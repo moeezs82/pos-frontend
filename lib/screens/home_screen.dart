@@ -1,3 +1,4 @@
+import 'package:enterprise_pos/screens/customers_screen.dart';
 import 'package:enterprise_pos/screens/product_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -86,7 +87,6 @@ class HomeScreen extends StatelessWidget {
                     color: Colors.blue,
                     onTap: () {
                       // TODO: Navigate to Products screen
-                      
                     },
                   ),
                   _DashboardCard(
@@ -107,7 +107,12 @@ class HomeScreen extends StatelessWidget {
                     title: "Customers",
                     color: Colors.orange,
                     onTap: () {
-                      // TODO: Navigate to Customers screen
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const CustomersScreen(),
+                        ),
+                      );
                     },
                   ),
                   _DashboardCard(

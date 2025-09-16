@@ -41,7 +41,6 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
   @override
   void initState() {
     super.initState();
-    final isEdit = widget.product != null;
     if (widget.product != null) {
       final p = widget.product!;
       _skuController.text = p['sku'] ?? '';
@@ -297,7 +296,7 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
                 children: [
                   Expanded(
                     child: DropdownButtonFormField<int>(
-                      value:
+                      initialValue:
                           _selectedCategoryId != null &&
                               _categories.any(
                                 (c) => c['id'] == _selectedCategoryId,
@@ -349,7 +348,7 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
                 children: [
                   Expanded(
                     child: DropdownButtonFormField<int>(
-                      value:
+                      initialValue:
                           _selectedBrandId != null &&
                               _brands.any((b) => b['id'] == _selectedBrandId)
                           ? _selectedBrandId

@@ -214,7 +214,7 @@ class ApiService {
       headers: {
         "Authorization": "Bearer $token",
         "Content-Type": "application/json",
-        "Accept": "application/json"
+        "Accept": "application/json",
       },
       body: jsonEncode(branch),
     );
@@ -224,6 +224,100 @@ class ApiService {
           body['data']; // depending on backend wrapper
     } else {
       throw Exception("Failed to create branch: ${res.body}");
+    }
+  }
+
+  static Future<Map<String, dynamic>> getCustomers(
+    String token, {
+    int page = 1,
+    String? search,
+  }) async {
+    final queryParams = {
+      "page": page.toString(),
+      if (search != null && search.isNotEmpty) "search": search,
+    };
+
+    final uri = Uri.parse(
+      "$baseUrl/customers",
+    ).replace(queryParameters: queryParams);
+    final res = await http.get(
+      uri,
+      headers: {"Authorization": "Bearer $token", "Accept": "application/json"},
+    );
+    final body = jsonDecode(res.body);
+    if (res.statusCode == 200 && body['success'] == true) {
+      return jsonDecode(res.body); // because of pagination
+    }
+    throw Exception("Failed to load products: ${res.body}");
+  }
+
+  static Future<Map<String, dynamic>> getCustomer(String token, int id) async {
+    final res = await http.get(
+      Uri.parse("$baseUrl/customers/$id"),
+      headers: {"Authorization": "Bearer $token", "Accept": "application/json"},
+    );
+    final body = jsonDecode(res.body);
+    if (res.statusCode == 200 && body['success'] == true) {
+      return body['data'];
+    }
+    throw Exception(body['message'] ?? "Failed to fetch customer");
+  }
+
+  static Future<void> createCustomer(
+    String token,
+    Map<String, dynamic> data,
+  ) async {
+    final res = await http.post(
+      Uri.parse("$baseUrl/customers"),
+      headers: {
+        "Authorization": "Bearer $token",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+      },
+      body: jsonEncode(data),
+    );
+    final body = jsonDecode(res.body);
+    if (res.statusCode != 200 && res.statusCode != 201) {
+      throw Exception(body['message'] ?? "Failed to create customer");
+    }
+  }
+
+  static Future<void> updateCustomer(
+    String token,
+    int id,
+    Map<String, dynamic> data,
+  ) async {
+    // 👇 ensure id is included in payload
+    final payload = {...data, "id": id};
+
+    final res = await http.put(
+      Uri.parse("$baseUrl/customers/$id"),
+      headers: {
+        "Authorization": "Bearer $token",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+      },
+      body: jsonEncode(payload),
+    );
+
+    final body = jsonDecode(res.body);
+    if (res.statusCode != 200) {
+      throw Exception(body['message'] ?? "Failed to update customer");
+    }
+  }
+
+  static Future<void> deleteCustomer(String token, int id) async {
+    final res = await http.delete(
+      Uri.parse("$baseUrl/customers/$id"),
+      headers: {
+        "Authorization": "Bearer $token",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+      },
+    );
+    final body = jsonDecode(res.body);
+    if (res.statusCode != 200) {
+      throw Exception(body['message'] ?? "Failed to delete customer");
     }
   }
 }

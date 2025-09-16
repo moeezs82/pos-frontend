@@ -35,8 +35,11 @@ class _ProductsScreenState extends State<ProductsScreen> {
 
     try {
       final token = Provider.of<AuthProvider>(context, listen: false).token!;
-      final data =
-          await ApiService.getProducts(token, page: _page, search: _search);
+      final data = await ApiService.getProducts(
+        token,
+        page: _page,
+        search: _search,
+      );
 
       final wrapper = (data['data'] as List).first;
       final items = wrapper['products'] as List<dynamic>;
@@ -63,15 +66,27 @@ class _ProductsScreenState extends State<ProductsScreen> {
     await _fetchProducts(reset: true);
   }
 
+  Future<void> _deleteProduct(int id) async {
+    try {
+      final token = Provider.of<AuthProvider>(context, listen: false).token!;
+      await ApiService.deleteProduct(token, id);
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Product deleted successfully")),
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text("Failed to delete product: $e")));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text("Products"),
-        centerTitle: true,
-      ),
+      appBar: AppBar(title: const Text("Products"), centerTitle: true),
 
       // ➕ Floating Add Button
       floatingActionButton: FloatingActionButton.extended(
@@ -158,80 +173,140 @@ class _ProductsScreenState extends State<ProductsScreen> {
                 child: _loading
                     ? const Center(child: CircularProgressIndicator())
                     : _products.isEmpty
-                        ? ListView(
-                            children: const [
-                              SizedBox(height: 120),
-                              Icon(Icons.inventory_2_outlined,
-                                  size: 64, color: Colors.grey),
-                              SizedBox(height: 12),
-                              Center(
-                                child: Text("No products found",
-                                    style: TextStyle(color: Colors.grey)),
-                              ),
-                            ],
-                          )
-                        : ListView.builder(
-                            itemCount: _products.length,
-                            itemBuilder: (context, index) {
-                              final p = _products[index];
-                              final stock =
-                                  (p['stocks'] as List?)?.isNotEmpty == true
-                                      ? p['stocks'][0]['quantity'].toString()
-                                      : "0";
-                              final brand = p['brand']?['name'] ?? "—";
-                              final category = p['category']?['name'] ?? "—";
-
-                              return Card(
-                                margin:
-                                    const EdgeInsets.symmetric(vertical: 6),
-                                elevation: 2,
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                                child: ListTile(
-                                  leading: CircleAvatar(
-                                    backgroundColor:
-                                        theme.colorScheme.primaryContainer,
-                                    child: Text(
-                                      p['name'][0].toUpperCase(),
-                                      style: TextStyle(
-                                        color: theme
-                                            .colorScheme.onPrimaryContainer,
-                                      ),
-                                    ),
-                                  ),
-                                  title: Text(
-                                    p['name'],
-                                    style: const TextStyle(
-                                        fontWeight: FontWeight.bold),
-                                  ),
-                                  subtitle: Text(
-                                    "SKU: ${p['sku']} | Price: \$${p['price']} | Stock: $stock\n"
-                                    "Brand: $brand | Category: $category",
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                  trailing: Icon(
-                                    Icons.edit,
-                                    size: 20,
-                                    color: theme.colorScheme.primary,
-                                  ),
-                                  onTap: () async {
-                                    final result = await Navigator.push(
-                                      context,
-                                      MaterialPageRoute(
-                                        builder: (_) =>
-                                            ProductFormScreen(product: p),
-                                      ),
-                                    );
-                                    if (result == true) {
-                                      _fetchProducts(reset: true);
-                                    }
-                                  },
-                                ),
-                              );
-                            },
+                    ? ListView(
+                        children: const [
+                          SizedBox(height: 120),
+                          Icon(
+                            Icons.inventory_2_outlined,
+                            size: 64,
+                            color: Colors.grey,
                           ),
+                          SizedBox(height: 12),
+                          Center(
+                            child: Text(
+                              "No products found",
+                              style: TextStyle(color: Colors.grey),
+                            ),
+                          ),
+                        ],
+                      )
+                    : ListView.builder(
+                        itemCount: _products.length,
+                        itemBuilder: (context, index) {
+                          final p = _products[index];
+                          final stock =
+                              (p['stocks'] as List?)?.isNotEmpty == true
+                              ? p['stocks'][0]['quantity'].toString()
+                              : "0";
+                          final brand = p['brand']?['name'] ?? "—";
+                          final category = p['category']?['name'] ?? "—";
+
+                          return Card(
+                            margin: const EdgeInsets.symmetric(vertical: 6),
+                            elevation: 2,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: ListTile(
+                              leading: CircleAvatar(
+                                backgroundColor:
+                                    theme.colorScheme.primaryContainer,
+                                child: Text(
+                                  p['name'][0].toUpperCase(),
+                                  style: TextStyle(
+                                    color: theme.colorScheme.onPrimaryContainer,
+                                  ),
+                                ),
+                              ),
+                              title: Text(
+                                p['name'],
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              subtitle: Text(
+                                "SKU: ${p['sku']} | Price: \$${p['price']} | Stock: $stock\n"
+                                "Brand: $brand | Category: $category",
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              // ✅ Multiple actions in trailing
+                              trailing: SizedBox(
+                                width: 70, // prevent row from taking full width
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.end,
+                                  children: [
+                                    // ✏️ Edit
+                                    GestureDetector(
+                                      child: Icon(
+                                        Icons.edit,
+                                        size: 20,
+                                        color: theme.colorScheme.primary,
+                                      ),
+                                      onTap: () async {
+                                        final result = await Navigator.push(
+                                          context,
+                                          MaterialPageRoute(
+                                            builder: (_) =>
+                                                ProductFormScreen(product: p),
+                                          ),
+                                        );
+                                        if (result == true) {
+                                          _fetchProducts(reset: true);
+                                        }
+                                      },
+                                    ),
+                                    const SizedBox(width: 12),
+                                    // 🗑️ Delete
+                                    GestureDetector(
+                                      child: const Icon(
+                                        Icons.delete,
+                                        size: 20,
+                                        color: Colors.red,
+                                      ),
+                                      onTap: () async {
+                                        final confirm = await showDialog<bool>(
+                                          context: context,
+                                          builder: (ctx) => AlertDialog(
+                                            title: const Text("Delete Product"),
+                                            content: Text(
+                                              "Are you sure you want to delete '${p['name']}'?",
+                                            ),
+                                            actions: [
+                                              TextButton(
+                                                onPressed: () =>
+                                                    Navigator.pop(ctx, false),
+                                                child: const Text("Cancel"),
+                                              ),
+                                              TextButton(
+                                                onPressed: () =>
+                                                    Navigator.pop(ctx, true),
+                                                child: const Text(
+                                                  "Delete",
+                                                  style: TextStyle(
+                                                    color: Colors.red,
+                                                  ),
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        );
+
+                                        if (confirm == true) {
+                                          await _deleteProduct(
+                                            p['id'],
+                                          ); // your API call
+                                          _fetchProducts(reset: true);
+                                        }
+                                      },
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          );
+                        },
+                      ),
               ),
             ),
           ],
