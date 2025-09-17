@@ -1,5 +1,6 @@
 import 'package:enterprise_pos/screens/customers_screen.dart';
 import 'package:enterprise_pos/screens/product_screen.dart';
+import 'package:enterprise_pos/screens/stock_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/auth_provider.dart';
@@ -99,6 +100,17 @@ class HomeScreen extends StatelessWidget {
                         MaterialPageRoute(
                           builder: (_) => const ProductsScreen(),
                         ),
+                      );
+                    },
+                  ),
+                  _DashboardCard(
+                    icon: Icons.warehouse, // or Icons.store
+                    title: "Stocks",
+                    color: Colors.red,
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const StockScreen()),
                       );
                     },
                   ),
