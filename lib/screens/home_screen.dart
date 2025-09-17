@@ -1,5 +1,6 @@
 import 'package:enterprise_pos/screens/customers_screen.dart';
 import 'package:enterprise_pos/screens/product_screen.dart';
+import 'package:enterprise_pos/screens/sale_screen.dart';
 import 'package:enterprise_pos/screens/stock_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -87,7 +88,10 @@ class HomeScreen extends StatelessWidget {
                     title: "Sales",
                     color: Colors.blue,
                     onTap: () {
-                      // TODO: Navigate to Products screen
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const SalesScreen()),
+                      );
                     },
                   ),
                   _DashboardCard(

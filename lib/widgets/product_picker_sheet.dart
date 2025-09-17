@@ -14,42 +14,34 @@ class ProductPickerSheet extends StatefulWidget {
 class _ProductPickerSheetState extends State<ProductPickerSheet> {
   List<Map<String, dynamic>> _products = [];
   int _page = 1;
+  int _lastPage = 1;
   bool _loading = false;
-  bool _hasMore = true;
   String _search = "";
-  final ScrollController _scrollController = ScrollController();
   Timer? _debounce;
 
   @override
   void initState() {
     super.initState();
-    _fetchProducts();
-    _scrollController.addListener(() {
-      if (_scrollController.position.pixels >= _scrollController.position.maxScrollExtent - 100) {
-        if (!_loading && _hasMore) {
-          _page++;
-          _fetchProducts();
-        }
-      }
-    });
+    _fetchProducts(page: 1);
   }
 
-  Future<void> _fetchProducts({bool reset = false}) async {
-    if (reset) {
-      _page = 1;
-      _products.clear();
-      _hasMore = true;
-    }
-    if (!_hasMore) return;
-
+  Future<void> _fetchProducts({int page = 1}) async {
     setState(() => _loading = true);
-    final data = await ApiService.getProducts(widget.token, page: _page, search: _search);
+
+    final data = await ApiService.getProducts(
+      widget.token,
+      page: page,
+      search: _search,
+    );
+
     final wrapper = (data['data'] as List).first;
-      // final newProducts = wrapper['products'] as List<dynamic>;
-    final newProducts = (wrapper['products'] as List).cast<Map<String, dynamic>>();
+    final newProducts = (wrapper['products'] as List)
+        .cast<Map<String, dynamic>>();
+
     setState(() {
-      _products.addAll(newProducts);
-      _hasMore = newProducts.isNotEmpty;
+      _products = newProducts;
+      _page = wrapper['current_page'];
+      _lastPage = wrapper['last_page'];
       _loading = false;
     });
   }
@@ -61,6 +53,7 @@ class _ProductPickerSheetState extends State<ProductPickerSheet> {
         padding: const EdgeInsets.all(12),
         child: Column(
           children: [
+            // 🔍 Search bar
             TextField(
               decoration: const InputDecoration(
                 prefixIcon: Icon(Icons.search),
@@ -71,31 +64,116 @@ class _ProductPickerSheetState extends State<ProductPickerSheet> {
                 _debounce?.cancel();
                 _debounce = Timer(const Duration(milliseconds: 500), () {
                   setState(() => _search = val);
-                  _fetchProducts(reset: true);
+                  _fetchProducts(page: 1);
                 });
               },
             ),
             const SizedBox(height: 12),
+
+            // 📋 Products list
             Expanded(
-              child: ListView.builder(
-                controller: _scrollController,
-                itemCount: _products.length + 1,
-                itemBuilder: (_, i) {
-                  if (i == _products.length) {
-                    return _loading
-                        ? const Padding(
-                            padding: EdgeInsets.all(16),
-                            child: Center(child: CircularProgressIndicator()))
-                        : const SizedBox.shrink();
-                  }
-                  final p = _products[i];
-                  return ListTile(
-                    title: Text(p['name']),
-                    subtitle: Text("SKU: ${p['sku']}"),
-                    onTap: () => Navigator.pop(context, p),
-                  );
-                },
-              ),
+              child: _loading
+                  ? const Center(child: CircularProgressIndicator())
+                  : _products.isEmpty
+                  ? const Center(child: Text("No products found"))
+                  : ListView.builder(
+                      itemCount: _products.length + 1,
+                      itemBuilder: (_, i) {
+                        if (i == 0) {
+                          // First option = Walk-in / No Customer
+                          return Card(
+                            color: Colors.grey.shade200,
+                            margin: const EdgeInsets.symmetric(
+                              vertical: 4,
+                              horizontal: 2,
+                            ),
+                            child: ListTile(
+                              leading: const Icon(
+                                Icons.clear,
+                                color: Colors.red,
+                              ),
+                              title: const Text(
+                                "-------",
+                                style: TextStyle(fontWeight: FontWeight.bold),
+                              ),
+                              onTap: () => Navigator.pop(context, null),
+                            ),
+                          );
+                        }
+
+                        final p = _products[i-1];
+                        final category =
+                            p['category']?['name'] ?? "Uncategorized";
+                        final price = p['price']?.toString() ?? "0";
+                        final discount = p['discount']?.toString() ?? "0";
+
+                        return Card(
+                          margin: const EdgeInsets.symmetric(
+                            vertical: 4,
+                            horizontal: 2,
+                          ),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: ListTile(
+                            title: Text(
+                              p['name'] ?? "Unnamed",
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            subtitle: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text("SKU: ${p['sku'] ?? '-'}"),
+                                Text("Category: $category"),
+                                Row(
+                                  children: [
+                                    Text("Price: \$$price"),
+                                    if (discount != "0")
+                                      Padding(
+                                        padding: const EdgeInsets.only(
+                                          left: 8.0,
+                                        ),
+                                        child: Text(
+                                          "Discount: \$$discount",
+                                          style: const TextStyle(
+                                            color: Colors.red,
+                                            fontWeight: FontWeight.w500,
+                                          ),
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              ],
+                            ),
+                            onTap: () => Navigator.pop(context, p),
+                          ),
+                        );
+                      },
+                    ),
+            ),
+
+            // ⏩ Pagination controls
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                ElevatedButton(
+                  onPressed: _page > 1
+                      ? () => _fetchProducts(page: _page - 1)
+                      : null,
+                  child: const Text("Previous"),
+                ),
+                const SizedBox(width: 16),
+                Text("Page $_page of $_lastPage"),
+                const SizedBox(width: 16),
+                ElevatedButton(
+                  onPressed: _page < _lastPage
+                      ? () => _fetchProducts(page: _page + 1)
+                      : null,
+                  child: const Text("Next"),
+                ),
+              ],
             ),
           ],
         ),
@@ -103,4 +181,3 @@ class _ProductPickerSheetState extends State<ProductPickerSheet> {
     );
   }
 }
-

@@ -105,6 +105,24 @@ class ApiService {
     }
   }
 
+  static Future<Map<String, dynamic>?> getProductByBarcode(
+    String token,
+    String barcode,
+  ) async {
+    final uri = Uri.parse("$baseUrl/products/by-barcode/$barcode");
+    final res = await http.get(
+      uri,
+      headers: {"Authorization": "Bearer $token", "Accept": "application/json"},
+    );
+
+    if (res.statusCode == 200) {
+      final data = jsonDecode(res.body);
+      // Expecting { "success": true, "data": { id, name, price, ... } }
+      return data['data'] as Map<String, dynamic>;
+    }
+    return null;
+  }
+
   static Future<void> deleteProduct(String token, int id) async {
     final response = await http.delete(
       Uri.parse("$baseUrl/products/$id"),

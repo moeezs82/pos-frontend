@@ -43,10 +43,13 @@ class _StockScreenState extends State<StockScreen> {
     final query = {
       "page": page.toString(),
       if (_selectedBranchId != null) "branch_id": _selectedBranchId!,
-      if (_selectedProduct != null) "product_id": _selectedProduct!['id'].toString(),
+      if (_selectedProduct != null)
+        "product_id": _selectedProduct!['id'].toString(),
     };
 
-    final uri = Uri.parse("${ApiService.baseUrl}/stocks").replace(queryParameters: query);
+    final uri = Uri.parse(
+      "${ApiService.baseUrl}/stocks",
+    ).replace(queryParameters: query);
     final token = Provider.of<AuthProvider>(context, listen: false).token!;
     final res = await http.get(
       uri,
@@ -75,11 +78,23 @@ class _StockScreenState extends State<StockScreen> {
   // ✅ Product picker bottom sheet
   Future<Map<String, dynamic>?> _pickProduct(BuildContext context) async {
     final token = Provider.of<AuthProvider>(context, listen: false).token!;
-    return showModalBottomSheet<Map<String, dynamic>>(
+    final product = await showModalBottomSheet<Map<String, dynamic>>(
       context: context,
       isScrollControlled: true,
       builder: (_) => ProductPickerSheet(token: token),
     );
+    if (product == null) {
+      setState(() {
+        _selectedProduct = null;
+      });
+    } else {
+      return product;
+    }
+    // return showModalBottomSheet<Map<String, dynamic>>(
+    //   context: context,
+    //   isScrollControlled: true,
+    //   builder: (_) => ProductPickerSheet(token: token),
+    // );
   }
 
   // ✅ Adjust stock dialog
@@ -124,7 +139,8 @@ class _StockScreenState extends State<StockScreen> {
                     child: Text(b['name']),
                   );
                 }).toList(),
-                onChanged: (val) => setStateDialog(() => selectedBranchId = val),
+                onChanged: (val) =>
+                    setStateDialog(() => selectedBranchId = val),
               ),
               const SizedBox(height: 12),
               TextField(
@@ -138,15 +154,26 @@ class _StockScreenState extends State<StockScreen> {
             ],
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(context), child: const Text("Cancel")),
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text("Cancel"),
+            ),
             ElevatedButton(
               onPressed: () async {
                 final qty = int.tryParse(qtyController.text) ?? 0;
-                if (qty != 0 && selectedProduct != null && selectedBranchId != null) {
-                  final token = Provider.of<AuthProvider>(context, listen: false).token!;
+                if (qty != 0 &&
+                    selectedProduct != null &&
+                    selectedBranchId != null) {
+                  final token = Provider.of<AuthProvider>(
+                    context,
+                    listen: false,
+                  ).token!;
                   await http.post(
                     Uri.parse("${ApiService.baseUrl}/stocks/adjust"),
-                    headers: {"Authorization": "Bearer $token", "Accept": "application/json"},
+                    headers: {
+                      "Authorization": "Bearer $token",
+                      "Accept": "application/json",
+                    },
                     body: {
                       "product_id": selectedProduct!['id'].toString(),
                       "branch_id": selectedBranchId!,
@@ -238,15 +265,27 @@ class _StockScreenState extends State<StockScreen> {
             ],
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(context), child: const Text("Cancel")),
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text("Cancel"),
+            ),
             ElevatedButton(
               onPressed: () async {
                 final qty = int.tryParse(qtyController.text) ?? 0;
-                if (qty > 0 && selectedProduct != null && fromBranchId != null && toBranchId != null) {
-                  final token = Provider.of<AuthProvider>(context, listen: false).token!;
+                if (qty > 0 &&
+                    selectedProduct != null &&
+                    fromBranchId != null &&
+                    toBranchId != null) {
+                  final token = Provider.of<AuthProvider>(
+                    context,
+                    listen: false,
+                  ).token!;
                   await http.post(
                     Uri.parse("${ApiService.baseUrl}/stocks/transfer"),
-                    headers: {"Authorization": "Bearer $token", "Accept": "application/json"},
+                    headers: {
+                      "Authorization": "Bearer $token",
+                      "Accept": "application/json",
+                    },
                     body: {
                       "product_id": selectedProduct!['id'].toString(),
                       "from_branch": fromBranchId!,
@@ -271,7 +310,12 @@ class _StockScreenState extends State<StockScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text("Stocks"),
-        actions: [IconButton(onPressed: () => _fetchStocks(page: 1), icon: const Icon(Icons.refresh))],
+        actions: [
+          IconButton(
+            onPressed: () => _fetchStocks(page: 1),
+            icon: const Icon(Icons.refresh),
+          ),
+        ],
       ),
       body: Column(
         children: [
@@ -284,13 +328,21 @@ class _StockScreenState extends State<StockScreen> {
                   child: DropdownButtonFormField<String>(
                     value: _selectedBranchId,
                     hint: const Text("Filter by Branch"),
-                    decoration: const InputDecoration(border: OutlineInputBorder()),
-                    items: _branches.map<DropdownMenuItem<String>>((b) {
-                      return DropdownMenuItem(
-                        value: b['id'].toString(),
-                        child: Text(b['name']),
-                      );
-                    }).toList(),
+                    decoration: const InputDecoration(
+                      border: OutlineInputBorder(),
+                    ),
+                    items: [
+                      const DropdownMenuItem<String>(
+                        value: null,
+                        child: Text("All Branches"), // unselect option
+                      ),
+                      ..._branches.map<DropdownMenuItem<String>>(
+                        (b) => DropdownMenuItem(
+                          value: b['id'].toString(),
+                          child: Text(b['name']),
+                        ),
+                      ),
+                    ],
                     onChanged: (val) {
                       setState(() => _selectedBranchId = val);
                       _fetchStocks(page: 1);
@@ -323,66 +375,82 @@ class _StockScreenState extends State<StockScreen> {
             child: _loading
                 ? const Center(child: CircularProgressIndicator())
                 : _stocks.isEmpty
-                    ? const Center(child: Text("No stock found"))
-                    : Column(
-                        children: [
-                          Expanded(
-                            child: ListView.builder(
-                              itemCount: _stocks.length,
-                              itemBuilder: (_, i) {
-                                final s = _stocks[i];
-                                final product = s['product']?['name'] ?? "Unknown";
-                                final branch = s['branch']?['name'] ?? "N/A";
-                                final qty = s['quantity'];
+                ? const Center(child: Text("No stock found"))
+                : Column(
+                    children: [
+                      Expanded(
+                        child: ListView.builder(
+                          itemCount: _stocks.length,
+                          itemBuilder: (_, i) {
+                            final s = _stocks[i];
+                            final product = s['product']?['name'] ?? "Unknown";
+                            final branch = s['branch']?['name'] ?? "N/A";
+                            final qty = s['quantity'];
 
-                                return Card(
-                                  margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                                  elevation: 2,
-                                  child: ListTile(
-                                    title: Text(product, style: const TextStyle(fontWeight: FontWeight.bold)),
-                                    subtitle: Text("Branch: $branch | Qty: $qty"),
-                                    trailing: PopupMenuButton<String>(
-                                      onSelected: (val) {
-                                        if (val == "adjust") _adjustStock(s);
-                                        if (val == "transfer") _transferStock(s);
-                                      },
-                                      itemBuilder: (_) => const [
-                                        PopupMenuItem(value: "adjust", child: Text("Adjust Stock")),
-                                        PopupMenuItem(value: "transfer", child: Text("Transfer Stock")),
-                                      ],
-                                    ),
+                            return Card(
+                              margin: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 6,
+                              ),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              elevation: 2,
+                              child: ListTile(
+                                title: Text(
+                                  product,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.bold,
                                   ),
-                                );
-                              },
-                            ),
-                          ),
-                          // ✅ Pagination controls
-                          Padding(
-                            padding: const EdgeInsets.all(8.0),
-                            child: Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                ElevatedButton(
-                                  onPressed: _currentPage > 1
-                                      ? () => _fetchStocks(page: _currentPage - 1)
-                                      : null,
-                                  child: const Text("Previous"),
                                 ),
-                                const SizedBox(width: 16),
-                                Text("Page $_currentPage of $_lastPage"),
-                                const SizedBox(width: 16),
-                                ElevatedButton(
-                                  onPressed: _currentPage < _lastPage
-                                      ? () => _fetchStocks(page: _currentPage + 1)
-                                      : null,
-                                  child: const Text("Next"),
+                                subtitle: Text("Branch: $branch | Qty: $qty"),
+                                trailing: PopupMenuButton<String>(
+                                  onSelected: (val) {
+                                    if (val == "adjust") _adjustStock(s);
+                                    if (val == "transfer") _transferStock(s);
+                                  },
+                                  itemBuilder: (_) => const [
+                                    PopupMenuItem(
+                                      value: "adjust",
+                                      child: Text("Adjust Stock"),
+                                    ),
+                                    PopupMenuItem(
+                                      value: "transfer",
+                                      child: Text("Transfer Stock"),
+                                    ),
+                                  ],
                                 ),
-                              ],
-                            ),
-                          ),
-                        ],
+                              ),
+                            );
+                          },
+                        ),
                       ),
+                      // ✅ Pagination controls
+                      Padding(
+                        padding: const EdgeInsets.all(8.0),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            ElevatedButton(
+                              onPressed: _currentPage > 1
+                                  ? () => _fetchStocks(page: _currentPage - 1)
+                                  : null,
+                              child: const Text("Previous"),
+                            ),
+                            const SizedBox(width: 16),
+                            Text("Page $_currentPage of $_lastPage"),
+                            const SizedBox(width: 16),
+                            ElevatedButton(
+                              onPressed: _currentPage < _lastPage
+                                  ? () => _fetchStocks(page: _currentPage + 1)
+                                  : null,
+                              child: const Text("Next"),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
           ),
         ],
       ),
