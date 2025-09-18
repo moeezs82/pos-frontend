@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/services/api_service.dart';
 import 'package:enterprise_pos/widgets/product_picker_sheet.dart';
@@ -56,7 +58,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     }
   }
 
-  // 🏷 Customer Picker
+  // 🏷 Customer Picker (supports deselect)
   Future<void> _pickCustomer() async {
     final token = Provider.of<AuthProvider>(context, listen: false).token!;
     final customer = await showModalBottomSheet<Map<String, dynamic>?>(
@@ -66,7 +68,6 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     );
 
     if (customer == null) {
-      // Clear selection (Walk-in / deselect)
       setState(() {
         _selectedCustomer = null;
         _selectedCustomerId = null;
@@ -79,7 +80,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     }
   }
 
-  // 🏷 Add Product Manually
+  // 🏷 Add Product (manual picker → instant add)
   Future<void> _addItemManual() async {
     final token = Provider.of<AuthProvider>(context, listen: false).token!;
     final product = await showModalBottomSheet<Map<String, dynamic>>(
@@ -89,57 +90,108 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     );
     if (product == null) return;
 
-    final qtyController = TextEditingController(text: "1");
+    setState(() {
+      _items.add({
+        "product_id": product['id'],
+        "name": product['name'],
+        "cost_price": product['cost_price'],
+        "wholesale_price": product['wholesale_price'],
+        "quantity": 1,
+        "price": double.tryParse(product['price'].toString()) ?? 0.0,
+      });
+    });
+  }
+
+  // 🏷 Edit Product (when tapping item)
+  void _editItem(int index) {
+    final item = _items[index];
+    final qtyController = TextEditingController(
+      text: item['quantity'].toString(),
+    );
     final priceController = TextEditingController(
-      text: product['price'].toString(),
+      text: item['price'].toString(),
     );
 
-    await showDialog(
+    // hidden fields for cost and wholesale (not editable by default)
+    final costPrice = item['cost_price'] ?? 0.0;
+    final wholesalePrice = item['wholesale_price'] ?? 0.0;
+
+    bool showHidden = false;
+
+    showDialog(
       context: context,
-      builder: (_) => AlertDialog(
-        title: Text("Add ${product['name']}"),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: qtyController,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(
-                labelText: "Quantity",
-                border: OutlineInputBorder(),
-              ),
+      builder: (_) => StatefulBuilder(
+        builder: (context, setLocal) {
+          return AlertDialog(
+            title: Text("Edit ${item['name']}"),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: qtyController,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(labelText: "Quantity"),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: priceController,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(labelText: "Sale Price"),
+                ),
+                const SizedBox(height: 12),
+
+                // toggle button
+                TextButton.icon(
+                  icon: Icon(
+                    showHidden ? Icons.visibility_off : Icons.visibility,
+                  ),
+                  label: Text(
+                    showHidden ? "Hide Cost/Wholesale" : "Show Cost/Wholesale",
+                  ),
+                  onPressed: () => setLocal(() => showHidden = !showHidden),
+                ),
+
+                if (showHidden) ...[
+                  const Divider(),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          "Cost Price: \$${costPrice.toString()}",
+                          style: const TextStyle(color: Colors.grey),
+                        ),
+                        Text(
+                          "Wholesale Price: \$${wholesalePrice.toString()}",
+                          style: const TextStyle(color: Colors.grey),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ],
             ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: priceController,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(
-                labelText: "Price",
-                border: OutlineInputBorder(),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text("Cancel"),
               ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text("Cancel"),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              setState(() {
-                _items.add({
-                  "product_id": product['id'],
-                  "name": product['name'],
-                  "quantity": int.tryParse(qtyController.text) ?? 1,
-                  "price": double.tryParse(priceController.text) ?? 0.0,
-                });
-              });
-              Navigator.pop(context);
-            },
-            child: const Text("Add"),
-          ),
-        ],
+              ElevatedButton(
+                onPressed: () {
+                  setState(() {
+                    _items[index]['quantity'] =
+                        int.tryParse(qtyController.text) ?? 1;
+                    _items[index]['price'] =
+                        double.tryParse(priceController.text) ?? 0.0;
+                  });
+                  Navigator.pop(context);
+                },
+                child: const Text("Save"),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -159,18 +211,12 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
             TextField(
               controller: amountController,
               keyboardType: TextInputType.number,
-              decoration: const InputDecoration(
-                labelText: "Amount",
-                border: OutlineInputBorder(),
-              ),
+              decoration: const InputDecoration(labelText: "Amount"),
             ),
             const SizedBox(height: 12),
             DropdownButtonFormField<String>(
               value: method,
-              decoration: const InputDecoration(
-                labelText: "Method",
-                border: OutlineInputBorder(),
-              ),
+              decoration: const InputDecoration(labelText: "Method"),
               items: const [
                 DropdownMenuItem(value: "cash", child: Text("Cash")),
                 DropdownMenuItem(value: "card", child: Text("Card")),
@@ -203,6 +249,35 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     );
   }
 
+  // 🏷 Handle Barcode Scan
+  Future<void> _onBarcodeScanned(String code) async {
+    if (code.isEmpty) return;
+    final token = Provider.of<AuthProvider>(context, listen: false).token!;
+    final product = await ApiService.getProductByBarcode(token, code);
+
+    if (product != null) {
+      setState(() {
+        _items.add({
+          "product_id": product['id'],
+          "name": product['name'],
+          "cost_price": product['cost_price'],
+          "wholesale_price": product['wholesale_price'],
+          "quantity": 1,
+          "price": double.tryParse(product['price'].toString()) ?? 0.0,
+        });
+      });
+    } else {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text("Product not found: $code")));
+    }
+
+    _barcodeController.clear();
+    Future.delayed(const Duration(milliseconds: 50), () {
+      if (mounted) _barcodeFocusNode.requestFocus();
+    });
+  }
+
   // 🏷 Hidden Barcode Field
   Widget _buildHiddenBarcodeInput() {
     return Opacity(
@@ -211,9 +286,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         controller: _barcodeController,
         focusNode: _barcodeFocusNode,
         autofocus: false,
-        onSubmitted: (code) {
-          // TODO: implement barcode scan handling
-        },
+        onSubmitted: _onBarcodeScanned,
       ),
     );
   }
@@ -256,12 +329,24 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
 
     setState(() => _submitting = false);
 
-    if (res.statusCode == 200) {
+    if (res.statusCode == 200 || res.statusCode == 201) {
       Navigator.pop(context, true);
     } else {
+      String message = "Failed to create sale";
+      try {
+        final data = jsonDecode(res.body);
+        if (data is Map && data.containsKey("message")) {
+          message = data["message"].toString();
+        } else if (data is Map && data.containsKey("error")) {
+          message = data["error"].toString();
+        }
+      } catch (e) {
+        message = "Something went wrong (${res.statusCode})";
+      }
+
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(const SnackBar(content: Text("Failed to create sale")));
+      ).showSnackBar(SnackBar(content: Text(message)));
     }
   }
 
@@ -405,6 +490,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
                             onPressed: () =>
                                 setState(() => _items.removeAt(index)),
                           ),
+                          onTap: () => _editItem(index),
                         );
                       }),
                       Align(

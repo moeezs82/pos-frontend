@@ -1,6 +1,7 @@
 import 'package:enterprise_pos/screens/customers_screen.dart';
 import 'package:enterprise_pos/screens/product_screen.dart';
-import 'package:enterprise_pos/screens/sale_screen.dart';
+import 'package:enterprise_pos/screens/sales/sale_returns_screen.dart';
+import 'package:enterprise_pos/screens/sales/sale_screen.dart';
 import 'package:enterprise_pos/screens/stock_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -17,6 +18,7 @@ class HomeScreen extends StatelessWidget {
 
     return Scaffold(
       appBar: AppBar(
+        elevation: 0,
         title: const Text("Enterprise POS"),
         actions: [
           IconButton(
@@ -32,24 +34,39 @@ class HomeScreen extends StatelessWidget {
           ),
         ],
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // 🔹 User info header
-            Row(
+      body: Column(
+        children: [
+          // 🔹 User Header Section
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [
+                  theme.colorScheme.primary.withOpacity(0.85),
+                  theme.colorScheme.primary,
+                ],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              borderRadius: const BorderRadius.only(
+                bottomLeft: Radius.circular(24),
+                bottomRight: Radius.circular(24),
+              ),
+            ),
+            child: Row(
               children: [
                 CircleAvatar(
-                  radius: 28,
-                  backgroundColor: theme.colorScheme.primaryContainer,
+                  radius: 32,
+                  backgroundColor: Colors.white,
                   child: Text(
                     auth.user?['name'] != null
                         ? auth.user!['name'][0].toUpperCase()
                         : "?",
                     style: TextStyle(
-                      fontSize: 24,
-                      color: theme.colorScheme.onPrimaryContainer,
+                      fontSize: 26,
+                      fontWeight: FontWeight.bold,
+                      color: theme.colorScheme.primary,
                     ),
                   ),
                 ),
@@ -57,27 +74,34 @@ class HomeScreen extends StatelessWidget {
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text("Welcome back,", style: theme.textTheme.bodyMedium),
+                    const Text(
+                      "Welcome back,",
+                      style: TextStyle(color: Colors.white70, fontSize: 14),
+                    ),
                     Text(
                       auth.user?['name'] ?? "User",
-                      style: theme.textTheme.titleLarge?.copyWith(
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 20,
                         fontWeight: FontWeight.bold,
                       ),
                     ),
                     Text(
                       "Role: ${auth.user?['role']?[0] ?? 'Unknown'}",
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: theme.colorScheme.primary,
-                      ),
+                      style: const TextStyle(color: Colors.white70, fontSize: 12),
                     ),
                   ],
                 ),
               ],
             ),
-            const SizedBox(height: 24),
+          ),
 
-            // 🔹 Dashboard grid
-            Expanded(
+          const SizedBox(height: 24),
+
+          // 🔹 Dashboard Grid
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
               child: GridView.count(
                 crossAxisCount: MediaQuery.of(context).size.width > 600 ? 4 : 2,
                 crossAxisSpacing: 16,
@@ -95,6 +119,18 @@ class HomeScreen extends StatelessWidget {
                     },
                   ),
                   _DashboardCard(
+                    icon: Icons.assignment_return,
+                    title: "Sale Returns",
+                    color: Colors.indigo,
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                            builder: (_) => const SaleReturnsScreen()),
+                      );
+                    },
+                  ),
+                  _DashboardCard(
                     icon: Icons.inventory_2,
                     title: "Products",
                     color: Colors.green,
@@ -108,7 +144,7 @@ class HomeScreen extends StatelessWidget {
                     },
                   ),
                   _DashboardCard(
-                    icon: Icons.warehouse, // or Icons.store
+                    icon: Icons.warehouse,
                     title: "Stocks",
                     color: Colors.red,
                     onTap: () {
@@ -150,8 +186,8 @@ class HomeScreen extends StatelessWidget {
                 ],
               ),
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -175,23 +211,27 @@ class _DashboardCard extends StatelessWidget {
     final theme = Theme.of(context);
 
     return InkWell(
-      borderRadius: BorderRadius.circular(16),
+      borderRadius: BorderRadius.circular(12),
       onTap: onTap,
       child: Card(
-        color: color.withOpacity(0.1),
-        elevation: 2,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        child: Center(
+        elevation: 1.5,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+          side: BorderSide(color: Colors.grey.shade200, width: 1),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 12),
           child: Column(
-            mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(icon, size: 40, color: color),
-              const SizedBox(height: 12),
+              Icon(icon, size: 28, color: color), // smaller icon
+              const SizedBox(height: 10),
               Text(
                 title,
-                style: theme.textTheme.titleMedium?.copyWith(
+                textAlign: TextAlign.center,
+                style: theme.textTheme.bodyMedium?.copyWith(
                   fontWeight: FontWeight.w600,
-                  color: color,
+                  color: Colors.grey.shade800,
                 ),
               ),
             ],

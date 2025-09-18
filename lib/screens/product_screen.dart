@@ -195,9 +195,13 @@ class _ProductsScreenState extends State<ProductsScreen> {
                         itemBuilder: (context, index) {
                           final p = _products[index];
                           final stock =
-                              (p['stocks'] as List?)?.isNotEmpty == true
-                              ? p['stocks'][0]['quantity'].toString()
-                              : "0";
+                              (p['stocks'] as List?)
+                                  ?.fold<int>(
+                                    0,
+                                    (sum, s) => sum + (s['quantity'] as int),
+                                  )
+                                  .toString() ??
+                              "0";
                           final brand = p['brand']?['name'] ?? "—";
                           final category = p['category']?['name'] ?? "—";
 

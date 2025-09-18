@@ -1,22 +1,21 @@
-import 'dart:async';
 import 'dart:convert';
 import 'package:enterprise_pos/providers/auth_provider.dart';
-import 'package:enterprise_pos/screens/sale_create.dart';
-import 'package:enterprise_pos/screens/sale_detail.dart';
+import 'package:enterprise_pos/screens/sales/sale_return_create.dart';
+import 'package:enterprise_pos/screens/sales/sale_return_detail.dart';
 import 'package:enterprise_pos/services/api_service.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
 
-class SalesScreen extends StatefulWidget {
-  const SalesScreen({super.key});
+class SaleReturnsScreen extends StatefulWidget {
+  const SaleReturnsScreen({super.key});
 
   @override
-  State<SalesScreen> createState() => _SalesScreenState();
+  State<SaleReturnsScreen> createState() => _SaleReturnsScreenState();
 }
 
-class _SalesScreenState extends State<SalesScreen> {
-  List<dynamic> _sales = [];
+class _SaleReturnsScreenState extends State<SaleReturnsScreen> {
+  List<dynamic> _returns = [];
   List<Map<String, dynamic>> _branches = [];
   bool _loading = true;
 
@@ -27,7 +26,6 @@ class _SalesScreenState extends State<SalesScreen> {
   // Filters
   String? _selectedBranchId;
   String _searchQuery = "";
-  String _sortBy = "date"; // date | total
 
   final TextEditingController _searchController = TextEditingController();
 
@@ -38,21 +36,20 @@ class _SalesScreenState extends State<SalesScreen> {
   }
 
   Future<void> _fetchInitialData() async {
-    await Future.wait([_fetchSales(page: 1), _fetchBranches()]);
+    await Future.wait([_fetchReturns(page: 1), _fetchBranches()]);
   }
 
-  Future<void> _fetchSales({int page = 1}) async {
+  Future<void> _fetchReturns({int page = 1}) async {
     setState(() => _loading = true);
 
     final query = {
       "page": page.toString(),
-      "sort_by": _sortBy,
       if (_selectedBranchId != null) "branch_id": _selectedBranchId!,
       if (_searchQuery.isNotEmpty) "search": _searchQuery,
     };
 
     final uri = Uri.parse(
-      "${ApiService.baseUrl}/sales",
+      "${ApiService.baseUrl}/sales/returns",
     ).replace(queryParameters: query);
     final token = Provider.of<AuthProvider>(context, listen: false).token!;
 
@@ -64,7 +61,7 @@ class _SalesScreenState extends State<SalesScreen> {
     if (res.statusCode == 200) {
       final data = jsonDecode(res.body);
       setState(() {
-        _sales = data['data']['data'];
+        _returns = data['data']['data'];
         _currentPage = data['data']['current_page'];
         _lastPage = data['data']['last_page'];
         _loading = false;
@@ -84,28 +81,28 @@ class _SalesScreenState extends State<SalesScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text("Sales"),
+        title: const Text("Sale Returns"),
         actions: [
           IconButton(
-            onPressed: () => _fetchSales(page: 1),
+            onPressed: () => _fetchReturns(page: 1),
             icon: const Icon(Icons.refresh),
           ),
         ],
       ),
-      // ➕ Floating Add Button
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () async {
           final result = await Navigator.push(
             context,
-            MaterialPageRoute(builder: (_) => const CreateSaleScreen()),
+            MaterialPageRoute(builder: (_) => const CreateSaleReturnScreen()),
           );
           if (result == true) {
-            _fetchSales(page: 1);
+            _fetchReturns(page: 1);
           }
         },
         icon: const Icon(Icons.add),
-        label: const Text("Add Sale"),
+        label: const Text("Add Return"),
       ),
+
       body: Column(
         children: [
           // ✅ Filters + Search
@@ -124,7 +121,7 @@ class _SalesScreenState extends State<SalesScreen> {
                     items: [
                       const DropdownMenuItem<String>(
                         value: null,
-                        child: Text("All Branches"), // unselect option
+                        child: Text("All Branches"),
                       ),
                       ..._branches.map<DropdownMenuItem<String>>(
                         (b) => DropdownMenuItem(
@@ -135,29 +132,11 @@ class _SalesScreenState extends State<SalesScreen> {
                     ],
                     onChanged: (val) {
                       setState(() => _selectedBranchId = val);
-                      _fetchSales(page: 1);
+                      _fetchReturns(page: 1);
                     },
                   ),
                 ),
                 const SizedBox(width: 8),
-                // Sort dropdown
-                DropdownButton<String>(
-                  value: _sortBy,
-                  items: const [
-                    DropdownMenuItem(
-                      value: "date",
-                      child: Text("Sort by Date"),
-                    ),
-                    DropdownMenuItem(
-                      value: "total",
-                      child: Text("Sort by Amount"),
-                    ),
-                  ],
-                  onChanged: (val) {
-                    setState(() => _sortBy = val!);
-                    _fetchSales(page: 1);
-                  },
-                ),
               ],
             ),
           ),
@@ -168,7 +147,7 @@ class _SalesScreenState extends State<SalesScreen> {
             child: TextField(
               controller: _searchController,
               decoration: InputDecoration(
-                hintText: "Search by Invoice or Customer",
+                hintText: "Search by Return No or Invoice",
                 prefixIcon: const Icon(Icons.search),
                 border: const OutlineInputBorder(),
                 suffixIcon: _searchQuery.isNotEmpty
@@ -177,41 +156,41 @@ class _SalesScreenState extends State<SalesScreen> {
                         onPressed: () {
                           _searchController.clear();
                           setState(() => _searchQuery = "");
-                          _fetchSales(page: 1);
+                          _fetchReturns(page: 1);
                         },
                       )
                     : null,
               ),
               onSubmitted: (val) {
                 setState(() => _searchQuery = val);
-                _fetchSales(page: 1);
+                _fetchReturns(page: 1);
               },
             ),
           ),
 
           const SizedBox(height: 8),
 
-          // ✅ Sales list
+          // ✅ Returns list
           Expanded(
             child: _loading
                 ? const Center(child: CircularProgressIndicator())
-                : _sales.isEmpty
-                ? const Center(child: Text("No sales found"))
+                : _returns.isEmpty
+                ? const Center(child: Text("No returns found"))
                 : Column(
                     children: [
                       Expanded(
                         child: ListView.builder(
-                          itemCount: _sales.length,
+                          itemCount: _returns.length,
                           itemBuilder: (_, i) {
-                            final s = _sales[i];
-                            final invoice = s['invoice_no'];
+                            final r = _returns[i];
+                            final returnNo = r['return_no'];
+                            final status = r['status'];
+                            final total = r['total'];
                             final customer =
-                                s['customer']?['first_name'] ?? "Walk-in";
-                            final branch = s['branch']?['name'] ?? "N/A";
-                            final total = s['total'];
-                            final status = s['status'];
-                            final paid = s['paid_amount'] ?? 0;
-                            final balance = s['balance'] ?? 0;
+                                r['sale']?['customer']?['first_name'] ?? "N/A";
+                            final invoice = r['sale']?['invoice_no'] ?? "N/A";
+                            final branch =
+                                r['sale']?['branch']?['name'] ?? "N/A";
 
                             return Card(
                               margin: const EdgeInsets.symmetric(
@@ -224,23 +203,22 @@ class _SalesScreenState extends State<SalesScreen> {
                               elevation: 2,
                               child: ListTile(
                                 title: Text(
-                                  "Invoice: $invoice",
+                                  "Return: $returnNo",
                                   style: const TextStyle(
                                     fontWeight: FontWeight.bold,
                                   ),
                                 ),
                                 subtitle: Text(
-                                  // "Customer: $customer | Branch: $branch\nTotal: \$${total.toString()} | Paid: \$${paid.toString()} | Balance: \$${balance.toString()}",
-                                  "Customer: $customer | Branch: $branch\nTotal: \$${total.toString()} | Paid: \$${paid.toString()}",
+                                  "Invoice: $invoice | Customer: $customer | Branch: $branch\nTotal: \$${total.toString()}",
                                 ),
                                 trailing: Chip(
                                   label: Text(
                                     status.toUpperCase(),
                                     style: const TextStyle(color: Colors.white),
                                   ),
-                                  backgroundColor: status == "paid"
+                                  backgroundColor: status == "approved"
                                       ? Colors.green
-                                      : status == "partial"
+                                      : status == "pending"
                                       ? Colors.orange
                                       : Colors.red,
                                 ),
@@ -248,8 +226,9 @@ class _SalesScreenState extends State<SalesScreen> {
                                   Navigator.push(
                                     context,
                                     MaterialPageRoute(
-                                      builder: (_) =>
-                                          SaleDetailScreen(saleId: s['id']),
+                                      builder: (_) => SaleReturnDetailScreen(
+                                        returnId: r['id'],
+                                      ),
                                     ),
                                   );
                                 },
@@ -258,7 +237,7 @@ class _SalesScreenState extends State<SalesScreen> {
                           },
                         ),
                       ),
-                      // ✅ Pagination controls
+                      // ✅ Pagination
                       Padding(
                         padding: const EdgeInsets.all(8.0),
                         child: Row(
@@ -266,7 +245,7 @@ class _SalesScreenState extends State<SalesScreen> {
                           children: [
                             ElevatedButton(
                               onPressed: _currentPage > 1
-                                  ? () => _fetchSales(page: _currentPage - 1)
+                                  ? () => _fetchReturns(page: _currentPage - 1)
                                   : null,
                               child: const Text("Previous"),
                             ),
@@ -275,7 +254,7 @@ class _SalesScreenState extends State<SalesScreen> {
                             const SizedBox(width: 16),
                             ElevatedButton(
                               onPressed: _currentPage < _lastPage
-                                  ? () => _fetchSales(page: _currentPage + 1)
+                                  ? () => _fetchReturns(page: _currentPage + 1)
                                   : null,
                               child: const Text("Next"),
                             ),
