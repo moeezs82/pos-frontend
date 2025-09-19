@@ -1,7 +1,8 @@
+import 'package:enterprise_pos/api/common_service.dart';
+import 'package:enterprise_pos/api/product_service.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/auth_provider.dart';
-import '../services/api_service.dart';
 
 class ProductFormScreen extends StatefulWidget {
   final Map<String, dynamic>? product;
@@ -38,9 +39,15 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
   List<Map<String, dynamic>> _branches = [];
   final Map<int, TextEditingController> _branchStockControllers = {};
 
+  late ProductService _productService;
+  late CommonService _commonService;
+
   @override
   void initState() {
     super.initState();
+    final token = Provider.of<AuthProvider>(context, listen: false).token!;
+    _productService = ProductService(token: token);
+    _commonService = CommonService(token: token);
     if (widget.product != null) {
       final p = widget.product!;
       _skuController.text = p['sku'] ?? '';
@@ -62,12 +69,10 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
   }
 
   Future<void> _loadInitialData() async {
-    final auth = Provider.of<AuthProvider>(context, listen: false);
-    final token = auth.token!;
     try {
-      final cats = await ApiService.getCategories(token);
-      final brands = await ApiService.getBrands(token);
-      final branches = await ApiService.getBranches(token);
+      final cats = await _commonService.getCategories();
+      final brands = await _commonService.getBrands();
+      final branches = await _commonService.getBranches();
 
       setState(() {
         _categories = cats;
@@ -98,7 +103,7 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
 
   String _generateBarcode() {
     final millis = DateTime.now().millisecondsSinceEpoch;
-    return "BC$millis";
+    return "$millis";
   }
 
   Future<String?> _showAddDialog(String type) async {
@@ -176,8 +181,7 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
     );
 
     if (result != null) {
-      final auth = Provider.of<AuthProvider>(context, listen: false);
-      final newBranch = await ApiService.createBranch(auth.token!, result);
+      final newBranch = await _commonService.createBranch(result);
       setState(() {
         _branches.add(newBranch);
         _branchStockControllers[newBranch['id']] = TextEditingController(
@@ -215,15 +219,18 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
     };
 
     try {
-      final auth = Provider.of<AuthProvider>(context, listen: false);
-      final token = auth.token!;
       if (widget.product == null) {
-        await ApiService.createProduct(token, payload);
+        final product = await _productService.createProduct(payload);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("✅ Product created successfully")),
+        );
+        if (!mounted) return;
+        Navigator.pop(context, product);
       } else {
-        await ApiService.updateProduct(token, widget.product!['id'], payload);
+        await _productService.updateProduct(widget.product!['id'], payload);
+        if (!mounted) return;
+        Navigator.pop(context, true);
       }
-      if (!mounted) return;
-      Navigator.pop(context, true);
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(
@@ -324,12 +331,7 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
                     onPressed: () async {
                       final name = await _showAddDialog("Category");
                       if (name != null && name.isNotEmpty) {
-                        final auth = Provider.of<AuthProvider>(
-                          context,
-                          listen: false,
-                        );
-                        final newCat = await ApiService.createCategory(
-                          auth.token!,
+                        final newCat = await _commonService.createCategory(
                           name,
                         );
                         setState(() {
@@ -374,12 +376,7 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
                     onPressed: () async {
                       final name = await _showAddDialog("Brand");
                       if (name != null && name.isNotEmpty) {
-                        final auth = Provider.of<AuthProvider>(
-                          context,
-                          listen: false,
-                        );
-                        final newBrand = await ApiService.createBrand(
-                          auth.token!,
+                        final newBrand = await _commonService.createBrand(
                           name,
                         );
                         setState(() {

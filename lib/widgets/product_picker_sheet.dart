@@ -1,3 +1,5 @@
+import 'package:enterprise_pos/api/product_service.dart';
+import 'package:enterprise_pos/forms/product_form_screen.dart';
 import 'package:flutter/material.dart';
 import 'dart:async';
 
@@ -19,17 +21,39 @@ class _ProductPickerSheetState extends State<ProductPickerSheet> {
   String _search = "";
   Timer? _debounce;
 
+  late ProductService _productService;
+
   @override
   void initState() {
     super.initState();
+    _productService = ProductService(token: widget.token);
     _fetchProducts(page: 1);
+  }
+
+  Future<void> _quickAddProduct() async {
+    final created = await Navigator.push(
+      context,
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (_) => const ProductFormScreen(),
+      ),
+    );
+
+    if (created != null && created is Map<String, dynamic>) {
+      setState(() {
+        _products.insert(0, created); // 👈 add at the top
+      });
+      // // Delay the pop until after the current frame
+      Future.microtask(() {
+        Navigator.pop(context, created);
+      });
+    }
   }
 
   Future<void> _fetchProducts({int page = 1}) async {
     setState(() => _loading = true);
 
-    final data = await ApiService.getProducts(
-      widget.token,
+    final data = await _productService.getProducts(
       page: page,
       search: _search,
     );
@@ -77,10 +101,10 @@ class _ProductPickerSheetState extends State<ProductPickerSheet> {
                   : _products.isEmpty
                   ? const Center(child: Text("No products found"))
                   : ListView.builder(
-                      itemCount: _products.length + 1,
+                      itemCount: _products.length + 2, // +1 for no product, +1 for quick add
                       itemBuilder: (_, i) {
                         if (i == 0) {
-                          // First option = Walk-in / No Customer
+                          // No product
                           return Card(
                             color: Colors.grey.shade200,
                             margin: const EdgeInsets.symmetric(
@@ -100,8 +124,29 @@ class _ProductPickerSheetState extends State<ProductPickerSheet> {
                             ),
                           );
                         }
+                        if (i == 1) {
+                          // Last option = Quick Add
+                          return Card(
+                            color: Colors.green.shade50,
+                            margin: const EdgeInsets.symmetric(
+                              vertical: 4,
+                              horizontal: 2,
+                            ),
+                            child: ListTile(
+                              leading: const Icon(
+                                Icons.add_circle,
+                                color: Colors.green,
+                              ),
+                              title: const Text(
+                                "Quick Add New Product",
+                                style: TextStyle(fontWeight: FontWeight.bold),
+                              ),
+                              onTap: _quickAddProduct,
+                            ),
+                          );
+                        }
 
-                        final p = _products[i-1];
+                        final p = _products[i-2];
                         final category =
                             p['category']?['name'] ?? "Uncategorized";
                         final price = p['price']?.toString() ?? "0";

@@ -1,6 +1,6 @@
 import 'dart:convert';
+import 'package:enterprise_pos/api/core/api_client.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
-import 'package:enterprise_pos/services/api_service.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
@@ -46,7 +46,7 @@ class _CreateSaleReturnScreenState extends State<CreateSaleReturnScreen> {
               if (controller.text.isEmpty) return;
 
               final uri = Uri.parse(
-                "${ApiService.baseUrl}/sales",
+                "${ApiClient.baseUrl}/sales",
               ).replace(queryParameters: {"search": controller.text});
 
               final res = await http.get(
@@ -63,7 +63,7 @@ class _CreateSaleReturnScreenState extends State<CreateSaleReturnScreen> {
                 if (sales.isNotEmpty) {
                   final sale = sales.first;
                   final saleDetailRes = await http.get(
-                    Uri.parse("${ApiService.baseUrl}/sales/${sale['id']}"),
+                    Uri.parse("${ApiClient.baseUrl}/sales/${sale['id']}"),
                     headers: {
                       "Authorization": "Bearer $token",
                       "Accept": "application/json"
@@ -123,7 +123,7 @@ class _CreateSaleReturnScreenState extends State<CreateSaleReturnScreen> {
     });
 
     final res = await http.post(
-      Uri.parse("${ApiService.baseUrl}/sales/returns"),
+      Uri.parse("${ApiClient.baseUrl}/sales/returns"),
       headers: {
         "Authorization": "Bearer $token",
         "Content-Type": "application/json",

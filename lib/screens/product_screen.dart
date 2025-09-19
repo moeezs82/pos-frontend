@@ -1,8 +1,8 @@
+import 'package:enterprise_pos/api/product_service.dart';
 import 'package:enterprise_pos/forms/product_form_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/auth_provider.dart';
-import '../services/api_service.dart';
 
 class ProductsScreen extends StatefulWidget {
   const ProductsScreen({super.key});
@@ -19,9 +19,13 @@ class _ProductsScreenState extends State<ProductsScreen> {
   final List<dynamic> _products = [];
   final _searchController = TextEditingController();
 
+  late ProductService _productService;
+
   @override
   void initState() {
     super.initState();
+    final token = Provider.of<AuthProvider>(context, listen: false).token!;
+    _productService = ProductService(token: token);
     _fetchProducts(reset: true);
   }
 
@@ -34,9 +38,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
     }
 
     try {
-      final token = Provider.of<AuthProvider>(context, listen: false).token!;
-      final data = await ApiService.getProducts(
-        token,
+      final data = await _productService.getProducts(
         page: _page,
         search: _search,
       );
@@ -68,8 +70,8 @@ class _ProductsScreenState extends State<ProductsScreen> {
 
   Future<void> _deleteProduct(int id) async {
     try {
-      final token = Provider.of<AuthProvider>(context, listen: false).token!;
-      await ApiService.deleteProduct(token, id);
+      
+      await _productService.deleteProduct(id);
 
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text("Product deleted successfully")),

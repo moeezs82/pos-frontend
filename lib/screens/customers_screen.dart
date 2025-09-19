@@ -1,7 +1,7 @@
+import 'package:enterprise_pos/api/customer_service.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/auth_provider.dart';
-import '../services/api_service.dart';
 import '../forms/customer_form_screen.dart';
 
 class CustomersScreen extends StatefulWidget {
@@ -19,9 +19,13 @@ class _CustomersScreenState extends State<CustomersScreen> {
   final List<dynamic> _customers = [];
   final _searchController = TextEditingController();
 
+  late CustomerService _customerService;
+
   @override
   void initState() {
     super.initState();
+    final token = Provider.of<AuthProvider>(context, listen: false).token!;
+    _customerService = CustomerService(token: token);
     _fetchCustomers(reset: true);
   }
 
@@ -34,9 +38,7 @@ class _CustomersScreenState extends State<CustomersScreen> {
     }
 
     try {
-      final token = Provider.of<AuthProvider>(context, listen: false).token!;
-      final data = await ApiService.getCustomers(
-        token,
+      final data = await _customerService.getCustomers(
         page: _page,
         search: _search,
       );
@@ -69,8 +71,7 @@ class _CustomersScreenState extends State<CustomersScreen> {
 
   Future<void> _deleteCustomer(int id) async {
     try {
-      final token = Provider.of<AuthProvider>(context, listen: false).token!;
-      await ApiService.deleteCustomer(token, id);
+      await _customerService.deleteCustomer(id);
 
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text("Customer deleted successfully")),

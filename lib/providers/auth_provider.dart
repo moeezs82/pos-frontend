@@ -1,12 +1,13 @@
 import 'dart:convert';
+import 'package:enterprise_pos/api/auth_service.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import '../services/api_service.dart';
 
 class AuthProvider with ChangeNotifier {
   String? _token;
   Map<String, dynamic>? _user;
   bool _rememberMe = false;
+  final auth = AuthService();
 
   String? get token => _token;
   Map<String, dynamic>? get user => _user;
@@ -20,13 +21,14 @@ class AuthProvider with ChangeNotifier {
 
   Future<bool> login(String email, String password) async {
     try {
-      final data = await ApiService.login(email, password);
+
+      final data = await auth.login(email, password);
       _token = data['data']['token'];
       _user = data['data']['user'];
 
       final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('token', _token!);
-      await prefs.setString('user', jsonEncode(_user));
+      // await prefs.setString('token', _token!);
+      // await prefs.setString('user', jsonEncode(_user));
 
       // Only save if rememberMe is true
       if (_rememberMe) {
@@ -43,7 +45,8 @@ class AuthProvider with ChangeNotifier {
 
   Future<void> logout() async {
     if (_token != null) {
-      await ApiService.logout(_token!);
+      final authWithToken = AuthService(token: token);
+      await authWithToken.logout();
     }
 
     _token = null;

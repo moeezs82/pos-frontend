@@ -1,11 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
+import 'package:enterprise_pos/api/common_service.dart';
+import 'package:enterprise_pos/api/core/api_client.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
 import '../widgets/product_picker_sheet.dart';
-import '../services/api_service.dart';
 
 class StockScreen extends StatefulWidget {
   const StockScreen({super.key});
@@ -27,9 +28,13 @@ class _StockScreenState extends State<StockScreen> {
   String? _selectedBranchId;
   Map<String, dynamic>? _selectedProduct;
 
+  late CommonService _commonService;
+
   @override
   void initState() {
     super.initState();
+    final token = Provider.of<AuthProvider>(context, listen: false).token!;
+    _commonService = CommonService(token: token);
     _fetchInitialData();
   }
 
@@ -48,7 +53,7 @@ class _StockScreenState extends State<StockScreen> {
     };
 
     final uri = Uri.parse(
-      "${ApiService.baseUrl}/stocks",
+      "${ApiClient.baseUrl}/stocks",
     ).replace(queryParameters: query);
     final token = Provider.of<AuthProvider>(context, listen: false).token!;
     final res = await http.get(
@@ -70,8 +75,7 @@ class _StockScreenState extends State<StockScreen> {
   }
 
   Future<void> _fetchBranches() async {
-    final token = Provider.of<AuthProvider>(context, listen: false).token!;
-    final result = await ApiService.getBranches(token);
+    final result = await _commonService.getBranches();
     setState(() => _branches = result);
   }
 
@@ -169,7 +173,7 @@ class _StockScreenState extends State<StockScreen> {
                     listen: false,
                   ).token!;
                   await http.post(
-                    Uri.parse("${ApiService.baseUrl}/stocks/adjust"),
+                    Uri.parse("${ApiClient.baseUrl}/stocks/adjust"),
                     headers: {
                       "Authorization": "Bearer $token",
                       "Accept": "application/json",
@@ -281,7 +285,7 @@ class _StockScreenState extends State<StockScreen> {
                     listen: false,
                   ).token!;
                   await http.post(
-                    Uri.parse("${ApiService.baseUrl}/stocks/transfer"),
+                    Uri.parse("${ApiClient.baseUrl}/stocks/transfer"),
                     headers: {
                       "Authorization": "Bearer $token",
                       "Accept": "application/json",

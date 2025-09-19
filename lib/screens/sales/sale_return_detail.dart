@@ -1,7 +1,7 @@
 import 'dart:convert';
+import 'package:enterprise_pos/api/core/api_client.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/screens/sales/sale_detail.dart';
-import 'package:enterprise_pos/services/api_service.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
@@ -28,7 +28,7 @@ class _SaleReturnDetailScreenState extends State<SaleReturnDetailScreen> {
   Future<void> _fetchDetail() async {
     final token = Provider.of<AuthProvider>(context, listen: false).token!;
     final uri =
-        Uri.parse("${ApiService.baseUrl}/sales/returns/${widget.returnId}");
+        Uri.parse("${ApiClient.baseUrl}/sales/returns/${widget.returnId}");
 
     final res = await http.get(
       uri,
@@ -49,7 +49,7 @@ class _SaleReturnDetailScreenState extends State<SaleReturnDetailScreen> {
   Future<void> _approveReturn() async {
     final token = Provider.of<AuthProvider>(context, listen: false).token!;
     final uri = Uri.parse(
-        "${ApiService.baseUrl}/sales/returns/${widget.returnId}/approve");
+        "${ApiClient.baseUrl}/sales/returns/${widget.returnId}/approve");
 
     final res = await http.post(
       uri,

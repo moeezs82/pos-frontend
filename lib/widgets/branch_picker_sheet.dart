@@ -1,5 +1,5 @@
+import 'package:enterprise_pos/api/common_service.dart';
 import 'package:flutter/material.dart';
-import '../services/api_service.dart';
 
 class BranchPickerSheet extends StatefulWidget {
   final String token;
@@ -14,14 +14,17 @@ class _BranchPickerSheetState extends State<BranchPickerSheet> {
   bool _loading = true;
   String _search = "";
 
+  late CommonService _commonService;
+
   @override
   void initState() {
     super.initState();
+    _commonService = CommonService(token: widget.token);
     _fetchBranches();
   }
 
   Future<void> _fetchBranches() async {
-    final data = await ApiService.getBranches(widget.token);
+    final data = await _commonService.getBranches();
     setState(() {
       _branches = data.cast<Map<String, dynamic>>();
       _loading = false;

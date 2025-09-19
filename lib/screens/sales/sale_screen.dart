@@ -1,9 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
+import 'package:enterprise_pos/api/common_service.dart';
+import 'package:enterprise_pos/api/core/api_client.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/screens/sales/sale_create.dart';
 import 'package:enterprise_pos/screens/sales/sale_detail.dart';
-import 'package:enterprise_pos/services/api_service.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
@@ -31,9 +32,13 @@ class _SalesScreenState extends State<SalesScreen> {
 
   final TextEditingController _searchController = TextEditingController();
 
+  late CommonService _commonService;
+
   @override
   void initState() {
     super.initState();
+    final token = Provider.of<AuthProvider>(context, listen: false).token!;
+    _commonService = CommonService(token: token);
     _fetchInitialData();
   }
 
@@ -52,7 +57,7 @@ class _SalesScreenState extends State<SalesScreen> {
     };
 
     final uri = Uri.parse(
-      "${ApiService.baseUrl}/sales",
+      "${ApiClient.baseUrl}/sales",
     ).replace(queryParameters: query);
     final token = Provider.of<AuthProvider>(context, listen: false).token!;
 
@@ -75,8 +80,7 @@ class _SalesScreenState extends State<SalesScreen> {
   }
 
   Future<void> _fetchBranches() async {
-    final token = Provider.of<AuthProvider>(context, listen: false).token!;
-    final result = await ApiService.getBranches(token);
+    final result = await _commonService.getBranches();
     setState(() => _branches = result);
   }
 
@@ -244,14 +248,19 @@ class _SalesScreenState extends State<SalesScreen> {
                                       ? Colors.orange
                                       : Colors.red,
                                 ),
-                                onTap: () {
-                                  Navigator.push(
+                                onTap: () async {
+                                  final result = await Navigator.push(
                                     context,
                                     MaterialPageRoute(
                                       builder: (_) =>
                                           SaleDetailScreen(saleId: s['id']),
                                     ),
                                   );
+                                  if (result == true) {
+                                    _fetchSales(
+                                      page: _currentPage,
+                                    ); // refresh sales list
+                                  }
                                 },
                               ),
                             );

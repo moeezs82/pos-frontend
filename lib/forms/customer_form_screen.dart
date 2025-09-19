@@ -1,5 +1,5 @@
+import 'package:enterprise_pos/api/customer_service.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
-import 'package:enterprise_pos/services/api_service.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -24,9 +24,13 @@ class _CustomerFormScreenState extends State<CustomerFormScreen> {
 
   String _status = 'active';
 
+  late CustomerService _customerService;
+
   @override
   void initState() {
     super.initState();
+    final token = Provider.of<AuthProvider>(context, listen: false).token!;
+    _customerService = CustomerService(token: token);
     if (widget.customer != null) {
       final c = widget.customer!;
       _firstNameController.text = c['first_name'] ?? '';
@@ -54,19 +58,19 @@ class _CustomerFormScreenState extends State<CustomerFormScreen> {
     };
 
     try {
-      final token = Provider.of<AuthProvider>(context, listen: false).token!;
       if (widget.customer == null) {
-        await ApiService.createCustomer(token, data);
+        final customer = await _customerService.createCustomer(data);
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text("✅ Customer created successfully")),
         );
+        Navigator.pop(context, customer);
       } else {
-        await ApiService.updateCustomer(token, widget.customer!['id'], data);
+        await _customerService.updateCustomer(widget.customer!['id'], data);
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text("✅ Customer updated successfully")),
         );
+        Navigator.pop(context, true); 
       }
-      Navigator.pop(context, true);
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text("❌ Error: $e")),

@@ -1,9 +1,8 @@
 import 'dart:convert';
+import 'package:enterprise_pos/api/core/api_client.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
-import 'package:enterprise_pos/services/api_service.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
-import 'package:intl/intl.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
@@ -20,6 +19,7 @@ class SaleDetailScreen extends StatefulWidget {
 class _SaleDetailScreenState extends State<SaleDetailScreen> {
   Map<String, dynamic>? _sale;
   bool _loading = true;
+  bool _updated = false; // track if something changed
 
   @override
   void initState() {
@@ -31,7 +31,7 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
     setState(() => _loading = true);
     final token = Provider.of<AuthProvider>(context, listen: false).token!;
     final res = await http.get(
-      Uri.parse("${ApiService.baseUrl}/sales/${widget.saleId}"),
+      Uri.parse("${ApiClient.baseUrl}/sales/${widget.saleId}"),
       headers: {"Authorization": "Bearer $token", "Accept": "application/json"},
     );
     if (res.statusCode == 200) {
@@ -94,7 +94,7 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
               ).token!;
               final res = await http.post(
                 Uri.parse(
-                  "${ApiService.baseUrl}/sales/${widget.saleId}/payments",
+                  "${ApiClient.baseUrl}/sales/${widget.saleId}/payments",
                 ),
                 headers: {
                   "Authorization": "Bearer $token",
@@ -103,8 +103,9 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
                 body: {"amount": amountController.text, "method": method},
               );
               if (res.statusCode == 200) {
-                Navigator.pop(context);
+                Navigator.pop(context); // close dialog
                 _fetchSale();
+                _updated = true; // mark updated
               }
             },
             child: const Text("Save"),
@@ -143,21 +144,28 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
           pw.Text("Date: ${_sale!['created_at'].toString().substring(0, 10)}"),
           pw.SizedBox(height: 10),
 
-          pw.Text("Customer:",
-              style: pw.TextStyle(fontWeight: pw.FontWeight.bold)),
           pw.Text(
-              "${_sale!['customer']?['first_name'] ?? "Walk-in"} ${_sale!['customer']?['last_name'] ?? ""}"),
+            "Customer:",
+            style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
+          ),
+          pw.Text(
+            "${_sale!['customer']?['first_name'] ?? "Walk-in"} ${_sale!['customer']?['last_name'] ?? ""}",
+          ),
           pw.Text("Email: ${_sale!['customer']?['email'] ?? ""}"),
           pw.Text("Phone: ${_sale!['customer']?['phone'] ?? ""}"),
           pw.SizedBox(height: 10),
 
-          pw.Text("Branch:",
-              style: pw.TextStyle(fontWeight: pw.FontWeight.bold)),
+          pw.Text(
+            "Branch:",
+            style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
+          ),
           pw.Text(_sale!['branch']?['name'] ?? "N/A"),
           pw.SizedBox(height: 20),
 
-          pw.Text("Items",
-              style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 16)),
+          pw.Text(
+            "Items",
+            style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 16),
+          ),
           pw.Table.fromTextArray(
             headers: ["Product", "Qty", "Price", "Total"],
             data: (_sale!['items'] as List)
@@ -173,30 +181,39 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
           ),
           pw.SizedBox(height: 20),
 
-          pw.Text("Summary",
-              style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 16)),
+          pw.Text(
+            "Summary",
+            style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 16),
+          ),
           pw.Text("Subtotal: \$${_sale!['subtotal']}"),
           pw.Text("Discount: \$${_sale!['discount']}"),
           pw.Text("Tax: \$${_sale!['tax']}"),
-          pw.Text("Total: \$${_sale!['total']}",
-              style: pw.TextStyle(
-                  fontSize: 16, fontWeight: pw.FontWeight.bold)),
+          pw.Text(
+            "Total: \$${_sale!['total']}",
+            style: pw.TextStyle(fontSize: 16, fontWeight: pw.FontWeight.bold),
+          ),
           pw.Text("Paid: \$${paid.toStringAsFixed(2)}"),
-          pw.Text("Remaining: \$${remaining.toStringAsFixed(2)}",
-              style: pw.TextStyle(
-                  color: remaining > 0
-                      ? PdfColors.red
-                      : remaining < 0
-                          ? PdfColors.orange
-                          : PdfColors.green,
-                  fontSize: 14)),
+          pw.Text(
+            "Remaining: \$${remaining.toStringAsFixed(2)}",
+            style: pw.TextStyle(
+              color: remaining > 0
+                  ? PdfColors.red
+                  : remaining < 0
+                  ? PdfColors.orange
+                  : PdfColors.green,
+              fontSize: 14,
+            ),
+          ),
           pw.SizedBox(height: 20),
 
-          pw.Text("Payments",
-              style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 16)),
+          pw.Text(
+            "Payments",
+            style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 16),
+          ),
           if (payments.isEmpty) pw.Text("No payments yet"),
-          ...payments.map((p) =>
-              pw.Text("Method: ${p['method']} | Amount: \$${p['amount']}")),
+          ...payments.map(
+            (p) => pw.Text("Method: ${p['method']} | Amount: \$${p['amount']}"),
+          ),
         ],
       ),
     );
@@ -223,181 +240,190 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
       balanceColor = Colors.green; // fully paid
     }
 
-    return Scaffold(
-      appBar: AppBar(title: const Text("Sale Detail")),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : _sale == null
-              ? const Center(child: Text("Sale not found"))
-              : SingleChildScrollView(
-                  padding: const EdgeInsets.all(12),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // 📌 Invoice Header
-                      Card(
-                        elevation: 3,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: ListTile(
-                          title: Text(
-                            "Invoice: ${_sale!['invoice_no']}",
-                            style: const TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 18,
-                            ),
-                          ),
-                          subtitle: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                  "Date: ${_sale!['created_at'].toString().substring(0, 10)}"),
-                              Text(
-                                  "Customer: ${_sale!['customer']?['first_name'] ?? "Walk-in"} ${_sale!['customer']?['last_name'] ?? ""}"),
-                              Text("Branch: ${_sale!['branch']?['name']}"),
-                              Text("Status: ${_sale!['status']}"),
-                            ],
-                          ),
-                          trailing: IconButton(
-                            icon: const Icon(Icons.print),
-                            onPressed: _printInvoice,
-                          ),
-                        ),
+    return WillPopScope(
+      onWillPop: () async {
+        Navigator.pop(context, _updated); // send back "true" if updated
+        return false;
+      },
+      child: Scaffold(
+        appBar: AppBar(title: const Text("Sale Detail")),
+        body: _loading
+            ? const Center(child: CircularProgressIndicator())
+            : _sale == null
+            ? const Center(child: Text("Sale not found"))
+            : SingleChildScrollView(
+                padding: const EdgeInsets.all(12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // 📌 Invoice Header
+                    Card(
+                      elevation: 3,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
                       ),
-
-                      const SizedBox(height: 12),
-
-                      // 📌 Items
-                      Card(
-                        elevation: 2,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
+                      child: ListTile(
+                        title: Text(
+                          "Invoice: ${_sale!['invoice_no']}",
+                          style: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 18,
+                          ),
                         ),
-                        child: Column(
+                        subtitle: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const Padding(
-                              padding: EdgeInsets.all(12),
-                              child: Text(
-                                "Items",
-                                style: TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 16,
-                                ),
-                              ),
+                            Text(
+                              "Date: ${_sale!['created_at'].toString().substring(0, 10)}",
                             ),
-                            const Divider(height: 1),
-                            ...(_sale!['items'] as List).map(
-                              (i) => ListTile(
-                                title: Text(i['product']['name']),
-                                subtitle: Text(
-                                    "Qty: ${i['quantity']} × \$${i['price']}"),
-                                trailing: Text("\$${i['total']}"),
-                              ),
+                            Text(
+                              "Customer: ${_sale!['customer']?['first_name'] ?? "Walk-in"} ${_sale!['customer']?['last_name'] ?? ""}",
                             ),
+                            Text("Branch: ${_sale!['branch']?['name']}"),
+                            Text("Status: ${_sale!['status']}"),
                           ],
                         ),
-                      ),
-
-                      const SizedBox(height: 12),
-
-                      // 📌 Payments
-                      Card(
-                        elevation: 2,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Padding(
-                              padding: EdgeInsets.all(12),
-                              child: Text(
-                                "Payments",
-                                style: TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 16,
-                                ),
-                              ),
-                            ),
-                            const Divider(height: 1),
-                            if (payments.isEmpty)
-                              const ListTile(title: Text("No payments yet")),
-                            ...payments.map(
-                              (p) => ListTile(
-                                title: Text("\$${p['amount']}"),
-                                subtitle: Text("Method: ${p['method']}"),
-                              ),
-                            ),
-                            Padding(
-                              padding: const EdgeInsets.all(12.0),
-                              child: ElevatedButton.icon(
-                                onPressed: _addPayment,
-                                icon: const Icon(Icons.add),
-                                label: const Text("Add Payment"),
-                              ),
-                            ),
-                          ],
+                        trailing: IconButton(
+                          icon: const Icon(Icons.print),
+                          onPressed: _printInvoice,
                         ),
                       ),
+                    ),
 
-                      const SizedBox(height: 12),
+                    const SizedBox(height: 12),
 
-                      // 📌 Summary
-                      Card(
-                        elevation: 2,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: Column(
-                          children: [
-                            ListTile(
-                              title: const Text("Subtotal"),
-                              trailing: Text("\$${_sale!['subtotal']}"),
-                            ),
-                            ListTile(
-                              title: const Text("Discount"),
-                              trailing: Text("-\$${_sale!['discount']}"),
-                            ),
-                            ListTile(
-                              title: const Text("Tax"),
-                              trailing: Text("\$${_sale!['tax']}"),
-                            ),
-                            const Divider(),
-                            ListTile(
-                              title: const Text(
-                                "Total",
-                                style: TextStyle(fontWeight: FontWeight.bold),
-                              ),
-                              trailing: Text(
-                                "\$${_sale!['total']}",
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 18,
-                                ),
-                              ),
-                            ),
-                            ListTile(
-                              title: const Text("Paid"),
-                              trailing: Text("\$${paid.toStringAsFixed(2)}"),
-                            ),
-                            ListTile(
-                              title: const Text("Remaining"),
-                              trailing: Text(
-                                "\$${remaining.toStringAsFixed(2)}",
-                                style: TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  color: balanceColor,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
+                    // 📌 Items
+                    Card(
+                      elevation: 2,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
                       ),
-                    ],
-                  ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Padding(
+                            padding: EdgeInsets.all(12),
+                            child: Text(
+                              "Items",
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 16,
+                              ),
+                            ),
+                          ),
+                          const Divider(height: 1),
+                          ...(_sale!['items'] as List).map(
+                            (i) => ListTile(
+                              title: Text(i['product']['name']),
+                              subtitle: Text(
+                                "Qty: ${i['quantity']} × \$${i['price']}",
+                              ),
+                              trailing: Text("\$${i['total']}"),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    const SizedBox(height: 12),
+
+                    // 📌 Payments
+                    Card(
+                      elevation: 2,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Padding(
+                            padding: EdgeInsets.all(12),
+                            child: Text(
+                              "Payments",
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 16,
+                              ),
+                            ),
+                          ),
+                          const Divider(height: 1),
+                          if (payments.isEmpty)
+                            const ListTile(title: Text("No payments yet")),
+                          ...payments.map(
+                            (p) => ListTile(
+                              title: Text("\$${p['amount']}"),
+                              subtitle: Text("Method: ${p['method']}"),
+                            ),
+                          ),
+                          Padding(
+                            padding: const EdgeInsets.all(12.0),
+                            child: ElevatedButton.icon(
+                              onPressed: _addPayment,
+                              icon: const Icon(Icons.add),
+                              label: const Text("Add Payment"),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    const SizedBox(height: 12),
+
+                    // 📌 Summary
+                    Card(
+                      elevation: 2,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Column(
+                        children: [
+                          ListTile(
+                            title: const Text("Subtotal"),
+                            trailing: Text("\$${_sale!['subtotal']}"),
+                          ),
+                          ListTile(
+                            title: const Text("Discount"),
+                            trailing: Text("-\$${_sale!['discount']}"),
+                          ),
+                          ListTile(
+                            title: const Text("Tax"),
+                            trailing: Text("\$${_sale!['tax']}"),
+                          ),
+                          const Divider(),
+                          ListTile(
+                            title: const Text(
+                              "Total",
+                              style: TextStyle(fontWeight: FontWeight.bold),
+                            ),
+                            trailing: Text(
+                              "\$${_sale!['total']}",
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 18,
+                              ),
+                            ),
+                          ),
+                          ListTile(
+                            title: const Text("Paid"),
+                            trailing: Text("\$${paid.toStringAsFixed(2)}"),
+                          ),
+                          ListTile(
+                            title: const Text("Remaining"),
+                            trailing: Text(
+                              "\$${remaining.toStringAsFixed(2)}",
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                color: balanceColor,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
+              ),
+      ),
     );
   }
 }

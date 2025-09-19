@@ -1,7 +1,8 @@
 import 'dart:convert';
 
+import 'package:enterprise_pos/api/core/api_client.dart';
+import 'package:enterprise_pos/api/product_service.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
-import 'package:enterprise_pos/services/api_service.dart';
 import 'package:enterprise_pos/widgets/product_picker_sheet.dart';
 import 'package:enterprise_pos/widgets/customer_picker_sheet.dart';
 import 'package:enterprise_pos/widgets/branch_picker_sheet.dart';
@@ -35,9 +36,13 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
   bool _submitting = false;
   bool _scannerEnabled = false;
 
+  late ProductService _productService;
+
   @override
   void initState() {
     super.initState();
+    final token = Provider.of<AuthProvider>(context, listen: false).token!;
+    _productService = ProductService(token: token);
     _barcodeFocusNode.addListener(() {
       setState(() => _scannerEnabled = _barcodeFocusNode.hasFocus);
     });
@@ -252,8 +257,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
   // 🏷 Handle Barcode Scan
   Future<void> _onBarcodeScanned(String code) async {
     if (code.isEmpty) return;
-    final token = Provider.of<AuthProvider>(context, listen: false).token!;
-    final product = await ApiService.getProductByBarcode(token, code);
+    final product = await _productService.getProductByBarcode(code);
 
     if (product != null) {
       setState(() {
@@ -322,7 +326,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     };
 
     final res = await http.post(
-      Uri.parse("${ApiService.baseUrl}/sales"),
+      Uri.parse("${ApiClient.baseUrl}/sales"),
       headers: {"Authorization": "Bearer $token", "Accept": "application/json"},
       body: body,
     );

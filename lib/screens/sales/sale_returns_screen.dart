@@ -1,8 +1,9 @@
 import 'dart:convert';
+import 'package:enterprise_pos/api/common_service.dart';
+import 'package:enterprise_pos/api/core/api_client.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/screens/sales/sale_return_create.dart';
 import 'package:enterprise_pos/screens/sales/sale_return_detail.dart';
-import 'package:enterprise_pos/services/api_service.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
@@ -29,9 +30,13 @@ class _SaleReturnsScreenState extends State<SaleReturnsScreen> {
 
   final TextEditingController _searchController = TextEditingController();
 
+  late CommonService _commonService;
+
   @override
   void initState() {
     super.initState();
+    final token = Provider.of<AuthProvider>(context, listen: false).token!;
+    _commonService = CommonService(token: token);
     _fetchInitialData();
   }
 
@@ -49,7 +54,7 @@ class _SaleReturnsScreenState extends State<SaleReturnsScreen> {
     };
 
     final uri = Uri.parse(
-      "${ApiService.baseUrl}/sales/returns",
+      "${ApiClient.baseUrl}/sales/returns",
     ).replace(queryParameters: query);
     final token = Provider.of<AuthProvider>(context, listen: false).token!;
 
@@ -72,8 +77,7 @@ class _SaleReturnsScreenState extends State<SaleReturnsScreen> {
   }
 
   Future<void> _fetchBranches() async {
-    final token = Provider.of<AuthProvider>(context, listen: false).token!;
-    final result = await ApiService.getBranches(token);
+    final result = await _commonService.getBranches();
     setState(() => _branches = result);
   }
 
