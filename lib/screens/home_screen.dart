@@ -2,7 +2,9 @@ import 'package:enterprise_pos/screens/customers_screen.dart';
 import 'package:enterprise_pos/screens/product_screen.dart';
 import 'package:enterprise_pos/screens/sales/sale_returns_screen.dart';
 import 'package:enterprise_pos/screens/sales/sale_screen.dart';
+import 'package:enterprise_pos/screens/purchases/purchases_screen.dart';
 import 'package:enterprise_pos/screens/stock_screen.dart';
+import 'package:enterprise_pos/screens/vendors_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/auth_provider.dart';
@@ -131,6 +133,29 @@ class HomeScreen extends StatelessWidget {
                     },
                   ),
                   _DashboardCard(
+                    icon: Icons.shopping_cart,
+                    title: "Purchases",
+                    color: Colors.blue,
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const PurchasesScreen()),
+                      );
+                    },
+                  ),
+                  _DashboardCard(
+                    icon: Icons.assignment_return,
+                    title: "Sale Returns",
+                    color: Colors.indigo,
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                            builder: (_) => const SaleReturnsScreen()),
+                      );
+                    },
+                  ),
+                  _DashboardCard(
                     icon: Icons.inventory_2,
                     title: "Products",
                     color: Colors.green,
@@ -163,6 +188,19 @@ class HomeScreen extends StatelessWidget {
                         context,
                         MaterialPageRoute(
                           builder: (_) => const CustomersScreen(),
+                        ),
+                      );
+                    },
+                  ),
+                  _DashboardCard(
+                    icon: Icons.people,
+                    title: "vendors",
+                    color: Colors.orange,
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const VendorsScreen(),
                         ),
                       );
                     },

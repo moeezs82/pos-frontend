@@ -5,6 +5,7 @@ import 'package:enterprise_pos/api/core/api_client.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/screens/sales/sale_create.dart';
 import 'package:enterprise_pos/screens/sales/sale_detail.dart';
+import 'package:enterprise_pos/widgets/customer_picker_sheet.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
@@ -28,6 +29,8 @@ class _SalesScreenState extends State<SalesScreen> {
   // Filters
   String? _selectedBranchId;
   String _searchQuery = "";
+  int? _selectedCustomerId; // comes from CustomerPickerSheet (int?)
+  String? _selectedCustomerLabel; // "First Last" for UI
   String _sortBy = "date"; // date | total
 
   final TextEditingController _searchController = TextEditingController();
@@ -49,10 +52,12 @@ class _SalesScreenState extends State<SalesScreen> {
   Future<void> _fetchSales({int page = 1}) async {
     setState(() => _loading = true);
 
-    final query = {
+    final Map<String, String> query = {
       "page": page.toString(),
       "sort_by": _sortBy,
       if (_selectedBranchId != null) "branch_id": _selectedBranchId!,
+      if (_selectedCustomerId != null)
+        "customer_id": _selectedCustomerId!.toString(),
       if (_searchQuery.isNotEmpty) "search": _searchQuery,
     };
 
@@ -82,6 +87,38 @@ class _SalesScreenState extends State<SalesScreen> {
   Future<void> _fetchBranches() async {
     final result = await _commonService.getBranches();
     setState(() => _branches = result);
+  }
+
+  Future<void> _openCustomerPicker() async {
+    final token = Provider.of<AuthProvider>(context, listen: false).token!;
+    final picked = await showModalBottomSheet<Map<String, dynamic>?>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => SizedBox(
+        height: MediaQuery.of(context).size.height * 0.85,
+        child: CustomerPickerSheet(token: token),
+      ),
+    );
+
+    // picked will be:
+    //  - null => "No Customer (Walk-in)" was chosen
+    //  - Map {...} => first_name/last_name/email/phone/... of selected customer
+    setState(() {
+      if (picked == null) {
+        _selectedCustomerId = null;
+        _selectedCustomerLabel = null;
+      } else {
+        _selectedCustomerId = picked['id'] as int?;
+        final first = (picked['first_name'] ?? '').toString();
+        final last = (picked['last_name'] ?? '').toString();
+        final full = [first, last].where((s) => s.trim().isNotEmpty).join(' ');
+        _selectedCustomerLabel = full.isEmpty
+            ? 'Customer #${picked['id']}'
+            : full;
+      }
+    });
+
+    _fetchSales(page: 1);
   }
 
   @override
@@ -144,6 +181,44 @@ class _SalesScreenState extends State<SalesScreen> {
                   ),
                 ),
                 const SizedBox(width: 8),
+                // Customer Picker trigger
+                Expanded(
+                  child: InkWell(
+                    onTap: _openCustomerPicker,
+                    child: InputDecorator(
+                      decoration: const InputDecoration(
+                        border: OutlineInputBorder(),
+                        labelText: "Filter by Customer",
+                      ),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              _selectedCustomerLabel ?? "All Customers",
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          if (_selectedCustomerId != null)
+                            IconButton(
+                              tooltip: "Clear customer",
+                              icon: const Icon(Icons.clear),
+                              onPressed: () {
+                                setState(() {
+                                  _selectedCustomerId = null;
+                                  _selectedCustomerLabel = null;
+                                });
+                                _fetchSales(page: 1);
+                              },
+                            )
+                          else
+                            const Icon(Icons.search),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+
                 // Sort dropdown
                 DropdownButton<String>(
                   value: _sortBy,
