@@ -2,8 +2,10 @@ import 'dart:convert';
 import 'package:enterprise_pos/api/common_service.dart';
 import 'package:enterprise_pos/api/core/api_client.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
+import 'package:enterprise_pos/providers/branch_provider.dart';
 import 'package:enterprise_pos/screens/sales/sale_return_create.dart';
 import 'package:enterprise_pos/screens/sales/sale_return_detail.dart';
+import 'package:enterprise_pos/widgets/branch_indicator.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
@@ -47,9 +49,14 @@ class _SaleReturnsScreenState extends State<SaleReturnsScreen> {
   Future<void> _fetchReturns({int page = 1}) async {
     setState(() => _loading = true);
 
+    final globalBranchId = context.read<BranchProvider>().selectedBranchId;
+
     final query = {
       "page": page.toString(),
-      if (_selectedBranchId != null) "branch_id": _selectedBranchId!,
+      if (globalBranchId != null)
+        "branch_id": globalBranchId.toString()
+      else if (_selectedBranchId != null)
+        "branch_id": _selectedBranchId!, // local filter only when global is All
       if (_searchQuery.isNotEmpty) "search": _searchQuery,
     };
 
@@ -83,10 +90,12 @@ class _SaleReturnsScreenState extends State<SaleReturnsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final noBranch = context.watch<BranchProvider>().isAll;
     return Scaffold(
       appBar: AppBar(
         title: const Text("Sale Returns"),
         actions: [
+          BranchIndicator(tappable: false),
           IconButton(
             onPressed: () => _fetchReturns(page: 1),
             icon: const Icon(Icons.refresh),
@@ -109,42 +118,44 @@ class _SaleReturnsScreenState extends State<SaleReturnsScreen> {
 
       body: Column(
         children: [
-          // ✅ Filters + Search
-          Padding(
-            padding: const EdgeInsets.all(8.0),
-            child: Row(
-              children: [
-                // Branch filter
-                Expanded(
-                  child: DropdownButtonFormField<String>(
-                    value: _selectedBranchId,
-                    hint: const Text("Filter by Branch"),
-                    decoration: const InputDecoration(
-                      border: OutlineInputBorder(),
-                    ),
-                    items: [
-                      const DropdownMenuItem<String>(
-                        value: null,
-                        child: Text("All Branches"),
+          if (noBranch) ...[
+            // ✅ Filters + Search
+            Padding(
+              padding: const EdgeInsets.all(8.0),
+              child: Row(
+                children: [
+                  // Branch filter
+                  Expanded(
+                    child: DropdownButtonFormField<String>(
+                      value: _selectedBranchId,
+                      hint: const Text("Filter by Branch"),
+                      decoration: const InputDecoration(
+                        border: OutlineInputBorder(),
                       ),
-                      ..._branches.map<DropdownMenuItem<String>>(
-                        (b) => DropdownMenuItem(
-                          value: b['id'].toString(),
-                          child: Text(b['name']),
+                      items: [
+                        const DropdownMenuItem<String>(
+                          value: null,
+                          child: Text("All Branches"),
                         ),
-                      ),
-                    ],
-                    onChanged: (val) {
-                      setState(() => _selectedBranchId = val);
-                      _fetchReturns(page: 1);
-                    },
+                        ..._branches.map<DropdownMenuItem<String>>(
+                          (b) => DropdownMenuItem(
+                            value: b['id'].toString(),
+                            child: Text(b['name']),
+                          ),
+                        ),
+                      ],
+                      onChanged: (val) {
+                        setState(() => _selectedBranchId = val);
+                        _fetchReturns(page: 1);
+                      },
+                    ),
                   ),
-                ),
-                const SizedBox(width: 8),
-              ],
+                  const SizedBox(width: 8),
+                ],
+              ),
             ),
-          ),
-
+          ] else
+            const SizedBox.shrink(),
           // ✅ Search box
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 8),

@@ -1,5 +1,6 @@
 import 'package:enterprise_pos/api/purchase_service.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
+import 'package:enterprise_pos/widgets/branch_indicator.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -353,6 +354,7 @@ class _PurchaseDetailScreenState extends State<PurchaseDetailScreen> {
         appBar: AppBar(
           title: const Text("Purchase Detail"),
           actions: [
+            BranchIndicator(tappable: false),
             if (_purchase != null &&
                 recvStatus != 'cancelled' &&
                 recvStatus != 'received')

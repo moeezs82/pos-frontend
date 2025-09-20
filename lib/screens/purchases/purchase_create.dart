@@ -1,6 +1,7 @@
 import 'package:enterprise_pos/api/purchase_service.dart';
 import 'package:enterprise_pos/api/product_service.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
+import 'package:enterprise_pos/widgets/branch_indicator.dart';
 
 // pickers
 import 'package:enterprise_pos/widgets/product_picker_sheet.dart';
@@ -421,7 +422,7 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
     final balance = _balance;
 
     return Scaffold(
-      appBar: AppBar(title: const Text("Create Purchase")),
+      appBar: AppBar(title: const Text("Create Purchase"), actions: [BranchIndicator(tappable: false),],),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(12),
         child: Form(

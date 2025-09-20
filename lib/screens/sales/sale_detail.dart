@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:enterprise_pos/api/core/api_client.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
+import 'package:enterprise_pos/widgets/branch_indicator.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:pdf/pdf.dart';
@@ -246,7 +247,7 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
         return false;
       },
       child: Scaffold(
-        appBar: AppBar(title: const Text("Sale Detail")),
+        appBar: AppBar(title: const Text("Sale Detail"), actions: [BranchIndicator(tappable: false),],),
         body: _loading
             ? const Center(child: CircularProgressIndicator())
             : _sale == null

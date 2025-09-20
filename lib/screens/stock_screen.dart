@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'package:enterprise_pos/api/common_service.dart';
 import 'package:enterprise_pos/api/core/api_client.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
+import 'package:enterprise_pos/providers/branch_provider.dart';
+import 'package:enterprise_pos/widgets/branch_indicator.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
@@ -44,10 +46,14 @@ class _StockScreenState extends State<StockScreen> {
 
   Future<void> _fetchStocks({int page = 1}) async {
     setState(() => _loading = true);
+    final globalBranchId = context.read<BranchProvider>().selectedBranchId;
 
     final query = {
       "page": page.toString(),
-      if (_selectedBranchId != null) "branch_id": _selectedBranchId!,
+      if (globalBranchId != null)
+        "branch_id": globalBranchId.toString()
+      else if (_selectedBranchId != null)
+        "branch_id": _selectedBranchId!, // local filter only when global is All
       if (_selectedProduct != null)
         "product_id": _selectedProduct!['id'].toString(),
     };
@@ -311,10 +317,12 @@ class _StockScreenState extends State<StockScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final noBranch = context.watch<BranchProvider>().isAll;
     return Scaffold(
       appBar: AppBar(
         title: const Text("Stocks"),
         actions: [
+          BranchIndicator(tappable: false),
           IconButton(
             onPressed: () => _fetchStocks(page: 1),
             icon: const Icon(Icons.refresh),
@@ -328,6 +336,7 @@ class _StockScreenState extends State<StockScreen> {
             padding: const EdgeInsets.all(8.0),
             child: Row(
               children: [
+                if (noBranch)
                 Expanded(
                   child: DropdownButtonFormField<String>(
                     value: _selectedBranchId,

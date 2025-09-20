@@ -2,7 +2,7 @@ import 'package:flutter/foundation.dart';
 
 class BranchProvider extends ChangeNotifier {
   int? _selectedBranchId; // null = All branches
-  String? _selectedBranchName; // optional label for UI
+  String? _selectedBranchName;
 
   int? get selectedBranchId => _selectedBranchId;
   String get label => _selectedBranchName ?? "All Branches";
@@ -10,7 +10,7 @@ class BranchProvider extends ChangeNotifier {
 
   void setBranch({int? id, String? name}) {
     _selectedBranchId = id;
-    _selectedBranchName = name;
+    _selectedBranchName = name ?? "All Branches";
     notifyListeners();
   }
 

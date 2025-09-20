@@ -1,5 +1,7 @@
 import 'package:enterprise_pos/api/product_service.dart';
 import 'package:enterprise_pos/forms/product_form_screen.dart';
+import 'package:enterprise_pos/providers/branch_provider.dart';
+import 'package:enterprise_pos/widgets/branch_indicator.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/auth_provider.dart';
@@ -70,7 +72,6 @@ class _ProductsScreenState extends State<ProductsScreen> {
 
   Future<void> _deleteProduct(int id) async {
     try {
-      
       await _productService.deleteProduct(id);
 
       ScaffoldMessenger.of(context).showSnackBar(
@@ -88,7 +89,15 @@ class _ProductsScreenState extends State<ProductsScreen> {
     final theme = Theme.of(context);
 
     return Scaffold(
-      appBar: AppBar(title: const Text("Products"), centerTitle: true),
+      appBar: AppBar(
+        title: const Text("Products"),
+        actions: [
+          Padding(
+            padding: EdgeInsets.only(right: 8.0),
+            child: BranchIndicator(tappable: false),
+          ),
+        ],
+      ),
 
       // ➕ Floating Add Button
       floatingActionButton: FloatingActionButton.extended(
@@ -195,15 +204,42 @@ class _ProductsScreenState extends State<ProductsScreen> {
                     : ListView.builder(
                         itemCount: _products.length,
                         itemBuilder: (context, index) {
+                          int _intVal(dynamic v) {
+                            if (v is int) return v;
+                            if (v is num) return v.toInt();
+                            if (v is String) return int.tryParse(v) ?? 0;
+                            return 0;
+                          }
+
                           final p = _products[index];
-                          final stock =
+                          final selectedBranchId = context
+                              .watch<BranchProvider>()
+                              .selectedBranchId;
+
+                          final stocks =
                               (p['stocks'] as List?)
-                                  ?.fold<int>(
-                                    0,
-                                    (sum, s) => sum + (s['quantity'] as int),
-                                  )
-                                  .toString() ??
-                              "0";
+                                  ?.cast<Map<String, dynamic>>() ??
+                              const [];
+
+                          final int stockQty = selectedBranchId == null
+                              // All branches → sum everything
+                              ? stocks.fold<int>(
+                                  0,
+                                  (sum, s) => sum + _intVal(s['quantity']),
+                                )
+                              // Specific branch → sum only that branch (usually one entry)
+                              : stocks
+                                    .where(
+                                      (s) =>
+                                          _intVal(s['branch_id']) ==
+                                          selectedBranchId,
+                                    )
+                                    .fold<int>(
+                                      0,
+                                      (sum, s) => sum + _intVal(s['quantity']),
+                                    );
+
+                          final stock = stockQty.toString();
                           final brand = p['brand']?['name'] ?? "—";
                           final category = p['category']?['name'] ?? "—";
 

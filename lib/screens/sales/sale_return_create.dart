@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:enterprise_pos/api/core/api_client.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
+import 'package:enterprise_pos/widgets/branch_indicator.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
@@ -146,7 +147,7 @@ class _CreateSaleReturnScreenState extends State<CreateSaleReturnScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("Create Sale Return")),
+      appBar: AppBar(title: const Text("Create Sale Return"), actions: [BranchIndicator(tappable: false),],),
       body: Padding(
         padding: const EdgeInsets.all(12),
         child: Form(

@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'package:enterprise_pos/api/core/api_client.dart';
 import 'package:enterprise_pos/api/product_service.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
+import 'package:enterprise_pos/providers/branch_provider.dart';
+import 'package:enterprise_pos/widgets/branch_indicator.dart';
 import 'package:enterprise_pos/widgets/product_picker_sheet.dart';
 import 'package:enterprise_pos/widgets/customer_picker_sheet.dart';
 import 'package:enterprise_pos/widgets/branch_picker_sheet.dart';
@@ -46,6 +48,18 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     _barcodeFocusNode.addListener(() {
       setState(() => _scannerEnabled = _barcodeFocusNode.hasFocus);
     });
+    void _recalc() => setState(() {});
+    discountController.addListener(_recalc);
+    taxController.addListener(_recalc);
+  }
+
+  @override
+  void dispose() {
+    discountController.dispose();
+    taxController.dispose();
+    _barcodeController.dispose();
+    _barcodeFocusNode.dispose();
+    super.dispose();
   }
 
   // 🏷 Branch Picker
@@ -297,9 +311,19 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
 
   // 🏷 Submit
   Future<void> _submitSale() async {
-    if (_selectedBranchId == null || _items.isEmpty) {
+    if (_items.isEmpty) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text("Add at least 1 item")));
+      return;
+    }
+    // Prefer global branch; fallback to local only when global = All
+    final globalBranchId = context.read<BranchProvider>().selectedBranchId;
+    final effectiveBranchId = globalBranchId?.toString() ?? _selectedBranchId;
+
+    if (effectiveBranchId == null || effectiveBranchId.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Branch & at least 1 item required")),
+        const SnackBar(content: Text("Please select a branch (on Home)")),
       );
       return;
     }
@@ -308,7 +332,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
 
     final token = Provider.of<AuthProvider>(context, listen: false).token!;
     final body = {
-      "branch_id": _selectedBranchId!,
+      "branch_id": effectiveBranchId,
       if (_selectedCustomerId != null) "customer_id": _selectedCustomerId!,
       "discount": discountController.text.isEmpty
           ? "0"
@@ -356,18 +380,42 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final total = _items.fold<double>(
-      0,
-      (sum, i) => sum + (i['quantity'] * i['price']),
-    );
+    double toDouble(TextEditingController c) =>
+        double.tryParse(c.text.trim()) ?? 0.0;
+
+    String money(num v) => v.toStringAsFixed(2);
+
+    final subtotal = _items
+        .fold<double>(
+          0,
+          (sum, i) => sum + ((i['quantity'] as num) * (i['price'] as num)),
+        )
+        .toDouble();
+
+    final discount = toDouble(discountController);
+    final tax = toDouble(taxController);
+
+    // keep total non-negative (optional)
+    final total = (subtotal - discount + tax).clamp(0, double.infinity);
+
     final paid = _payments.fold<double>(
       0,
-      (sum, p) => sum + double.tryParse(p['amount'].toString())!,
+      (sum, p) => sum + (double.tryParse(p['amount'].toString()) ?? 0.0),
     );
+
     final balance = total - paid;
+    final isAll = context.watch<BranchProvider>().isAll;
 
     return Scaffold(
-      appBar: AppBar(title: const Text("Create Sale")),
+      appBar: AppBar(
+        title: const Text("Create Sale"),
+        actions: [
+          Padding(
+            padding: EdgeInsets.only(right: 8.0),
+            child: BranchIndicator(tappable: false),
+          ),
+        ],
+      ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(12),
         child: Form(
@@ -396,18 +444,20 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
                         ),
                       ),
                       const SizedBox(height: 12),
-                      InkWell(
-                        onTap: _pickBranch,
-                        child: InputDecorator(
-                          decoration: const InputDecoration(
-                            labelText: "Branch",
-                            border: OutlineInputBorder(),
-                          ),
-                          child: Text(
-                            _selectedBranch?['name'] ?? "Select Branch",
+                      if (isAll) ...[
+                        InkWell(
+                          onTap: _pickBranch,
+                          child: InputDecorator(
+                            decoration: const InputDecoration(
+                              labelText: "Branch",
+                              border: OutlineInputBorder(),
+                            ),
+                            child: Text(
+                              _selectedBranch?['name'] ?? "Select Branch",
+                            ),
                           ),
                         ),
-                      ),
+                      ],
                     ],
                   ),
                 ),
@@ -555,30 +605,83 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
 
               // Totals
               Card(
-                child: Column(
-                  children: [
-                    ListTile(
-                      title: const Text("Total"),
-                      trailing: Text("\$${total.toStringAsFixed(2)}"),
-                    ),
-                    ListTile(
-                      title: const Text("Paid"),
-                      trailing: Text("\$${paid.toStringAsFixed(2)}"),
-                    ),
-                    ListTile(
-                      title: const Text(
-                        "Balance",
-                        style: TextStyle(fontWeight: FontWeight.bold),
-                      ),
-                      trailing: Text(
-                        "\$${balance.toStringAsFixed(2)}",
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          color: balance > 0 ? Colors.red : Colors.green,
+                elevation: 2,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8),
+                  child: Column(
+                    children: [
+                      ListTile(
+                        dense: true,
+                        title: const Text("Subtotal"),
+                        trailing: Text(
+                          "\$${money(subtotal)}",
+                          style: const TextStyle(fontWeight: FontWeight.w600),
                         ),
                       ),
-                    ),
-                  ],
+                      ListTile(
+                        dense: true,
+                        title: const Text("Discount"),
+                        trailing: Text(
+                          "-\$${money(discount)}",
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w600,
+                            color: Colors.red,
+                          ),
+                        ),
+                      ),
+                      ListTile(
+                        dense: true,
+                        title: const Text("Tax"),
+                        trailing: Text(
+                          "\$${money(tax)}",
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w600,
+                            color: Colors.orange,
+                          ),
+                        ),
+                      ),
+                      const Divider(height: 8),
+                      ListTile(
+                        title: const Text(
+                          "Total",
+                          style: TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                        trailing: Text(
+                          "\$${money(total)}",
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w800,
+                            fontSize: 20, // 👈 bigger & bolder
+                          ),
+                        ),
+                      ),
+                      ListTile(
+                        dense: true,
+                        title: const Text("Paid"),
+                        trailing: Text(
+                          "\$${money(paid)}",
+                          style: const TextStyle(fontWeight: FontWeight.w600),
+                        ),
+                      ),
+                      ListTile(
+                        dense: true,
+                        title: const Text("Balance"),
+                        trailing: Text(
+                          "\$${money(balance)}",
+                          style: TextStyle(
+                            fontWeight: FontWeight.w800,
+                            color: balance > 0
+                                ? Colors.red
+                                : balance < 0
+                                ? Colors.orange
+                                : Colors.green,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
 

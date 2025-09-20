@@ -1,10 +1,13 @@
 import 'package:enterprise_pos/api/common_service.dart';
 import 'package:enterprise_pos/api/purchase_service.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
+import 'package:enterprise_pos/providers/branch_provider.dart';
 import 'package:enterprise_pos/screens/purchases/purchase_create.dart';
 import 'package:enterprise_pos/screens/purchases/purchase_detail.dart';
+import 'package:enterprise_pos/widgets/branch_indicator.dart';
 import 'package:enterprise_pos/widgets/vendor_picker_sheet.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 class PurchasesScreen extends StatefulWidget {
@@ -61,11 +64,16 @@ class _PurchasesScreenState extends State<PurchasesScreen> {
 
   Future<void> _fetchPurchases({int page = 1}) async {
     setState(() => _loading = true);
+    final globalBranchId = context.read<BranchProvider>().selectedBranchId;
     try {
+      if (globalBranchId != null) {
+        _selectedBranchId = globalBranchId.toString();
+      }
       final data = await _purchaseService.getPurchases(
         page: page,
         sortBy: _sortBy,
         search: _searchQuery.isNotEmpty ? _searchQuery : null,
+        
         branchId: _selectedBranchId != null
             ? int.tryParse(_selectedBranchId!)
             : null,
@@ -129,10 +137,12 @@ class _PurchasesScreenState extends State<PurchasesScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final noBranch = context.watch<BranchProvider>().isAll;
     return Scaffold(
       appBar: AppBar(
         title: const Text("Purchases"),
         actions: [
+          BranchIndicator(tappable: false),
           IconButton(
             onPressed: () => _fetchPurchases(page: 1),
             icon: const Icon(Icons.refresh),
@@ -161,34 +171,37 @@ class _PurchasesScreenState extends State<PurchasesScreen> {
             padding: const EdgeInsets.all(8.0),
             child: Row(
               children: [
-                // Branch filter
-                Expanded(
-                  child: DropdownButtonFormField<String?>(
-                    value: _selectedBranchId,
-                    hint: const Text("Filter by Branch"),
-                    isExpanded: true,
-                    decoration: const InputDecoration(
-                      border: OutlineInputBorder(),
-                    ),
-                    items: <DropdownMenuItem<String?>>[
-                      const DropdownMenuItem<String?>(
-                        value: null,
-                        child: Text("All Branches"),
+                if (noBranch) ...[
+                  // Branch filter
+                  Expanded(
+                    child: DropdownButtonFormField<String?>(
+                      value: _selectedBranchId,
+                      hint: const Text("Filter by Branch"),
+                      isExpanded: true,
+                      decoration: const InputDecoration(
+                        border: OutlineInputBorder(),
                       ),
-                      ..._branches.map(
-                        (b) => DropdownMenuItem<String?>(
-                          value: b['id'].toString(),
-                          child: Text(b['name']),
+                      items: <DropdownMenuItem<String?>>[
+                        const DropdownMenuItem<String?>(
+                          value: null,
+                          child: Text("All Branches"),
                         ),
-                      ),
-                    ],
-                    onChanged: (val) {
-                      setState(() => _selectedBranchId = val);
-                      _fetchPurchases(page: 1);
-                    },
+                        ..._branches.map(
+                          (b) => DropdownMenuItem<String?>(
+                            value: b['id'].toString(),
+                            child: Text(b['name']),
+                          ),
+                        ),
+                      ],
+                      onChanged: (val) {
+                        setState(() => _selectedBranchId = val);
+                        _fetchPurchases(page: 1);
+                      },
+                    ),
                   ),
-                ),
-                const SizedBox(width: 8),
+                  const SizedBox(width: 8),
+                ] else
+                  const SizedBox.shrink(),
 
                 // Vendor Picker trigger
                 Expanded(
@@ -354,8 +367,36 @@ class _PurchasesScreenState extends State<PurchasesScreen> {
                                   child: Wrap(
                                     spacing: 6,
                                     runSpacing: 4,
-                                    alignment: WrapAlignment.end,
+                                    crossAxisAlignment:
+                                        WrapCrossAlignment.center,
                                     children: [
+                                      // 📋 Copy PO button
+                                      IconButton(
+                                        tooltip: "Copy PO",
+                                        icon: const Icon(Icons.copy, size: 20),
+                                        constraints:
+                                            const BoxConstraints(), // keep it compact
+                                        padding: EdgeInsets.zero,
+                                        onPressed: () async {
+                                          await Clipboard.setData(
+                                            ClipboardData(
+                                              text: invoice.toString(),
+                                            ),
+                                          );
+                                          if (!mounted) return;
+                                          ScaffoldMessenger.of(
+                                            context,
+                                          ).showSnackBar(
+                                            SnackBar(
+                                              content: Text(
+                                                "Copied PO: $invoice",
+                                              ),
+                                            ),
+                                          );
+                                        },
+                                      ),
+
+                                      // 💸 Pay status
                                       Chip(
                                         label: Text(
                                           "Pay: ${payStatus.toUpperCase()}",
@@ -373,6 +414,8 @@ class _PurchasesScreenState extends State<PurchasesScreen> {
                                               horizontal: 8,
                                             ),
                                       ),
+
+                                      // 📦 Receive status
                                       Chip(
                                         label: Text(
                                           "Recv: ${recvStatus.toUpperCase()}",

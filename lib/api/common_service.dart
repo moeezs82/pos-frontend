@@ -32,8 +32,11 @@ class CommonService {
   }
 
   /// Get all branches
-  Future<List<Map<String, dynamic>>> getBranches() async {
-    final res = await _client.get("/branches");
+  Future<List<Map<String, dynamic>>> getBranches({String? search}) async {
+    final queryParams = {
+      if (search != null && search.isNotEmpty) "search": search,
+    };
+    final res = await _client.get("/branches", query: queryParams);
     final list = res["data"]["branches"] as List;
     return list.cast<Map<String, dynamic>>();
   }

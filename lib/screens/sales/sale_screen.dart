@@ -3,10 +3,13 @@ import 'dart:convert';
 import 'package:enterprise_pos/api/common_service.dart';
 import 'package:enterprise_pos/api/core/api_client.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
+import 'package:enterprise_pos/providers/branch_provider.dart';
 import 'package:enterprise_pos/screens/sales/sale_create.dart';
 import 'package:enterprise_pos/screens/sales/sale_detail.dart';
+import 'package:enterprise_pos/widgets/branch_indicator.dart';
 import 'package:enterprise_pos/widgets/customer_picker_sheet.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:provider/provider.dart';
 
@@ -52,10 +55,16 @@ class _SalesScreenState extends State<SalesScreen> {
   Future<void> _fetchSales({int page = 1}) async {
     setState(() => _loading = true);
 
+    final globalBranchId = context.read<BranchProvider>().selectedBranchId;
+
     final Map<String, String> query = {
       "page": page.toString(),
       "sort_by": _sortBy,
-      if (_selectedBranchId != null) "branch_id": _selectedBranchId!,
+
+      if (globalBranchId != null)
+        "branch_id": globalBranchId.toString()
+      else if (_selectedBranchId != null)
+        "branch_id": _selectedBranchId!, // local filter only when global is All
       if (_selectedCustomerId != null)
         "customer_id": _selectedCustomerId!.toString(),
       if (_searchQuery.isNotEmpty) "search": _searchQuery,
@@ -123,10 +132,12 @@ class _SalesScreenState extends State<SalesScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final isAll = context.watch<BranchProvider>().isAll;
     return Scaffold(
       appBar: AppBar(
         title: const Text("Sales"),
         actions: [
+          BranchIndicator(tappable: false),
           IconButton(
             onPressed: () => _fetchSales(page: 1),
             icon: const Icon(Icons.refresh),
@@ -154,33 +165,37 @@ class _SalesScreenState extends State<SalesScreen> {
             padding: const EdgeInsets.all(8.0),
             child: Row(
               children: [
-                // Branch filter
-                Expanded(
-                  child: DropdownButtonFormField<String>(
-                    value: _selectedBranchId,
-                    hint: const Text("Filter by Branch"),
-                    decoration: const InputDecoration(
-                      border: OutlineInputBorder(),
-                    ),
-                    items: [
-                      const DropdownMenuItem<String>(
-                        value: null,
-                        child: Text("All Branches"), // unselect option
+                if (isAll) ...[
+                  // Local Branch filter only when global = All Branches
+                  // Branch filter
+                  Expanded(
+                    child: DropdownButtonFormField<String>(
+                      value: _selectedBranchId,
+                      hint: const Text("Filter by Branch"),
+                      decoration: const InputDecoration(
+                        border: OutlineInputBorder(),
                       ),
-                      ..._branches.map<DropdownMenuItem<String>>(
-                        (b) => DropdownMenuItem(
-                          value: b['id'].toString(),
-                          child: Text(b['name']),
+                      items: [
+                        const DropdownMenuItem<String>(
+                          value: null,
+                          child: Text("All Branches"), // unselect option
                         ),
-                      ),
-                    ],
-                    onChanged: (val) {
-                      setState(() => _selectedBranchId = val);
-                      _fetchSales(page: 1);
-                    },
+                        ..._branches.map<DropdownMenuItem<String>>(
+                          (b) => DropdownMenuItem(
+                            value: b['id'].toString(),
+                            child: Text(b['name']),
+                          ),
+                        ),
+                      ],
+                      onChanged: (val) {
+                        setState(() => _selectedBranchId = val);
+                        _fetchSales(page: 1);
+                      },
+                    ),
                   ),
-                ),
-                const SizedBox(width: 8),
+                  const SizedBox(width: 8),
+                ] else
+                  const SizedBox.shrink(),
                 // Customer Picker trigger
                 Expanded(
                   child: InkWell(
@@ -312,16 +327,53 @@ class _SalesScreenState extends State<SalesScreen> {
                                   // "Customer: $customer | Branch: $branch\nTotal: \$${total.toString()} | Paid: \$${paid.toString()} | Balance: \$${balance.toString()}",
                                   "Customer: $customer | Branch: $branch\nTotal: \$${total.toString()} | Paid: \$${paid.toString()}",
                                 ),
-                                trailing: Chip(
-                                  label: Text(
-                                    status.toUpperCase(),
-                                    style: const TextStyle(color: Colors.white),
+                                trailing: FittedBox(
+                                  fit: BoxFit.scaleDown,
+                                  alignment: Alignment.centerRight,
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      IconButton(
+                                        tooltip: "Copy invoice",
+                                        icon: const Icon(Icons.copy, size: 20),
+                                        onPressed: () async {
+                                          await Clipboard.setData(
+                                            ClipboardData(
+                                              text: invoice.toString(),
+                                            ),
+                                          );
+                                          if (!mounted) return;
+                                          ScaffoldMessenger.of(
+                                            context,
+                                          ).showSnackBar(
+                                            SnackBar(
+                                              content: Text("Copied: $invoice"),
+                                            ),
+                                          );
+                                        },
+                                      ),
+                                      const SizedBox(width: 6),
+                                      Chip(
+                                        label: Text(
+                                          status.toUpperCase(),
+                                          style: const TextStyle(
+                                            color: Colors.white,
+                                          ),
+                                        ),
+                                        backgroundColor: status == "paid"
+                                            ? Colors.green
+                                            : status == "partial"
+                                            ? Colors.orange
+                                            : Colors.red,
+                                        visualDensity: VisualDensity.compact,
+                                        padding: EdgeInsets.zero,
+                                        labelPadding:
+                                            const EdgeInsets.symmetric(
+                                              horizontal: 8,
+                                            ),
+                                      ),
+                                    ],
                                   ),
-                                  backgroundColor: status == "paid"
-                                      ? Colors.green
-                                      : status == "partial"
-                                      ? Colors.orange
-                                      : Colors.red,
                                 ),
                                 onTap: () async {
                                   final result = await Navigator.push(

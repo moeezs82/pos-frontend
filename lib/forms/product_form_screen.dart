@@ -1,3 +1,5 @@
+import 'dart:math';
+
 import 'package:enterprise_pos/api/common_service.dart';
 import 'package:enterprise_pos/api/product_service.dart';
 import 'package:flutter/material.dart';
@@ -99,6 +101,18 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
     } catch (e) {
       debugPrint("Error loading initial data: $e");
     }
+  }
+
+  String _generateSKU() {
+    final ts = DateTime.now().millisecondsSinceEpoch
+        .toRadixString(36)
+        .toUpperCase();
+    final r = Random()
+        .nextInt(36 * 36 * 36)
+        .toRadixString(36)
+        .padLeft(3, '0')
+        .toUpperCase();
+    return "SKU-$ts$r";
   }
 
   String _generateBarcode() {
@@ -255,9 +269,14 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
             children: [
               TextFormField(
                 controller: _skuController,
-                decoration: const InputDecoration(
+                decoration: InputDecoration(
                   labelText: "SKU",
                   border: OutlineInputBorder(),
+                  suffixIcon: IconButton(
+                    icon: const Icon(Icons.qr_code),
+                    onPressed: () =>
+                        setState(() => _skuController.text = _generateSKU()),
+                  ),
                 ),
                 validator: (v) => v!.isEmpty ? "Required" : null,
               ),
@@ -376,9 +395,7 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
                     onPressed: () async {
                       final name = await _showAddDialog("Brand");
                       if (name != null && name.isNotEmpty) {
-                        final newBrand = await _commonService.createBrand(
-                          name,
-                        );
+                        final newBrand = await _commonService.createBrand(name);
                         setState(() {
                           _brands.add(newBrand);
                           _selectedBrandId = newBrand['id'];
@@ -441,69 +458,76 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
               ),
               const SizedBox(height: 12),
 
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Text(
-                    "Branch Stocks",
-                    style: TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                  if (!isEdit) // ➡️ Only show add button in create mode
-                    IconButton(
-                      icon: const Icon(Icons.add_business, color: Colors.green),
-                      onPressed: _addBranch,
+              if (false) ...[
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text(
+                      "Branch Stocks",
+                      style: TextStyle(fontWeight: FontWeight.bold),
                     ),
-                ],
-              ),
-
-              // 📍 Show different layouts based on create/edit
-              if (isEdit)
-                // 🔹 VIEW ONLY when editing
-                Column(
-                  children: (widget.product?['stocks'] as List<dynamic>? ?? [])
-                      .map((stock) {
-                        final branch =
-                            stock['branch']?['name'] ??
-                            "Branch ${stock['branch_id']}";
-                        final qty = stock['quantity'] ?? 0;
-                        return Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 6),
-                          child: ListTile(
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(8),
-                              side: BorderSide(color: Colors.grey.shade300),
-                            ),
-                            title: Text(branch),
-                            trailing: Text(
-                              "Qty: $qty",
-                              style: const TextStyle(
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ),
-                        );
-                      })
-                      .toList(),
-                )
-              else
-                // 🔹 EDITABLE when creating
-                Column(
-                  children: _branches.map((b) {
-                    return Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 6),
-                      child: TextFormField(
-                        controller: _branchStockControllers[b['id']],
-                        keyboardType: TextInputType.number,
-                        decoration: InputDecoration(
-                          labelText: "${b['name']} Stock",
-                          border: const OutlineInputBorder(),
+                    if (!isEdit) // ➡️ Only show add button in create mode
+                      IconButton(
+                        icon: const Icon(
+                          Icons.add_business,
+                          color: Colors.green,
                         ),
+                        onPressed: _addBranch,
                       ),
-                    );
-                  }).toList(),
+                  ],
                 ),
+                // 📍 Show different layouts based on create/edit
+                if (isEdit)
+                  // 🔹 VIEW ONLY when editing
+                  Column(
+                    children:
+                        (widget.product?['stocks'] as List<dynamic>? ?? []).map(
+                          (stock) {
+                            final branch =
+                                stock['branch']?['name'] ??
+                                "Branch ${stock['branch_id']}";
+                            final qty = stock['quantity'] ?? 0;
+                            return Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 6),
+                              child: ListTile(
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(8),
+                                  side: BorderSide(color: Colors.grey.shade300),
+                                ),
+                                title: Text(branch),
+                                trailing: Text(
+                                  "Qty: $qty",
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                            );
+                          },
+                        ).toList(),
+                  )
+                else
+                  // 🔹 EDITABLE when creating
+                  Column(
+                    children: _branches.map((b) {
+                      return Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 6),
+                        child: TextFormField(
+                          controller: _branchStockControllers[b['id']],
+                          keyboardType: TextInputType.number,
+                          decoration: InputDecoration(
+                            labelText: "${b['name']} Stock",
+                            border: const OutlineInputBorder(),
+                          ),
+                        ),
+                      );
+                    }).toList(),
+                  ),
 
-              const SizedBox(height: 24),
+                const SizedBox(height: 24),
+              ] else ...[
+                const SizedBox(height: 24),
+              ],
 
               SwitchListTile(
                 title: const Text("Active"),

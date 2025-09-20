@@ -1,4 +1,5 @@
 import 'package:enterprise_pos/api/vendor_service.dart';
+import 'package:enterprise_pos/widgets/branch_indicator.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/auth_provider.dart';
@@ -77,9 +78,9 @@ class _VendorsScreenState extends State<VendorsScreen> {
         const SnackBar(content: Text("Vendor deleted successfully")),
       );
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Failed to delete vendor: $e")),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text("Failed to delete vendor: $e")));
     }
   }
 
@@ -88,7 +89,15 @@ class _VendorsScreenState extends State<VendorsScreen> {
     final theme = Theme.of(context);
 
     return Scaffold(
-      appBar: AppBar(title: const Text("Vendors"), centerTitle: true),
+      appBar: AppBar(
+        title: const Text("Vendors"),
+        actions: [
+          Padding(
+            padding: EdgeInsets.only(right: 8.0),
+            child: BranchIndicator(tappable: false),
+          ),
+        ],
+      ),
 
       // ➕ Floating Add Button
       floatingActionButton: FloatingActionButton.extended(
@@ -175,144 +184,138 @@ class _VendorsScreenState extends State<VendorsScreen> {
                 child: _loading
                     ? const Center(child: CircularProgressIndicator())
                     : _vendors.isEmpty
-                        ? ListView(
-                            children: const [
-                              SizedBox(height: 120),
-                              Icon(
-                                Icons.people_outline,
-                                size: 64,
-                                color: Colors.grey,
-                              ),
-                              SizedBox(height: 12),
-                              Center(
-                                child: Text(
-                                  "No vendors found",
-                                  style: TextStyle(color: Colors.grey),
-                                ),
-                              ),
-                            ],
-                          )
-                        : ListView.builder(
-                            itemCount: _vendors.length,
-                            itemBuilder: (context, index) {
-                              final c = _vendors[index];
-                              final fullName =
-                                  "${c['first_name']} ${c['last_name'] ?? ''}".trim();
-                              final email = c['email'] ?? "—";
-                              final phone = c['phone'] ?? "—";
-                              final status = c['status'] ?? "active";
-
-                              return Card(
-                                margin:
-                                    const EdgeInsets.symmetric(vertical: 6),
-                                elevation: 2,
-                                shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                                child: ListTile(
-                                  leading: CircleAvatar(
-                                    backgroundColor:
-                                        theme.colorScheme.primaryContainer,
-                                    child: Text(
-                                      fullName.isNotEmpty
-                                          ? fullName[0].toUpperCase()
-                                          : "?",
-                                      style: TextStyle(
-                                        color: theme.colorScheme
-                                            .onPrimaryContainer,
-                                      ),
-                                    ),
-                                  ),
-                                  title: Text(
-                                    fullName,
-                                    style: const TextStyle(
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                  subtitle: Text(
-                                    "Phone: $phone | Email: $email\nStatus: $status",
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                  trailing: SizedBox(
-                                    width: 70,
-                                    child: Row(
-                                      mainAxisAlignment: MainAxisAlignment.end,
-                                      children: [
-                                        // ✏️ Edit
-                                        GestureDetector(
-                                          child: Icon(
-                                            Icons.edit,
-                                            size: 20,
-                                            color: theme.colorScheme.primary,
-                                          ),
-                                          onTap: () async {
-                                            final result =
-                                                await Navigator.push(
-                                              context,
-                                              MaterialPageRoute(
-                                                builder: (_) =>
-                                                    VendorFormScreen(
-                                                        vendor: c),
-                                              ),
-                                            );
-                                            if (result == true) {
-                                              _fetchVendors(reset: true);
-                                            }
-                                          },
-                                        ),
-                                        const SizedBox(width: 12),
-                                        // 🗑️ Delete
-                                        GestureDetector(
-                                          child: const Icon(
-                                            Icons.delete,
-                                            size: 20,
-                                            color: Colors.red,
-                                          ),
-                                          onTap: () async {
-                                            final confirm =
-                                                await showDialog<bool>(
-                                              context: context,
-                                              builder: (ctx) => AlertDialog(
-                                                title: const Text(
-                                                    "Delete Vendor"),
-                                                content: Text(
-                                                    "Are you sure you want to delete '$fullName'?"),
-                                                actions: [
-                                                  TextButton(
-                                                    onPressed: () =>
-                                                        Navigator.pop(
-                                                            ctx, false),
-                                                    child: const Text("Cancel"),
-                                                  ),
-                                                  TextButton(
-                                                    onPressed: () =>
-                                                        Navigator.pop(
-                                                            ctx, true),
-                                                    child: const Text(
-                                                      "Delete",
-                                                      style: TextStyle(
-                                                        color: Colors.red,
-                                                      ),
-                                                    ),
-                                                  ),
-                                                ],
-                                              ),
-                                            );
-
-                                            if (confirm == true) {
-                                              await _deleteVendor(c['id']);
-                                              _fetchVendors(reset: true);
-                                            }
-                                          },
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                              );
-                            },
+                    ? ListView(
+                        children: const [
+                          SizedBox(height: 120),
+                          Icon(
+                            Icons.people_outline,
+                            size: 64,
+                            color: Colors.grey,
                           ),
+                          SizedBox(height: 12),
+                          Center(
+                            child: Text(
+                              "No vendors found",
+                              style: TextStyle(color: Colors.grey),
+                            ),
+                          ),
+                        ],
+                      )
+                    : ListView.builder(
+                        itemCount: _vendors.length,
+                        itemBuilder: (context, index) {
+                          final c = _vendors[index];
+                          final fullName =
+                              "${c['first_name']} ${c['last_name'] ?? ''}"
+                                  .trim();
+                          final email = c['email'] ?? "—";
+                          final phone = c['phone'] ?? "—";
+                          final status = c['status'] ?? "active";
+
+                          return Card(
+                            margin: const EdgeInsets.symmetric(vertical: 6),
+                            elevation: 2,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: ListTile(
+                              leading: CircleAvatar(
+                                backgroundColor:
+                                    theme.colorScheme.primaryContainer,
+                                child: Text(
+                                  fullName.isNotEmpty
+                                      ? fullName[0].toUpperCase()
+                                      : "?",
+                                  style: TextStyle(
+                                    color: theme.colorScheme.onPrimaryContainer,
+                                  ),
+                                ),
+                              ),
+                              title: Text(
+                                fullName,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              subtitle: Text(
+                                "Phone: $phone | Email: $email\nStatus: $status",
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                              trailing: SizedBox(
+                                width: 70,
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.end,
+                                  children: [
+                                    // ✏️ Edit
+                                    GestureDetector(
+                                      child: Icon(
+                                        Icons.edit,
+                                        size: 20,
+                                        color: theme.colorScheme.primary,
+                                      ),
+                                      onTap: () async {
+                                        final result = await Navigator.push(
+                                          context,
+                                          MaterialPageRoute(
+                                            builder: (_) =>
+                                                VendorFormScreen(vendor: c),
+                                          ),
+                                        );
+                                        if (result == true) {
+                                          _fetchVendors(reset: true);
+                                        }
+                                      },
+                                    ),
+                                    const SizedBox(width: 12),
+                                    // 🗑️ Delete
+                                    GestureDetector(
+                                      child: const Icon(
+                                        Icons.delete,
+                                        size: 20,
+                                        color: Colors.red,
+                                      ),
+                                      onTap: () async {
+                                        final confirm = await showDialog<bool>(
+                                          context: context,
+                                          builder: (ctx) => AlertDialog(
+                                            title: const Text("Delete Vendor"),
+                                            content: Text(
+                                              "Are you sure you want to delete '$fullName'?",
+                                            ),
+                                            actions: [
+                                              TextButton(
+                                                onPressed: () =>
+                                                    Navigator.pop(ctx, false),
+                                                child: const Text("Cancel"),
+                                              ),
+                                              TextButton(
+                                                onPressed: () =>
+                                                    Navigator.pop(ctx, true),
+                                                child: const Text(
+                                                  "Delete",
+                                                  style: TextStyle(
+                                                    color: Colors.red,
+                                                  ),
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        );
+
+                                        if (confirm == true) {
+                                          await _deleteVendor(c['id']);
+                                          _fetchVendors(reset: true);
+                                        }
+                                      },
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          );
+                        },
+                      ),
               ),
             ),
           ],

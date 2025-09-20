@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:enterprise_pos/api/core/api_client.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/screens/sales/sale_detail.dart';
+import 'package:enterprise_pos/widgets/branch_indicator.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
@@ -27,8 +28,9 @@ class _SaleReturnDetailScreenState extends State<SaleReturnDetailScreen> {
 
   Future<void> _fetchDetail() async {
     final token = Provider.of<AuthProvider>(context, listen: false).token!;
-    final uri =
-        Uri.parse("${ApiClient.baseUrl}/sales/returns/${widget.returnId}");
+    final uri = Uri.parse(
+      "${ApiClient.baseUrl}/sales/returns/${widget.returnId}",
+    );
 
     final res = await http.get(
       uri,
@@ -49,7 +51,8 @@ class _SaleReturnDetailScreenState extends State<SaleReturnDetailScreen> {
   Future<void> _approveReturn() async {
     final token = Provider.of<AuthProvider>(context, listen: false).token!;
     final uri = Uri.parse(
-        "${ApiClient.baseUrl}/sales/returns/${widget.returnId}/approve");
+      "${ApiClient.baseUrl}/sales/returns/${widget.returnId}/approve",
+    );
 
     final res = await http.post(
       uri,
@@ -87,8 +90,10 @@ class _SaleReturnDetailScreenState extends State<SaleReturnDetailScreen> {
     final items = _return!['items'] as List;
     final status = _return!['status'];
     final sale = _return!['sale'];
-    final currency =
-        NumberFormat.simpleCurrency(decimalDigits: 2, name: ""); // money format
+    final currency = NumberFormat.simpleCurrency(
+      decimalDigits: 2,
+      name: "",
+    ); // money format
 
     Color statusColor;
     switch (status) {
@@ -103,7 +108,10 @@ class _SaleReturnDetailScreenState extends State<SaleReturnDetailScreen> {
     }
 
     return Scaffold(
-      appBar: AppBar(title: Text("Return #${_return!['return_no']}")),
+      appBar: AppBar(
+        title: Text("Return #${_return!['return_no']}"),
+        actions: [BranchIndicator(tappable: false)],
+      ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -122,8 +130,8 @@ class _SaleReturnDetailScreenState extends State<SaleReturnDetailScreen> {
                 ),
                 Text(
                   DateFormat.yMMMd().add_jm().format(
-                        DateTime.parse(_return!['created_at']),
-                      ),
+                    DateTime.parse(_return!['created_at']),
+                  ),
                   style: const TextStyle(color: Colors.grey),
                 ),
               ],
@@ -141,9 +149,13 @@ class _SaleReturnDetailScreenState extends State<SaleReturnDetailScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text("Invoice: ${sale['invoice_no']}",
-                        style: const TextStyle(
-                            fontWeight: FontWeight.bold, fontSize: 16)),
+                    Text(
+                      "Invoice: ${sale['invoice_no']}",
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                      ),
+                    ),
                     const SizedBox(height: 6),
                     Text(
                       "Customer: ${sale['customer'] != null ? "${sale['customer']['first_name']} ${sale['customer']['last_name']}" : "Walk-In"}",
@@ -163,9 +175,8 @@ class _SaleReturnDetailScreenState extends State<SaleReturnDetailScreen> {
                           Navigator.push(
                             context,
                             MaterialPageRoute(
-                              builder: (_) => SaleDetailScreen(
-                                saleId: sale['id'],
-                              ),
+                              builder: (_) =>
+                                  SaleDetailScreen(saleId: sale['id']),
                             ),
                           );
                         },
@@ -181,8 +192,10 @@ class _SaleReturnDetailScreenState extends State<SaleReturnDetailScreen> {
             const SizedBox(height: 20),
 
             // 🛒 Items Section
-            const Text("Returned Items",
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            const Text(
+              "Returned Items",
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            ),
             const Divider(),
             ...items.map((item) {
               return Card(
@@ -239,9 +252,10 @@ class _SaleReturnDetailScreenState extends State<SaleReturnDetailScreen> {
                   Text(
                     "Total: ${currency.format(double.parse(_return!['total']))}",
                     style: const TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.black87),
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.black87,
+                    ),
                   ),
                 ],
               ),
@@ -260,7 +274,9 @@ class _SaleReturnDetailScreenState extends State<SaleReturnDetailScreen> {
                     foregroundColor: Colors.white,
                     padding: const EdgeInsets.symmetric(vertical: 14),
                     textStyle: const TextStyle(
-                        fontSize: 16, fontWeight: FontWeight.bold),
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                 ),
               ),
