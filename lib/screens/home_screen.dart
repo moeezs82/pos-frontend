@@ -1,5 +1,7 @@
+import 'package:enterprise_pos/screens/cashbook_screen.dart';
 import 'package:enterprise_pos/screens/customers_screen.dart';
 import 'package:enterprise_pos/screens/product_screen.dart';
+import 'package:enterprise_pos/screens/purchases/purchase_claim_screen.dart';
 import 'package:enterprise_pos/screens/sales/sale_returns_screen.dart';
 import 'package:enterprise_pos/screens/sales/sale_screen.dart';
 import 'package:enterprise_pos/screens/purchases/purchases_screen.dart';
@@ -32,6 +34,103 @@ class HomeScreen extends StatelessWidget {
     final theme = Theme.of(context);
     final bp = context.watch<BranchProvider>();
 
+    // Dashboard tile definitions (clean & easy to maintain)
+    final tiles = <_Tile>[
+      _Tile(
+        icon: Icons.shopping_cart,
+        title: "Sales",
+        subtitle: "Create invoices",
+        color: Colors.blue,
+        onTap: () => Navigator.push(
+          context, MaterialPageRoute(builder: (_) => const SalesScreen())),
+      ),
+      _Tile(
+        icon: Icons.assignment_return,
+        title: "Sale Returns",
+        subtitle: "Process returns",
+        color: Colors.indigo,
+        onTap: () => Navigator.push(
+          context, MaterialPageRoute(builder: (_) => const SaleReturnsScreen())),
+      ),
+      _Tile(
+        icon: Icons.shopping_cart_checkout,
+        title: "Purchases",
+        subtitle: "Supplier bills",
+        color: Colors.blue,
+        onTap: () => Navigator.push(
+          context, MaterialPageRoute(builder: (_) => const PurchasesScreen())),
+      ),
+      _Tile(
+        icon: Icons.assignment_return_outlined,
+        title: "Purchase Claim",
+        subtitle: "Damage/shortage",
+        color: Colors.indigo,
+        onTap: () => Navigator.push(
+          context, MaterialPageRoute(builder: (_) => const PurchaseClaimsScreen())),
+      ),
+      _Tile(
+        icon: Icons.inventory_2,
+        title: "Products",
+        subtitle: "Catalog & SKUs",
+        color: Colors.green,
+        onTap: () => Navigator.push(
+          context, MaterialPageRoute(builder: (_) => const ProductsScreen())),
+      ),
+      _Tile(
+        icon: Icons.warehouse,
+        title: "Stocks",
+        subtitle: "On-hand by branch",
+        color: Colors.red,
+        onTap: () => Navigator.push(
+          context, MaterialPageRoute(builder: (_) => const StockScreen())),
+      ),
+
+      // 🔥 New Cash Book tile
+      _Tile(
+        icon: Icons.receipt_long_rounded,
+        title: "Cash Book",
+        subtitle: "Receipts • Payments • Expenses",
+        color: Colors.teal,
+        onTap: () => Navigator.push(
+          context, MaterialPageRoute(builder: (_) => const CashBookScreen())),
+      ),
+
+      _Tile(
+        icon: Icons.people,
+        title: "Customers",
+        subtitle: "CRM basics",
+        color: Colors.orange,
+        onTap: () => Navigator.push(
+          context, MaterialPageRoute(builder: (_) => const CustomersScreen())),
+      ),
+      _Tile(
+        icon: Icons.groups_2,
+        title: "Vendors",
+        subtitle: "Supplier list",
+        color: Colors.orange,
+        onTap: () => Navigator.push(
+          context, MaterialPageRoute(builder: (_) => const VendorsScreen())),
+      ),
+      _Tile(
+        icon: Icons.bar_chart,
+        title: "Reports",
+        subtitle: "Analytics & KPIs",
+        color: Colors.purple,
+        onTap: () {}, // hook up later
+      ),
+      _Tile(
+        icon: Icons.settings,
+        title: "Settings",
+        subtitle: "Configuration",
+        color: Colors.blueGrey,
+        onTap: () {}, // hook up later
+      ),
+    ];
+
+    // Responsive columns
+    final width = MediaQuery.of(context).size.width;
+    final cols = width >= 1100 ? 5 : width >= 900 ? 4 : width >= 600 ? 3 : 2;
+
     return Scaffold(
       appBar: AppBar(
         elevation: 0,
@@ -62,7 +161,7 @@ class HomeScreen extends StatelessWidget {
       ),
       body: Column(
         children: [
-          // compact welcome
+          // Welcome banner
           Container(
             width: double.infinity,
             padding: const EdgeInsets.all(16),
@@ -120,70 +219,37 @@ class HomeScreen extends StatelessWidget {
 
           const SizedBox(height: 16),
 
+          // Section header
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16.0),
+            child: Row(
+              children: [
+                Text("Quick Actions",
+                    style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
+                const Spacer(),
+                IconButton(
+                  tooltip: "Refresh",
+                  onPressed: () {}, // (optional) wire to dashboard summaries
+                  icon: const Icon(Icons.refresh),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 8),
+
           // Grid
           Expanded(
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: GridView.count(
-                crossAxisCount: MediaQuery.of(context).size.width > 600 ? 4 : 2,
-                crossAxisSpacing: 16,
-                mainAxisSpacing: 16,
-                children: [
-                  _DashboardCard(
-                    icon: Icons.shopping_cart,
-                    title: "Sales",
-                    color: Colors.blue,
-                    onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const SalesScreen())),
-                  ),
-                  _DashboardCard(
-                    icon: Icons.assignment_return,
-                    title: "Sale Returns",
-                    color: Colors.indigo,
-                    onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const SaleReturnsScreen())),
-                  ),
-                  _DashboardCard(
-                    icon: Icons.shopping_cart_checkout,
-                    title: "Purchases",
-                    color: Colors.blue,
-                    onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PurchasesScreen())),
-                  ),
-                  _DashboardCard(
-                    icon: Icons.inventory_2,
-                    title: "Products",
-                    color: Colors.green,
-                    onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ProductsScreen())),
-                  ),
-                  _DashboardCard(
-                    icon: Icons.warehouse,
-                    title: "Stocks",
-                    color: Colors.red,
-                    onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const StockScreen())),
-                  ),
-                  _DashboardCard(
-                    icon: Icons.people,
-                    title: "Customers",
-                    color: Colors.orange,
-                    onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const CustomersScreen())),
-                  ),
-                  _DashboardCard(
-                    icon: Icons.groups_2,
-                    title: "Vendors",
-                    color: Colors.orange,
-                    onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const VendorsScreen())),
-                  ),
-                  _DashboardCard(
-                    icon: Icons.bar_chart,
-                    title: "Reports",
-                    color: Colors.purple,
-                    onTap: () {},
-                  ),
-                  _DashboardCard(
-                    icon: Icons.settings,
-                    title: "Settings",
-                    color: Colors.teal,
-                    onTap: () {},
-                  ),
-                ],
+              child: GridView.builder(
+                gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: cols,
+                  crossAxisSpacing: 16,
+                  mainAxisSpacing: 16,
+                  childAspectRatio: 1.15,
+                ),
+                itemCount: tiles.length,
+                itemBuilder: (_, i) => _DashboardCard(tile: tiles[i]),
               ),
             ),
           ),
@@ -193,45 +259,86 @@ class HomeScreen extends StatelessWidget {
   }
 }
 
-class _DashboardCard extends StatelessWidget {
+class _Tile {
   final IconData icon;
   final String title;
+  final String subtitle;
   final Color color;
   final VoidCallback onTap;
 
-  const _DashboardCard({
+  _Tile({
     required this.icon,
     required this.title,
+    required this.subtitle,
     required this.color,
     required this.onTap,
   });
+}
+
+class _DashboardCard extends StatelessWidget {
+  final _Tile tile;
+  const _DashboardCard({required this.tile});
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+
     return InkWell(
-      borderRadius: BorderRadius.circular(12),
-      onTap: onTap,
+      borderRadius: BorderRadius.circular(16),
+      onTap: tile.onTap,
       child: Card(
-        elevation: 1.5,
+        elevation: 2,
+        shadowColor: tile.color.withOpacity(0.2),
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(16),
           side: BorderSide(color: Colors.grey.shade200, width: 1),
         ),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 12),
+        child: Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            gradient: LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                tile.color.withOpacity(0.08),
+                tile.color.withOpacity(0.02),
+              ],
+            ),
+          ),
+          padding: const EdgeInsets.symmetric(vertical: 18, horizontal: 14),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(icon, size: 28, color: color),
-              const SizedBox(height: 10),
-              Text(
-                title,
-                textAlign: TextAlign.center,
-                style: theme.textTheme.bodyMedium?.copyWith(
-                  fontWeight: FontWeight.w600,
-                  color: Colors.grey.shade800,
+              // Icon in a soft circle
+              Container(
+                width: 46,
+                height: 46,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: tile.color.withOpacity(0.15),
                 ),
+                child: Icon(tile.icon, size: 26, color: tile.color),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                tile.title,
+                textAlign: TextAlign.center,
+                style: theme.textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.w700,
+                  color: Colors.grey.shade900,
+                ),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+              const SizedBox(height: 6),
+              Text(
+                tile.subtitle,
+                textAlign: TextAlign.center,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: Colors.grey.shade600,
+                ),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
               ),
             ],
           ),

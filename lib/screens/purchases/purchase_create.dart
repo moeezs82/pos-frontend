@@ -1,6 +1,7 @@
 import 'package:enterprise_pos/api/purchase_service.dart';
 import 'package:enterprise_pos/api/product_service.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
+import 'package:enterprise_pos/providers/branch_provider.dart';
 import 'package:enterprise_pos/widgets/branch_indicator.dart';
 
 // pickers
@@ -421,8 +422,13 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
     final paid = _paid;
     final balance = _balance;
 
+    final isAll = context.watch<BranchProvider>().isAll;
+
     return Scaffold(
-      appBar: AppBar(title: const Text("Create Purchase"), actions: [BranchIndicator(tappable: false),],),
+      appBar: AppBar(
+        title: const Text("Create Purchase"),
+        actions: [BranchIndicator(tappable: false)],
+      ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(12),
         child: Form(
@@ -453,18 +459,20 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
                         ),
                       ),
                       const SizedBox(height: 12),
-                      InkWell(
-                        onTap: _pickBranch,
-                        child: InputDecorator(
-                          decoration: const InputDecoration(
-                            labelText: "Branch",
-                            border: OutlineInputBorder(),
-                          ),
-                          child: Text(
-                            _selectedBranch?['name'] ?? "Select Branch",
+                      if (isAll) ...[
+                        InkWell(
+                          onTap: _pickBranch,
+                          child: InputDecorator(
+                            decoration: const InputDecoration(
+                              labelText: "Branch",
+                              border: OutlineInputBorder(),
+                            ),
+                            child: Text(
+                              _selectedBranch?['name'] ?? "Select Branch",
+                            ),
                           ),
                         ),
-                      ),
+                      ],
                     ],
                   ),
                 ),

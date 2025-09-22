@@ -41,6 +41,7 @@ dependencies:
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
+  msix: ^3.16.12
 
 dev_dependencies:
   flutter_test:
@@ -94,3 +95,17 @@ flutter:
   #
   # For details regarding fonts from package dependencies,
   # see https://flutter.dev/to/font-from-package
+
+
+msix_config:
+  display_name: Enterprise POS
+  publisher_display_name: Moeez Pvt Ltd
+  identity_name: com.moeez.enterprisepos
+  msix_version: 1.0.0.0
+  logo_path: windows/runner/resources/app_icon.ico
+  architecture: x64
+  capabilities: internetClient
+
+  publisher: "CN=Moeez"
+  certificate_path: "D:\\folder-e\\learning\\flutter\\enterprise_pos\\windows\\signing\\moeez_codesign.pfx"
+  certificate_password: "Moeez@123"
