@@ -112,7 +112,10 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
     );
     if (product == null) return;
 
-    final price = double.tryParse(product['price'].toString()) ?? 0.0;
+    final unitCost =
+        double.tryParse(product['cost_price']?.toString() ?? '') ??
+        double.tryParse(product['price']?.toString() ?? '') ??
+        0.0;
 
     setState(() {
       _items.add({
@@ -121,9 +124,8 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
         "cost_price": product['cost_price'],
         "wholesale_price": product['wholesale_price'],
         "quantity": 1,
-        "price": price,
-        // for receiving
-        "received_qty": 1, // if receiveNow on, this will be used
+        "price": unitCost, // <-- use cost_price by default
+        "received_qty": _receiveNow ? 1 : 0,
       });
     });
   }
@@ -132,7 +134,9 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
     final item = _items[index];
 
     final qtyCtl = TextEditingController(text: item['quantity'].toString());
-    final priceCtl = TextEditingController(text: item['cost_price'].toString());
+    final priceCtl = TextEditingController(
+      text: (item['cost_price'] ?? item['price'] ?? 0).toString(),
+    );
     final rcvCtl = TextEditingController(
       text: (item['received_qty'] ?? item['quantity']).toString(),
     );
@@ -304,7 +308,11 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
     final product = await _productService.getProductByBarcode(code);
 
     if (product != null) {
-      final price = double.tryParse(product['price'].toString()) ?? 0.0;
+      final unitCost =
+          double.tryParse(product['cost_price']?.toString() ?? '') ??
+          double.tryParse(product['price']?.toString() ?? '') ??
+          0.0;
+
       setState(() {
         _items.add({
           "product_id": product['id'],
@@ -312,7 +320,7 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
           "cost_price": product['cost_price'],
           "wholesale_price": product['wholesale_price'],
           "quantity": 1,
-          "price": price,
+          "price": unitCost, // <-- use cost_price by default
           "received_qty": _receiveNow ? 1 : 0,
         });
       });
@@ -343,9 +351,19 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
   /* ----------------- submit ----------------- */
 
   Future<void> _submitPurchase() async {
-    if (_selectedBranchId == null || _items.isEmpty) {
+    if (_items.isEmpty) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text("Add at least 1 item")));
+      return;
+    }
+    // Prefer global branch; fallback to local only when global = All
+    final globalBranchId = context.read<BranchProvider>().selectedBranchId;
+    final effectiveBranchId = globalBranchId?.toString() ?? _selectedBranchId;
+
+    if (effectiveBranchId == null || effectiveBranchId.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Branch & at least 1 item required")),
+        const SnackBar(content: Text("Please select a branch (on Home)")),
       );
       return;
     }
@@ -372,7 +390,7 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
           double.tryParse(c.text.trim()) ?? 0.0;
 
       final payload = <String, dynamic>{
-        "branch_id": int.parse(_selectedBranchId!),
+        "branch_id": effectiveBranchId,
         if (_selectedVendorId != null) "vendor_id": _selectedVendorId,
         "discount": toAmount(discountController),
         "tax": toAmount(taxController),
@@ -579,9 +597,13 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
                         final price = i['price'];
                         final cost = i['cost_price'];
                         final rcv = i['received_qty'] ?? 0;
+                        final unitCost =
+                            double.tryParse(i['cost_price']?.toString() ?? '') ??
+                            double.tryParse(i['price']?.toString() ?? '') ??
+                            0.0;
 
                         final subtitle = _receiveNow
-                            ? "Qty: $q | Price: \$$cost | Receive: $rcv"
+                            ? "Qty: $q | Price: \$$price | Receive: $rcv"
                             : "Qty: $q | Price: \$$price";
 
                         return ListTile(
