@@ -37,6 +37,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
 
   bool _submitting = false;
   bool _scannerEnabled = false;
+  bool _autoCashIfEmpty = true;
 
   late ProductService _productService;
 
@@ -317,6 +318,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       ).showSnackBar(const SnackBar(content: Text("Add at least 1 item")));
       return;
     }
+
     // Prefer global branch; fallback to local only when global = All
     final globalBranchId = context.read<BranchProvider>().selectedBranchId;
     final effectiveBranchId = globalBranchId?.toString() ?? _selectedBranchId;
@@ -326,6 +328,28 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         const SnackBar(content: Text("Please select a branch (on Home)")),
       );
       return;
+    }
+
+    // 👇 Recompute total for the fallback payment
+    double subtotal = _items
+        .fold<double>(
+          0,
+          (sum, i) => sum + ((i['quantity'] as num) * (i['price'] as num)),
+        )
+        .toDouble();
+    double discount = double.tryParse(discountController.text.trim()) ?? 0.0;
+    double tax = double.tryParse(taxController.text.trim()) ?? 0.0;
+    double total = (subtotal - discount + tax).clamp(0, double.infinity);
+
+    // 👇 Build payments list to send (may auto-inject cash)
+    final List<Map<String, dynamic>> paymentsToSend =
+        List<Map<String, dynamic>>.from(_payments);
+
+    if (_autoCashIfEmpty && paymentsToSend.isEmpty) {
+      paymentsToSend.add({
+        "amount": total.toStringAsFixed(2),
+        "method": "cash",
+      });
     }
 
     setState(() => _submitting = true);
@@ -343,9 +367,10 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         "items[$i][quantity]": _items[i]['quantity'].toString(),
         "items[$i][price]": _items[i]['price'].toString(),
       },
-      for (int j = 0; j < _payments.length; j++) ...{
-        "payments[$j][amount]": _payments[j]['amount'].toString(),
-        "payments[$j][method]": _payments[j]['method'].toString(),
+      // 👇 Use paymentsToSend instead of _payments
+      for (int j = 0; j < paymentsToSend.length; j++) ...{
+        "payments[$j][amount]": paymentsToSend[j]['amount'].toString(),
+        "payments[$j][method]": paymentsToSend[j]['method'].toString(),
       },
     };
 
@@ -574,6 +599,16 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
                         style: TextStyle(fontWeight: FontWeight.bold),
                       ),
                       const Divider(),
+                      // 👇 NEW: Auto-cash toggle
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text("Auto-cash if no payment"),
+                        subtitle: const Text(
+                          "When ON, sends full invoice total as CASH if you add no payments.",
+                        ),
+                        value: _autoCashIfEmpty,
+                        onChanged: (v) => setState(() => _autoCashIfEmpty = v),
+                      ),
                       if (_payments.isEmpty) const Text("No payments yet"),
                       ..._payments.asMap().entries.map((entry) {
                         final idx = entry.key;

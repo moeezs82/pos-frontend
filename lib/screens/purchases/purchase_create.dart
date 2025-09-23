@@ -45,6 +45,8 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
   // receive now
   bool _receiveNow = true; // default ON for convenience
 
+  bool _autoCashIfEmpty = true;
+
   // services
   late ProductService _productService;
   late PurchaseService _purchaseService;
@@ -389,6 +391,19 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
       double toAmount(TextEditingController c) =>
           double.tryParse(c.text.trim()) ?? 0.0;
 
+      // 👇 NEW: build payments with optional auto-cash
+      final List<Map<String, dynamic>> paymentsToSend =
+          List<Map<String, dynamic>>.from(_payments);
+
+      if (_autoCashIfEmpty && paymentsToSend.isEmpty) {
+        // use current computed total; clamp to non-negative just in case
+        final fullTotal = _total < 0 ? 0.0 : _total;
+        paymentsToSend.add({
+          "amount": fullTotal, // keep as number (double)
+          "method": "cash",
+        });
+      }
+
       final payload = <String, dynamic>{
         "branch_id": effectiveBranchId,
         if (_selectedVendorId != null) "vendor_id": _selectedVendorId,
@@ -396,7 +411,7 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
         "tax": toAmount(taxController),
         "receive_now": _receiveNow,
         "items": itemsPayload,
-        if (_payments.isNotEmpty) "payments": _payments,
+        if (paymentsToSend.isNotEmpty) "payments": paymentsToSend,
       };
 
       await _purchaseService.createPurchase(payload);
@@ -598,7 +613,9 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
                         final cost = i['cost_price'];
                         final rcv = i['received_qty'] ?? 0;
                         final unitCost =
-                            double.tryParse(i['cost_price']?.toString() ?? '') ??
+                            double.tryParse(
+                              i['cost_price']?.toString() ?? '',
+                            ) ??
                             double.tryParse(i['price']?.toString() ?? '') ??
                             0.0;
 
@@ -647,6 +664,16 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
                         style: TextStyle(fontWeight: FontWeight.bold),
                       ),
                       const Divider(),
+                      //  Auto-cash toggle
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text("Auto-cash if no payment"),
+                        subtitle: const Text(
+                          "When ON, sends full invoice total as CASH if you add no payments.",
+                        ),
+                        value: _autoCashIfEmpty,
+                        onChanged: (v) => setState(() => _autoCashIfEmpty = v),
+                      ),
                       if (_payments.isEmpty) const Text("No payments yet"),
                       ..._payments.asMap().entries.map((entry) {
                         final idx = entry.key;
