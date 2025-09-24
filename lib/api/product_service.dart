@@ -9,10 +9,12 @@ class ProductService {
   Future<Map<String, dynamic>> getProducts({
     int page = 1,
     String? search,
+    int? vendorId,
   }) async {
     final queryParams = {
       "page": page.toString(),
       if (search != null && search.isNotEmpty) "search": search,
+      if (vendorId != null) "vendor_id": vendorId.toString(),
     };
     return await _client.get("/products", query: queryParams);
   }

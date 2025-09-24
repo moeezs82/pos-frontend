@@ -106,14 +106,14 @@ class _ProductsScreenState extends State<ProductsScreen> {
             context,
             MaterialPageRoute(builder: (_) => const ProductFormScreen()),
           );
-          if (result == true) {
+          if (!mounted) return;
+          if (result != null) {
             _fetchProducts(reset: true);
           }
         },
         icon: const Icon(Icons.add),
         label: const Text("Add Product"),
       ),
-
       // 📍 Pagination Bar at Bottom
       bottomNavigationBar: _products.isNotEmpty
           ? Padding(
