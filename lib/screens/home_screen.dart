@@ -1,4 +1,4 @@
-import 'package:enterprise_pos/screens/cashbook_screen.dart';
+import 'package:enterprise_pos/screens/cashbook/cashbook_screen.dart';
 import 'package:enterprise_pos/screens/customers_screen.dart';
 import 'package:enterprise_pos/screens/product_screen.dart';
 import 'package:enterprise_pos/screens/purchases/purchase_claim_screen.dart';

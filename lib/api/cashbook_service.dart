@@ -23,10 +23,10 @@ class CashBookService {
     String? accountId,
     String? branchId,
     String? dateFrom, // "YYYY-MM-DD"
-    String? dateTo,   // "YYYY-MM-DD"
-    String? source,   // sales|purchases
-    String? type,     // receipt|payment|expense|transfer_in|transfer_out
-    String? method,   // cash|card|bank|wallet...
+    String? dateTo, // "YYYY-MM-DD"
+    String? source, // sales|purchases
+    String? type, // receipt|payment|expense|transfer_in|transfer_out
+    String? method, // cash|card|bank|wallet...
     String? amountMin,
     String? amountMax,
     String? search,
@@ -72,15 +72,20 @@ class CashBookService {
   }) async {
     final body = <String, String>{
       if (accountId != null && accountId.isNotEmpty) "account_id": accountId,
-      if ((accountId == null || accountId.isEmpty) && method != null && method.isNotEmpty) "method": method,
+      if ((accountId == null || accountId.isEmpty) &&
+          method != null &&
+          method.isNotEmpty)
+        "method": method,
       "amount": amount,
       if (txnDate != null && txnDate.isNotEmpty) "txn_date": txnDate,
       if (branchId != null && branchId.isNotEmpty) "branch_id": branchId,
       if (reference != null && reference.isNotEmpty) "reference": reference,
       if (note != null && note.isNotEmpty) "note": note,
       if (status.isNotEmpty) "status": status,
-      if (counterpartyType != null && counterpartyType.isNotEmpty) "counterparty_type": counterpartyType,
-      if (counterpartyId != null && counterpartyId.isNotEmpty) "counterparty_id": counterpartyId,
+      if (counterpartyType != null && counterpartyType.isNotEmpty)
+        "counterparty_type": counterpartyType,
+      if (counterpartyId != null && counterpartyId.isNotEmpty)
+        "counterparty_id": counterpartyId,
     };
 
     final res = await _client.post("/cashbook/expense", body: body);
@@ -90,15 +95,56 @@ class CashBookService {
     throw Exception(res["message"] ?? "Failed to create expense");
   }
 
+  Future<Map<String, dynamic>> getCashBookDailySummary({
+    int page = 1,
+    int perPage = 30,
+    String status = "approved",
+    String? accountId,
+    String? branchId,
+    String? dateFrom, // "YYYY-MM-DD"
+    String? dateTo, // "YYYY-MM-DD"
+    String? source, // sales|purchases
+    String? type, // keep null for daily usually
+    String? method, // cash|card|bank|wallet...
+    String? amountMin,
+    String? amountMax,
+    String? search,
+  }) async {
+    final q = <String, String>{
+      "page": page.toString(),
+      "per_page": perPage.toString(),
+      "status": status,
+      if (accountId != null && accountId.isNotEmpty) "account_id": accountId,
+      if (branchId != null && branchId.isNotEmpty) "branch_id": branchId,
+      if (dateFrom != null && dateFrom.isNotEmpty) "date_from": dateFrom,
+      if (dateTo != null && dateTo.isNotEmpty) "date_to": dateTo,
+      if (source != null && source.isNotEmpty) "source": source,
+      if (type != null && type.isNotEmpty) "type": type,
+      if (method != null && method.isNotEmpty) "method": method,
+      if (amountMin != null && amountMin.isNotEmpty) "amount_min": amountMin,
+      if (amountMax != null && amountMax.isNotEmpty) "amount_max": amountMax,
+      if (search != null && search.isNotEmpty) "search": search,
+    };
+
+    final res = await _client.get("/cashbook/daily-summary", query: q);
+    if (res["success"] == true) {
+      return res;
+    }
+    throw Exception(res["message"] ?? "Failed to load cash book daily summary");
+  }
+
   /// OPTIONAL helper if you expose /accounts
   /// Expecting: GET /accounts?is_active=1 -> { success:true, data: [ {id,name,code}, ... ] }
   Future<List<Map<String, dynamic>>> getAccounts({bool isActive = true}) async {
-    final res = await _client.get("/accounts", query: {
-      if (isActive) "is_active": "1",
-    });
+    final res = await _client.get(
+      "/accounts",
+      query: {if (isActive) "is_active": "1"},
+    );
     if (res["success"] == true) {
       final list = (res["data"] as List?) ?? const [];
-      return list.map<Map<String, dynamic>>((e) => Map<String, dynamic>.from(e)).toList();
+      return list
+          .map<Map<String, dynamic>>((e) => Map<String, dynamic>.from(e))
+          .toList();
     }
     return [];
   }
