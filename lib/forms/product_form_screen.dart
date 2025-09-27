@@ -9,8 +9,9 @@ import '../providers/branch_provider.dart';
 
 class ProductFormScreen extends StatefulWidget {
   final Map<String, dynamic>? product;
+  final int? vendorId;
 
-  const ProductFormScreen({super.key, this.product});
+  const ProductFormScreen({super.key, this.product, this.vendorId});
 
   @override
   State<ProductFormScreen> createState() => _ProductFormScreenState();
@@ -85,10 +86,20 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
       if (p['vendor'] is Map<String, dynamic>) {
         _selectedVendor = {
           'id': p['vendor']['id'],
-          'name': p['vendor']['name'],
+          'name': p['vendor']['first_name'],
         };
         _selectedVendorId = _selectedVendor?['id'] as int?;
       }
+    }
+
+    // If a vendorId is passed to the screen, lock it in:
+    if (widget.vendorId != null) {
+      _selectedVendorId = widget.vendorId;
+      // Optional: if you have vendor details, set a name; fallback to id-only label
+      _selectedVendor = {
+        'id': widget.vendorId,
+        'name': 'Vendor #${widget.vendorId}',
+      };
     }
 
     _loadInitialData();
@@ -137,8 +148,14 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
   }
 
   String _generateSKU() {
-    final ts = DateTime.now().millisecondsSinceEpoch.toRadixString(36).toUpperCase();
-    final r = Random().nextInt(36 * 36 * 36).toRadixString(36).padLeft(3, '0').toUpperCase();
+    final ts = DateTime.now().millisecondsSinceEpoch
+        .toRadixString(36)
+        .toUpperCase();
+    final r = Random()
+        .nextInt(36 * 36 * 36)
+        .toRadixString(36)
+        .padLeft(3, '0')
+        .toUpperCase();
     return "SKU-$ts$r";
   }
 
@@ -158,7 +175,10 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
           decoration: InputDecoration(hintText: "$type Name"),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancel")),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text("Cancel"),
+          ),
           ElevatedButton(
             onPressed: () => Navigator.pop(ctx, controller.text.trim()),
             child: const Text("Add"),
@@ -182,14 +202,30 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            TextField(controller: nameController, decoration: const InputDecoration(labelText: "Name")),
-            TextField(controller: locController, decoration: const InputDecoration(labelText: "Location")),
-            TextField(controller: phoneController, decoration: const InputDecoration(labelText: "Phone")),
-            SwitchListTile(title: const Text("Active"), value: isActive, onChanged: (v) => isActive = v),
+            TextField(
+              controller: nameController,
+              decoration: const InputDecoration(labelText: "Name"),
+            ),
+            TextField(
+              controller: locController,
+              decoration: const InputDecoration(labelText: "Location"),
+            ),
+            TextField(
+              controller: phoneController,
+              decoration: const InputDecoration(labelText: "Phone"),
+            ),
+            SwitchListTile(
+              title: const Text("Active"),
+              value: isActive,
+              onChanged: (v) => isActive = v,
+            ),
           ],
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancel")),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text("Cancel"),
+          ),
           ElevatedButton(
             onPressed: () => Navigator.pop(ctx, {
               "name": nameController.text,
@@ -210,7 +246,9 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
         final bp = Provider.of<BranchProvider>(context, listen: false);
         if (_isAllBranchesSelected(bp)) {
           _visibleBranches.add(newBranch);
-          _branchStockControllers[newBranch['id']] = TextEditingController(text: "0");
+          _branchStockControllers[newBranch['id']] = TextEditingController(
+            text: "0",
+          );
         }
       });
     }
@@ -239,7 +277,8 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
     setState(() => _loading = true);
 
     final branchStocks = _visibleBranches.map((b) {
-      final qty = double.tryParse(_branchStockControllers[b['id']]?.text ?? "0") ?? 0.0;
+      final qty =
+          double.tryParse(_branchStockControllers[b['id']]?.text ?? "0") ?? 0.0;
       return {"branch_id": b['id'], "quantity": qty};
     }).toList();
 
@@ -276,7 +315,9 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
       }
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text("Error: $e")));
     }
 
     setState(() => _loading = false);
@@ -287,6 +328,20 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
     final bp = Provider.of<BranchProvider>(context); // listen for UI toggles
     final showAll = _isAllBranchesSelected(bp);
     final activeId = _activeBranchId(bp);
+
+    final fixedVendorId = widget.vendorId; // lock if provided to screen
+    final productVendorId =
+        widget.product?['vendor_id']; // vendor from existing product
+    final showReadOnly =
+        _isEdit || fixedVendorId != null; // read-only on edit OR when locked
+    final effectiveVendorId =
+        fixedVendorId ?? productVendorId ?? _selectedVendorId;
+    final effectiveVendorName =
+        _selectedVendor?['name'] ??
+        widget.product?['vendor']?['first_name'] ??
+        (effectiveVendorId != null
+            ? 'Vendor #$effectiveVendorId'
+            : 'None selected');
 
     return Scaffold(
       appBar: AppBar(title: Text(_isEdit ? "Edit Product" : "Add Product")),
@@ -303,7 +358,8 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
                   border: const OutlineInputBorder(),
                   suffixIcon: IconButton(
                     icon: const Icon(Icons.qr_code),
-                    onPressed: () => setState(() => _skuController.text = _generateSKU()),
+                    onPressed: () =>
+                        setState(() => _skuController.text = _generateSKU()),
                   ),
                 ),
                 validator: (v) => v!.isEmpty ? "Required" : null,
@@ -317,7 +373,9 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
                   border: const OutlineInputBorder(),
                   suffixIcon: IconButton(
                     icon: const Icon(Icons.qr_code),
-                    onPressed: () => setState(() => _barcodeController.text = _generateBarcode()),
+                    onPressed: () => setState(
+                      () => _barcodeController.text = _generateBarcode(),
+                    ),
                   ),
                 ),
               ),
@@ -325,7 +383,10 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
 
               TextFormField(
                 controller: _nameController,
-                decoration: const InputDecoration(labelText: "Name", border: OutlineInputBorder()),
+                decoration: const InputDecoration(
+                  labelText: "Name",
+                  border: OutlineInputBorder(),
+                ),
                 validator: (v) => v!.isEmpty ? "Required" : null,
               ),
               const SizedBox(height: 12),
@@ -333,7 +394,10 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
               TextFormField(
                 controller: _descController,
                 maxLines: 3,
-                decoration: const InputDecoration(labelText: "Description", border: OutlineInputBorder()),
+                decoration: const InputDecoration(
+                  labelText: "Description",
+                  border: OutlineInputBorder(),
+                ),
               ),
               const SizedBox(height: 12),
 
@@ -342,14 +406,27 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
                 children: [
                   Expanded(
                     child: DropdownButtonFormField<int>(
-                      value: (_selectedCategoryId != null && _categories.any((c) => c['id'] == _selectedCategoryId))
+                      value:
+                          (_selectedCategoryId != null &&
+                              _categories.any(
+                                (c) => c['id'] == _selectedCategoryId,
+                              ))
                           ? _selectedCategoryId
                           : null,
-                      decoration: const InputDecoration(labelText: "Category", border: OutlineInputBorder()),
+                      decoration: const InputDecoration(
+                        labelText: "Category",
+                        border: OutlineInputBorder(),
+                      ),
                       items: _categories
-                          .map((c) => DropdownMenuItem<int>(value: c['id'], child: Text(c['name'])))
+                          .map(
+                            (c) => DropdownMenuItem<int>(
+                              value: c['id'],
+                              child: Text(c['name']),
+                            ),
+                          )
                           .toList(),
-                      onChanged: (val) => setState(() => _selectedCategoryId = val),
+                      onChanged: (val) =>
+                          setState(() => _selectedCategoryId = val),
                     ),
                   ),
                   IconButton(
@@ -357,7 +434,9 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
                     onPressed: () async {
                       final name = await _showAddDialog("Category");
                       if (name != null && name.isNotEmpty) {
-                        final newCat = await _commonService.createCategory(name);
+                        final newCat = await _commonService.createCategory(
+                          name,
+                        );
                         setState(() {
                           _categories.add(newCat);
                           _selectedCategoryId = newCat['id'];
@@ -374,14 +453,25 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
                 children: [
                   Expanded(
                     child: DropdownButtonFormField<int>(
-                      value: (_selectedBrandId != null && _brands.any((b) => b['id'] == _selectedBrandId))
+                      value:
+                          (_selectedBrandId != null &&
+                              _brands.any((b) => b['id'] == _selectedBrandId))
                           ? _selectedBrandId
                           : null,
-                      decoration: const InputDecoration(labelText: "Brand", border: OutlineInputBorder()),
+                      decoration: const InputDecoration(
+                        labelText: "Brand",
+                        border: OutlineInputBorder(),
+                      ),
                       items: _brands
-                          .map((b) => DropdownMenuItem<int>(value: b['id'], child: Text(b['name'])))
+                          .map(
+                            (b) => DropdownMenuItem<int>(
+                              value: b['id'],
+                              child: Text(b['name']),
+                            ),
+                          )
                           .toList(),
-                      onChanged: (val) => setState(() => _selectedBrandId = val),
+                      onChanged: (val) =>
+                          setState(() => _selectedBrandId = val),
                     ),
                   ),
                   IconButton(
@@ -402,54 +492,82 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
               const SizedBox(height: 12),
 
               // Vendor (optional)
-              ListTile(
-                contentPadding: const EdgeInsets.symmetric(horizontal: 8),
-                title: const Text("Vendor (optional)"),
-                subtitle: Text(_selectedVendor?['first_name']?.toString() ?? 'None selected'),
-                trailing: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (_selectedVendorId != null)
-                      IconButton(
-                        tooltip: "Clear",
-                        onPressed: () => setState(() {
-                          _selectedVendor = null;
-                          _selectedVendorId = null;
-                        }),
-                        icon: const Icon(Icons.clear),
-                      ),
-                    ElevatedButton.icon(
-                      icon: const Icon(Icons.store),
-                      label: Text(_selectedVendorId == null ? "Pick" : "Change"),
-                      onPressed: _pickVendor,
-                    ),
-                  ],
+              // --- Vendor UI ---
+              if (showReadOnly) ...[
+                // Read-only tile, no picker, no clear
+                ListTile(
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+                  title: const Text("Vendor"),
+                  subtitle: Text("Vendor Selected"),
+                  trailing: const Icon(Icons.lock),
                 ),
-              ),
-              const SizedBox(height: 12),
+              ] else ...[
+                // Picker visible only on create AND when no fixed vendorId is passed
+                ListTile(
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+                  title: const Text("Vendor (optional)"),
+                  subtitle: Text(
+                    _selectedVendor?['name']?.toString() ?? 'None selected',
+                  ),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (_selectedVendorId != null)
+                        IconButton(
+                          tooltip: "Clear",
+                          onPressed: () => setState(() {
+                            _selectedVendor = null;
+                            _selectedVendorId = null;
+                          }),
+                          icon: const Icon(Icons.clear),
+                        ),
+                      ElevatedButton.icon(
+                        icon: const Icon(Icons.store),
+                        label: Text(
+                          _selectedVendorId == null ? "Pick" : "Change",
+                        ),
+                        onPressed: _pickVendor,
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
+              ],
 
               TextFormField(
                 controller: _priceController,
                 keyboardType: TextInputType.number,
-                decoration: const InputDecoration(labelText: "Price", border: OutlineInputBorder()),
+                decoration: const InputDecoration(
+                  labelText: "Price",
+                  border: OutlineInputBorder(),
+                ),
               ),
               const SizedBox(height: 12),
               TextFormField(
                 controller: _costPriceController,
                 keyboardType: TextInputType.number,
-                decoration: const InputDecoration(labelText: "Cost Price", border: OutlineInputBorder()),
+                decoration: const InputDecoration(
+                  labelText: "Cost Price",
+                  border: OutlineInputBorder(),
+                ),
               ),
               const SizedBox(height: 12),
               TextFormField(
                 controller: _wholesalePriceController,
                 keyboardType: TextInputType.number,
-                decoration: const InputDecoration(labelText: "Wholesale Price", border: OutlineInputBorder()),
+                decoration: const InputDecoration(
+                  labelText: "Wholesale Price",
+                  border: OutlineInputBorder(),
+                ),
               ),
               const SizedBox(height: 12),
               TextFormField(
                 controller: _taxRateController,
                 keyboardType: TextInputType.number,
-                decoration: const InputDecoration(labelText: "Tax Rate (%)", border: OutlineInputBorder()),
+                decoration: const InputDecoration(
+                  labelText: "Tax Rate (%)",
+                  border: OutlineInputBorder(),
+                ),
               ),
               const SizedBox(height: 12),
               SwitchListTile(
@@ -460,7 +578,10 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
               TextFormField(
                 controller: _discountController,
                 keyboardType: TextInputType.number,
-                decoration: const InputDecoration(labelText: "Discount (%)", border: OutlineInputBorder()),
+                decoration: const InputDecoration(
+                  labelText: "Discount (%)",
+                  border: OutlineInputBorder(),
+                ),
               ),
               const SizedBox(height: 12),
 
@@ -468,7 +589,10 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  const Text("Branch Stocks", style: TextStyle(fontWeight: FontWeight.bold)),
+                  const Text(
+                    "Branch Stocks",
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
                   if (!_isEdit && showAll)
                     IconButton(
                       icon: const Icon(Icons.add_business, color: Colors.green),
@@ -480,12 +604,17 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
               if (_isEdit)
                 Column(
                   children: (() {
-                    final stocks = (widget.product?['stocks'] as List<dynamic>? ?? []);
+                    final stocks =
+                        (widget.product?['stocks'] as List<dynamic>? ?? []);
                     final filtered = showAll
                         ? stocks
-                        : stocks.where((s) => s['branch_id'] == activeId).toList();
+                        : stocks
+                              .where((s) => s['branch_id'] == activeId)
+                              .toList();
                     return filtered.map((stock) {
-                      final branchName = stock['branch']?['name'] ?? "Branch ${stock['branch_id']}";
+                      final branchName =
+                          stock['branch']?['name'] ??
+                          "Branch ${stock['branch_id']}";
                       final qty = stock['quantity'] ?? 0;
                       return Padding(
                         padding: const EdgeInsets.symmetric(vertical: 6),
@@ -495,7 +624,10 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
                             side: BorderSide(color: Colors.grey.shade300),
                           ),
                           title: Text(branchName),
-                          trailing: Text("Qty: $qty", style: const TextStyle(fontWeight: FontWeight.bold)),
+                          trailing: Text(
+                            "Qty: $qty",
+                            style: const TextStyle(fontWeight: FontWeight.bold),
+                          ),
                         ),
                       );
                     }).toList();
@@ -533,7 +665,9 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
                     ? const Center(child: CircularProgressIndicator())
                     : ElevatedButton.icon(
                         icon: Icon(_isEdit ? Icons.save : Icons.add),
-                        label: Text(_isEdit ? "Update Product" : "Create Product"),
+                        label: Text(
+                          _isEdit ? "Update Product" : "Create Product",
+                        ),
                         onPressed: _save,
                       ),
               ),

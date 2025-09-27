@@ -3,6 +3,7 @@ import 'package:enterprise_pos/api/common_service.dart';
 import 'package:enterprise_pos/api/cashbook_service.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/providers/branch_provider.dart';
+import 'package:enterprise_pos/screens/cashbook/widgets/cashbook_daily_summary_screen.dart';
 import 'package:enterprise_pos/screens/cashbook/widgets/cb_date_range_bar.dart';
 import 'package:enterprise_pos/screens/cashbook/widgets/cb_daily_list.dart';
 import 'package:enterprise_pos/screens/cashbook/widgets/cb_filters.dart';
@@ -266,9 +267,8 @@ class _CashBookScreenState extends State<CashBookScreen> {
           ),
         ],
       ),
-      floatingActionButton: _dailyMode
-          ? null
-          : FloatingActionButton.extended(
+      floatingActionButton: 
+      FloatingActionButton.extended(
               onPressed: _addExpenseDialog,
               icon: const Icon(Icons.remove_circle),
               label: const Text("Add Expense"),
@@ -343,7 +343,7 @@ class _CashBookScreenState extends State<CashBookScreen> {
             child: _loading
                 ? const Center(child: CircularProgressIndicator())
                 : (_dailyMode
-                      ? CBDailyList(rows: _dailyRows)
+                      ? CashbookDailySummaryScreen(rows: _dailyRows, fetch: () async { await _fetchDailySummary(); },)
                       : CBTxnList(txns: _txns)),
           ),
 

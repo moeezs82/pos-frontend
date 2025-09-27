@@ -106,7 +106,8 @@ class _VendorsScreenState extends State<VendorsScreen> {
             context,
             MaterialPageRoute(builder: (_) => const VendorFormScreen()),
           );
-          if (result == true) {
+          if (!mounted) return;
+          if (result != null) {
             _fetchVendors(reset: true);
           }
         },

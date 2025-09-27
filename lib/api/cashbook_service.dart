@@ -148,4 +148,49 @@ class CashBookService {
     }
     return [];
   }
+
+  /// GET /cashbook/day-details
+  /// Returns:
+  /// {
+  ///   "success": true,
+  ///   "data": {
+  ///     "date": "YYYY-MM-DD",
+  ///     "opening": "0.00",
+  ///     "closing": "0.00",
+  ///     "totals": { "in":"", "out":"", "expense":"", "net":"" },
+  ///     "rows": [ ... ],
+  ///     "pagination": { ... }
+  ///   }
+  /// }
+  Future<Map<String, dynamic>> getCashBookDayDetails({
+    required String date, // "YYYY-MM-DD"
+    String? accountId,
+    String? branchId,
+    String? type,
+    String? method,
+    String? partyKind, // customer|vendor|none
+    String? search,
+    int page = 1,
+    int perPage = 100,
+    String sort = "created_at",
+    String order = "asc",
+  }) async {
+    final q = <String, String>{
+      "date": date,
+      "page": page.toString(),
+      "per_page": perPage.toString(),
+      "sort": sort,
+      "order": order,
+      if (accountId != null && accountId.isNotEmpty) "account_id": accountId,
+      if (branchId != null && branchId.isNotEmpty) "branch_id": branchId,
+      if (type != null && type.isNotEmpty) "type": type,
+      if (method != null && method.isNotEmpty) "method": method,
+      if (partyKind != null && partyKind.isNotEmpty) "party_kind": partyKind,
+      if (search != null && search.isNotEmpty) "search": search,
+    };
+
+    final res = await _client.get("/cashbook/day-details", query: q);
+    if (res["success"] == true) return Map<String, dynamic>.from(res["data"]);
+    throw Exception(res["message"] ?? "Failed to load cashbook day details");
+  }
 }

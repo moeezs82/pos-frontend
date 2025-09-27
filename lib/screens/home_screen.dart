@@ -6,6 +6,7 @@ import 'package:enterprise_pos/screens/sales/sale_returns_screen.dart';
 import 'package:enterprise_pos/screens/sales/sale_screen.dart';
 import 'package:enterprise_pos/screens/purchases/purchases_screen.dart';
 import 'package:enterprise_pos/screens/stock_screen.dart';
+import 'package:enterprise_pos/screens/users_screen.dart';
 import 'package:enterprise_pos/screens/vendors_screen.dart';
 import 'package:enterprise_pos/widgets/branch_select_sheet.dart';
 import 'package:flutter/material.dart';
@@ -110,6 +111,14 @@ class HomeScreen extends StatelessWidget {
         color: Colors.orange,
         onTap: () => Navigator.push(
           context, MaterialPageRoute(builder: (_) => const VendorsScreen())),
+      ),
+      _Tile(
+        icon: Icons.groups_2,
+        title: "Users",
+        subtitle: "App Users / Salesmen",
+        color: Colors.orange,
+        onTap: () => Navigator.push(
+          context, MaterialPageRoute(builder: (_) => const UsersScreen())),
       ),
       _Tile(
         icon: Icons.bar_chart,

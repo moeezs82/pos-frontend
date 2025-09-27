@@ -37,9 +37,34 @@ class ProductService {
   }
 
   /// Get product by barcode
-  Future<Map<String, dynamic>?> getProductByBarcode(String barcode) async {
-    final res = await _client.get("/products/by-barcode/$barcode");
-    return res["data"];
+  // Future<Map<String, dynamic>?> getProductByBarcode(String barcode) async {
+  //   final res = await _client.get("/products/by-barcode/$barcode");
+  //   return res["data"];
+  // }
+
+  Future<Map<String, dynamic>?> getProductByBarcode(
+    String barcode, {
+    int? vendorId,
+  }) async {
+    final safeBarcode = Uri.encodeComponent(barcode.trim());
+    final path = vendorId != null
+        ? "/products/by-barcode/$safeBarcode/$vendorId"
+        : "/products/by-barcode/$safeBarcode";
+
+    try {
+      final res = await _client.get(path);
+      final data = res["data"];
+      if (data is Map) {
+        return Map<String, dynamic>.from(data);
+      }
+      return null;
+    } catch (e) {
+      // If your ApiClient throws typed errors with status codes, you can
+      // check for 404 here and return null. Otherwise, just swallow and return null.
+      // Example:
+      // if (e is ApiError && e.statusCode == 404) return null;
+      return null;
+    }
   }
 
   /// Delete product

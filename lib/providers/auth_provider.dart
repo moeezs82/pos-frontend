@@ -21,7 +21,6 @@ class AuthProvider with ChangeNotifier {
 
   Future<bool> login(String email, String password) async {
     try {
-
       final data = await auth.login(email, password);
       _token = data['data']['token'];
       _user = data['data']['user'];
@@ -43,12 +42,8 @@ class AuthProvider with ChangeNotifier {
     }
   }
 
-  Future<void> logout() async {
-    if (_token != null) {
-      final authWithToken = AuthService(token: token);
-      await authWithToken.logout();
-    }
-
+  /// Local-only, no server call. Use this for 401 auto sign-out.
+  Future<void> forceLogout() async {
     _token = null;
     _user = null;
 
@@ -57,6 +52,19 @@ class AuthProvider with ChangeNotifier {
     await prefs.remove('user');
 
     notifyListeners();
+  }
+
+  Future<void> logout() async {
+    try {
+      if (_token != null) {
+        final authWithToken = AuthService(token: _token!);
+        await authWithToken.logout(); // best-effort
+      }
+    } catch (_) {
+      // ignore – still log out locally
+    } finally {
+      await forceLogout();
+    }
   }
 
   Future<void> tryAutoLogin() async {

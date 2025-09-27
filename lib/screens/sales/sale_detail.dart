@@ -1,13 +1,18 @@
-import 'dart:convert';
 import 'package:enterprise_pos/api/core/api_client.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/widgets/branch_indicator.dart';
 import 'package:enterprise_pos/widgets/product_picker_sheet.dart';
+import 'package:enterprise_pos/widgets/vendor_picker_sheet.dart';
 import 'package:flutter/material.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import 'package:provider/provider.dart';
+
+// parts
+import 'package:enterprise_pos/screens/sales/parts/sale_items_section.dart';
+import 'package:enterprise_pos/screens/sales/parts/sale_payments_section.dart';
+import 'package:enterprise_pos/screens/sales/parts/sale_totals_editable.dart';
 
 class SaleDetailScreen extends StatefulWidget {
   final int saleId;
@@ -20,7 +25,15 @@ class SaleDetailScreen extends StatefulWidget {
 class _SaleDetailScreenState extends State<SaleDetailScreen> {
   Map<String, dynamic>? _sale;
   bool _loading = true;
-  bool _updated = false; // track if something changed
+  bool _updated = false;
+
+  // optional vendor filter for add-item
+  Map<String, dynamic>? _selectedVendor;
+  int? _selectedVendorId;
+
+  // controllers for inline edit (filled from _sale on fetch)
+  final discountCtl = TextEditingController();
+  final taxCtl = TextEditingController();
 
   ApiClient get _api =>
       ApiClient(token: Provider.of<AuthProvider>(context, listen: false).token);
@@ -31,7 +44,14 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
     _fetchSale();
   }
 
-  /* ====================== Data Fetch ====================== */
+  @override
+  void dispose() {
+    discountCtl.dispose();
+    taxCtl.dispose();
+    super.dispose();
+  }
+
+  /* ====================== Data ====================== */
 
   Future<void> _fetchSale() async {
     setState(() => _loading = true);
@@ -40,6 +60,10 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
       if (!mounted) return;
       setState(() {
         _sale = res['data'];
+        _selectedVendorId = _sale?['vendor_id'];
+        // seed controllers
+        discountCtl.text = (_sale?['discount'] ?? 0).toString();
+        taxCtl.text = (_sale?['tax'] ?? 0).toString();
         _loading = false;
       });
     } catch (e) {
@@ -51,12 +75,35 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
     }
   }
 
+  Future<void> _updateDiscountTax() async {
+    // push only discount & tax
+    try {
+      await _api.put(
+        "/sales/${widget.saleId}",
+        body: {
+          "discount": double.tryParse(discountCtl.text.trim()) ?? 0.0,
+          "tax": double.tryParse(taxCtl.text.trim()) ?? 0.0,
+        },
+      );
+      if (!mounted) return;
+      _updated = true;
+      await _fetchSale();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Updated discount/tax.")),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Update failed: $e")),
+      );
+    }
+  }
+
   /* ====================== Payments ====================== */
 
   Future<void> _addPayment() async {
     final amountController = TextEditingController();
     String method = "cash";
-
     await showDialog(
       context: context,
       builder: (_) => AlertDialog(
@@ -208,21 +255,40 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
 
   /* ====================== Items ====================== */
 
+  Future<void> _pickVendor() async {
+    final token = Provider.of<AuthProvider>(context, listen: false).token!;
+    final vendor = await showModalBottomSheet<Map<String, dynamic>?>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => SizedBox(
+        height: MediaQuery.of(context).size.height * 0.85,
+        child: VendorPickerSheet(token: token),
+      ),
+    );
+    if (!mounted) return;
+    setState(() {
+      if (vendor == null) {
+        _selectedVendor = null;
+        _selectedVendorId = null;
+      } else {
+        _selectedVendor = vendor;
+        _selectedVendorId = vendor['id'] as int?;
+      }
+    });
+  }
+
   Future<void> _addItem() async {
     final token = Provider.of<AuthProvider>(context, listen: false).token!;
-
-    // Pick a product
     final product = await showModalBottomSheet<Map<String, dynamic>?>(
       context: context,
       isScrollControlled: true,
       builder: (_) => SizedBox(
         height: MediaQuery.of(context).size.height * 0.85,
-        child: ProductPickerSheet(token: token),
+        child: ProductPickerSheet(token: token, vendorId: _selectedVendorId),
       ),
     );
     if (product == null) return;
 
-    // Confirm qty & price
     final qtyCtl = TextEditingController(text: "1");
     final priceCtl = TextEditingController(text: (product['price'] ?? 0).toString());
 
@@ -384,17 +450,18 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
           pw.Text("Invoice No: ${_sale!['invoice_no']}"),
           pw.Text("Date: ${_sale!['created_at'].toString().substring(0, 10)}"),
           pw.SizedBox(height: 10),
-
+          pw.Text("Salesman: ${_sale!['salesman']?['name'] ?? "-"}"),
+          pw.SizedBox(height: 10),
+          pw.Text("Vendor: ${_sale!['vendor']?['first_name'] ?? "No Vendor"} ${_sale!['vendor']?['last_name'] ?? ""}"),
+          pw.SizedBox(height: 10),
           pw.Text("Customer:", style: pw.TextStyle(fontWeight: pw.FontWeight.bold)),
           pw.Text("${_sale!['customer']?['first_name'] ?? "Walk-in"} ${_sale!['customer']?['last_name'] ?? ""}"),
           pw.Text("Email: ${_sale!['customer']?['email'] ?? ""}"),
           pw.Text("Phone: ${_sale!['customer']?['phone'] ?? ""}"),
           pw.SizedBox(height: 10),
-
           pw.Text("Branch:", style: pw.TextStyle(fontWeight: pw.FontWeight.bold)),
           pw.Text(_sale!['branch']?['name'] ?? "N/A"),
           pw.SizedBox(height: 20),
-
           pw.Text("Items", style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 16)),
           pw.Table.fromTextArray(
             headers: ["Product", "Qty", "Price", "Total"],
@@ -408,7 +475,6 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
                 .toList(),
           ),
           pw.SizedBox(height: 20),
-
           pw.Text("Summary", style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 16)),
           pw.Text("Subtotal: \$${_sale!['subtotal']}"),
           pw.Text("Discount: \$${_sale!['discount']}"),
@@ -423,7 +489,6 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
             ),
           ),
           pw.SizedBox(height: 20),
-
           pw.Text("Payments", style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 16)),
           if (payments.isEmpty) pw.Text("No payments yet"),
           ...payments.map((p) => pw.Text("Method: ${p['method']} | Amount: \$${p['amount']}")),
@@ -454,13 +519,13 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
 
     return WillPopScope(
       onWillPop: () async {
-        Navigator.pop(context, _updated); // send back "true" if updated
+        Navigator.pop(context, _updated);
         return false;
       },
       child: Scaffold(
         appBar: AppBar(
           title: const Text("Sale Detail"),
-          actions: [BranchIndicator(tappable: false)],
+          actions: const [BranchIndicator(tappable: false)],
         ),
         body: _loading
             ? const Center(child: CircularProgressIndicator())
@@ -471,7 +536,7 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        // 📌 Header
+                        // Header
                         Card(
                           elevation: 3,
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -484,6 +549,8 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text("Date: ${_sale!['created_at'].toString().substring(0, 10)}"),
+                                Text("Salesman: ${_sale!['salesman']?['name'] ?? "-"}"),
+                                Text("Vendor: ${_sale!['vendor']?['first_name'] ?? "No Vendor"} ${_sale!['vendor']?['last_name'] ?? ""}"),
                                 Text("Customer: ${_sale!['customer']?['first_name'] ?? "Walk-in"} ${_sale!['customer']?['last_name'] ?? ""}"),
                                 Text("Branch: ${_sale!['branch']?['name']}"),
                                 Text("Status: ${_sale!['status']}"),
@@ -495,123 +562,36 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
 
                         const SizedBox(height: 12),
 
-                        // 📌 Items
-                        Card(
-                          elevation: 2,
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const Padding(
-                                padding: EdgeInsets.all(12),
-                                child: Text("Items", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                              ),
-                              const Divider(height: 1),
-                              ...(_sale!['items'] as List).map((i) => ListTile(
-                                    title: Text(i['product']['name']),
-                                    subtitle: Text("Qty: ${i['quantity']} × \$${i['price']}"),
-                                    trailing: Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        IconButton(icon: const Icon(Icons.edit), onPressed: () => _editItem(i)),
-                                        IconButton(
-                                          icon: const Icon(Icons.delete, color: Colors.red),
-                                          onPressed: () => _deleteItem(i['id'] as int),
-                                        ),
-                                      ],
-                                    ),
-                                  )),
-                              Padding(
-                                padding: const EdgeInsets.all(12.0),
-                                child: OutlinedButton.icon(
-                                  onPressed: _addItem,
-                                  icon: const Icon(Icons.add),
-                                  label: const Text("Add Item"),
-                                ),
-                              ),
-                            ],
-                          ),
+                        // Items section
+                        SaleItemsSection(
+                          sale: _sale!,
+                          onPickVendor: _pickVendor,
+                          selectedVendor: _selectedVendor,
+                          onAddItem: _addItem,
+                          onEditItem: _editItem,
+                          onDeleteItem: _deleteItem,
                         ),
 
                         const SizedBox(height: 12),
 
-                        // 📌 Payments
-                        Card(
-                          elevation: 2,
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const Padding(
-                                padding: EdgeInsets.all(12),
-                                child: Text("Payments", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                              ),
-                              const Divider(height: 1),
-                              if (payments.isEmpty) const ListTile(title: Text("No payments yet")),
-                              ...payments.map((p) => ListTile(
-                                    title: Text("\$${p['amount']}"),
-                                    subtitle: Text("Method: ${p['method']}"),
-                                    trailing: Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        IconButton(icon: const Icon(Icons.edit), onPressed: () => _editPayment(p)),
-                                        IconButton(
-                                          icon: const Icon(Icons.delete, color: Colors.red),
-                                          onPressed: () => _deletePayment(p['id'] as int),
-                                        ),
-                                      ],
-                                    ),
-                                  )),
-                              Padding(
-                                padding: const EdgeInsets.all(12.0),
-                                child: ElevatedButton.icon(
-                                  onPressed: _addPayment,
-                                  icon: const Icon(Icons.add),
-                                  label: const Text("Add Payment"),
-                                ),
-                              ),
-                            ],
-                          ),
+                        // Payments section
+                        SalePaymentsSection(
+                          payments: payments,
+                          onAddPayment: _addPayment,
+                          onEditPayment: _editPayment,
+                          onDeletePayment: _deletePayment,
                         ),
 
                         const SizedBox(height: 12),
 
-                        // 📌 Summary
-                        Card(
-                          elevation: 2,
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                          child: Column(
-                            children: [
-                              ListTile(
-                                title: const Text("Subtotal"),
-                                trailing: Text("\$${_sale!['subtotal']}"),
-                              ),
-                              ListTile(
-                                title: const Text("Discount"),
-                                trailing: Text("-\$${_sale!['discount']}"),
-                              ),
-                              ListTile(
-                                title: const Text("Tax"),
-                                trailing: Text("\$${_sale!['tax']}"),
-                              ),
-                              const Divider(),
-                              ListTile(
-                                title: const Text("Total", style: TextStyle(fontWeight: FontWeight.bold)),
-                                trailing: Text("\$${_sale!['total']}", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
-                              ),
-                              ListTile(
-                                title: const Text("Paid"),
-                                trailing: Text("\$${paid.toStringAsFixed(2)}"),
-                              ),
-                              ListTile(
-                                title: const Text("Remaining"),
-                                trailing: Text(
-                                  "\$${remaining.toStringAsFixed(2)}",
-                                  style: TextStyle(fontWeight: FontWeight.bold, color: balanceColor),
-                                ),
-                              ),
-                            ],
-                          ),
+                        // Summary with inline editable discount/tax
+                        SaleTotalsEditable(
+                          sale: _sale!,
+                          discountController: discountCtl,
+                          taxController: taxCtl,
+                          paid: paid,
+                          balanceColor: balanceColor,
+                          onSave: _updateDiscountTax,
                         ),
                       ],
                     ),

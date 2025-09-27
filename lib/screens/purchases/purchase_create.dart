@@ -30,7 +30,7 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
   int? _selectedVendorId;
 
   // cart & payments
-  final List<Map<String, dynamic>> _items = [];
+  List<Map<String, dynamic>> _items = [];
   final List<Map<String, dynamic>> _payments = [];
 
   // pricing
@@ -95,11 +95,13 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
       setState(() {
         _selectedVendor = null;
         _selectedVendorId = null;
+        _items = [];
       });
     } else {
       setState(() {
         _selectedVendor = vendor;
         _selectedVendorId = vendor['id'] as int?;
+        _items = [];
       });
     }
   }
@@ -110,7 +112,7 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
     final product = await showModalBottomSheet<Map<String, dynamic>>(
       context: context,
       isScrollControlled: true,
-      builder: (_) => ProductPickerSheet(token: _token),
+      builder: (_) => ProductPickerSheet(token: _token, vendorId: _selectedVendorId),
     );
     if (product == null) return;
 

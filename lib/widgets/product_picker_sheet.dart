@@ -5,13 +5,9 @@ import 'package:flutter/material.dart';
 
 class ProductPickerSheet extends StatefulWidget {
   final String token;
-  final int? vendorId; 
+  final int? vendorId;
 
-  const ProductPickerSheet({
-    super.key,
-    required this.token,
-    this.vendorId, 
-  });
+  const ProductPickerSheet({super.key, required this.token, this.vendorId});
 
   @override
   State<ProductPickerSheet> createState() => _ProductPickerSheetState();
@@ -25,18 +21,30 @@ class _ProductPickerSheetState extends State<ProductPickerSheet> {
   String _search = "";
   Timer? _debounce;
 
+  // 🔍 search controller & focus
+  final _searchCtrl = TextEditingController();
+  final _searchFocus = FocusNode();
+
   late ProductService _productService;
 
   @override
   void initState() {
     super.initState();
     _productService = ProductService(token: widget.token);
-    _fetchProducts(page: 1, reset: true);
+
+    // Auto-focus the search once the sheet is rendered
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _searchFocus.requestFocus();
+    });
+
+    _fetchProducts(page: 1, replace: true);
   }
 
   @override
   void dispose() {
     _debounce?.cancel();
+    _searchCtrl.dispose();
+    _searchFocus.dispose();
     super.dispose();
   }
 
@@ -45,19 +53,19 @@ class _ProductPickerSheetState extends State<ProductPickerSheet> {
       context,
       MaterialPageRoute(
         fullscreenDialog: true,
-        builder: (_) => const ProductFormScreen(),
+        builder: (_) => ProductFormScreen(vendorId: widget.vendorId),
       ),
     );
 
     if (created != null && created is Map<String, dynamic>) {
-      // Optimistically insert on top and return it
+      if (!mounted) return;
       setState(() => _products.insert(0, created));
-      // Pop the sheet returning the created product
+      // Immediately return the new product
       Future.microtask(() => Navigator.pop(context, created));
     }
   }
 
-  Future<void> _fetchProducts({int page = 1, bool reset = false}) async {
+  Future<void> _fetchProducts({required int page, bool replace = true}) async {
     if (_loading) return;
     setState(() => _loading = true);
 
@@ -65,64 +73,51 @@ class _ProductPickerSheetState extends State<ProductPickerSheet> {
       final data = await _productService.getProducts(
         page: page,
         search: _search,
-        vendorId: widget.vendorId, // ⬅️ pass vendor filter
+        vendorId: widget.vendorId,
       );
 
-      // ==== Robust parsing (handles multiple shapes) ====
-      // Expected possibilities:
-      //  A) { data: { products: { data: [...], current_page, last_page } } }
-      //  B) { data: [{ products: [...], current_page, last_page }] }
-      //  C) { products: { data: [...], current_page, last_page } }
-      //  D) { products: [...], current_page, last_page }
-      //  E) { data: [...]} (already the list)
-      //  F) Flat list [...]
+      // ... your flexible parsing (unchanged) ...
       List<Map<String, dynamic>> newProducts = [];
       int currentPage = 1;
       int lastPage = 1;
 
       dynamic root = data['data'] ?? data;
+      if (root is List && root.isNotEmpty) root = root.first;
 
-      // If root is a list, pick first object that has products or treat as products
-      if (root is List && root.isNotEmpty) {
-        // e.g. case B
-        root = root.first;
-      }
-
-      dynamic productsNode;
-      if (root is Map) {
-        productsNode = root['products'] ?? root['data'] ?? root;
-      } else {
-        productsNode = root;
-      }
+      dynamic productsNode = (root is Map)
+          ? (root['products'] ?? root['data'] ?? root)
+          : root;
 
       if (productsNode is Map) {
-        // productsNode might be a paginated object { data: [...], current_page, last_page }
         final listNode = productsNode['data'];
         if (listNode is List) {
           newProducts = listNode.cast<Map<String, dynamic>>();
         }
-        currentPage = (productsNode['current_page'] ?? root['current_page'] ?? 1) as int;
+        currentPage =
+            (productsNode['current_page'] ?? root['current_page'] ?? page)
+                as int;
         lastPage = (productsNode['last_page'] ?? root['last_page'] ?? 1) as int;
       } else if (productsNode is List) {
         newProducts = productsNode.cast<Map<String, dynamic>>();
-        currentPage = (root is Map ? (root['current_page'] ?? 1) : 1) as int;
+        currentPage = page;
         lastPage = (root is Map ? (root['last_page'] ?? 1) : 1) as int;
       }
 
+      if (!mounted) return;
       setState(() {
-        if (reset) {
+        if (replace) {
           _products
             ..clear()
             ..addAll(newProducts);
         } else {
           _products.addAll(newProducts);
         }
-        _page = currentPage;
+        _page = page; // ← trust the requested page
         _lastPage = lastPage;
       });
-    } catch (e) {
-      // Optionally show a toast/snackbar
-      // ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Failed to load products: $e")));
+
+      // Optional: jump list to top when page changes
+      // if (replace && _listCtrl.hasClients) _listCtrl.jumpTo(0);
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -130,119 +125,254 @@ class _ProductPickerSheetState extends State<ProductPickerSheet> {
 
   void _onSearchChanged(String val) {
     _debounce?.cancel();
-    _debounce = Timer(const Duration(milliseconds: 500), () {
+    _debounce = Timer(const Duration(milliseconds: 450), () {
       setState(() => _search = val.trim());
-      _fetchProducts(page: 1, reset: true);
+      _fetchProducts(page: 1, replace: true);
     });
   }
 
   @override
   Widget build(BuildContext context) {
+    final t = Theme.of(context);
+    final bottomInset = MediaQuery.of(context).viewInsets.bottom;
+
+    const visualDense = VisualDensity(horizontal: -2, vertical: -3);
+    const contentDense = EdgeInsets.symmetric(horizontal: 10, vertical: 6);
+
     return SafeArea(
       child: Padding(
-        padding: const EdgeInsets.all(12),
+        padding: EdgeInsets.fromLTRB(12, 8, 12, 8 + bottomInset),
         child: Column(
           children: [
-            // 🔍 Search
-            TextField(
-              decoration: const InputDecoration(
-                prefixIcon: Icon(Icons.search),
-                hintText: "Search product...",
-                border: OutlineInputBorder(),
-              ),
-              onChanged: _onSearchChanged,
+            // Title + Close
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    "Select Product",
+                    style: t.textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(),
+                  iconSize: 20,
+                  icon: const Icon(Icons.close),
+                  onPressed: () => Navigator.pop(context),
+                ),
+              ],
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 6),
 
-            // 📋 Products
+            // 🔍 Search (auto-focused, compact)
+            TextField(
+              controller: _searchCtrl,
+              focusNode: _searchFocus,
+              autofocus: true,
+              textInputAction: TextInputAction.search,
+              onChanged: _onSearchChanged,
+              onSubmitted: (_) => _fetchProducts(page: 1, replace: true),
+              decoration: InputDecoration(
+                prefixIcon: const Icon(Icons.search),
+                suffixIcon: (_searchCtrl.text.isNotEmpty)
+                    ? IconButton(
+                        icon: const Icon(Icons.clear),
+                        onPressed: () {
+                          _searchCtrl.clear();
+                          _onSearchChanged("");
+                        },
+                      )
+                    : null,
+                hintText: "Search product…",
+                isDense: true,
+                border: const OutlineInputBorder(),
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 10,
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+
+            // Quick choices row (no cards; subtle containers)
+            Row(
+              children: [
+                Expanded(
+                  child: _ThinAction(
+                    color: Colors.grey.shade100,
+                    borderColor: t.dividerColor,
+                    icon: const Icon(Icons.clear, color: Colors.red),
+                    label: "No Product",
+                    onTap: () => Navigator.pop(context, null),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _ThinAction(
+                    color: Colors.green.shade50,
+                    borderColor: Colors.green.shade200,
+                    icon: const Icon(
+                      Icons.add_circle_outline,
+                      color: Colors.green,
+                    ),
+                    label: "Quick Add",
+                    onTap: _quickAddProduct,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+
+            // 📋 Products (dense, separated)
             Expanded(
               child: _loading && _products.isEmpty
-                  ? const Center(child: CircularProgressIndicator())
+                  ? const Center(
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
                   : _products.isEmpty
-                      ? const Center(child: Text("No products found"))
-                      : ListView.builder(
-                          itemCount: _products.length + 2, // No product + Quick Add
-                          itemBuilder: (_, i) {
-                            if (i == 0) {
-                              // No product
-                              return Card(
-                                color: Colors.grey.shade200,
-                                margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 2),
-                                child: ListTile(
-                                  leading: const Icon(Icons.clear, color: Colors.red),
-                                  title: const Text("-------", style: TextStyle(fontWeight: FontWeight.bold)),
-                                  onTap: () => Navigator.pop(context, null),
-                                ),
-                              );
-                            }
-                            if (i == 1) {
-                              // Quick Add
-                              return Card(
-                                color: Colors.green.shade50,
-                                margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 2),
-                                child: ListTile(
-                                  leading: const Icon(Icons.add_circle, color: Colors.green),
-                                  title: const Text("Quick Add New Product", style: TextStyle(fontWeight: FontWeight.bold)),
-                                  onTap: _quickAddProduct,
-                                ),
-                              );
-                            }
+                  ? const Center(child: Text("No products found"))
+                  : ListView.separated(
+                      itemCount: _products.length,
+                      separatorBuilder: (_, __) => Divider(
+                        height: 1,
+                        thickness: 0.6,
+                        color: t.dividerColor.withOpacity(0.6),
+                      ),
+                      itemBuilder: (_, index) {
+                        final p = _products[index];
+                        final name = (p['name'] ?? 'Unnamed').toString();
+                        final sku = (p['sku'] ?? '-').toString();
+                        final category =
+                            (p['category']?['name'] ?? 'Uncategorized')
+                                .toString();
+                        final priceStr = (p['price']?.toString() ?? '0');
+                        final discountStr = (p['discount']?.toString() ?? '0');
 
-                            final p = _products[i - 2];
-                            final category = p['category']?['name'] ?? "Uncategorized";
-                            final price = p['price']?.toString() ?? "0";
-                            final discount = p['discount']?.toString() ?? "0";
-
-                            return Card(
-                              margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 2),
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                              child: ListTile(
-                                title: Text(p['name'] ?? "Unnamed", style: const TextStyle(fontWeight: FontWeight.bold)),
-                                subtitle: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text("SKU: ${p['sku'] ?? '-'}"),
-                                    Text("Category: $category"),
-                                    Row(
-                                      children: [
-                                        Text("Price: \$$price"),
-                                        if (discount != "0")
-                                          Padding(
-                                            padding: const EdgeInsets.only(left: 8.0),
-                                            child: Text(
-                                              "Discount: \$$discount",
-                                              style: const TextStyle(color: Colors.red, fontWeight: FontWeight.w500),
-                                            ),
-                                          ),
-                                      ],
-                                    ),
-                                  ],
+                        return ListTile(
+                          dense: true,
+                          visualDensity: visualDense,
+                          contentPadding: contentDense,
+                          title: Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  name,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w600,
+                                  ),
                                 ),
-                                onTap: () => Navigator.pop(context, p),
                               ),
-                            );
-                          },
-                        ),
+                              Text(
+                                "\$$priceStr",
+                                style: t.textTheme.bodyMedium?.copyWith(
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ],
+                          ),
+                          subtitle: Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  "SKU: $sku • $category",
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                              if (discountStr != "0")
+                                Padding(
+                                  padding: const EdgeInsets.only(left: 8),
+                                  child: Text(
+                                    "-\$$discountStr",
+                                    style: const TextStyle(
+                                      color: Colors.red,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                            ],
+                          ),
+                          trailing: const Icon(Icons.chevron_right, size: 18),
+                          onTap: () => Navigator.pop(context, p),
+                        );
+                      },
+                    ),
             ),
 
-            // ⏩ Pagination
+            // ⏩ Pagination (compact)
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                ElevatedButton(
-                  onPressed: !_loading && _page > 1 ? () => _fetchProducts(page: _page - 1) : null,
-                  child: const Text("Previous"),
+                TextButton(
+                  onPressed: !_loading && _page > 1
+                      ? () => _fetchProducts(page: _page - 1, replace: true)
+                      : null,
+                  child: const Text("Prev"),
                 ),
-                const SizedBox(width: 16),
-                Text("Page $_page of $_lastPage"),
-                const SizedBox(width: 16),
-                ElevatedButton(
-                  onPressed: !_loading && _page < _lastPage ? () => _fetchProducts(page: _page + 1) : null,
+                const SizedBox(width: 8),
+                Text(
+                  "$_page / $_lastPage",
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(width: 8),
+                TextButton(
+                  onPressed: !_loading && _page < _lastPage
+                      ? () => _fetchProducts(page: _page + 1, replace: true)
+                      : null,
                   child: const Text("Next"),
                 ),
               ],
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ThinAction extends StatelessWidget {
+  final Color color;
+  final Color borderColor;
+  final Widget icon;
+  final String label;
+  final VoidCallback onTap;
+
+  const _ThinAction({
+    required this.color,
+    required this.borderColor,
+    required this.icon,
+    required this.label,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: color,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(8),
+        side: BorderSide(color: borderColor),
+      ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          child: Row(
+            children: [
+              icon,
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  label,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

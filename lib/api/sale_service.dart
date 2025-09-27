@@ -15,36 +15,38 @@ class SaleService {
     required int branchId,
     int? customerId,
     int? vendorId,
+    int? userId,
     List<Map<String, dynamic>> items = const [],
     List<Map<String, dynamic>> payments = const [],
     double discount = 0.0,
     double tax = 0.0,
   }) async {
-    final Map<String, String> body = {
-      "branch_id": branchId.toString(),
-      "discount": discount.toString(),
-      "tax": tax.toString(),
-      if (customerId != null) "customer_id": customerId.toString(),
-      if (vendorId != null) "vendor_id": vendorId.toString(),
+    final payload = <String, dynamic>{
+      "branch_id": branchId,
+      "discount": discount,
+      "tax": tax,
+      if (customerId != null) "customer_id": customerId,
+      if (vendorId != null) "vendor_id": vendorId,
+      if (userId != null) "salesman_id": userId,
+      "items": items
+          .map(
+            (it) => {
+              "product_id": it["product_id"],
+              "quantity": it["quantity"],
+              "price": it["price"],
+            },
+          )
+          .toList(),
+      "payments": payments
+          .map((p) => {"amount": p["amount"], "method": p["method"]})
+          .toList(),
     };
 
-    // items[i][...]
-    for (int i = 0; i < items.length; i++) {
-      final it = items[i];
-      body["items[$i][product_id]"] = it["product_id"].toString();
-      body["items[$i][quantity]"] = it["quantity"].toString();
-      body["items[$i][price]"] = it["price"].toString();
-    }
-
-    // payments[j][...]
-    for (int j = 0; j < payments.length; j++) {
-      final p = payments[j];
-      body["payments[$j][amount]"] = p["amount"].toString();
-      body["payments[$j][method]"] = p["method"].toString();
-    }
-
-    // POST /sales via ApiClient (form-encoded or JSON as your ApiClient implements)
-    final res = await _client.post("/sales", body: body);
+    // Ensure your ApiClient sends JSON (sets Content-Type: application/json)
+    final res = await _client.post(
+      "/sales",
+      body: payload, // let ApiClient json-encode it, or do jsonEncode(payload)
+    );
     return res;
   }
 }

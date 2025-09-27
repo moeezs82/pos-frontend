@@ -255,12 +255,13 @@ class _PurchaseDetailScreenState extends State<PurchaseDetailScreen> {
 
   Future<void> _addItem() async {
     final token = Provider.of<AuthProvider>(context, listen: false).token!;
+    final vendorId = _purchase?['vendor_id'];
     final product = await showModalBottomSheet<Map<String, dynamic>?>(
       context: context,
       isScrollControlled: true,
       builder: (_) => SizedBox(
         height: MediaQuery.of(context).size.height * 0.85,
-        child: ProductPickerSheet(token: token),
+        child: ProductPickerSheet(token: token, vendorId: vendorId),
       ),
     );
     if (product == null) return;
