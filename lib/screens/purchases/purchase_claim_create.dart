@@ -4,6 +4,7 @@ import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/widgets/branch_indicator.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 class CreatePurchaseClaimScreen extends StatefulWidget {
@@ -31,6 +32,38 @@ class _CreatePurchaseClaimScreenState extends State<CreatePurchaseClaimScreen> {
 
   bool _submitting = false;
 
+  // NEW: Approve + Receipt on create
+  bool _approveNow = false;
+  bool _receiveNow = false;
+  final _receiptAmountCtrl = TextEditingController();
+  String _receiptMethod = 'cash';
+  final _receiptRefCtrl = TextEditingController();
+  DateTime? _receiptDate;
+
+  final _currency = NumberFormat.simpleCurrency(name: "", decimalDigits: 2);
+
+  double _toDouble(dynamic v) {
+    if (v == null) return 0.0;
+    if (v is num) return v.toDouble();
+    return double.tryParse(v.toString()) ?? 0.0;
+  }
+
+  double _computeClaimTotal() {
+    double sum = 0.0;
+    for (final it in _purchaseItems) {
+      final pid = it['id'] as int; // purchase_item_id
+      final qty = int.tryParse(_qtyCtrls[pid]?.text ?? '0') ?? 0;
+      final price = _toDouble(it['price']); // purchase price from API
+      if (qty > 0) sum += qty * price;
+    }
+    return sum;
+  }
+
+  void _syncDefaultReceipt() {
+    final t = _computeClaimTotal();
+    _receiptAmountCtrl.text = t.toStringAsFixed(2);
+  }
+
   Future<void> _searchPurchase(BuildContext context) async {
     final token = Provider.of<AuthProvider>(context, listen: false).token!;
     final invCtrl = TextEditingController();
@@ -52,7 +85,6 @@ class _CreatePurchaseClaimScreenState extends State<CreatePurchaseClaimScreen> {
             onPressed: () async {
               if (invCtrl.text.isEmpty) return;
 
-              // Assumes: GET /purchases?search=INV
               final listUri = Uri.parse("${ApiClient.baseUrl}/purchases")
                   .replace(queryParameters: {"search": invCtrl.text});
               final listRes = await http.get(listUri, headers: {
@@ -66,7 +98,6 @@ class _CreatePurchaseClaimScreenState extends State<CreatePurchaseClaimScreen> {
                 if (purchases.isNotEmpty) {
                   final purchase = purchases.first;
 
-                  // Assumes: GET /purchases/{id} returns items[]
                   final detailRes = await http.get(
                     Uri.parse("${ApiClient.baseUrl}/purchases/${purchase['id']}"),
                     headers: {
@@ -75,6 +106,7 @@ class _CreatePurchaseClaimScreenState extends State<CreatePurchaseClaimScreen> {
                     },
                   );
 
+                  if (!mounted) return;
                   if (detailRes.statusCode == 200) {
                     final detail = jsonDecode(detailRes.body)['data'];
                     setState(() {
@@ -89,7 +121,10 @@ class _CreatePurchaseClaimScreenState extends State<CreatePurchaseClaimScreen> {
 
                       for (final it in _purchaseItems) {
                         final int pid = it['id']; // purchase_item_id
-                        _qtyCtrls[pid] = TextEditingController(text: "0");
+                        _qtyCtrls[pid] = TextEditingController(text: "0")
+                          ..addListener(() {
+                            if (_receiveNow) setState(_syncDefaultReceipt);
+                          });
                         _remarksCtrls[pid] = TextEditingController();
                         _batchCtrls[pid] = TextEditingController();
                         _expiryCtrls[pid] = TextEditingController();
@@ -126,10 +161,8 @@ class _CreatePurchaseClaimScreenState extends State<CreatePurchaseClaimScreen> {
     if (val == null) return;
     setState(() {
       _type = val;
-      // reset affectsStock defaults based on type
       for (final it in _purchaseItems) {
         final int pid = it['id'];
-        // keep manual overrides? If you want to force, uncomment next line:
         _affectsStock[pid] = _type != 'shortage';
       }
     });
@@ -143,38 +176,67 @@ class _CreatePurchaseClaimScreenState extends State<CreatePurchaseClaimScreen> {
       return;
     }
 
-    final token = Provider.of<AuthProvider>(context, listen: false).token!;
-    setState(() => _submitting = true);
-
     final itemsPayload = _purchaseItems
-        .where((i) => int.tryParse(_qtyCtrls[i['id']]?.text ?? "0") != null
-            && int.parse(_qtyCtrls[i['id']]!.text) > 0)
+        .where((i) {
+          final txt = _qtyCtrls[i['id']]?.text ?? "0";
+          final q = int.tryParse(txt) ?? 0;
+          return q > 0;
+        })
         .map<Map<String, dynamic>>((i) {
-      final pid = i['id'];
-      return {
-        "purchase_item_id": pid,
-        "quantity": int.parse(_qtyCtrls[pid]!.text),
-        "affects_stock": _affectsStock[pid] ?? (_type != 'shortage'),
-        if (_remarksCtrls[pid]!.text.isNotEmpty) "remarks": _remarksCtrls[pid]!.text,
-        if (_batchCtrls[pid]!.text.isNotEmpty) "batch_no": _batchCtrls[pid]!.text,
-        if (_expiryCtrls[pid]!.text.isNotEmpty) "expiry_date": _expiryCtrls[pid]!.text,
-      };
-    }).toList();
+          final pid = i['id'] as int;
+          return {
+            "purchase_item_id": pid,
+            "quantity": int.parse(_qtyCtrls[pid]!.text),
+            "affects_stock": _affectsStock[pid] ?? (_type != 'shortage'),
+            if (_remarksCtrls[pid]!.text.isNotEmpty) "remarks": _remarksCtrls[pid]!.text,
+            if (_batchCtrls[pid]!.text.isNotEmpty) "batch_no": _batchCtrls[pid]!.text,
+            if (_expiryCtrls[pid]!.text.isNotEmpty) "expiry_date": _expiryCtrls[pid]!.text,
+          };
+        }).toList();
 
     if (itemsPayload.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text("Enter at least 1 claim quantity.")),
       );
-      setState(() => _submitting = false);
       return;
     }
 
-    final body = jsonEncode({
+    // Guard: receipt amount <= total when approve+receive now
+    final total = _computeClaimTotal();
+    if (_approveNow && _receiveNow) {
+      final requested = double.tryParse(_receiptAmountCtrl.text.trim()) ?? 0.0;
+      if (requested <= 0) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Enter a valid receipt amount")),
+        );
+        return;
+      }
+      if (requested > total + 0.0001) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Receipt cannot exceed claim total (${_currency.format(total)})")),
+        );
+        return;
+      }
+    }
+
+    final token = Provider.of<AuthProvider>(context, listen: false).token!;
+    setState(() => _submitting = true);
+
+    // Build request body
+    final Map<String, dynamic> payload = {
       "purchase_id": _selectedPurchase!['id'],
       "type": _type,
       "reason": _reasonCtrl.text,
       "items": itemsPayload,
-    });
+      if (_approveNow) "approve_now": true,
+      if (_approveNow && _receiveNow)
+        "receipt": {
+          "amount": double.tryParse(_receiptAmountCtrl.text.trim()) ?? total,
+          "method": _receiptMethod,
+          if (_receiptRefCtrl.text.trim().isNotEmpty) "reference": _receiptRefCtrl.text.trim(),
+          if (_receiptDate != null) "received_at": DateFormat("yyyy-MM-dd").format(_receiptDate!),
+        },
+    };
 
     final res = await http.post(
       Uri.parse("${ApiClient.baseUrl}/purchase-claims"),
@@ -183,12 +245,24 @@ class _CreatePurchaseClaimScreenState extends State<CreatePurchaseClaimScreen> {
         "Content-Type": "application/json",
         "Accept": "application/json",
       },
-      body: body,
+      body: jsonEncode(payload),
     );
 
     setState(() => _submitting = false);
 
+    if (!mounted) return;
     if (res.statusCode == 200 || res.statusCode == 201) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            _approveNow
+                ? (_receiveNow
+                    ? "Claim created, approved and receipt posted ${_currency.format(double.tryParse(_receiptAmountCtrl.text) ?? total)}"
+                    : "Claim created and approved")
+                : "Claim created",
+          ),
+        ),
+      );
       Navigator.pop(context, true);
     } else {
       String msg = "Failed to create purchase claim";
@@ -202,8 +276,10 @@ class _CreatePurchaseClaimScreenState extends State<CreatePurchaseClaimScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final vendorName = _selectedPurchase?['vendor']?['name'] ?? 'N/A';
+    final vendorName = _selectedPurchase?['vendor']?['name'] ??
+        _selectedPurchase?['vendor']?['first_name'] ?? 'N/A';
     final invoiceNo = _selectedPurchase?['invoice_no'] ?? 'N/A';
+    final total = _computeClaimTotal();
 
     return Scaffold(
       appBar: AppBar(
@@ -218,12 +294,14 @@ class _CreatePurchaseClaimScreenState extends State<CreatePurchaseClaimScreen> {
             children: [
               // 🔍 Select Purchase
               ListTile(
-                title: Text(_selectedPurchase == null
-                    ? "No purchase selected"
-                    : "Invoice: $invoiceNo"),
-                subtitle: Text(_selectedPurchase == null
-                    ? "Tap search to select purchase"
-                    : "Vendor: $vendorName"),
+                title: Text(
+                  _selectedPurchase == null ? "No purchase selected" : "Invoice: $invoiceNo",
+                ),
+                subtitle: Text(
+                  _selectedPurchase == null
+                      ? "Tap search to select purchase"
+                      : "Vendor: $vendorName",
+                ),
                 trailing: IconButton(
                   icon: const Icon(Icons.search),
                   onPressed: () => _searchPurchase(context),
@@ -273,10 +351,11 @@ class _CreatePurchaseClaimScreenState extends State<CreatePurchaseClaimScreen> {
                         itemCount: _purchaseItems.length,
                         itemBuilder: (_, i) {
                           final item = _purchaseItems[i];
-                          final pid = item['id']; // purchase_item_id
+                          final pid = item['id'] as int; // purchase_item_id
                           final productName = item['product']?['name'] ?? 'Product';
-                          final qtyReceived = item['quantity'];
                           final sku = item['product']?['sku'];
+                          final qtyReceived = item['quantity'];
+                          final price = _toDouble(item['price']);
 
                           return Card(
                             child: Padding(
@@ -287,7 +366,9 @@ class _CreatePurchaseClaimScreenState extends State<CreatePurchaseClaimScreen> {
                                   ListTile(
                                     contentPadding: EdgeInsets.zero,
                                     title: Text(productName, style: const TextStyle(fontWeight: FontWeight.bold)),
-                                    subtitle: Text("SKU: ${sku ?? '-'} • Qty received: $qtyReceived"),
+                                    subtitle: Text(
+                                      "SKU: ${sku ?? '-'} • Qty received: $qtyReceived • Price: ${_currency.format(price)}",
+                                    ),
                                     trailing: SizedBox(
                                       width: 90,
                                       child: TextFormField(
@@ -297,7 +378,6 @@ class _CreatePurchaseClaimScreenState extends State<CreatePurchaseClaimScreen> {
                                       ),
                                     ),
                                   ),
-                                  // affects_stock toggle
                                   Row(
                                     children: [
                                       Switch(
@@ -307,7 +387,6 @@ class _CreatePurchaseClaimScreenState extends State<CreatePurchaseClaimScreen> {
                                       const Text('Affects Stock'),
                                     ],
                                   ),
-                                  // extra fields: remarks, batch, expiry
                                   Row(
                                     children: [
                                       Expanded(
@@ -349,7 +428,7 @@ class _CreatePurchaseClaimScreenState extends State<CreatePurchaseClaimScreen> {
                                         ),
                                       ),
                                       const SizedBox(width: 8),
-                                      Expanded(child: Container()), // spacer
+                                      const Expanded(child: SizedBox.shrink()),
                                     ],
                                   ),
                                 ],
@@ -360,13 +439,128 @@ class _CreatePurchaseClaimScreenState extends State<CreatePurchaseClaimScreen> {
                       ),
               ),
 
+              // ✅ Approve & 📥 Receive Now (optional)
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Column(
+                    children: [
+                      SwitchListTile(
+                        title: const Text("Approve immediately"),
+                        value: _approveNow,
+                        onChanged: (v) {
+                          setState(() {
+                            _approveNow = v;
+                            if (!_approveNow) _receiveNow = false;
+                            if (_approveNow && _receiveNow) _syncDefaultReceipt();
+                          });
+                        },
+                      ),
+                      if (_approveNow) ...[
+                        SwitchListTile(
+                          title: const Text("Receive now"),
+                          value: _receiveNow,
+                          onChanged: (v) {
+                            setState(() {
+                              _receiveNow = v;
+                              if (_receiveNow) _syncDefaultReceipt();
+                            });
+                          },
+                        ),
+                        if (_receiveNow) ...[
+                          Row(
+                            children: [
+                              Expanded(
+                                child: TextField(
+                                  controller: _receiptAmountCtrl,
+                                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                                  decoration: InputDecoration(
+                                    labelText: "Receipt Amount (max ${_currency.format(total)})",
+                                    border: const OutlineInputBorder(),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: DropdownButtonFormField<String>(
+                                  value: _receiptMethod,
+                                  decoration: const InputDecoration(
+                                    labelText: "Method",
+                                    border: OutlineInputBorder(),
+                                  ),
+                                  items: const [
+                                    DropdownMenuItem(value: "cash", child: Text("Cash")),
+                                    DropdownMenuItem(value: "bank", child: Text("Bank")),
+                                    DropdownMenuItem(value: "credit_note", child: Text("Credit Note")),
+                                    DropdownMenuItem(value: "wallet", child: Text("Wallet")),
+                                  ],
+                                  onChanged: (v) => setState(() => _receiptMethod = v ?? 'cash'),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          TextField(
+                            controller: _receiptRefCtrl,
+                            decoration: const InputDecoration(
+                              labelText: "Reference (optional)",
+                              border: OutlineInputBorder(),
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: OutlinedButton.icon(
+                                  icon: const Icon(Icons.calendar_today),
+                                  label: Text(
+                                    _receiptDate == null
+                                        ? "Receipt Date (optional)"
+                                        : DateFormat.yMMMd().format(_receiptDate!),
+                                  ),
+                                  onPressed: () async {
+                                    final now = DateTime.now();
+                                    final d = await showDatePicker(
+                                      context: context,
+                                      initialDate: _receiptDate ?? now,
+                                      firstDate: DateTime(now.year - 5),
+                                      lastDate: DateTime(now.year + 5),
+                                    );
+                                    if (d != null) setState(() => _receiptDate = d);
+                                  },
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ],
+                      const Divider(),
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: Text(
+                          "Claim Total: ${_currency.format(total)}",
+                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+
+              const SizedBox(height: 12),
+
               // Submit
-              ElevatedButton.icon(
-                onPressed: _submitting ? null : () => _submitClaim(context),
-                icon: const Icon(Icons.save),
-                label: _submitting
-                    ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                    : const Text("Submit Claim"),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: _submitting ? null : () => _submitClaim(context),
+                  icon: _submitting
+                      ? const SizedBox(
+                          height: 16, width: 16, child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.save),
+                  label: Text(_submitting ? "Submitting..." : "Submit Claim"),
+                ),
               ),
             ],
           ),

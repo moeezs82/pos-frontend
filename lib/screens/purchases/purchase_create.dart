@@ -112,7 +112,8 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
     final product = await showModalBottomSheet<Map<String, dynamic>>(
       context: context,
       isScrollControlled: true,
-      builder: (_) => ProductPickerSheet(token: _token, vendorId: _selectedVendorId),
+      builder: (_) =>
+          ProductPickerSheet(token: _token, vendorId: _selectedVendorId),
     );
     if (product == null) return;
 
@@ -354,6 +355,8 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
 
   /* ----------------- submit ----------------- */
 
+  /* ----------------- submit ----------------- */
+
   Future<void> _submitPurchase() async {
     if (_items.isEmpty) {
       ScaffoldMessenger.of(
@@ -393,17 +396,49 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
       double toAmount(TextEditingController c) =>
           double.tryParse(c.text.trim()) ?? 0.0;
 
-      // 👇 NEW: build payments with optional auto-cash
-      final List<Map<String, dynamic>> paymentsToSend =
+      // --- BUILD A SINGLE payment OBJECT for the API (backend expects 'payment')
+      // Start from UI payments list
+      final List<Map<String, dynamic>> uiPayments =
           List<Map<String, dynamic>>.from(_payments);
 
-      if (_autoCashIfEmpty && paymentsToSend.isEmpty) {
-        // use current computed total; clamp to non-negative just in case
+      // Auto-cash fallback if enabled & no UI payments
+      if (_autoCashIfEmpty && uiPayments.isEmpty) {
         final fullTotal = _total < 0 ? 0.0 : _total;
-        paymentsToSend.add({
-          "amount": fullTotal, // keep as number (double)
-          "method": "cash",
-        });
+        uiPayments.add({"amount": fullTotal, "method": "cash"});
+      }
+
+      // Normalize and create a single payment payload
+      Map<String, dynamic>? paymentToSend;
+      if (uiPayments.isEmpty) {
+        paymentToSend = null;
+      } else if (uiPayments.length == 1) {
+        // ensure numeric types are doubles
+        paymentToSend = {
+          'amount': (uiPayments.first['amount'] as num).toDouble(),
+          'method': uiPayments.first['method'] ?? 'cash',
+        };
+        // optional fields if present in UI (not required)
+        if (uiPayments.first.containsKey('paid_at')) {
+          paymentToSend['paid_at'] = uiPayments.first['paid_at'];
+        }
+        if (uiPayments.first.containsKey('reference')) {
+          paymentToSend['reference'] = uiPayments.first['reference'];
+        }
+        if (uiPayments.first.containsKey('note')) {
+          paymentToSend['note'] = uiPayments.first['note'];
+        }
+      } else {
+        // Multiple UI payments — merge them into one payment for the API:
+        // sum amounts, pick the first method as representative.
+        final double totalAmt = uiPayments.fold<double>(
+          0.0,
+          (s, p) => s + ((p['amount'] as num).toDouble()),
+        );
+        paymentToSend = {
+          'amount': totalAmt,
+          'method': uiPayments.first['method'] ?? 'cash',
+        };
+        // we intentionally do not send per-payment metadata (backend expects single payment)
       }
 
       final payload = <String, dynamic>{
@@ -413,7 +448,7 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
         "tax": toAmount(taxController),
         "receive_now": _receiveNow,
         "items": itemsPayload,
-        if (paymentsToSend.isNotEmpty) "payments": paymentsToSend,
+        if (paymentToSend != null) "payment": paymentToSend, // <<< singular
       };
 
       await _purchaseService.createPurchase(payload);
@@ -516,37 +551,15 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
               const SizedBox(height: 12),
 
               // Discount & Tax + Receive Now
+              // Discount & Tax + Receive Now
               Card(
                 child: Padding(
                   padding: const EdgeInsets.all(12),
                   child: Column(
                     children: [
-                      Row(
-                        children: [
-                          Expanded(
-                            child: TextField(
-                              controller: discountController,
-                              keyboardType: TextInputType.number,
-                              decoration: const InputDecoration(
-                                labelText: "Discount",
-                              ),
-                              onChanged: (_) => setState(() {}),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: TextField(
-                              controller: taxController,
-                              keyboardType: TextInputType.number,
-                              decoration: const InputDecoration(
-                                labelText: "Tax",
-                              ),
-                              onChanged: (_) => setState(() {}),
-                            ),
-                          ),
-                        ],
-                      ),
+                      // ⛔️ REMOVED old top Discount/Tax inputs
                       const SizedBox(height: 8),
+
                       SwitchListTile(
                         contentPadding: EdgeInsets.zero,
                         title: const Text("Receive Now"),
@@ -706,6 +719,7 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
               const SizedBox(height: 12),
 
               // Totals
+              // Totals
               Card(
                 child: Column(
                   children: [
@@ -713,22 +727,71 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
                       title: const Text("Subtotal"),
                       trailing: Text("\$${_subtotal.toStringAsFixed(2)}"),
                     ),
-                    ListTile(
-                      title: const Text("Discount"),
-                      trailing: Text("- \$${_discount.toStringAsFixed(2)}"),
+
+                    // ✅ Editable Discount in Totals
+                    Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 4,
+                      ),
+                      child: Row(
+                        children: [
+                          const Expanded(child: Text("Discount")),
+                          SizedBox(
+                            width: 140,
+                            child: TextField(
+                              controller: discountController,
+                              keyboardType: TextInputType.number,
+                              textAlign: TextAlign.right,
+                              decoration: const InputDecoration(
+                                isDense: true,
+                                border: OutlineInputBorder(),
+                                prefixText: "- \$",
+                                hintText: "0.00",
+                              ),
+                              onChanged: (_) => setState(() {}),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
-                    ListTile(
-                      title: const Text("Tax"),
-                      trailing: Text("+ \$${_tax.toStringAsFixed(2)}"),
+
+                    // ✅ Editable Tax in Totals
+                    Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 4,
+                      ),
+                      child: Row(
+                        children: [
+                          const Expanded(child: Text("Tax")),
+                          SizedBox(
+                            width: 140,
+                            child: TextField(
+                              controller: taxController,
+                              keyboardType: TextInputType.number,
+                              textAlign: TextAlign.right,
+                              decoration: const InputDecoration(
+                                isDense: true,
+                                border: OutlineInputBorder(),
+                                prefixText: "+ \$",
+                                hintText: "0.00",
+                              ),
+                              onChanged: (_) => setState(() {}),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
+
                     const Divider(height: 0),
                     ListTile(
                       title: const Text("Total"),
-                      trailing: Text("\$${total.toStringAsFixed(2)}"),
+                      trailing: Text("\$${_total.toStringAsFixed(2)}"),
                     ),
                     ListTile(
                       title: const Text("Paid"),
-                      trailing: Text("\$${paid.toStringAsFixed(2)}"),
+                      trailing: Text("\$${_paid.toStringAsFixed(2)}"),
                     ),
                     ListTile(
                       title: const Text(
@@ -736,10 +799,10 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
                         style: TextStyle(fontWeight: FontWeight.bold),
                       ),
                       trailing: Text(
-                        "\$${balance.toStringAsFixed(2)}",
+                        "\$${_balance.toStringAsFixed(2)}",
                         style: TextStyle(
                           fontWeight: FontWeight.bold,
-                          color: balance > 0 ? Colors.red : Colors.green,
+                          color: _balance > 0 ? Colors.red : Colors.green,
                         ),
                       ),
                     ),

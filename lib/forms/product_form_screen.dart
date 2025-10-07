@@ -67,8 +67,8 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
 
     if (widget.product != null) {
       final p = widget.product!;
-      _skuController.text = p['sku'] ?? '';
-      _barcodeController.text = p['barcode'] ?? '';
+      _skuController.text = p['sku'] ?? _generateSKU();
+      _barcodeController.text = p['barcode'] ?? _generateBarcode();
       _nameController.text = p['name'] ?? '';
       _descController.text = p['description'] ?? '';
       _priceController.text = p['price']?.toString() ?? '';

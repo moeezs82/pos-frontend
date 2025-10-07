@@ -57,7 +57,7 @@ class SaleItemsSection extends StatelessWidget {
           ),
           const Divider(height: 1),
           ...items.map((i) => ListTile(
-                title: Text(i['product']['name']),
+                title: Text(i['product']?['name']?? 'Product Deleted'),
                 subtitle: Text("Qty: ${i['quantity']} × \$${i['price']}"),
                 trailing: Row(
                   mainAxisSize: MainAxisSize.min,

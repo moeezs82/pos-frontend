@@ -143,7 +143,7 @@ class HomeScreen extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(
         elevation: 0,
-        title: const Text("Enterprise POS"),
+        title: const Text("HT Computers"),
         actions: [
           Padding(
             padding: const EdgeInsets.only(right: 8.0),

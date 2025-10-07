@@ -98,9 +98,9 @@ flutter:
 
 
 msix_config:
-  display_name: Enterprise POS
+  display_name: CounterIQ
   publisher_display_name: Moeez Pvt Ltd
-  identity_name: com.moeez.enterprisepos
+  identity_name: com.moeez.counteriq
   msix_version: 1.0.0.0
   logo_path: windows/runner/resources/app_icon.ico
   architecture: x64

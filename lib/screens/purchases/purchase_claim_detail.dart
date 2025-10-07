@@ -19,6 +19,12 @@ class PurchaseClaimDetailScreen extends StatefulWidget {
 class _PurchaseClaimDetailScreenState extends State<PurchaseClaimDetailScreen> {
   Map<String, dynamic>? _claim;
   bool _loading = true;
+  bool _changed = false;
+
+  // Derived amounts
+  double _subtotal = 0, _tax = 0, _total = 0, _received = 0, _left = 0;
+
+  final _currency = NumberFormat.simpleCurrency(decimalDigits: 2, name: "");
 
   @override
   void initState() {
@@ -26,47 +32,188 @@ class _PurchaseClaimDetailScreenState extends State<PurchaseClaimDetailScreen> {
     _fetchDetail();
   }
 
+  double _toDouble(dynamic v) {
+    if (v == null) return 0.0;
+    if (v is num) return v.toDouble();
+    return double.tryParse(v.toString()) ?? 0.0;
+  }
+
+  void _deriveMoney(Map<String, dynamic> map) {
+    _subtotal = _toDouble(map['subtotal']);
+    _tax = _toDouble(map['tax']);
+    _total = _toDouble(map['total']);
+
+    // Prefer server-provided totals if available
+    final serverReceived = _toDouble(map['received_total']);
+    final serverLeft = _toDouble(map['receivable_left']);
+
+    if (serverReceived > 0 || serverLeft > 0) {
+      _received = serverReceived;
+      _left = serverLeft;
+      // sanity fallback if only received_total provided
+      if (_left <= 0) _left = (_total - _received).clamp(0, double.infinity);
+      return;
+    }
+
+    // Otherwise sum receipts array
+    final receipts = (map['receipts'] as List?) ?? const [];
+    _received = receipts.fold<double>(0.0, (sum, r) => sum + _toDouble((r as Map)['amount']));
+    _left = (_total - _received);
+    if (_left < 0) _left = 0;
+  }
+
   Future<void> _fetchDetail() async {
+    setState(() => _loading = true);
     final token = Provider.of<AuthProvider>(context, listen: false).token!;
     final uri = Uri.parse("${ApiClient.baseUrl}/purchase-claims/${widget.claimId}");
 
-    final res = await http.get(
-      uri,
-      headers: {"Authorization": "Bearer $token", "Accept": "application/json"},
-    );
-
-    if (!mounted) return;
-    if (res.statusCode == 200) {
-      final data = jsonDecode(res.body);
-      setState(() {
-        _claim = data['data'];
-        _loading = false;
-      });
-    } else {
-      setState(() => _loading = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Failed to load claim details")),
+    try {
+      final res = await http.get(
+        uri,
+        headers: {"Authorization": "Bearer $token", "Accept": "application/json"},
       );
+
+      if (!mounted) return;
+
+      if (res.statusCode == 200) {
+        final data = jsonDecode(res.body);
+        // The API might send either { data: { claim, received_total, receivable_left } } or just the claim
+        final raw = data['data'];
+        Map<String, dynamic> map;
+        if (raw is Map && raw['claim'] is Map) {
+          map = (raw['claim'] as Map<String, dynamic>);
+          // copy computed fields onto map so UI can use one source
+          map['received_total'] = raw['received_total'];
+          map['receivable_left'] = raw['receivable_left'];
+        } else {
+          map = (raw as Map<String, dynamic>);
+        }
+
+        _deriveMoney(map);
+        setState(() {
+          _claim = map;
+          _loading = false;
+        });
+      } else {
+        setState(() => _loading = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Failed to load claim details")),
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _loading = false);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
     }
   }
 
   Future<void> _approveClaim() async {
+    // Optional "receive now" dialog on approval
+    final decision = await showDialog<_ReceiptDecision>(
+      context: context,
+      builder: (_) => _ReceiptDialog(
+        title: "Approve Claim",
+        maxAmount: _left.clamp(0.0, _toDouble(_claim?['total'])),
+        defaultAmount: _left > 0 ? _left : _toDouble(_claim?['total']),
+      ),
+    );
+
+    if (decision == null) return;
+
     final token = Provider.of<AuthProvider>(context, listen: false).token!;
     final uri = Uri.parse("${ApiClient.baseUrl}/purchase-claims/${widget.claimId}/approve");
+
+    final body = <String, String>{};
+    if (decision.receiveNow && decision.amount > 0) {
+      body.addAll({
+        "receipt[amount]": decision.amount.toStringAsFixed(2),
+        "receipt[method]": decision.method,
+        if (decision.reference?.trim().isNotEmpty == true) "receipt[reference]": decision.reference!.trim(),
+        if (decision.date != null) "receipt[received_at]": DateFormat("yyyy-MM-dd").format(decision.date!),
+      });
+    }
 
     final res = await http.post(
       uri,
       headers: {"Authorization": "Bearer $token", "Accept": "application/json"},
+      body: body.isEmpty ? null : body,
     );
 
     if (!mounted) return;
+
     if (res.statusCode == 200) {
+      _changed = true;
       await _fetchDetail();
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Claim approved successfully")),
-      );
+      String msg = "Claim approved";
+      try {
+        final data = jsonDecode(res.body);
+        final receivedTotal = _toDouble(data['data']?['received_total']);
+        final left = _toDouble(data['data']?['receivable_left']);
+        if (decision.receiveNow && decision.amount > 0) {
+          msg = "Approved. Received ${_currency.format(decision.amount)} "
+              "(Total received: ${_currency.format(receivedTotal)}, Left: ${_currency.format(left)})";
+        }
+      } catch (_) {}
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
     } else {
       String msg = "Failed to approve claim";
+      try {
+        final body = jsonDecode(res.body);
+        if (body is Map && body['message'] is String) msg = body['message'];
+      } catch (_) {}
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+    }
+  }
+
+  Future<void> _postReceipt() async {
+    if (_left <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Nothing left to receive.")));
+      return;
+    }
+
+    final decision = await showDialog<_ReceiptDecision>(
+      context: context,
+      builder: (_) => _ReceiptDialog(
+        title: "Record Receipt",
+        maxAmount: _left,
+        defaultAmount: _left,
+      ),
+    );
+
+    if (decision == null || !decision.receiveNow || decision.amount <= 0) return;
+
+    final token = Provider.of<AuthProvider>(context, listen: false).token!;
+    final uri = Uri.parse("${ApiClient.baseUrl}/purchase-claims/${widget.claimId}/receipt");
+
+    final body = <String, String>{
+      "amount": decision.amount.toStringAsFixed(2),
+      "method": decision.method,
+      if (decision.reference?.trim().isNotEmpty == true) "reference": decision.reference!.trim(),
+      if (decision.date != null) "received_at": DateFormat("yyyy-MM-dd").format(decision.date!),
+    };
+
+    final res = await http.post(
+      uri,
+      headers: {"Authorization": "Bearer $token", "Accept": "application/json"},
+      body: body,
+    );
+
+    if (!mounted) return;
+
+    if (res.statusCode == 200) {
+      _changed = true;
+      await _fetchDetail();
+      String msg = "Receipt posted";
+      try {
+        final data = jsonDecode(res.body);
+        final receivedTotal = _toDouble(data['data']?['received_total']);
+        final left = _toDouble(data['data']?['receivable_left']);
+        msg = "Received ${_currency.format(decision.amount)} "
+            "(Total received: ${_currency.format(receivedTotal)}, Left: ${_currency.format(left)})";
+      } catch (_) {}
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+    } else {
+      String msg = "Failed to post receipt";
       try {
         final body = jsonDecode(res.body);
         if (body is Map && body['message'] is String) msg = body['message'];
@@ -79,26 +226,21 @@ class _PurchaseClaimDetailScreenState extends State<PurchaseClaimDetailScreen> {
     final token = Provider.of<AuthProvider>(context, listen: false).token!;
     final uri = Uri.parse("${ApiClient.baseUrl}/purchase-claims/${widget.claimId}/reject");
 
-    // Your backend reject() didn’t require a payload; we’ll still support an optional reason.
     final res = await http.post(
       uri,
       headers: {
         "Authorization": "Bearer $token",
         "Accept": "application/json",
-        // If you want to send a reason, keep content-type/json + small body:
         if (reason != null && reason.trim().isNotEmpty) "Content-Type": "application/json",
       },
-      body: (reason != null && reason.trim().isNotEmpty)
-          ? jsonEncode({"reason": reason.trim()})
-          : null,
+      body: (reason != null && reason.trim().isNotEmpty) ? jsonEncode({"reason": reason.trim()}) : null,
     );
 
     if (!mounted) return;
     if (res.statusCode == 200) {
+      _changed = true;
       await _fetchDetail();
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Claim rejected")),
-      );
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Claim rejected")));
     } else {
       String msg = "Failed to reject claim";
       try {
@@ -117,10 +259,7 @@ class _PurchaseClaimDetailScreenState extends State<PurchaseClaimDetailScreen> {
         title: const Text("Reject Claim"),
         content: TextField(
           controller: controller,
-          decoration: const InputDecoration(
-            hintText: "Optional reason...",
-            border: OutlineInputBorder(),
-          ),
+          decoration: const InputDecoration(hintText: "Optional reason...", border: OutlineInputBorder()),
           maxLines: 3,
         ),
         actions: [
@@ -142,11 +281,11 @@ class _PurchaseClaimDetailScreenState extends State<PurchaseClaimDetailScreen> {
   Color _statusColor(String status) {
     switch (status) {
       case "approved":
-        return Colors.green;
+        return Colors.green.shade600;
       case "pending":
-        return Colors.orange;
+        return Colors.orange.shade700;
       case "rejected":
-        return Colors.red;
+        return Colors.red.shade600;
       case "closed":
         return Colors.blueGrey;
       default:
@@ -156,221 +295,546 @@ class _PurchaseClaimDetailScreenState extends State<PurchaseClaimDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
     if (_loading) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+      return const Scaffold(
+        appBar: _SimpleAppBar(title: "Claim"),
+        body: Center(child: CircularProgressIndicator()),
+      );
     }
 
     if (_claim == null) {
       return const Scaffold(
+        appBar: _SimpleAppBar(title: "Claim"),
         body: Center(child: Text("Failed to load claim details")),
       );
     }
 
-    final items = (_claim!['items'] as List?) ?? [];
     final status = (_claim!['status'] ?? '').toString();
-    final purchase = _claim!['purchase'] ?? {};
-    final vendor = purchase['vendor'];
-    final branch = _claim!['branch'];
-    final currency = NumberFormat.simpleCurrency(decimalDigits: 2, name: "");
-
+    final purchase = (_claim!['purchase'] as Map<String, dynamic>?);
+    final items = (_claim!['items'] as List?) ?? const [];
+    final receipts = (_claim!['receipts'] as List?) ?? const [];
     final createdAt = _claim!['created_at'];
     final created = createdAt != null ? DateTime.tryParse(createdAt) : null;
 
-    return Scaffold(
-      appBar: AppBar(
-        title: Text("Claim #${_claim!['claim_no']}"),
-        actions: const [BranchIndicator(tappable: false)],
-      ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // 🔖 Status + Date
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+    return PopScope(
+      canPop: false,
+      onPopInvoked: (didPop) {
+        if (didPop) return;
+        Navigator.pop(context, _changed);
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          title: Text("Claim #${_claim!['claim_no']}"),
+          actions: const [Padding(padding: EdgeInsets.only(right: 8), child: BranchIndicator(tappable: false))],
+        ),
+        body: RefreshIndicator(
+          onRefresh: _fetchDetail,
+          child: SingleChildScrollView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: const EdgeInsets.all(16),
+            child: Column(
               children: [
-                Chip(
-                  label: Text(
-                    status.toUpperCase(),
-                    style: const TextStyle(color: Colors.white),
-                  ),
-                  backgroundColor: _statusColor(status),
-                ),
-                Text(
-                  created != null ? DateFormat.yMMMd().add_jm().format(created) : '',
-                  style: const TextStyle(color: Colors.grey),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-
-            // 📄 Claim + Purchase Info
-            Card(
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              elevation: 3,
-              child: Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                // Status & date
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text(
-                      "Invoice: ${purchase['invoice_no'] ?? 'N/A'}",
-                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                    Chip(
+                      label: Text(status.toUpperCase(), style: const TextStyle(color: Colors.white)),
+                      backgroundColor: _statusColor(status),
                     ),
-                    const SizedBox(height: 6),
-                    Text("Vendor: ${vendor?['name'] ?? 'N/A'}"),
-                    Text("Branch: ${branch?['name'] ?? 'N/A'}"),
-                    Text("Type: ${_claim!['type'] ?? 'N/A'}"),
-                    if ((_claim!['reason'] ?? '').toString().isNotEmpty)
-                      Padding(
-                        padding: const EdgeInsets.only(top: 8),
-                        child: Text("Reason: ${_claim!['reason']}"),
-                      ),
-                    const SizedBox(height: 12),
-                    SizedBox(
-                      width: double.infinity,
-                      child: OutlinedButton.icon(
-                        onPressed: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) => PurchaseDetailScreen(purchaseId: purchase['id']),
-                            ),
-                          );
-                        },
-                        icon: const Icon(Icons.receipt_long),
-                        label: const Text("View Purchase Details"),
-                      ),
+                    Text(
+                      created != null ? DateFormat.yMMMd().add_jm().format(created) : '',
+                      style: theme.textTheme.bodySmall?.copyWith(color: Colors.grey),
                     ),
                   ],
                 ),
-              ),
-            ),
+                const SizedBox(height: 12),
 
-            const SizedBox(height: 20),
-
-            // 🛒 Items Section
-            const Text(
-              "Claimed Items",
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-            ),
-            const Divider(),
-            ...items.map((item) {
-              final prod = item['product'] ?? {};
-              final name = prod['name'] ?? 'Product';
-              final sku = prod['sku'] ?? '-';
-              final qty = item['quantity'];
-              final priceStr = item['price']?.toString() ?? '0';
-              final totalStr = item['total']?.toString() ?? '0';
-              final price = double.tryParse(priceStr) ?? 0;
-              final total = double.tryParse(totalStr) ?? 0;
-              final affectsStock = (item['affects_stock'] == true);
-              final batch = (item['batch_no'] ?? '').toString();
-              final expiry = (item['expiry_date'] ?? '').toString();
-              final remarks = (item['remarks'] ?? '').toString();
-
-              return Card(
-                margin: const EdgeInsets.symmetric(vertical: 6),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                child: ListTile(
-                  title: Text(name),
-                  subtitle: Column(
+                // Header card
+                _SectionCard(
+                  child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text("SKU: $sku • Affects stock: ${affectsStock ? 'Yes' : 'No'}"),
-                      if (batch.isNotEmpty || expiry.isNotEmpty || remarks.isNotEmpty)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 4),
-                          child: Text([
-                            if (batch.isNotEmpty) "Batch: $batch",
-                            if (expiry.isNotEmpty) "Expiry: $expiry",
-                            if (remarks.isNotEmpty) "Remarks: $remarks",
-                          ].join(" • ")),
+                      Text("Invoice: ${purchase?['invoice_no'] ?? 'N/A'}",
+                          style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
+                      const SizedBox(height: 6),
+                      Text("Vendor: ${purchase?['vendor']?['name'] ?? purchase?['vendor']?['first_name'] ?? 'N/A'}"),
+                      Text("Branch: ${_claim?['branch']?['name'] ?? 'N/A'}"),
+                      Text("Type: ${_claim!['type'] ?? 'N/A'}"),
+                      if ((_claim!['reason'] ?? '').toString().isNotEmpty) ...[
+                        const SizedBox(height: 8),
+                        Text("Reason: ${_claim!['reason']}"),
+                      ],
+                      const SizedBox(height: 12),
+                      SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton.icon(
+                          onPressed: purchase == null
+                              ? null
+                              : () {
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (_) =>
+                                          PurchaseDetailScreen(purchaseId: purchase['id'] as int),
+                                    ),
+                                  );
+                                },
+                          icon: const Icon(Icons.receipt_long),
+                          label: const Text("View Purchase Details"),
                         ),
-                    ],
-                  ),
-                  leading: CircleAvatar(
-                    backgroundColor: Colors.teal.shade50,
-                    child: Text(
-                      '$qty',
-                      style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.teal),
-                    ),
-                  ),
-                  trailing: Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Text("Price: ${currency.format(price)}"),
-                      Text("Total: ${currency.format(total)}"),
+                      ),
                     ],
                   ),
                 ),
-              );
-            }),
 
-            const SizedBox(height: 20),
+                const SizedBox(height: 12),
 
-            // 💰 Summary Section
-            Align(
-              alignment: Alignment.centerRight,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Text(
-                    "Subtotal: ${currency.format(double.tryParse('${_claim!['subtotal']}') ?? 0)}",
-                    style: const TextStyle(fontWeight: FontWeight.w500),
+                // KPI summary: Total / Received / Left
+                Row(
+                  children: [
+                    Expanded(child: _KpiTile(title: "Total", value: _currency.format(_total), icon: Icons.summarize)),
+                    const SizedBox(width: 8),
+                    Expanded(child: _KpiTile(title: "Received", value: _currency.format(_received), icon: Icons.download)),
+                    const SizedBox(width: 8),
+                    Expanded(child: _KpiTile(title: "Left", value: _currency.format(_left), icon: Icons.account_balance_wallet_outlined)),
+                  ],
+                ),
+
+                const SizedBox(height: 20),
+
+                // Items
+                _SectionHeader(title: "Claimed Items"),
+                if (items.isEmpty)
+                  const _EmptyNote(text: "No items found for this claim.")
+                else
+                  Column(
+                    children: items.map((item) {
+                      final prod = item['product'] ?? {};
+                      final name = prod['name'] ?? 'Product';
+                      final sku = prod['sku'] ?? '-';
+                      final qty = (item['quantity'] as num?)?.toInt() ??
+                          int.tryParse(item['quantity'].toString()) ??
+                          0;
+                      final price = _toDouble(item['price']);
+                      final lineTotal = _toDouble(item['total']);
+                      final affectsStock = (item['affects_stock'] == true);
+                      final batch = (item['batch_no'] ?? '').toString();
+                      final expiry = (item['expiry_date'] ?? '').toString();
+                      final remarks = (item['remarks'] ?? '').toString();
+
+                      final extras = <String>[
+                        if (batch.isNotEmpty) "Batch: $batch",
+                        if (expiry.isNotEmpty) "Expiry: $expiry",
+                        if (remarks.isNotEmpty) "Remarks: $remarks",
+                      ].join(" • ");
+
+                      return _ListCard(
+                        leading: _QtyBubble(qty: qty, color: Colors.teal),
+                        title: name,
+                        subtitle: [
+                          "SKU: $sku",
+                          "Affects stock: ${affectsStock ? 'Yes' : 'No'}",
+                          if (extras.isNotEmpty) extras,
+                        ].join(" • "),
+                        trailing: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            Text("Price: ${_currency.format(price)}"),
+                            Text("Total: ${_currency.format(lineTotal)}"),
+                          ],
+                        ),
+                      );
+                    }).toList(),
                   ),
-                  Text(
-                    "Tax: ${currency.format(double.tryParse('${_claim!['tax']}') ?? 0)}",
-                    style: const TextStyle(fontWeight: FontWeight.w500),
+
+                const SizedBox(height: 20),
+
+                // Summary (Subtotal / Tax / Total)
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: _SectionCard(
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        _RowPrice(label: "Subtotal", value: _currency.format(_subtotal)),
+                        _RowPrice(label: "Tax", value: _currency.format(_tax)),
+                        const Divider(height: 14),
+                        _RowPrice(label: "Total", value: _currency.format(_total), isBold: true),
+                      ],
+                    ),
                   ),
-                  const Divider(),
-                  Text(
-                    "Total: ${currency.format(double.tryParse('${_claim!['total']}') ?? 0)}",
-                    style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.black87),
+                ),
+
+                const SizedBox(height: 20),
+
+                // Receipts
+                _SectionHeader(title: "Receipts"),
+                if (receipts.isEmpty)
+                  const _EmptyNote(text: "No receipts posted yet.")
+                else
+                  Column(
+                    children: receipts.map((r) {
+                      final amount = _toDouble(r['amount']);
+                      final method = (r['method'] ?? '—').toString();
+                      final ref = (r['reference'] ?? '').toString();
+                      final dateStr = (r['received_at'] ?? r['created_at'] ?? '').toString();
+                      String when = "—";
+                      if (dateStr.isNotEmpty) {
+                        try { when = DateFormat.yMMMd().format(DateTime.parse(dateStr)); } catch (_) {}
+                      }
+                      return _ListCard(
+                        leading: const CircleAvatar(child: Icon(Icons.download_done)),
+                        title: _currency.format(amount),
+                        subtitle: "Method: $method${ref.isNotEmpty ? " • Ref: $ref" : ""}",
+                        trailing: Text(when),
+                      );
+                    }).toList(),
+                  ),
+
+                const SizedBox(height: 16),
+
+                // Actions
+                if (status == "approved") ...[
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: _left <= 0 ? null : _postReceipt,
+                      icon: const Icon(Icons.attach_money),
+                      label: Text(_left <= 0 ? "Fully Received" : "Record Receipt"),
+                    ),
                   ),
                 ],
-              ),
+                if (status == "pending") ...[
+                  Row(
+                    children: [
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          onPressed: _approveClaim,
+                          icon: const Icon(Icons.check),
+                          label: const Text("Approve"),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.green,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          onPressed: _confirmRejectDialog,
+                          icon: const Icon(Icons.cancel),
+                          label: const Text("Reject"),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.red,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+                const SizedBox(height: 8),
+              ],
             ),
+          ),
+        ),
+      ),
+    );
+  }
+}
 
-            if (status == "pending") ...[
-              const SizedBox(height: 20),
-              Row(
-                children: [
-                  Expanded(
-                    child: ElevatedButton.icon(
-                      onPressed: _approveClaim,
-                      icon: const Icon(Icons.check),
-                      label: const Text("Approve"),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.green,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: ElevatedButton.icon(
-                      onPressed: _confirmRejectDialog,
-                      icon: const Icon(Icons.cancel),
-                      label: const Text("Reject"),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.red,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ],
+/// ---------- Small UI building blocks ----------
+
+class _SimpleAppBar extends StatelessWidget implements PreferredSizeWidget {
+  final String title;
+  const _SimpleAppBar({required this.title, super.key});
+  @override
+  Size get preferredSize => const Size.fromHeight(kToolbarHeight);
+  @override
+  Widget build(BuildContext context) => AppBar(title: Text(title));
+}
+
+class _SectionHeader extends StatelessWidget {
+  final String title;
+  const _SectionHeader({required this.title});
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Row(
+      children: [
+        Text(title, style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
+        const Expanded(child: Divider(indent: 12)),
+      ],
+    );
+  }
+}
+
+class _SectionCard extends StatelessWidget {
+  final Widget child;
+  final EdgeInsetsGeometry padding;
+  const _SectionCard({required this.child, this.padding = const EdgeInsets.all(16)});
+  @override
+  Widget build(BuildContext context) => Card(
+        elevation: 3,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        child: Padding(padding: padding, child: child),
+      );
+}
+
+class _ListCard extends StatelessWidget {
+  final Widget? leading;
+  final String title;
+  final String? subtitle;
+  final Widget? trailing;
+  const _ListCard({this.leading, required this.title, this.subtitle, this.trailing});
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card(
+      margin: const EdgeInsets.symmetric(vertical: 6),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: ListTile(
+        leading: leading,
+        title: Text(title, style: theme.textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w600)),
+        subtitle: subtitle == null ? null : Text(subtitle!),
+        trailing: trailing,
+      ),
+    );
+  }
+}
+
+class _KpiTile extends StatelessWidget {
+  final String title;
+  final String value;
+  final IconData icon;
+  const _KpiTile({required this.title, required this.value, required this.icon});
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return _SectionCard(
+      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 14),
+      child: Row(
+        children: [
+          CircleAvatar(radius: 18, child: Icon(icon, size: 20)),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text(value, style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
+                const SizedBox(height: 2),
+                Text(title, style: theme.textTheme.bodySmall?.copyWith(color: Colors.grey[700])),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _QtyBubble extends StatelessWidget {
+  final int qty;
+  final Color color;
+  const _QtyBubble({required this.qty, this.color = Colors.blue});
+  @override
+  Widget build(BuildContext context) => CircleAvatar(
+        backgroundColor: color.withOpacity(0.1),
+        child: Text(qty.toString(), style: TextStyle(fontWeight: FontWeight.bold, color: color)),
+      );
+}
+
+class _RowPrice extends StatelessWidget {
+  final String label;
+  final String value;
+  final bool isBold;
+  const _RowPrice({required this.label, required this.value, this.isBold = false});
+  @override
+  Widget build(BuildContext context) {
+    final style = isBold ? const TextStyle(fontSize: 16, fontWeight: FontWeight.w700) : const TextStyle(fontWeight: FontWeight.w500);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [Text("$label: ", style: style), Text(value, style: style)]),
+    );
+  }
+}
+
+class _EmptyNote extends StatelessWidget {
+  final String text;
+  final IconData icon;
+  const _EmptyNote({super.key, required this.text, this.icon = Icons.info_outline});
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
+        child: Row(
+          children: [
+            CircleAvatar(radius: 18, child: Icon(icon, size: 20)),
+            const SizedBox(width: 12),
+            Expanded(child: Text(text, style: theme.textTheme.bodyMedium?.copyWith(color: Colors.grey[700]))),
           ],
         ),
       ),
+    );
+  }
+}
+
+/// ---------- Receipt dialog ----------
+
+class _ReceiptDecision {
+  final bool receiveNow;
+  final double amount;
+  final String method;
+  final String? reference;
+  final DateTime? date;
+  _ReceiptDecision({
+    required this.receiveNow,
+    required this.amount,
+    required this.method,
+    this.reference,
+    this.date,
+  });
+}
+
+class _ReceiptDialog extends StatefulWidget {
+  final String title;
+  final double maxAmount;
+  final double defaultAmount;
+  const _ReceiptDialog({
+    required this.title,
+    required this.maxAmount,
+    required this.defaultAmount,
+  });
+
+  @override
+  State<_ReceiptDialog> createState() => _ReceiptDialogState();
+}
+
+class _ReceiptDialogState extends State<_ReceiptDialog> {
+  bool _receiveNow = true;
+  late final TextEditingController _amountCtrl;
+  final _refCtrl = TextEditingController();
+  String _method = 'cash';
+  DateTime? _pickedDate;
+
+  @override
+  void initState() {
+    super.initState();
+    _amountCtrl = TextEditingController(text: widget.defaultAmount.toStringAsFixed(2));
+  }
+
+  double _toDouble(String s) => double.tryParse(s.trim()) ?? 0.0;
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(widget.title),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SwitchListTile(
+            value: _receiveNow,
+            onChanged: (v) => setState(() => _receiveNow = v),
+            title: const Text("Record receipt now"),
+          ),
+          if (_receiveNow) ...[
+            const SizedBox(height: 8),
+            TextField(
+              controller: _amountCtrl,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              decoration: InputDecoration(
+                labelText: "Receipt Amount (max ${widget.maxAmount.toStringAsFixed(2)})",
+                border: const OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 10),
+            DropdownButtonFormField<String>(
+              value: _method,
+              decoration: const InputDecoration(labelText: "Method", border: OutlineInputBorder()),
+              items: const [
+                DropdownMenuItem(value: "cash", child: Text("Cash")),
+                DropdownMenuItem(value: "bank", child: Text("Bank")),
+                DropdownMenuItem(value: "credit_note", child: Text("Credit Note")),
+                DropdownMenuItem(value: "wallet", child: Text("Wallet")),
+              ],
+              onChanged: (v) => setState(() => _method = v ?? 'cash'),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: _refCtrl,
+              decoration: const InputDecoration(labelText: "Reference (optional)", border: OutlineInputBorder()),
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    icon: const Icon(Icons.calendar_today),
+                    label: Text(_pickedDate == null ? "Pick Date" : DateFormat.yMMMd().format(_pickedDate!)),
+                    onPressed: () async {
+                      final now = DateTime.now();
+                      final d = await showDatePicker(
+                        context: context,
+                        initialDate: _pickedDate ?? now,
+                        firstDate: DateTime(now.year - 5),
+                        lastDate: DateTime(now.year + 5),
+                      );
+                      if (d != null) setState(() => _pickedDate = d);
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ],
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text("Cancel")),
+        ElevatedButton.icon(
+          icon: const Icon(Icons.check),
+          label: const Text("Confirm"),
+          onPressed: () {
+            if (!_receiveNow) {
+              Navigator.pop(context, _ReceiptDecision(receiveNow: false, amount: 0, method: 'cash'));
+              return;
+            }
+            final amt = _toDouble(_amountCtrl.text);
+            if (amt <= 0) {
+              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Enter a valid receipt amount")));
+              return;
+            }
+            if (amt > widget.maxAmount + 0.0001) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text("Amount cannot exceed ${widget.maxAmount.toStringAsFixed(2)}")),
+              );
+              return;
+            }
+            Navigator.pop(
+              context,
+              _ReceiptDecision(
+                receiveNow: true,
+                amount: amt,
+                method: _method,
+                reference: _refCtrl.text,
+                date: _pickedDate,
+              ),
+            );
+          },
+        ),
+      ],
     );
   }
 }

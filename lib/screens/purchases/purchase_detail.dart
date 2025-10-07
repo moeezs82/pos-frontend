@@ -19,6 +19,11 @@ class _PurchaseDetailScreenState extends State<PurchaseDetailScreen> {
   bool _loading = true;
   bool _updated = false;
 
+  // header (discount/tax) editors
+  final _discountCtl = TextEditingController();
+  final _taxCtl = TextEditingController();
+  bool _savingHeader = false;
+
   late PurchaseService _purchaseService;
 
   ApiClient get _api =>
@@ -43,6 +48,13 @@ class _PurchaseDetailScreenState extends State<PurchaseDetailScreen> {
     _fetchPurchase();
   }
 
+  @override
+  void dispose() {
+    _discountCtl.dispose();
+    _taxCtl.dispose();
+    super.dispose();
+  }
+
   Future<void> _fetchPurchase() async {
     setState(() => _loading = true);
     try {
@@ -50,6 +62,9 @@ class _PurchaseDetailScreenState extends State<PurchaseDetailScreen> {
       if (!mounted) return;
       setState(() {
         _purchase = data;
+        // prefill editors from API
+        _discountCtl.text = _money(_purchase?['discount']);
+        _taxCtl.text = _money(_purchase?['tax']);
         _loading = false;
       });
     } catch (_) {
@@ -58,6 +73,32 @@ class _PurchaseDetailScreenState extends State<PurchaseDetailScreen> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(const SnackBar(content: Text("Failed to load purchase")));
+    }
+  }
+
+  Future<void> _saveHeader() async {
+    final discount = double.tryParse(_discountCtl.text.trim()) ?? 0.0;
+    final tax = double.tryParse(_taxCtl.text.trim()) ?? 0.0;
+
+    setState(() => _savingHeader = true);
+    try {
+      await _api.put(
+        "/purchases/${widget.purchaseId}",
+        body: {"discount": discount, "tax": tax},
+      );
+      _updated = true;
+      await _fetchPurchase(); // refresh numbers from server
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text("Updated")));
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text("Update failed: $e")));
+    } finally {
+      if (mounted) setState(() => _savingHeader = false);
     }
   }
 
@@ -351,103 +392,103 @@ class _PurchaseDetailScreenState extends State<PurchaseDetailScreen> {
     );
   }
 
-  Future<void> _editItem(Map<String, dynamic> item) async {
-    final qtyCtl = TextEditingController(
-      text: _intVal(item['quantity']).toString(),
-    );
-    final priceCtl = TextEditingController(text: _money(item['price']));
-    final rcvCtl = TextEditingController(
-      text: _intVal(item['received_qty']).toString(),
-    );
+  // Future<void> _editItem(Map<String, dynamic> item) async {
+  //   final qtyCtl = TextEditingController(
+  //     text: _intVal(item['quantity']).toString(),
+  //   );
+  //   final priceCtl = TextEditingController(text: _money(item['price']));
+  //   final rcvCtl = TextEditingController(
+  //     text: _intVal(item['received_qty']).toString(),
+  //   );
 
-    final ordered = _intVal(item['quantity']);
+  //   final ordered = _intVal(item['quantity']);
 
-    await showDialog(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text("Edit Item"),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: qtyCtl,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(
-                labelText: "Quantity (ordered)",
-                border: OutlineInputBorder(),
-              ),
-              onChanged: (v) {
-                // keep received within range in UI
-                final newQty = int.tryParse(v) ?? ordered;
-                final r = int.tryParse(rcvCtl.text) ?? 0;
-                if (r > newQty) rcvCtl.text = newQty.toString();
-              },
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: priceCtl,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(
-                labelText: "Purchase Price",
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: rcvCtl,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(
-                labelText: "Received Qty",
-                border: OutlineInputBorder(),
-              ),
-              onChanged: (v) {
-                final q = int.tryParse(qtyCtl.text) ?? ordered;
-                final r = int.tryParse(v) ?? 0;
-                if (r > q) rcvCtl.text = q.toString();
-                if (r < 0) rcvCtl.text = '0';
-              },
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text("Cancel"),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              final body = <String, dynamic>{};
-              if (qtyCtl.text.trim().isNotEmpty)
-                body['quantity'] = int.tryParse(qtyCtl.text.trim());
-              if (priceCtl.text.trim().isNotEmpty)
-                body['price'] = double.tryParse(priceCtl.text.trim());
-              if (rcvCtl.text.trim().isNotEmpty) {
-                final q = body['quantity'] ?? ordered;
-                final r = (int.tryParse(rcvCtl.text.trim()) ?? 0).clamp(0, q);
-                body['received_qty'] = r;
-              }
-              try {
-                await _api.put(
-                  "/purchases/${widget.purchaseId}/items/${item['id']}",
-                  body: body,
-                );
-                if (!mounted) return;
-                Navigator.pop(context);
-                _updated = true;
-                _fetchPurchase();
-              } catch (e) {
-                if (!mounted) return;
-                ScaffoldMessenger.of(
-                  context,
-                ).showSnackBar(SnackBar(content: Text("Update failed: $e")));
-              }
-            },
-            child: const Text("Save"),
-          ),
-        ],
-      ),
-    );
-  }
+  //   await showDialog(
+  //     context: context,
+  //     builder: (_) => AlertDialog(
+  //       title: const Text("Edit Item"),
+  //       content: Column(
+  //         mainAxisSize: MainAxisSize.min,
+  //         children: [
+  //           TextField(
+  //             controller: qtyCtl,
+  //             keyboardType: TextInputType.number,
+  //             decoration: const InputDecoration(
+  //               labelText: "Quantity (ordered)",
+  //               border: OutlineInputBorder(),
+  //             ),
+  //             onChanged: (v) {
+  //               // keep received within range in UI
+  //               final newQty = int.tryParse(v) ?? ordered;
+  //               final r = int.tryParse(rcvCtl.text) ?? 0;
+  //               if (r > newQty) rcvCtl.text = newQty.toString();
+  //             },
+  //           ),
+  //           const SizedBox(height: 12),
+  //           TextField(
+  //             controller: priceCtl,
+  //             keyboardType: TextInputType.number,
+  //             decoration: const InputDecoration(
+  //               labelText: "Purchase Price",
+  //               border: OutlineInputBorder(),
+  //             ),
+  //           ),
+  //           const SizedBox(height: 12),
+  //           TextField(
+  //             controller: rcvCtl,
+  //             keyboardType: TextInputType.number,
+  //             decoration: const InputDecoration(
+  //               labelText: "Received Qty",
+  //               border: OutlineInputBorder(),
+  //             ),
+  //             onChanged: (v) {
+  //               final q = int.tryParse(qtyCtl.text) ?? ordered;
+  //               final r = int.tryParse(v) ?? 0;
+  //               if (r > q) rcvCtl.text = q.toString();
+  //               if (r < 0) rcvCtl.text = '0';
+  //             },
+  //           ),
+  //         ],
+  //       ),
+  //       actions: [
+  //         TextButton(
+  //           onPressed: () => Navigator.pop(context),
+  //           child: const Text("Cancel"),
+  //         ),
+  //         ElevatedButton(
+  //           onPressed: () async {
+  //             final body = <String, dynamic>{};
+  //             if (qtyCtl.text.trim().isNotEmpty)
+  //               body['quantity'] = int.tryParse(qtyCtl.text.trim());
+  //             if (priceCtl.text.trim().isNotEmpty)
+  //               body['price'] = double.tryParse(priceCtl.text.trim());
+  //             if (rcvCtl.text.trim().isNotEmpty) {
+  //               final q = body['quantity'] ?? ordered;
+  //               final r = (int.tryParse(rcvCtl.text.trim()) ?? 0).clamp(0, q);
+  //               body['received_qty'] = r;
+  //             }
+  //             try {
+  //               await _api.put(
+  //                 "/purchases/${widget.purchaseId}/items/${item['id']}",
+  //                 body: body,
+  //               );
+  //               if (!mounted) return;
+  //               Navigator.pop(context);
+  //               _updated = true;
+  //               _fetchPurchase();
+  //             } catch (e) {
+  //               if (!mounted) return;
+  //               ScaffoldMessenger.of(
+  //                 context,
+  //               ).showSnackBar(SnackBar(content: Text("Update failed: $e")));
+  //             }
+  //           },
+  //           child: const Text("Save"),
+  //         ),
+  //       ],
+  //     ),
+  //   );
+  // }
 
   Future<void> _deleteItem(int itemId) async {
     final ok = await showDialog<bool>(
@@ -831,10 +872,10 @@ class _PurchaseDetailScreenState extends State<PurchaseDetailScreen> {
                                   trailing: Row(
                                     mainAxisSize: MainAxisSize.min,
                                     children: [
-                                      IconButton(
-                                        icon: const Icon(Icons.edit),
-                                        onPressed: () => _editItem(i),
-                                      ),
+                                      // IconButton(
+                                      //   icon: const Icon(Icons.edit),
+                                      //   onPressed: () => _editItem(i),
+                                      // ),
                                       IconButton(
                                         icon: const Icon(
                                           Icons.delete,
@@ -935,27 +976,107 @@ class _PurchaseDetailScreenState extends State<PurchaseDetailScreen> {
                               "\$${_money(_purchase!['subtotal'])}",
                             ),
                           ),
-                          ListTile(
-                            title: const Text("Discount"),
-                            trailing: Text(
-                              "-\$${_money(_purchase!['discount'])}",
+                          // Editable Discount
+                          Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 4,
+                            ),
+                            child: Row(
+                              children: [
+                                const Expanded(child: Text("Discount")),
+                                SizedBox(
+                                  width: 140,
+                                  child: TextField(
+                                    controller: _discountCtl,
+                                    keyboardType: TextInputType.number,
+                                    textAlign: TextAlign.right,
+                                    decoration: const InputDecoration(
+                                      isDense: true,
+                                      border: OutlineInputBorder(),
+                                      prefixText: "- \$",
+                                      hintText: "0.00",
+                                    ),
+                                    onChanged: (_) => setState(() {}),
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
-                          ListTile(
-                            title: const Text("Tax"),
-                            trailing: Text("\$${_money(_purchase!['tax'])}"),
+
+                          // Editable Tax
+                          Padding(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 16,
+                              vertical: 4,
+                            ),
+                            child: Row(
+                              children: [
+                                const Expanded(child: Text("Tax")),
+                                SizedBox(
+                                  width: 140,
+                                  child: TextField(
+                                    controller: _taxCtl,
+                                    keyboardType: TextInputType.number,
+                                    textAlign: TextAlign.right,
+                                    decoration: const InputDecoration(
+                                      isDense: true,
+                                      border: OutlineInputBorder(),
+                                      prefixText: "+ \$",
+                                      hintText: "0.00",
+                                    ),
+                                    onChanged: (_) => setState(() {}),
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
+
                           const Divider(),
-                          ListTile(
-                            title: const Text(
-                              "Total",
-                              style: TextStyle(fontWeight: FontWeight.bold),
-                            ),
-                            trailing: Text(
-                              "\$${_money(_purchase!['total'])}",
-                              style: const TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 18,
+                          // Live total preview (client-side) using edited values
+                          Builder(
+                            builder: (_) {
+                              final sub = _doubleVal(_purchase?['subtotal']);
+                              final d =
+                                  double.tryParse(_discountCtl.text.trim()) ??
+                                  _doubleVal(_purchase?['discount']);
+                              final t =
+                                  double.tryParse(_taxCtl.text.trim()) ??
+                                  _doubleVal(_purchase?['tax']);
+                              final previewTotal = (sub - d + t);
+                              return ListTile(
+                                title: const Text(
+                                  "Total",
+                                  style: TextStyle(fontWeight: FontWeight.bold),
+                                ),
+                                trailing: Text(
+                                  "\$${previewTotal.toStringAsFixed(2)}",
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 18,
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+
+                          // Save button
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                            child: Align(
+                              alignment: Alignment.centerRight,
+                              child: ElevatedButton.icon(
+                                onPressed: _savingHeader ? null : _saveHeader,
+                                icon: _savingHeader
+                                    ? const SizedBox(
+                                        width: 16,
+                                        height: 16,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                        ),
+                                      )
+                                    : const Icon(Icons.save),
+                                label: const Text("Save Discount/Tax"),
                               ),
                             ),
                           ),
