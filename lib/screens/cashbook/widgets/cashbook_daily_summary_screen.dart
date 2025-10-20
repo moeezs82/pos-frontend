@@ -1,3 +1,4 @@
+import 'package:enterprise_pos/screens/cashbook/widgets/daybook_day_details_screen.dart';
 import 'package:flutter/material.dart';
 
 import 'cb_daily_list.dart';
@@ -51,7 +52,8 @@ class _CashbookDailySummaryScreenState
 
   void _openDay(String date) {
     Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => CashbookDayDetailsScreen(date: date)),
+      // MaterialPageRoute(builder: (_) => CashbookDayDetailsScreen(date: date)),
+      MaterialPageRoute(builder: (_) => DayBookDayDetailsScreen(date: date)),
     );
   }
 

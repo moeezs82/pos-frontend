@@ -1,4 +1,7 @@
+import 'dart:convert';
+
 import 'package:enterprise_pos/api/core/api_client.dart';
+typedef ExpenseLine = Map<String, Object?>;
 
 class CashBookService {
   final ApiClient _client;
@@ -192,5 +195,98 @@ class CashBookService {
     final res = await _client.get("/cashbook/day-details", query: q);
     if (res["success"] == true) return Map<String, dynamic>.from(res["data"]);
     throw Exception(res["message"] ?? "Failed to load cashbook day details");
+  }
+
+  Future<Map<String, dynamic>> getDayBookSummary({
+    String? branchId,
+    String? dateFrom,
+    String? dateTo,
+    int page = 1,
+    int perPage = 30,
+    String order = 'desc',
+  }) async {
+    final q = <String, String>{
+      if (branchId != null && branchId.isNotEmpty) 'branch_id': branchId,
+      if (dateFrom != null && dateFrom.isNotEmpty) 'from': dateFrom,
+      if (dateTo != null && dateTo.isNotEmpty) 'to': dateTo,
+      'page': page.toString(),
+      'per_page': perPage.toString(),
+      'order': order,
+    };
+    final res = await _client.get("/daybook", query: q);
+    if (res["success"] == true) {
+      return Map<String, dynamic>.from(res["data"] ?? res);
+    }
+    throw Exception(res["message"] ?? "Failed to load daybook");
+  }
+
+  Future<Map<String, dynamic>> getDayBookDayDetails({
+    required String date, // "YYYY-MM-DD"
+    String? accountId,
+    String? branchId,
+    String? type,
+    String? method,
+    String? partyKind, // customer|vendor|none
+    String? search,
+    int page = 1,
+    int perPage = 100,
+    String sort = "created_at",
+    String order = "asc",
+    String? referenceType,
+    bool? includeLines,
+  }) async {
+    final q = <String, String>{
+      "date": date,
+      "page": page.toString(),
+      "per_page": perPage.toString(),
+      "sort": sort,
+      "order": order,
+      if (accountId != null && accountId.isNotEmpty) "account_id": accountId,
+      if (branchId != null && branchId.isNotEmpty) "branch_id": branchId,
+      if (type != null && type.isNotEmpty) "type": type,
+      if (method != null && method.isNotEmpty) "method": method,
+      if (partyKind != null && partyKind.isNotEmpty) "party_kind": partyKind,
+      if (search != null && search.isNotEmpty) "search": search,
+    };
+
+    final res = await _client.get("/daybook/day-details", query: q);
+    if (res["success"] == true) return Map<String, dynamic>.from(res["data"]);
+    throw Exception(res["message"] ?? "Failed to load cashbook day details");
+  }
+
+  Future<Map<String, dynamic>> createExpensesBulk({
+    String? paymentAccountId,
+    String? method, // cash|bank|card|wallet (if paymentAccountId is null)
+    String? branchId,
+    String? txnDate, // YYYY-MM-DD
+    String? reference,
+    String? note,
+    String status = "approved",
+    bool singleEntry = true, // one JE with many expense lines (recommended)
+    required List<ExpenseLine> lines,
+  }) async {
+    final body = <String, String>{
+      if (paymentAccountId != null && paymentAccountId.isNotEmpty)
+        "payment_account_id": paymentAccountId,
+      if ((paymentAccountId == null || paymentAccountId.isEmpty) &&
+          method != null &&
+          method.isNotEmpty)
+        "method": method,
+      if (branchId != null && branchId.isNotEmpty) "branch_id": branchId,
+      if (txnDate != null && txnDate.isNotEmpty) "txn_date": txnDate,
+      if (reference != null && reference.isNotEmpty) "reference": reference,
+      if (note != null && note.isNotEmpty) "note": note,
+      if (status.isNotEmpty) "status": status,
+      "single_entry": singleEntry ? "1" : "0",
+    };
+
+    // send lines as JSON array
+    final res = await _client.post(
+      "/expenses",
+      body: {...body, "lines": lines},
+    );
+
+    if (res["success"] == true) return Map<String, dynamic>.from(res["data"]);
+    throw Exception(res["message"] ?? "Failed to create expenses (bulk)");
   }
 }

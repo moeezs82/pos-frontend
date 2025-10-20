@@ -1,4 +1,6 @@
+import 'package:enterprise_pos/screens/account_screen.dart';
 import 'package:enterprise_pos/screens/cashbook/cashbook_screen.dart';
+import 'package:enterprise_pos/screens/cashbook/daybook_screen.dart';
 import 'package:enterprise_pos/screens/customers_screen.dart';
 import 'package:enterprise_pos/screens/product_screen.dart';
 import 'package:enterprise_pos/screens/purchases/purchase_claim_screen.dart';
@@ -86,14 +88,22 @@ class HomeScreen extends StatelessWidget {
           context, MaterialPageRoute(builder: (_) => const StockScreen())),
       ),
 
-      // 🔥 New Cash Book tile
       _Tile(
         icon: Icons.receipt_long_rounded,
         title: "Cash Book",
         subtitle: "Receipts • Payments • Expenses",
         color: Colors.teal,
         onTap: () => Navigator.push(
-          context, MaterialPageRoute(builder: (_) => const CashBookScreen())),
+          context, MaterialPageRoute(builder: (_) => const DayBookScreen())),
+      ),
+      
+      _Tile(
+        icon: Icons.receipt_long_rounded,
+        title: "Accounts",
+        subtitle: "ASSET • Libilities • Expenses",
+        color: Colors.teal,
+        onTap: () => Navigator.push(
+          context, MaterialPageRoute(builder: (_) => const AccountsScreen())),
       ),
 
       _Tile(
@@ -143,7 +153,7 @@ class HomeScreen extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(
         elevation: 0,
-        title: const Text("HT Computers"),
+        title: const Text("POS"),
         actions: [
           Padding(
             padding: const EdgeInsets.only(right: 8.0),

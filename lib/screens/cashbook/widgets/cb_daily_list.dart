@@ -1,4 +1,3 @@
-import 'dart:ui' show FontFeature;
 import 'package:flutter/material.dart';
 
 class CBDailyList extends StatefulWidget {
@@ -181,8 +180,10 @@ class _CBDailyListState extends State<CBDailyList> {
                         final r = rows[i];
                         final date = (r['date'] ?? '').toString();
                         final opening = _fmt(r['opening']);
-                        final pin = _fmt(r['payment_in']);
-                        final pout = _fmt(r['payment_out']);
+                        final pin = _fmt(r['in']);
+                        // final pin = _fmt(r['payment_in']);
+                        // final pout = _fmt(r['payment_out']);
+                        final pout = _fmt(r['out']);
                         final exp = _fmt(r['expense']);
                         final net = _fmt(r['net']);
                         final closing = _fmt(r['closing']);

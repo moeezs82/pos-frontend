@@ -1,11 +1,9 @@
 import 'dart:async';
-import 'package:enterprise_pos/api/common_service.dart';
 import 'package:enterprise_pos/api/cashbook_service.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/providers/branch_provider.dart';
 import 'package:enterprise_pos/screens/cashbook/widgets/cashbook_daily_summary_screen.dart';
 import 'package:enterprise_pos/screens/cashbook/widgets/cb_date_range_bar.dart';
-import 'package:enterprise_pos/screens/cashbook/widgets/cb_daily_list.dart';
 import 'package:enterprise_pos/screens/cashbook/widgets/cb_filters.dart';
 import 'package:enterprise_pos/screens/cashbook/widgets/cb_mode_toggle.dart';
 import 'package:enterprise_pos/screens/cashbook/widgets/cb_pagination.dart';
@@ -24,7 +22,6 @@ class CashBookScreen extends StatefulWidget {
 
 class _CashBookScreenState extends State<CashBookScreen> {
   // Services
-  late CommonService _commonService;
   late CashBookService _cashService;
 
   // Data (transactions mode)
@@ -97,7 +94,6 @@ class _CashBookScreenState extends State<CashBookScreen> {
   void initState() {
     super.initState();
     final token = Provider.of<AuthProvider>(context, listen: false).token!;
-    _commonService = CommonService(token: token);
     _cashService = CashBookService(token: token);
     _fetchInitialData();
   }
