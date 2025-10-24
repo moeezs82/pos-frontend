@@ -1,7 +1,7 @@
 import 'package:enterprise_pos/screens/account_screen.dart';
 import 'package:enterprise_pos/screens/cashbook/cashbook_screen.dart';
 import 'package:enterprise_pos/screens/cashbook/daybook_screen.dart';
-import 'package:enterprise_pos/screens/customers_screen.dart';
+import 'package:enterprise_pos/screens/customers/customers_screen.dart';
 import 'package:enterprise_pos/screens/product_screen.dart';
 import 'package:enterprise_pos/screens/purchases/purchase_claim_screen.dart';
 import 'package:enterprise_pos/screens/sales/sale_returns_screen.dart';
@@ -9,7 +9,7 @@ import 'package:enterprise_pos/screens/sales/sale_screen.dart';
 import 'package:enterprise_pos/screens/purchases/purchases_screen.dart';
 import 'package:enterprise_pos/screens/stock_screen.dart';
 import 'package:enterprise_pos/screens/users_screen.dart';
-import 'package:enterprise_pos/screens/vendors_screen.dart';
+import 'package:enterprise_pos/screens/vendors/vendors_screen.dart';
 import 'package:enterprise_pos/widgets/branch_select_sheet.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -20,16 +20,16 @@ import 'login_screen.dart';
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
 
-  Future<void> _openBranchSheet(BuildContext context) async {
-    await showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      builder: (_) => SizedBox(
-        height: MediaQuery.of(context).size.height * 0.85,
-        child: const BranchSelectSheet(),
-      ),
-    );
-  }
+  // Future<void> _openBranchSheet(BuildContext context) async {
+  //   await showModalBottomSheet(
+  //     context: context,
+  //     isScrollControlled: true,
+  //     builder: (_) => SizedBox(
+  //       height: MediaQuery.of(context).size.height * 0.85,
+  //       child: const BranchSelectSheet(),
+  //     ),
+  //   );
+  // }
 
   @override
   Widget build(BuildContext context) {
@@ -155,15 +155,15 @@ class HomeScreen extends StatelessWidget {
         elevation: 0,
         title: const Text("POS"),
         actions: [
-          Padding(
-            padding: const EdgeInsets.only(right: 8.0),
-            child: ActionChip(
-              label: Text(bp.label, style: const TextStyle(color: Colors.white)),
-              avatar: const Icon(Icons.warehouse_outlined, color: Colors.white, size: 18),
-              backgroundColor: Colors.blueGrey,
-              onPressed: () => _openBranchSheet(context), // Home can change
-            ),
-          ),
+          // Padding(
+          //   padding: const EdgeInsets.only(right: 8.0),
+          //   child: ActionChip(
+          //     label: Text(bp.label, style: const TextStyle(color: Colors.white)),
+          //     avatar: const Icon(Icons.warehouse_outlined, color: Colors.white, size: 18),
+          //     backgroundColor: Colors.blueGrey,
+          //     onPressed: () => _openBranchSheet(context), // Home can change
+          //   ),
+          // ),
           IconButton(
             tooltip: "Logout",
             icon: const Icon(Icons.logout),
@@ -227,34 +227,16 @@ class HomeScreen extends StatelessWidget {
                     ],
                   ),
                 ),
-                TextButton.icon(
-                  onPressed: () => _openBranchSheet(context),
-                  icon: const Icon(Icons.swap_horiz, color: Colors.white),
-                  label: const Text("Change Branch", style: TextStyle(color: Colors.white)),
-                ),
+                // TextButton.icon(
+                //   onPressed: () => _openBranchSheet(context),
+                //   icon: const Icon(Icons.swap_horiz, color: Colors.white),
+                //   label: const Text("Change Branch", style: TextStyle(color: Colors.white)),
+                // ),
               ],
             ),
           ),
 
           const SizedBox(height: 16),
-
-          // Section header
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16.0),
-            child: Row(
-              children: [
-                Text("Quick Actions",
-                    style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
-                const Spacer(),
-                IconButton(
-                  tooltip: "Refresh",
-                  onPressed: () {}, // (optional) wire to dashboard summaries
-                  icon: const Icon(Icons.refresh),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 8),
 
           // Grid
           Expanded(

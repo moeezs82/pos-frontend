@@ -227,13 +227,6 @@ class _DayBookScreenState extends State<DayBookScreen> {
             heroTag: 'fab-bulk-expense',
             onPressed: _addExpensesBulkDialog,
             icon: const Icon(Icons.playlist_add),
-            label: const Text("Add Multiple"),
-          ),
-          const SizedBox(height: 10),
-          FloatingActionButton.extended(
-            heroTag: 'fab-single-expense',
-            onPressed: _addExpenseDialog,
-            icon: const Icon(Icons.remove_circle),
             label: const Text("Add Expense"),
           ),
         ],
@@ -333,162 +326,162 @@ class _DayBookScreenState extends State<DayBookScreen> {
   }
 
   // ======= Single expense dialog (posts to /cashbook/expense) =======
-  Future<void> _addExpenseDialog() async {
-    final amountCtrl = TextEditingController();
-    final refCtrl = TextEditingController();
-    final noteCtrl = TextEditingController();
+  // Future<void> _addExpenseDialog() async {
+  //   final amountCtrl = TextEditingController();
+  //   final refCtrl = TextEditingController();
+  //   final noteCtrl = TextEditingController();
 
-    String? method = 'cash';
-    String? accountId; // optional
-    DateTime? txnDate = DateTime.now();
+  //   String? method = 'cash';
+  //   String? accountId; // optional
+  //   DateTime? txnDate = DateTime.now();
 
-    await showDialog(
-      context: context,
-      builder: (_) => StatefulBuilder(
-        builder: (context, setStateDialog) => AlertDialog(
-          title: const Text("Add Expense"),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                DropdownButtonFormField<String>(
-                  value: method,
-                  decoration: const InputDecoration(
-                    labelText: "Payment Method",
-                    border: OutlineInputBorder(),
-                  ),
-                  items: const [
-                    DropdownMenuItem(value: 'cash', child: Text('Cash')),
-                    DropdownMenuItem(value: 'card', child: Text('Card')),
-                    DropdownMenuItem(value: 'bank', child: Text('Bank')),
-                    DropdownMenuItem(value: 'wallet', child: Text('Wallet')),
-                  ],
-                  onChanged: (val) => setStateDialog(() => method = val),
-                ),
-                const SizedBox(height: 12),
-                if (_accounts.isNotEmpty)
-                  DropdownButtonFormField<String>(
-                    value: accountId,
-                    decoration: const InputDecoration(
-                      labelText: "Account (optional)",
-                      border: OutlineInputBorder(),
-                    ),
-                    items: [
-                      const DropdownMenuItem<String>(
-                        value: null,
-                        child: Text("Auto by Method"),
-                      ),
-                      ..._accounts.map(
-                        (a) => DropdownMenuItem<String>(
-                          value: a['id'].toString(),
-                          child: Text("${a['name']} (${a['code'] ?? ''})"),
-                        ),
-                      ),
-                    ],
-                    onChanged: (val) => setStateDialog(() => accountId = val),
-                  ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: amountCtrl,
-                  keyboardType: const TextInputType.numberWithOptions(
-                    decimal: true,
-                  ),
-                  decoration: const InputDecoration(
-                    labelText: "Amount",
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: refCtrl,
-                  decoration: const InputDecoration(
-                    labelText: "Reference (optional)",
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: noteCtrl,
-                  decoration: const InputDecoration(
-                    labelText: "Note (optional)",
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                InkWell(
-                  onTap: () async {
-                    final picked = await showDatePicker(
-                      context: context,
-                      initialDate: txnDate ?? DateTime.now(),
-                      firstDate: DateTime(2020, 1, 1),
-                      lastDate: DateTime(DateTime.now().year + 1, 12, 31),
-                    );
-                    if (picked != null) setStateDialog(() => txnDate = picked);
-                  },
-                  child: InputDecorator(
-                    decoration: const InputDecoration(
-                      labelText: "Transaction Date",
-                      border: OutlineInputBorder(),
-                    ),
-                    child: Text(
-                      txnDate != null
-                          ? _fmtDate(txnDate!)
-                          : "Select date (optional)",
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text("Cancel"),
-            ),
-            ElevatedButton(
-              onPressed: () async {
-                final amount = double.tryParse(amountCtrl.text) ?? 0;
-                if (amount <= 0) return;
+  //   await showDialog(
+  //     context: context,
+  //     builder: (_) => StatefulBuilder(
+  //       builder: (context, setStateDialog) => AlertDialog(
+  //         title: const Text("Add Expense"),
+  //         content: SingleChildScrollView(
+  //           child: Column(
+  //             mainAxisSize: MainAxisSize.min,
+  //             children: [
+  //               DropdownButtonFormField<String>(
+  //                 value: method,
+  //                 decoration: const InputDecoration(
+  //                   labelText: "Payment Method",
+  //                   border: OutlineInputBorder(),
+  //                 ),
+  //                 items: const [
+  //                   DropdownMenuItem(value: 'cash', child: Text('Cash')),
+  //                   DropdownMenuItem(value: 'card', child: Text('Card')),
+  //                   DropdownMenuItem(value: 'bank', child: Text('Bank')),
+  //                   DropdownMenuItem(value: 'wallet', child: Text('Wallet')),
+  //                 ],
+  //                 onChanged: (val) => setStateDialog(() => method = val),
+  //               ),
+  //               const SizedBox(height: 12),
+  //               if (_accounts.isNotEmpty)
+  //                 DropdownButtonFormField<String>(
+  //                   value: accountId,
+  //                   decoration: const InputDecoration(
+  //                     labelText: "Account (optional)",
+  //                     border: OutlineInputBorder(),
+  //                   ),
+  //                   items: [
+  //                     const DropdownMenuItem<String>(
+  //                       value: null,
+  //                       child: Text("Auto by Method"),
+  //                     ),
+  //                     ..._accounts.map(
+  //                       (a) => DropdownMenuItem<String>(
+  //                         value: a['id'].toString(),
+  //                         child: Text("${a['name']} (${a['code'] ?? ''})"),
+  //                       ),
+  //                     ),
+  //                   ],
+  //                   onChanged: (val) => setStateDialog(() => accountId = val),
+  //                 ),
+  //               const SizedBox(height: 12),
+  //               TextField(
+  //                 controller: amountCtrl,
+  //                 keyboardType: const TextInputType.numberWithOptions(
+  //                   decimal: true,
+  //                 ),
+  //                 decoration: const InputDecoration(
+  //                   labelText: "Amount",
+  //                   border: OutlineInputBorder(),
+  //                 ),
+  //               ),
+  //               const SizedBox(height: 12),
+  //               TextField(
+  //                 controller: refCtrl,
+  //                 decoration: const InputDecoration(
+  //                   labelText: "Reference (optional)",
+  //                   border: OutlineInputBorder(),
+  //                 ),
+  //               ),
+  //               const SizedBox(height: 12),
+  //               TextField(
+  //                 controller: noteCtrl,
+  //                 decoration: const InputDecoration(
+  //                   labelText: "Note (optional)",
+  //                   border: OutlineInputBorder(),
+  //                 ),
+  //               ),
+  //               const SizedBox(height: 12),
+  //               InkWell(
+  //                 onTap: () async {
+  //                   final picked = await showDatePicker(
+  //                     context: context,
+  //                     initialDate: txnDate ?? DateTime.now(),
+  //                     firstDate: DateTime(2020, 1, 1),
+  //                     lastDate: DateTime(DateTime.now().year + 1, 12, 31),
+  //                   );
+  //                   if (picked != null) setStateDialog(() => txnDate = picked);
+  //                 },
+  //                 child: InputDecorator(
+  //                   decoration: const InputDecoration(
+  //                     labelText: "Transaction Date",
+  //                     border: OutlineInputBorder(),
+  //                   ),
+  //                   child: Text(
+  //                     txnDate != null
+  //                         ? _fmtDate(txnDate!)
+  //                         : "Select date (optional)",
+  //                   ),
+  //                 ),
+  //               ),
+  //             ],
+  //           ),
+  //         ),
+  //         actions: [
+  //           TextButton(
+  //             onPressed: () => Navigator.pop(context),
+  //             child: const Text("Cancel"),
+  //           ),
+  //           ElevatedButton(
+  //             onPressed: () async {
+  //               final amount = double.tryParse(amountCtrl.text) ?? 0;
+  //               if (amount <= 0) return;
 
-                final globalBranchId = context
-                    .read<BranchProvider>()
-                    .selectedBranchId;
+  //               final globalBranchId = context
+  //                   .read<BranchProvider>()
+  //                   .selectedBranchId;
 
-                try {
-                  await _cashService.createExpense(
-                    accountId: accountId,
-                    method: accountId == null ? method : null,
-                    amount: amount.toStringAsFixed(2),
-                    txnDate: txnDate != null ? _fmtDate(txnDate!) : null,
-                    branchId: globalBranchId?.toString(),
-                    reference: refCtrl.text.trim().isNotEmpty
-                        ? refCtrl.text.trim()
-                        : null,
-                    note: noteCtrl.text.trim().isNotEmpty
-                        ? noteCtrl.text.trim()
-                        : null,
-                    status: "approved",
-                  );
-                  if (context.mounted) {
-                    Navigator.pop(context);
-                    _fetchDaybook(page: _currentPage); // refresh current page
-                  }
-                } catch (e) {
-                  if (context.mounted) {
-                    Navigator.pop(context);
-                    ScaffoldMessenger.of(
-                      context,
-                    ).showSnackBar(SnackBar(content: Text(e.toString())));
-                  }
-                }
-              },
-              child: const Text("Save"),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+  //               try {
+  //                 await _cashService.createExpense(
+  //                   accountId: accountId,
+  //                   method: accountId == null ? method : null,
+  //                   amount: amount.toStringAsFixed(2),
+  //                   txnDate: txnDate != null ? _fmtDate(txnDate!) : null,
+  //                   branchId: globalBranchId?.toString(),
+  //                   reference: refCtrl.text.trim().isNotEmpty
+  //                       ? refCtrl.text.trim()
+  //                       : null,
+  //                   note: noteCtrl.text.trim().isNotEmpty
+  //                       ? noteCtrl.text.trim()
+  //                       : null,
+  //                   status: "approved",
+  //                 );
+  //                 if (context.mounted) {
+  //                   Navigator.pop(context);
+  //                   _fetchDaybook(page: _currentPage); // refresh current page
+  //                 }
+  //               } catch (e) {
+  //                 if (context.mounted) {
+  //                   Navigator.pop(context);
+  //                   ScaffoldMessenger.of(
+  //                     context,
+  //                   ).showSnackBar(SnackBar(content: Text(e.toString())));
+  //                 }
+  //               }
+  //             },
+  //             child: const Text("Save"),
+  //           ),
+  //         ],
+  //       ),
+  //     ),
+  //   );
+  // }
 
   // ======= Bulk expense dialog (one JE, many lines) =======
   Future<void> _addExpensesBulkDialog() async {

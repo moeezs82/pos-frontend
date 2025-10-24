@@ -43,7 +43,7 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
   bool _scannerEnabled = false;
 
   // receive now
-  bool _receiveNow = true; // default ON for convenience
+  bool _receiveNow = false; // default ON for convenience
 
   bool _autoCashIfEmpty = true;
 
@@ -181,16 +181,16 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
                     labelText: "Purchase Price",
                   ),
                 ),
-                if (_receiveNow) ...[
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: rcvCtl,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(
-                      labelText: "Receive Now (qty)",
-                    ),
-                  ),
-                ],
+                // if (_receiveNow) ...[
+                //   const SizedBox(height: 12),
+                //   TextField(
+                //     controller: rcvCtl,
+                //     keyboardType: TextInputType.number,
+                //     decoration: const InputDecoration(
+                //       labelText: "Receive Now (qty)",
+                //     ),
+                //   ),
+                // ],
                 const SizedBox(height: 12),
                 TextButton.icon(
                   icon: Icon(
@@ -368,12 +368,12 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
     final globalBranchId = context.read<BranchProvider>().selectedBranchId;
     final effectiveBranchId = globalBranchId?.toString() ?? _selectedBranchId;
 
-    if (effectiveBranchId == null || effectiveBranchId.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Please select a branch (on Home)")),
-      );
-      return;
-    }
+    // if (effectiveBranchId == null || effectiveBranchId.isEmpty) {
+    //   ScaffoldMessenger.of(context).showSnackBar(
+    //     const SnackBar(content: Text("Please select a branch (on Home)")),
+    //   );
+    //   return;
+    // }
 
     setState(() => _submitting = true);
 
@@ -551,39 +551,38 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
               const SizedBox(height: 12),
 
               // Discount & Tax + Receive Now
-              // Discount & Tax + Receive Now
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: Column(
-                    children: [
-                      // ⛔️ REMOVED old top Discount/Tax inputs
-                      const SizedBox(height: 8),
+              // Card(
+              //   child: Padding(
+              //     padding: const EdgeInsets.all(12),
+              //     child: Column(
+              //       children: [
+              //         // ⛔️ REMOVED old top Discount/Tax inputs
+              //         const SizedBox(height: 8),
 
-                      SwitchListTile(
-                        contentPadding: EdgeInsets.zero,
-                        title: const Text("Receive Now"),
-                        subtitle: const Text(
-                          "If ON, items can include 'received_qty'",
-                        ),
-                        value: _receiveNow,
-                        onChanged: (v) {
-                          setState(() {
-                            _receiveNow = v;
-                            // normalize received_qtys
-                            for (final i in _items) {
-                              final q = (i['quantity'] as int?) ?? 0;
-                              i['received_qty'] = v
-                                  ? (i['received_qty'] ?? q).clamp(0, q)
-                                  : 0;
-                            }
-                          });
-                        },
-                      ),
-                    ],
-                  ),
-                ),
-              ),
+              //         SwitchListTile(
+              //           contentPadding: EdgeInsets.zero,
+              //           title: const Text("Receive Now"),
+              //           subtitle: const Text(
+              //             "If ON, items can include 'received_qty'",
+              //           ),
+              //           value: _receiveNow,
+              //           onChanged: (v) {
+              //             setState(() {
+              //               _receiveNow = v;
+              //               // normalize received_qtys
+              //               for (final i in _items) {
+              //                 final q = (i['quantity'] as int?) ?? 0;
+              //                 i['received_qty'] = v
+              //                     ? (i['received_qty'] ?? q).clamp(0, q)
+              //                     : 0;
+              //               }
+              //             });
+              //           },
+              //         ),
+              //       ],
+              //     ),
+              //   ),
+              // ),
 
               const SizedBox(height: 12),
 
@@ -682,35 +681,37 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
                       //  Auto-cash toggle
                       SwitchListTile(
                         contentPadding: EdgeInsets.zero,
-                        title: const Text("Auto-cash if no payment"),
+                        title: const Text("Auto-cash"),
+                        // title: const Text("Auto-cash if no payment"),
                         subtitle: const Text(
-                          "When ON, sends full invoice total as CASH if you add no payments.",
+                          // "When ON, sends full invoice total as CASH if you add no payments.",
+                          "When ON, sends full invoice total as CASH.",
                         ),
                         value: _autoCashIfEmpty,
                         onChanged: (v) => setState(() => _autoCashIfEmpty = v),
                       ),
-                      if (_payments.isEmpty) const Text("No payments yet"),
-                      ..._payments.asMap().entries.map((entry) {
-                        final idx = entry.key;
-                        final p = entry.value;
-                        return ListTile(
-                          title: Text("\$${p['amount']}"),
-                          subtitle: Text("Method: ${p['method']}"),
-                          trailing: IconButton(
-                            icon: const Icon(Icons.delete, color: Colors.red),
-                            onPressed: () =>
-                                setState(() => _payments.removeAt(idx)),
-                          ),
-                        );
-                      }),
-                      Align(
-                        alignment: Alignment.centerRight,
-                        child: TextButton.icon(
-                          onPressed: _addPaymentDialog,
-                          icon: const Icon(Icons.add),
-                          label: const Text("Add Payment"),
-                        ),
-                      ),
+                      // if (_payments.isEmpty) const Text("No payments yet"),
+                      // ..._payments.asMap().entries.map((entry) {
+                      //   final idx = entry.key;
+                      //   final p = entry.value;
+                      //   return ListTile(
+                      //     title: Text("\$${p['amount']}"),
+                      //     subtitle: Text("Method: ${p['method']}"),
+                      //     trailing: IconButton(
+                      //       icon: const Icon(Icons.delete, color: Colors.red),
+                      //       onPressed: () =>
+                      //           setState(() => _payments.removeAt(idx)),
+                      //     ),
+                      //   );
+                      // }),
+                      // Align(
+                      //   alignment: Alignment.centerRight,
+                      //   child: TextButton.icon(
+                      //     onPressed: _addPaymentDialog,
+                      //     icon: const Icon(Icons.add),
+                      //     label: const Text("Add Payment"),
+                      //   ),
+                      // ),
                     ],
                   ),
                 ),

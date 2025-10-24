@@ -876,14 +876,14 @@ class _PurchaseDetailScreenState extends State<PurchaseDetailScreen> {
                                       //   icon: const Icon(Icons.edit),
                                       //   onPressed: () => _editItem(i),
                                       // ),
-                                      IconButton(
-                                        icon: const Icon(
-                                          Icons.delete,
-                                          color: Colors.red,
-                                        ),
-                                        onPressed: () =>
-                                            _deleteItem(i['id'] as int),
-                                      ),
+                                      // IconButton(
+                                      //   icon: const Icon(
+                                      //     Icons.delete,
+                                      //     color: Colors.red,
+                                      //   ),
+                                      //   onPressed: () =>
+                                      //       _deleteItem(i['id'] as int),
+                                      // ),
                                     ],
                                   ),
                                 );
@@ -931,11 +931,11 @@ class _PurchaseDetailScreenState extends State<PurchaseDetailScreen> {
                               trailing: Row(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
-                                  IconButton(
-                                    icon: const Icon(Icons.edit),
-                                    onPressed: () =>
-                                        _editPayment(p as Map<String, dynamic>),
-                                  ),
+                                  // IconButton(
+                                  //   icon: const Icon(Icons.edit),
+                                  //   onPressed: () =>
+                                  //       _editPayment(p as Map<String, dynamic>),
+                                  // ),
                                   IconButton(
                                     icon: const Icon(
                                       Icons.delete,

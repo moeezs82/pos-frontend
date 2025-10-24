@@ -46,7 +46,7 @@ class SalePaymentsSection extends StatelessWidget {
                 trailing: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    IconButton(icon: const Icon(Icons.edit), onPressed: () => onEditPayment(p)),
+                    // IconButton(icon: const Icon(Icons.edit), onPressed: () => onEditPayment(p)),
                     IconButton(
                       icon: const Icon(Icons.delete, color: Colors.red),
                       onPressed: () => onDeletePayment(p['id'] as int),

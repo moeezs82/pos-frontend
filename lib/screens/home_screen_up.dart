@@ -1,12 +1,12 @@
 import 'dart:ui';
-import 'package:enterprise_pos/screens/customers_screen.dart';
+import 'package:enterprise_pos/screens/customers/customers_screen.dart';
 import 'package:enterprise_pos/screens/product_screen.dart';
 import 'package:enterprise_pos/screens/purchases/purchase_claim_screen.dart';
 import 'package:enterprise_pos/screens/purchases/purchases_screen.dart';
 import 'package:enterprise_pos/screens/sales/sale_returns_screen.dart';
 import 'package:enterprise_pos/screens/sales/sale_screen.dart';
 import 'package:enterprise_pos/screens/stock_screen.dart';
-import 'package:enterprise_pos/screens/vendors_screen.dart';
+import 'package:enterprise_pos/screens/vendors/vendors_screen.dart';
 import 'package:enterprise_pos/widgets/branch_select_sheet.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';

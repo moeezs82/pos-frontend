@@ -38,7 +38,7 @@ class _VendorPickerSheetState extends State<VendorPickerSheet> {
 
     // your vendor API format:
     // res = { data: [ { vendors: [...], current_page: x, last_page: y } ] }
-    final wrapper = (data['data'] as List).first;
+    final wrapper = data['data'];
     final newVendors = (wrapper['vendors'] as List).cast<Map<String, dynamic>>();
 
     setState(() {

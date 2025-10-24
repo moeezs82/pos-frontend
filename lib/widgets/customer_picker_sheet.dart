@@ -53,8 +53,7 @@ class _CustomerPickerSheetState extends State<CustomerPickerSheet> {
       search: _search,
     );
 
-    // expected: { data: [ { customers: [...], current_page, last_page } ] }
-    final wrapper = (data['data'] as List).first;
+    final wrapper = data['data'];
     final newCustomers = (wrapper['customers'] as List)
         .cast<Map<String, dynamic>>();
     final lastPage = (wrapper['last_page'] ?? 1) as int;

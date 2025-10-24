@@ -61,13 +61,13 @@ class SaleItemsSection extends StatelessWidget {
                 subtitle: Text("Qty: ${i['quantity']} × \$${i['price']}"),
                 trailing: Row(
                   mainAxisSize: MainAxisSize.min,
-                  children: [
-                    IconButton(icon: const Icon(Icons.edit), onPressed: () => onEditItem(i)),
-                    IconButton(
-                      icon: const Icon(Icons.delete, color: Colors.red),
-                      onPressed: () => onDeleteItem(i['id'] as int),
-                    ),
-                  ],
+                  // children: [
+                  //   IconButton(icon: const Icon(Icons.edit), onPressed: () => onEditItem(i)),
+                  //   IconButton(
+                  //     icon: const Icon(Icons.delete, color: Colors.red),
+                  //     onPressed: () => onDeleteItem(i['id'] as int),
+                  //   ),
+                  // ],
                 ),
               )),
           const SizedBox(height: 8),

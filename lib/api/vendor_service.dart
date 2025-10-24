@@ -9,10 +9,14 @@ class VendorService {
   Future<Map<String, dynamic>> getVendors({
     int page = 1,
     String? search,
+    bool includeBalance = false,
+    int? branchId,
   }) async {
     final queryParams = {
       "page": page.toString(),
-      if (search != null && search.isNotEmpty) "search": search,
+      if (search != null && search.isNotEmpty) 'search': search,
+      if (includeBalance) 'include_balance': '1',
+      if (branchId != null) 'branch_id': '$branchId',
     };
 
     final res = await _client.get("/vendors", query: queryParams);
@@ -60,5 +64,61 @@ class VendorService {
     if (res["success"] != true) {
       throw Exception(res["message"] ?? "Failed to delete vendor");
     }
+  }
+
+  Future<Map<String, dynamic>> getVendorDetail({
+    required int id,
+    int? branchId,
+  }) async {
+    final params = {if (branchId != null) 'branch_id': '$branchId'};
+    // GET /api/vendors/{id}?branch_id=..&invoice_limit=..&receipt_limit=..
+    final res = await _client.get('/vendors/$id', query: params);
+    return res; // expects { data: { vendor:{..}, ar:{..}, aging:{..}, recent:{open_invoices:[], receipts:[]} } }
+  }
+
+  Future<Map<String, dynamic>> getVendorPurchases({
+    required int id,
+    int page = 1,
+    int perPage = 1,
+    int? branchId,
+  }) async {
+    final params = {
+      'page': '$page',
+      'per_page': '$perPage',
+      if (branchId != null) 'branch_id': '$branchId',
+    };
+    return await _client.get('/vendors/$id/purchases', query: params);
+  }
+
+  Future<Map<String, dynamic>> getVendorPayments({
+    required int id,
+    int page = 1,
+    int perPage = 1,
+    int? branchId,
+  }) async {
+    final params = {
+      'page': '$page',
+      'per_page': '$perPage',
+      if (branchId != null) 'branch_id': '$branchId',
+    };
+    return await _client.get('/vendors/$id/payments', query: params);
+  }
+
+  Future<Map<String, dynamic>> getVendorLedger({
+    required int id,
+    int page = 1,
+    int perPage = 10,
+    int? branchId,
+    String? from,
+    String? to,
+  }) async {
+    final params = {
+      'page': '$page',
+      'per_page': '$perPage',
+      if (branchId != null) 'branch_id': '$branchId',
+      if (from != null) 'from': from,
+      if (to != null) 'to': to,
+    };
+    return await _client.get('/vendors/$id/ledger', query: params);
   }
 }

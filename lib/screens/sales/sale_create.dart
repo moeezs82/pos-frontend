@@ -342,20 +342,14 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     }
 
     final globalBranchId = context.read<BranchProvider>().selectedBranchId;
-    final String? effectiveBranchIdStr =
-        globalBranchId?.toString() ?? _selectedBranchId;
+    final effectiveBranchId = globalBranchId?.toString() ?? _selectedBranchId;
 
-    if (effectiveBranchIdStr == null || effectiveBranchIdStr.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Please select a branch (on Home)")),
-      );
-      return;
-    }
-    final int effectiveBranchId = int.tryParse(effectiveBranchIdStr) ?? 0;
-    if (effectiveBranchId == 0) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Invalid branch")));
-      return;
-    }
+    // if (effectiveBranchId == null || effectiveBranchId.isEmpty) {
+    //   ScaffoldMessenger.of(context).showSnackBar(
+    //     const SnackBar(content: Text("Please select a branch (on Home)")),
+    //   );
+    //   return;
+    // }
 
     double subtotal = _items.fold<double>(
       0,
