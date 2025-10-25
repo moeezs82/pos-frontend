@@ -109,29 +109,29 @@ class _PurchaseClaimDetailScreenState extends State<PurchaseClaimDetailScreen> {
 
   Future<void> _approveClaim() async {
     // Optional "receive now" dialog on approval
-    final decision = await showDialog<_ReceiptDecision>(
-      context: context,
-      builder: (_) => _ReceiptDialog(
-        title: "Approve Claim",
-        maxAmount: _left.clamp(0.0, _toDouble(_claim?['total'])),
-        defaultAmount: _left > 0 ? _left : _toDouble(_claim?['total']),
-      ),
-    );
+    // final decision = await showDialog<_ReceiptDecision>(
+    //   context: context,
+    //   builder: (_) => _ReceiptDialog(
+    //     title: "Approve Claim",
+    //     maxAmount: _left.clamp(0.0, _toDouble(_claim?['total'])),
+    //     defaultAmount: _left > 0 ? _left : _toDouble(_claim?['total']),
+    //   ),
+    // );
 
-    if (decision == null) return;
+    // if (decision == null) return;
 
     final token = Provider.of<AuthProvider>(context, listen: false).token!;
     final uri = Uri.parse("${ApiClient.baseUrl}/purchase-claims/${widget.claimId}/approve");
 
     final body = <String, String>{};
-    if (decision.receiveNow && decision.amount > 0) {
-      body.addAll({
-        "receipt[amount]": decision.amount.toStringAsFixed(2),
-        "receipt[method]": decision.method,
-        if (decision.reference?.trim().isNotEmpty == true) "receipt[reference]": decision.reference!.trim(),
-        if (decision.date != null) "receipt[received_at]": DateFormat("yyyy-MM-dd").format(decision.date!),
-      });
-    }
+    // if (decision.receiveNow && decision.amount > 0) {
+    //   body.addAll({
+    //     "receipt[amount]": decision.amount.toStringAsFixed(2),
+    //     "receipt[method]": decision.method,
+    //     if (decision.reference?.trim().isNotEmpty == true) "receipt[reference]": decision.reference!.trim(),
+    //     if (decision.date != null) "receipt[received_at]": DateFormat("yyyy-MM-dd").format(decision.date!),
+    //   });
+    // }
 
     final res = await http.post(
       uri,
@@ -149,10 +149,10 @@ class _PurchaseClaimDetailScreenState extends State<PurchaseClaimDetailScreen> {
         final data = jsonDecode(res.body);
         final receivedTotal = _toDouble(data['data']?['received_total']);
         final left = _toDouble(data['data']?['receivable_left']);
-        if (decision.receiveNow && decision.amount > 0) {
-          msg = "Approved. Received ${_currency.format(decision.amount)} "
-              "(Total received: ${_currency.format(receivedTotal)}, Left: ${_currency.format(left)})";
-        }
+        // if (decision.receiveNow && decision.amount > 0) {
+        //   msg = "Approved. Received ${_currency.format(decision.amount)} "
+        //       "(Total received: ${_currency.format(receivedTotal)}, Left: ${_currency.format(left)})";
+        // }
       } catch (_) {}
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
     } else {
@@ -499,16 +499,16 @@ class _PurchaseClaimDetailScreenState extends State<PurchaseClaimDetailScreen> {
                 const SizedBox(height: 16),
 
                 // Actions
-                if (status == "approved") ...[
-                  SizedBox(
-                    width: double.infinity,
-                    child: OutlinedButton.icon(
-                      onPressed: _left <= 0 ? null : _postReceipt,
-                      icon: const Icon(Icons.attach_money),
-                      label: Text(_left <= 0 ? "Fully Received" : "Record Receipt"),
-                    ),
-                  ),
-                ],
+                // if (status == "approved") ...[
+                //   SizedBox(
+                //     width: double.infinity,
+                //     child: OutlinedButton.icon(
+                //       onPressed: _left <= 0 ? null : _postReceipt,
+                //       icon: const Icon(Icons.attach_money),
+                //       label: Text(_left <= 0 ? "Fully Received" : "Record Receipt"),
+                //     ),
+                //   ),
+                // ],
                 if (status == "pending") ...[
                   Row(
                     children: [

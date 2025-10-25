@@ -89,9 +89,9 @@ class _SaleReturnsScreenState extends State<SaleReturnsScreen> {
   }
 
   Future<void> _fetchBranches() async {
-    final result = await _commonService.getBranches();
+    // final result = await _commonService.getBranches();
     if (!mounted) return;
-    setState(() => _branches = result);
+    setState(() => _branches = []);
   }
 
   Future<void> _fetchReturns({required int page, bool replace = false}) async {
@@ -259,7 +259,7 @@ class _SaleReturnsScreenState extends State<SaleReturnsScreen> {
       appBar: AppBar(
         title: const Text("Sale Returns"),
         actions: [
-          const BranchIndicator(tappable: false),
+          // const BranchIndicator(tappable: false),
           IconButton(
             onPressed: _fetchInitial,
             icon: const Icon(Icons.refresh),
@@ -580,7 +580,7 @@ class _SaleReturnsScreenState extends State<SaleReturnsScreen> {
                                         children: [
                                           Expanded(
                                             child: Text(
-                                              "Invoice: $invoice • Cust: ${customer.isEmpty ? 'N/A' : customer} • $branch",
+                                              "Invoice: $invoice • Cust: ${customer.isEmpty ? 'N/A' : customer}",
                                               overflow: TextOverflow.ellipsis,
                                             ),
                                           ),
@@ -596,21 +596,21 @@ class _SaleReturnsScreenState extends State<SaleReturnsScreen> {
                                         ],
                                       ),
                                       const SizedBox(height: 2),
-                                      Wrap(
-                                        spacing: 0,
-                                        runSpacing: 0,
-                                        children: [
-                                          _amountChip(context, "Total", _currency.format(total), Colors.blue, icon: Icons.summarize),
-                                          _amountChip(context, "Refunded", _currency.format(refunded), Colors.green, icon: Icons.reply_all),
-                                          _amountChip(
-                                            context,
-                                            "Bal",
-                                            _currency.format(balance),
-                                            balance <= 0 ? Colors.teal : Colors.deepOrange,
-                                            icon: balance <= 0 ? Icons.check_circle : Icons.account_balance_wallet_outlined,
-                                          ),
-                                        ],
-                                      ),
+                                      // Wrap(
+                                      //   spacing: 0,
+                                      //   runSpacing: 0,
+                                      //   children: [
+                                      //     _amountChip(context, "Total", _currency.format(total), Colors.blue, icon: Icons.summarize),
+                                      //     _amountChip(context, "Refunded", _currency.format(refunded), Colors.green, icon: Icons.reply_all),
+                                      //     _amountChip(
+                                      //       context,
+                                      //       "Bal",
+                                      //       _currency.format(balance),
+                                      //       balance <= 0 ? Colors.teal : Colors.deepOrange,
+                                      //       icon: balance <= 0 ? Icons.check_circle : Icons.account_balance_wallet_outlined,
+                                      //     ),
+                                      //   ],
+                                      // ),
                                     ],
                                   ),
                                 ),

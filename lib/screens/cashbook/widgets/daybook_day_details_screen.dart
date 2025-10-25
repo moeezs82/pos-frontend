@@ -77,8 +77,6 @@ class _DayBookDayDetailsScreenState extends State<DayBookDayDetailsScreen> {
         search: _searchCtrl.text.trim().isNotEmpty ? _searchCtrl.text.trim() : null,
         includeLines: _includeLines,
       );
-      
-      print(res);
 
       final totals = Map<String, dynamic>.from(res['totals'] ?? {});
       final rows = List<Map<String, dynamic>>.from(res['rows'] ?? const []);

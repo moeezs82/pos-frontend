@@ -81,20 +81,20 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
   }
 
   // ---------------- Pickers ----------------
-  Future<void> _pickBranch() async {
-    final token = Provider.of<AuthProvider>(context, listen: false).token!;
-    final branch = await showModalBottomSheet<Map<String, dynamic>>(
-      context: context,
-      builder: (_) => BranchPickerSheet(token: token),
-    );
-    if (!mounted) return;
-    if (branch != null) {
-      setState(() {
-        _selectedBranch = branch;
-        _selectedBranchId = branch['id'].toString();
-      });
-    }
-  }
+  // Future<void> _pickBranch() async {
+  //   final token = Provider.of<AuthProvider>(context, listen: false).token!;
+  //   final branch = await showModalBottomSheet<Map<String, dynamic>>(
+  //     context: context,
+  //     builder: (_) => BranchPickerSheet(token: token),
+  //   );
+  //   if (!mounted) return;
+  //   if (branch != null) {
+  //     setState(() {
+  //       _selectedBranch = branch;
+  //       _selectedBranchId = branch['id'].toString();
+  //     });
+  //   }
+  // }
 
   Future<void> _pickCustomer() async {
     final token = Provider.of<AuthProvider>(context, listen: false).token!;
@@ -428,7 +428,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         actions: const [
           Padding(
             padding: EdgeInsets.only(right: 8.0),
-            child: BranchIndicator(tappable: false),
+            // child: BranchIndicator(tappable: false),
           ),
         ],
       ),
@@ -449,7 +449,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
                 selectedVendor: _selectedVendor,
                 onPickCustomer: _pickCustomer,
                 onPickUser: _pickUser,
-                onPickBranch: _pickBranch,
+                // onPickBranch: _pickBranch,
                 onPickVendor: _pickVendor,
                 onClearVendor: () => setState(() {
                   _selectedVendor = null;

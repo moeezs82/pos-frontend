@@ -90,9 +90,9 @@ class _SalesScreenState extends State<SalesScreen> {
   }
 
   Future<void> _fetchBranches() async {
-    final result = await _commonService.getBranches();
+    // final result = await _commonService.getBranches();
     if (!mounted) return;
-    setState(() => _branches = result);
+    setState(() => _branches = []);
   }
 
   Future<void> _fetchSales({required int page, bool replace = false}) async {
@@ -258,7 +258,7 @@ class _SalesScreenState extends State<SalesScreen> {
       appBar: AppBar(
         title: const Text("Sales"),
         actions: [
-          const BranchIndicator(tappable: false),
+          // const BranchIndicator(tappable: false),
           IconButton(
             onPressed: () => _fetchInitial(),
             icon: const Icon(Icons.refresh),
@@ -285,36 +285,36 @@ class _SalesScreenState extends State<SalesScreen> {
             padding: const EdgeInsets.fromLTRB(8, 6, 8, 4),
             child: Row(
               children: [
-                if (isAll) ...[
-                  Expanded(
-                    flex: 14,
-                    child: DropdownButtonFormField<String>(
-                      value: _selectedBranchId,
-                      decoration: const InputDecoration(
-                        labelText: "Branch",
-                        border: OutlineInputBorder(),
-                        isDense: true,
-                      ),
-                      items: [
-                        const DropdownMenuItem<String>(
-                          value: null,
-                          child: Text("All"),
-                        ),
-                        ..._branches.map(
-                          (b) => DropdownMenuItem<String>(
-                            value: b['id'].toString(),
-                            child: Text(b['name'].toString()),
-                          ),
-                        ),
-                      ],
-                      onChanged: (v) async {
-                        setState(() => _selectedBranchId = v);
-                        await _fetchInitial();
-                      },
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                ],
+                // if (isAll) ...[
+                //   Expanded(
+                //     flex: 14,
+                //     child: DropdownButtonFormField<String>(
+                //       value: _selectedBranchId,
+                //       decoration: const InputDecoration(
+                //         labelText: "Branch",
+                //         border: OutlineInputBorder(),
+                //         isDense: true,
+                //       ),
+                //       items: [
+                //         const DropdownMenuItem<String>(
+                //           value: null,
+                //           child: Text("All"),
+                //         ),
+                //         ..._branches.map(
+                //           (b) => DropdownMenuItem<String>(
+                //             value: b['id'].toString(),
+                //             child: Text(b['name'].toString()),
+                //           ),
+                //         ),
+                //       ],
+                //       onChanged: (v) async {
+                //         setState(() => _selectedBranchId = v);
+                //         await _fetchInitial();
+                //       },
+                //     ),
+                //   ),
+                //   const SizedBox(width: 6),
+                // ],
 
                 // Customer selector
                 Expanded(

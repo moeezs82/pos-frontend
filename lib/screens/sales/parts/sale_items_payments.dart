@@ -115,24 +115,24 @@ class PaymentsCard extends StatelessWidget {
                   child: Text("Payments",
                       style: TextStyle(fontWeight: FontWeight.bold)),
                 ),
-                TextButton.icon(
-                  onPressed: onAddPayment,
-                  icon: const Icon(Icons.add),
-                  label: const Text("Add Payment"),
-                ),
+                // TextButton.icon(
+                //   onPressed: onAddPayment,
+                //   icon: const Icon(Icons.add),
+                //   label: const Text("Add Payment"),
+                // ),
               ],
             ),
             const Divider(),
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
-              title: const Text("Auto-cash if no payment"),
+              title: const Text("Auto-cash"),
               subtitle: const Text(
-                "When ON, sends full invoice total as CASH if you add no payments.",
+                "When ON, sends full invoice total as CASH.",
               ),
               value: autoCashIfEmpty,
               onChanged: onToggleAutoCash,
             ),
-            if (payments.isEmpty) const Text("No payments yet"),
+            // if (payments.isEmpty) const Text("No payments yet"),
             ...payments.asMap().entries.map((entry) {
               final idx = entry.key;
               final p = entry.value;

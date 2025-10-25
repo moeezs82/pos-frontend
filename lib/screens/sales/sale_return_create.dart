@@ -81,14 +81,15 @@ class _CreateSaleReturnScreenState extends State<CreateSaleReturnScreen> {
             onPressed: () async {
               if (controller.text.isEmpty) return;
 
-              final uri = Uri.parse("${ApiClient.baseUrl}/sales")
-                  .replace(queryParameters: {"search": controller.text});
+              final uri = Uri.parse(
+                "${ApiClient.baseUrl}/sales",
+              ).replace(queryParameters: {"search": controller.text});
 
               final res = await http.get(
                 uri,
                 headers: {
                   "Authorization": "Bearer $token",
-                  "Accept": "application/json"
+                  "Accept": "application/json",
                 },
               );
 
@@ -101,7 +102,7 @@ class _CreateSaleReturnScreenState extends State<CreateSaleReturnScreen> {
                     Uri.parse("${ApiClient.baseUrl}/sales/${sale['id']}"),
                     headers: {
                       "Authorization": "Bearer $token",
-                      "Accept": "application/json"
+                      "Accept": "application/json",
                     },
                   );
                   if (saleDetailRes.statusCode == 200) {
@@ -139,9 +140,9 @@ class _CreateSaleReturnScreenState extends State<CreateSaleReturnScreen> {
 
   Future<void> _submitReturn(BuildContext context) async {
     if (_selectedSale == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Please select a sale")),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text("Please select a sale")));
       return;
     }
 
@@ -152,15 +153,19 @@ class _CreateSaleReturnScreenState extends State<CreateSaleReturnScreen> {
           final q = int.tryParse(_qtyControllers[id]?.text ?? "0") ?? 0;
           return q > 0;
         })
-        .map((i) => {
-              "sale_item_id": i['id'],
-              "quantity": int.parse(_qtyControllers[i['id']]!.text),
-            })
+        .map(
+          (i) => {
+            "sale_item_id": i['id'],
+            "quantity": int.parse(_qtyControllers[i['id']]!.text),
+          },
+        )
         .toList();
 
     if (items.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Please enter at least 1 return quantity")),
+        const SnackBar(
+          content: Text("Please enter at least 1 return quantity"),
+        ),
       );
       return;
     }
@@ -209,9 +214,9 @@ class _CreateSaleReturnScreenState extends State<CreateSaleReturnScreen> {
 
     if (createRes.statusCode != 200) {
       setState(() => _submitting = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Failed to create return")),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text("Failed to create return")));
       return;
     }
 
@@ -244,14 +249,16 @@ class _CreateSaleReturnScreenState extends State<CreateSaleReturnScreen> {
       Map<String, String>? approveBody;
       if (_refundNow) {
         approveBody = {
-          "refund[amount]": (double.tryParse(_refundAmountCtrl.text.trim()) ??
-                  computedTotal)
-              .toStringAsFixed(2),
+          "refund[amount]":
+              (double.tryParse(_refundAmountCtrl.text.trim()) ?? computedTotal)
+                  .toStringAsFixed(2),
           "refund[method]": _refundMethod,
           if (_refundRefCtrl.text.trim().isNotEmpty)
             "refund[reference]": _refundRefCtrl.text.trim(),
           if (_refundDate != null)
-            "refund[refunded_at]": DateFormat("yyyy-MM-dd").format(_refundDate!),
+            "refund[refunded_at]": DateFormat(
+              "yyyy-MM-dd",
+            ).format(_refundDate!),
         };
       }
 
@@ -271,7 +278,9 @@ class _CreateSaleReturnScreenState extends State<CreateSaleReturnScreen> {
           final d = jsonDecode(approveRes.body);
           if (d is Map && d['message'] != null) msg = d['message'].toString();
         } catch (_) {}
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(msg)));
         return;
       }
     }
@@ -283,8 +292,8 @@ class _CreateSaleReturnScreenState extends State<CreateSaleReturnScreen> {
           content: Text(
             _approveNow
                 ? (_refundNow
-                    ? "Return created, approved and refunded ${_currency.format(double.tryParse(_refundAmountCtrl.text) ?? _computeReturnTotal())}"
-                    : "Return created and approved")
+                      ? "Return created, approved and refunded ${_currency.format(double.tryParse(_refundAmountCtrl.text) ?? _computeReturnTotal())}"
+                      : "Return created and approved")
                 : "Return created",
           ),
         ),
@@ -300,7 +309,12 @@ class _CreateSaleReturnScreenState extends State<CreateSaleReturnScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text("Create Sale Return"),
-        actions: const [Padding(padding: EdgeInsets.only(right: 8), child: BranchIndicator(tappable: false))],
+        actions: const [
+          Padding(
+            padding: EdgeInsets.only(right: 8),
+            // child: BranchIndicator(tappable: false),
+          ),
+        ],
       ),
       body: Padding(
         padding: const EdgeInsets.all(12),
@@ -338,12 +352,15 @@ class _CreateSaleReturnScreenState extends State<CreateSaleReturnScreen> {
                           final name = item['product']?['name'] ?? '—';
                           final soldQty = item['quantity'];
                           final id = item['id'] as int;
-                          final price = _itemPrices[id] ?? _toDouble(item['price']);
+                          final price =
+                              _itemPrices[id] ?? _toDouble(item['price']);
 
                           return Card(
                             child: ListTile(
                               title: Text(name),
-                              subtitle: Text("Qty sold: $soldQty  |  Price: ${_currency.format(price)}"),
+                              subtitle: Text(
+                                "Qty sold: $soldQty  |  Price: ${_currency.format(price)}",
+                              ),
                               trailing: SizedBox(
                                 width: 90,
                                 child: TextFormField(
@@ -383,87 +400,110 @@ class _CreateSaleReturnScreenState extends State<CreateSaleReturnScreen> {
                           setState(() {
                             _approveNow = v;
                             if (!_approveNow) _refundNow = false;
-                            if (_approveNow && _refundNow) _recalcRefundDefault();
+                            if (_approveNow && _refundNow)
+                              _recalcRefundDefault();
                           });
                         },
                       ),
-                      if (_approveNow) ...[
-                        SwitchListTile(
-                          title: const Text("Refund now"),
-                          value: _refundNow,
-                          onChanged: (v) {
-                            setState(() {
-                              _refundNow = v;
-                              if (_refundNow) _recalcRefundDefault();
-                            });
-                          },
-                        ),
-                        if (_refundNow) ...[
-                          Row(
-                            children: [
-                              Expanded(
-                                child: TextField(
-                                  controller: _refundAmountCtrl,
-                                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                                  decoration: InputDecoration(
-                                    labelText:
-                                        "Refund Amount (max ${_currency.format(total)})",
-                                    border: const OutlineInputBorder(),
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: DropdownButtonFormField<String>(
-                                  value: _refundMethod,
-                                  decoration: const InputDecoration(
-                                    labelText: "Method",
-                                    border: OutlineInputBorder(),
-                                  ),
-                                  items: const [
-                                    DropdownMenuItem(value: "cash", child: Text("Cash")),
-                                    DropdownMenuItem(value: "card", child: Text("Card")),
-                                    DropdownMenuItem(value: "bank", child: Text("Bank")),
-                                    DropdownMenuItem(value: "wallet", child: Text("Wallet")),
-                                  ],
-                                  onChanged: (v) => setState(() => _refundMethod = v ?? 'cash'),
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 8),
-                          TextField(
-                            controller: _refundRefCtrl,
-                            decoration: const InputDecoration(
-                              labelText: "Reference (optional)",
-                              border: OutlineInputBorder(),
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          Row(
-                            children: [
-                              Expanded(
-                                child: OutlinedButton.icon(
-                                  icon: const Icon(Icons.calendar_today),
-                                  label: Text(_refundDate == null
-                                      ? "Refund Date (optional)"
-                                      : DateFormat.yMMMd().format(_refundDate!)),
-                                  onPressed: () async {
-                                    final now = DateTime.now();
-                                    final d = await showDatePicker(
-                                      context: context,
-                                      initialDate: _refundDate ?? now,
-                                      firstDate: DateTime(now.year - 5),
-                                      lastDate: DateTime(now.year + 5),
-                                    );
-                                    if (d != null) setState(() => _refundDate = d);
-                                  },
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ],
+                      // if (_approveNow) ...[
+                      //   SwitchListTile(
+                      //     title: const Text("Refund now"),
+                      //     value: _refundNow,
+                      //     onChanged: (v) {
+                      //       setState(() {
+                      //         _refundNow = v;
+                      //         if (_refundNow) _recalcRefundDefault();
+                      //       });
+                      //     },
+                      //   ),
+                        // if (_refundNow) ...[
+                        //   Row(
+                        //     children: [
+                        //       Expanded(
+                        //         child: TextField(
+                        //           controller: _refundAmountCtrl,
+                        //           keyboardType:
+                        //               const TextInputType.numberWithOptions(
+                        //                 decimal: true,
+                        //               ),
+                        //           decoration: InputDecoration(
+                        //             labelText:
+                        //                 "Refund Amount (max ${_currency.format(total)})",
+                        //             border: const OutlineInputBorder(),
+                        //           ),
+                        //         ),
+                        //       ),
+                        //       const SizedBox(width: 8),
+                        //       Expanded(
+                        //         child: DropdownButtonFormField<String>(
+                        //           value: _refundMethod,
+                        //           decoration: const InputDecoration(
+                        //             labelText: "Method",
+                        //             border: OutlineInputBorder(),
+                        //           ),
+                        //           items: const [
+                        //             DropdownMenuItem(
+                        //               value: "cash",
+                        //               child: Text("Cash"),
+                        //             ),
+                        //             DropdownMenuItem(
+                        //               value: "card",
+                        //               child: Text("Card"),
+                        //             ),
+                        //             DropdownMenuItem(
+                        //               value: "bank",
+                        //               child: Text("Bank"),
+                        //             ),
+                        //             DropdownMenuItem(
+                        //               value: "wallet",
+                        //               child: Text("Wallet"),
+                        //             ),
+                        //           ],
+                        //           onChanged: (v) => setState(
+                        //             () => _refundMethod = v ?? 'cash',
+                        //           ),
+                        //         ),
+                        //       ),
+                        //     ],
+                        //   ),
+                        //   const SizedBox(height: 8),
+                        //   TextField(
+                        //     controller: _refundRefCtrl,
+                        //     decoration: const InputDecoration(
+                        //       labelText: "Reference (optional)",
+                        //       border: OutlineInputBorder(),
+                        //     ),
+                        //   ),
+                        //   const SizedBox(height: 8),
+                        //   Row(
+                        //     children: [
+                        //       Expanded(
+                        //         child: OutlinedButton.icon(
+                        //           icon: const Icon(Icons.calendar_today),
+                        //           label: Text(
+                        //             _refundDate == null
+                        //                 ? "Refund Date (optional)"
+                        //                 : DateFormat.yMMMd().format(
+                        //                     _refundDate!,
+                        //                   ),
+                        //           ),
+                        //           onPressed: () async {
+                        //             final now = DateTime.now();
+                        //             final d = await showDatePicker(
+                        //               context: context,
+                        //               initialDate: _refundDate ?? now,
+                        //               firstDate: DateTime(now.year - 5),
+                        //               lastDate: DateTime(now.year + 5),
+                        //             );
+                        //             if (d != null)
+                        //               setState(() => _refundDate = d);
+                        //           },
+                        //         ),
+                        //       ),
+                        //     ],
+                        //   ),
+                        // ],
+                      // ],
                       const Divider(),
                       // 💰 Summary
                       Align(

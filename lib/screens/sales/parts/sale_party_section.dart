@@ -9,7 +9,7 @@ class PartySectionCard extends StatelessWidget {
 
   final VoidCallback onPickCustomer;
   final VoidCallback onPickUser;
-  final VoidCallback onPickBranch;
+  // final VoidCallback onPickBranch;
   final VoidCallback onPickVendor;
   final VoidCallback onClearVendor;
 
@@ -22,7 +22,7 @@ class PartySectionCard extends StatelessWidget {
     required this.selectedVendor,
     required this.onPickCustomer,
     required this.onPickUser,
-    required this.onPickBranch,
+    // required this.onPickBranch,
     required this.onPickVendor,
     required this.onClearVendor,
   });
@@ -47,11 +47,11 @@ class PartySectionCard extends StatelessWidget {
             ),
             const SizedBox(height: 12),
             if (isAll)
-              SelectField(
-                label: "Branch",
-                valueText: selectedBranch?['name'] ?? "Select Branch",
-                onTap: onPickBranch,
-              ),
+              // SelectField(
+              //   label: "Branch",
+              //   valueText: selectedBranch?['name'] ?? "Select Branch",
+              //   onTap: onPickBranch,
+              // ),
             if (isAll) const SizedBox(height: 12),
             SelectField(
               label: "Vendor (optional)",

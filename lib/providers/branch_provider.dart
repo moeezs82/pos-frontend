@@ -16,7 +16,8 @@ class BranchProvider extends ChangeNotifier {
 
   int? get selectedBranchId => _selectedBranchId;
   String get label => _selectedBranchName ?? "All Branches";
-  bool get isAll => _selectedBranchId == null;
+  bool get isAll => false;
+  // bool get isAll => _selectedBranchId == null;
   bool get restored => _restored;
 
   Future<void> _restore() async {

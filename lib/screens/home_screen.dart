@@ -4,6 +4,7 @@ import 'package:enterprise_pos/screens/cashbook/daybook_screen.dart';
 import 'package:enterprise_pos/screens/customers/customers_screen.dart';
 import 'package:enterprise_pos/screens/product_screen.dart';
 import 'package:enterprise_pos/screens/purchases/purchase_claim_screen.dart';
+import 'package:enterprise_pos/screens/reports/report_hub_screen.dart';
 import 'package:enterprise_pos/screens/sales/sale_returns_screen.dart';
 import 'package:enterprise_pos/screens/sales/sale_screen.dart';
 import 'package:enterprise_pos/screens/purchases/purchases_screen.dart';
@@ -45,7 +46,9 @@ class HomeScreen extends StatelessWidget {
         subtitle: "Create invoices",
         color: Colors.blue,
         onTap: () => Navigator.push(
-          context, MaterialPageRoute(builder: (_) => const SalesScreen())),
+          context,
+          MaterialPageRoute(builder: (_) => const SalesScreen()),
+        ),
       ),
       _Tile(
         icon: Icons.assignment_return,
@@ -53,7 +56,9 @@ class HomeScreen extends StatelessWidget {
         subtitle: "Process returns",
         color: Colors.indigo,
         onTap: () => Navigator.push(
-          context, MaterialPageRoute(builder: (_) => const SaleReturnsScreen())),
+          context,
+          MaterialPageRoute(builder: (_) => const SaleReturnsScreen()),
+        ),
       ),
       _Tile(
         icon: Icons.shopping_cart_checkout,
@@ -61,7 +66,9 @@ class HomeScreen extends StatelessWidget {
         subtitle: "Supplier bills",
         color: Colors.blue,
         onTap: () => Navigator.push(
-          context, MaterialPageRoute(builder: (_) => const PurchasesScreen())),
+          context,
+          MaterialPageRoute(builder: (_) => const PurchasesScreen()),
+        ),
       ),
       _Tile(
         icon: Icons.assignment_return_outlined,
@@ -69,7 +76,9 @@ class HomeScreen extends StatelessWidget {
         subtitle: "Damage/shortage",
         color: Colors.indigo,
         onTap: () => Navigator.push(
-          context, MaterialPageRoute(builder: (_) => const PurchaseClaimsScreen())),
+          context,
+          MaterialPageRoute(builder: (_) => const PurchaseClaimsScreen()),
+        ),
       ),
       _Tile(
         icon: Icons.inventory_2,
@@ -77,7 +86,9 @@ class HomeScreen extends StatelessWidget {
         subtitle: "Catalog & SKUs",
         color: Colors.green,
         onTap: () => Navigator.push(
-          context, MaterialPageRoute(builder: (_) => const ProductsScreen())),
+          context,
+          MaterialPageRoute(builder: (_) => const ProductsScreen()),
+        ),
       ),
       _Tile(
         icon: Icons.warehouse,
@@ -85,7 +96,9 @@ class HomeScreen extends StatelessWidget {
         subtitle: "On-hand by branch",
         color: Colors.red,
         onTap: () => Navigator.push(
-          context, MaterialPageRoute(builder: (_) => const StockScreen())),
+          context,
+          MaterialPageRoute(builder: (_) => const StockScreen()),
+        ),
       ),
 
       _Tile(
@@ -94,16 +107,20 @@ class HomeScreen extends StatelessWidget {
         subtitle: "Receipts • Payments • Expenses",
         color: Colors.teal,
         onTap: () => Navigator.push(
-          context, MaterialPageRoute(builder: (_) => const DayBookScreen())),
+          context,
+          MaterialPageRoute(builder: (_) => const DayBookScreen()),
+        ),
       ),
-      
+
       _Tile(
         icon: Icons.receipt_long_rounded,
         title: "Accounts",
         subtitle: "ASSET • Libilities • Expenses",
         color: Colors.teal,
         onTap: () => Navigator.push(
-          context, MaterialPageRoute(builder: (_) => const AccountsScreen())),
+          context,
+          MaterialPageRoute(builder: (_) => const AccountsScreen()),
+        ),
       ),
 
       _Tile(
@@ -112,7 +129,9 @@ class HomeScreen extends StatelessWidget {
         subtitle: "CRM basics",
         color: Colors.orange,
         onTap: () => Navigator.push(
-          context, MaterialPageRoute(builder: (_) => const CustomersScreen())),
+          context,
+          MaterialPageRoute(builder: (_) => const CustomersScreen()),
+        ),
       ),
       _Tile(
         icon: Icons.groups_2,
@@ -120,7 +139,9 @@ class HomeScreen extends StatelessWidget {
         subtitle: "Supplier list",
         color: Colors.orange,
         onTap: () => Navigator.push(
-          context, MaterialPageRoute(builder: (_) => const VendorsScreen())),
+          context,
+          MaterialPageRoute(builder: (_) => const VendorsScreen()),
+        ),
       ),
       _Tile(
         icon: Icons.groups_2,
@@ -128,14 +149,19 @@ class HomeScreen extends StatelessWidget {
         subtitle: "App Users / Salesmen",
         color: Colors.orange,
         onTap: () => Navigator.push(
-          context, MaterialPageRoute(builder: (_) => const UsersScreen())),
+          context,
+          MaterialPageRoute(builder: (_) => const UsersScreen()),
+        ),
       ),
       _Tile(
         icon: Icons.bar_chart,
         title: "Reports",
         subtitle: "Analytics & KPIs",
         color: Colors.purple,
-        onTap: () {}, // hook up later
+        onTap: () => Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const ReportsHubScreen()),
+        ),
       ),
       _Tile(
         icon: Icons.settings,
@@ -148,7 +174,13 @@ class HomeScreen extends StatelessWidget {
 
     // Responsive columns
     final width = MediaQuery.of(context).size.width;
-    final cols = width >= 1100 ? 5 : width >= 900 ? 4 : width >= 600 ? 3 : 2;
+    final cols = width >= 1100
+        ? 5
+        : width >= 900
+        ? 4
+        : width >= 600
+        ? 3
+        : 2;
 
     return Scaffold(
       appBar: AppBar(
@@ -186,7 +218,10 @@ class HomeScreen extends StatelessWidget {
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
               gradient: LinearGradient(
-                colors: [theme.colorScheme.primary.withOpacity(0.9), theme.colorScheme.primary],
+                colors: [
+                  theme.colorScheme.primary.withOpacity(0.9),
+                  theme.colorScheme.primary,
+                ],
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
               ),
@@ -201,7 +236,9 @@ class HomeScreen extends StatelessWidget {
                   radius: 26,
                   backgroundColor: Colors.white,
                   child: Text(
-                    auth.user?['name'] != null ? auth.user!['name'][0].toUpperCase() : "?",
+                    auth.user?['name'] != null
+                        ? auth.user!['name'][0].toUpperCase()
+                        : "?",
                     style: TextStyle(
                       fontSize: 20,
                       fontWeight: FontWeight.bold,
@@ -214,15 +251,25 @@ class HomeScreen extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text("Welcome back,", style: TextStyle(color: Colors.white70)),
+                      const Text(
+                        "Welcome back,",
+                        style: TextStyle(color: Colors.white70),
+                      ),
                       Text(
                         auth.user?['name'] ?? "User",
-                        style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
                         overflow: TextOverflow.ellipsis,
                       ),
                       Text(
                         "Role: ${auth.user?['role']?[0] ?? 'Unknown'}",
-                        style: const TextStyle(color: Colors.white70, fontSize: 12),
+                        style: const TextStyle(
+                          color: Colors.white70,
+                          fontSize: 12,
+                        ),
                       ),
                     ],
                   ),

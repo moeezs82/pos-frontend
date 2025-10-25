@@ -94,18 +94,18 @@ class _SaleReturnDetailScreenState extends State<SaleReturnDetailScreen> {
   }
 
   Future<void> _approveReturn() async {
-    final decision = await showDialog<_RefundDecision>(
-      context: context,
-      builder: (_) => _RefundDialog(
-        title: "Approve Return",
-        maxAmount: _remaining.clamp(0.0, _toDouble(_return?['total'])),
-        defaultAmount: _remaining > 0
-            ? _remaining
-            : _toDouble(_return?['total']),
-      ),
-    );
+    // final decision = await showDialog<_RefundDecision>(
+    //   context: context,
+    //   builder: (_) => _RefundDialog(
+    //     title: "Approve Return",
+    //     maxAmount: _remaining.clamp(0.0, _toDouble(_return?['total'])),
+    //     defaultAmount: _remaining > 0
+    //         ? _remaining
+    //         : _toDouble(_return?['total']),
+    //   ),
+    // );
 
-    if (decision == null) return;
+    // if (decision == null) return;
 
     final token = Provider.of<AuthProvider>(context, listen: false).token!;
     final uri = Uri.parse(
@@ -113,18 +113,18 @@ class _SaleReturnDetailScreenState extends State<SaleReturnDetailScreen> {
     );
 
     final body = <String, String>{};
-    if (decision.issueRefund && decision.amount > 0) {
-      body.addAll({
-        "refund[amount]": decision.amount.toStringAsFixed(2),
-        "refund[method]": decision.method,
-        if (decision.reference?.trim().isNotEmpty == true)
-          "refund[reference]": decision.reference!.trim(),
-        if (decision.date != null)
-          "refund[refunded_at]": DateFormat(
-            "yyyy-MM-dd",
-          ).format(decision.date!),
-      });
-    }
+    // if (decision.issueRefund && decision.amount > 0) {
+    //   body.addAll({
+    //     "refund[amount]": decision.amount.toStringAsFixed(2),
+    //     "refund[method]": decision.method,
+    //     if (decision.reference?.trim().isNotEmpty == true)
+    //       "refund[reference]": decision.reference!.trim(),
+    //     if (decision.date != null)
+    //       "refund[refunded_at]": DateFormat(
+    //         "yyyy-MM-dd",
+    //       ).format(decision.date!),
+    //   });
+    // }
 
     final res = await http.post(
       uri,
@@ -142,11 +142,11 @@ class _SaleReturnDetailScreenState extends State<SaleReturnDetailScreen> {
         final data = jsonDecode(res.body);
         final refundedTotal = _toDouble(data['data']?['refunded_total']);
         final left = _toDouble(data['data']?['refundable_left']);
-        if (decision.issueRefund && decision.amount > 0) {
-          msg =
-              "Approved. Refunded ${_currency.format(decision.amount)} "
-              "(Total refunded: ${_currency.format(refundedTotal)}, Left: ${_currency.format(left)})";
-        }
+        // if (decision.issueRefund && decision.amount > 0) {
+        //   msg =
+        //       "Approved. Refunded ${_currency.format(decision.amount)} "
+        //       "(Total refunded: ${_currency.format(refundedTotal)}, Left: ${_currency.format(left)})";
+        // }
       } catch (_) {}
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
     } else {
@@ -275,7 +275,7 @@ class _SaleReturnDetailScreenState extends State<SaleReturnDetailScreen> {
           actions: const [
             Padding(
               padding: EdgeInsets.only(right: 8),
-              child: BranchIndicator(tappable: false),
+              // child: BranchIndicator(tappable: false),
             ),
           ],
         ),
@@ -357,35 +357,35 @@ class _SaleReturnDetailScreenState extends State<SaleReturnDetailScreen> {
                 const SizedBox(height: 12),
 
                 // Money summary (Total / Refunded / Remaining)
-                Row(
-                  children: [
-                    Expanded(
-                      child: _KpiTile(
-                        title: "Total",
-                        value: _currency.format(_total),
-                        icon: Icons.summarize,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: _KpiTile(
-                        title: "Refunded",
-                        value: _currency.format(_refunded),
-                        icon: Icons.payments,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: _KpiTile(
-                        title: "Remaining",
-                        value: _currency.format(_remaining),
-                        icon: Icons.account_balance_wallet_outlined,
-                      ),
-                    ),
-                  ],
-                ),
+                // Row(
+                //   children: [
+                //     Expanded(
+                //       child: _KpiTile(
+                //         title: "Total",
+                //         value: _currency.format(_total),
+                //         icon: Icons.summarize,
+                //       ),
+                //     ),
+                //     const SizedBox(width: 8),
+                //     Expanded(
+                //       child: _KpiTile(
+                //         title: "Refunded",
+                //         value: _currency.format(_refunded),
+                //         icon: Icons.payments,
+                //       ),
+                //     ),
+                //     const SizedBox(width: 8),
+                //     Expanded(
+                //       child: _KpiTile(
+                //         title: "Remaining",
+                //         value: _currency.format(_remaining),
+                //         icon: Icons.account_balance_wallet_outlined,
+                //       ),
+                //     ),
+                //   ],
+                // ),
 
-                const SizedBox(height: 20),
+                // const SizedBox(height: 20),
 
                 // Items
                 _SectionHeader(title: "Returned Items"),
@@ -442,53 +442,53 @@ class _SaleReturnDetailScreenState extends State<SaleReturnDetailScreen> {
                 const SizedBox(height: 20),
 
                 // Refunds history
-                _SectionHeader(title: "Refunds"),
-                if (refunds.isEmpty)
-                  _EmptyNote(text: "No refunds have been issued yet.")
-                else
-                  Column(
-                    children: refunds.map((r) {
-                      final amount = _toDouble(r['amount']);
-                      final method = (r['method'] ?? '—').toString();
-                      final ref = (r['reference'] ?? '').toString();
-                      final dateStr =
-                          (r['refunded_at'] ?? r['created_at'] ?? '')
-                              .toString();
-                      String when = "—";
-                      if (dateStr.isNotEmpty) {
-                        try {
-                          when = DateFormat.yMMMd().format(
-                            DateTime.parse(dateStr),
-                          );
-                        } catch (_) {}
-                      }
-                      return _ListCard(
-                        leading: const CircleAvatar(
-                          child: Icon(Icons.reply_all_rounded),
-                        ),
-                        title: _currency.format(amount),
-                        subtitle:
-                            "Method: $method${ref.isNotEmpty ? " • Ref: $ref" : ""}",
-                        trailing: Text(when),
-                      );
-                    }).toList(),
-                  ),
+                // _SectionHeader(title: "Refunds"),
+                // if (refunds.isEmpty)
+                //   _EmptyNote(text: "No refunds have been issued yet.")
+                // else
+                //   Column(
+                //     children: refunds.map((r) {
+                //       final amount = _toDouble(r['amount']);
+                //       final method = (r['method'] ?? '—').toString();
+                //       final ref = (r['reference'] ?? '').toString();
+                //       final dateStr =
+                //           (r['refunded_at'] ?? r['created_at'] ?? '')
+                //               .toString();
+                //       String when = "—";
+                //       if (dateStr.isNotEmpty) {
+                //         try {
+                //           when = DateFormat.yMMMd().format(
+                //             DateTime.parse(dateStr),
+                //           );
+                //         } catch (_) {}
+                //       }
+                //       return _ListCard(
+                //         leading: const CircleAvatar(
+                //           child: Icon(Icons.reply_all_rounded),
+                //         ),
+                //         title: _currency.format(amount),
+                //         subtitle:
+                //             "Method: $method${ref.isNotEmpty ? " • Ref: $ref" : ""}",
+                //         trailing: Text(when),
+                //       );
+                //     }).toList(),
+                //   ),
 
-                const SizedBox(height: 16),
+                // const SizedBox(height: 16),
 
                 // Action buttons
-                if (status == "approved") ...[
-                  SizedBox(
-                    width: double.infinity,
-                    child: OutlinedButton.icon(
-                      onPressed: _remaining <= 0 ? null : _refundReturn,
-                      icon: const Icon(Icons.money_off),
-                      label: Text(
-                        _remaining <= 0 ? "Fully Refunded" : "Refund",
-                      ),
-                    ),
-                  ),
-                ],
+                // if (status == "approved") ...[
+                //   SizedBox(
+                //     width: double.infinity,
+                //     child: OutlinedButton.icon(
+                //       onPressed: _remaining <= 0 ? null : _refundReturn,
+                //       icon: const Icon(Icons.money_off),
+                //       label: Text(
+                //         _remaining <= 0 ? "Fully Refunded" : "Refund",
+                //       ),
+                //     ),
+                //   ),
+                // ],
                 if (status == "pending") ...[
                   SizedBox(
                     width: double.infinity,

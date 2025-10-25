@@ -456,84 +456,84 @@ class _CreatePurchaseClaimScreenState extends State<CreatePurchaseClaimScreen> {
                           });
                         },
                       ),
-                      if (_approveNow) ...[
-                        SwitchListTile(
-                          title: const Text("Receive now"),
-                          value: _receiveNow,
-                          onChanged: (v) {
-                            setState(() {
-                              _receiveNow = v;
-                              if (_receiveNow) _syncDefaultReceipt();
-                            });
-                          },
-                        ),
-                        if (_receiveNow) ...[
-                          Row(
-                            children: [
-                              Expanded(
-                                child: TextField(
-                                  controller: _receiptAmountCtrl,
-                                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                                  decoration: InputDecoration(
-                                    labelText: "Receipt Amount (max ${_currency.format(total)})",
-                                    border: const OutlineInputBorder(),
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: DropdownButtonFormField<String>(
-                                  value: _receiptMethod,
-                                  decoration: const InputDecoration(
-                                    labelText: "Method",
-                                    border: OutlineInputBorder(),
-                                  ),
-                                  items: const [
-                                    DropdownMenuItem(value: "cash", child: Text("Cash")),
-                                    DropdownMenuItem(value: "bank", child: Text("Bank")),
-                                    DropdownMenuItem(value: "credit_note", child: Text("Credit Note")),
-                                    DropdownMenuItem(value: "wallet", child: Text("Wallet")),
-                                  ],
-                                  onChanged: (v) => setState(() => _receiptMethod = v ?? 'cash'),
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 8),
-                          TextField(
-                            controller: _receiptRefCtrl,
-                            decoration: const InputDecoration(
-                              labelText: "Reference (optional)",
-                              border: OutlineInputBorder(),
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          Row(
-                            children: [
-                              Expanded(
-                                child: OutlinedButton.icon(
-                                  icon: const Icon(Icons.calendar_today),
-                                  label: Text(
-                                    _receiptDate == null
-                                        ? "Receipt Date (optional)"
-                                        : DateFormat.yMMMd().format(_receiptDate!),
-                                  ),
-                                  onPressed: () async {
-                                    final now = DateTime.now();
-                                    final d = await showDatePicker(
-                                      context: context,
-                                      initialDate: _receiptDate ?? now,
-                                      firstDate: DateTime(now.year - 5),
-                                      lastDate: DateTime(now.year + 5),
-                                    );
-                                    if (d != null) setState(() => _receiptDate = d);
-                                  },
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ],
+                      // if (_approveNow) ...[
+                      //   SwitchListTile(
+                      //     title: const Text("Receive now"),
+                      //     value: _receiveNow,
+                      //     onChanged: (v) {
+                      //       setState(() {
+                      //         _receiveNow = v;
+                      //         if (_receiveNow) _syncDefaultReceipt();
+                      //       });
+                      //     },
+                      //   ),
+                      //   if (_receiveNow) ...[
+                      //     Row(
+                      //       children: [
+                      //         Expanded(
+                      //           child: TextField(
+                      //             controller: _receiptAmountCtrl,
+                      //             keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      //             decoration: InputDecoration(
+                      //               labelText: "Receipt Amount (max ${_currency.format(total)})",
+                      //               border: const OutlineInputBorder(),
+                      //             ),
+                      //           ),
+                      //         ),
+                      //         const SizedBox(width: 8),
+                      //         Expanded(
+                      //           child: DropdownButtonFormField<String>(
+                      //             value: _receiptMethod,
+                      //             decoration: const InputDecoration(
+                      //               labelText: "Method",
+                      //               border: OutlineInputBorder(),
+                      //             ),
+                      //             items: const [
+                      //               DropdownMenuItem(value: "cash", child: Text("Cash")),
+                      //               DropdownMenuItem(value: "bank", child: Text("Bank")),
+                      //               DropdownMenuItem(value: "credit_note", child: Text("Credit Note")),
+                      //               DropdownMenuItem(value: "wallet", child: Text("Wallet")),
+                      //             ],
+                      //             onChanged: (v) => setState(() => _receiptMethod = v ?? 'cash'),
+                      //           ),
+                      //         ),
+                      //       ],
+                      //     ),
+                      //     const SizedBox(height: 8),
+                      //     TextField(
+                      //       controller: _receiptRefCtrl,
+                      //       decoration: const InputDecoration(
+                      //         labelText: "Reference (optional)",
+                      //         border: OutlineInputBorder(),
+                      //       ),
+                      //     ),
+                      //     const SizedBox(height: 8),
+                      //     Row(
+                      //       children: [
+                      //         Expanded(
+                      //           child: OutlinedButton.icon(
+                      //             icon: const Icon(Icons.calendar_today),
+                      //             label: Text(
+                      //               _receiptDate == null
+                      //                   ? "Receipt Date (optional)"
+                      //                   : DateFormat.yMMMd().format(_receiptDate!),
+                      //             ),
+                      //             onPressed: () async {
+                      //               final now = DateTime.now();
+                      //               final d = await showDatePicker(
+                      //                 context: context,
+                      //                 initialDate: _receiptDate ?? now,
+                      //                 firstDate: DateTime(now.year - 5),
+                      //                 lastDate: DateTime(now.year + 5),
+                      //               );
+                      //               if (d != null) setState(() => _receiptDate = d);
+                      //             },
+                      //           ),
+                      //         ),
+                      //       ],
+                      //     ),
+                      //   ],
+                      // ],
                       const Divider(),
                       Align(
                         alignment: Alignment.centerRight,

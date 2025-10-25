@@ -26,6 +26,7 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
   final _nameController = TextEditingController();
   final _descController = TextEditingController();
   final _priceController = TextEditingController();
+  final _stockController = TextEditingController();
   final _costPriceController = TextEditingController();
   final _wholesalePriceController = TextEditingController();
   final _taxRateController = TextEditingController();
@@ -86,7 +87,7 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
       if (p['vendor'] is Map<String, dynamic>) {
         _selectedVendor = {
           'id': p['vendor']['id'],
-          'name': p['vendor']['first_name'],
+          'first_name': p['vendor']['first_name'],
         };
         _selectedVendorId = _selectedVendor?['id'] as int?;
       }
@@ -98,7 +99,7 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
       // Optional: if you have vendor details, set a name; fallback to id-only label
       _selectedVendor = {
         'id': widget.vendorId,
-        'name': 'Vendor #${widget.vendorId}',
+        'first_name': 'Vendor #${widget.vendorId}',
       };
     }
 
@@ -287,6 +288,7 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
       "barcode": _barcodeController.text,
       "name": _nameController.text,
       "description": _descController.text,
+      "stock": double.tryParse(_stockController.text)??0,
       "price": double.tryParse(_priceController.text) ?? 0.0,
       "cost_price": double.tryParse(_costPriceController.text) ?? 0.0,
       "wholesale_price": double.tryParse(_wholesalePriceController.text) ?? 0.0,
@@ -337,7 +339,7 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
     final effectiveVendorId =
         fixedVendorId ?? productVendorId ?? _selectedVendorId;
     final effectiveVendorName =
-        _selectedVendor?['name'] ??
+        _selectedVendor?['first_name'] ??
         widget.product?['vendor']?['first_name'] ??
         (effectiveVendorId != null
             ? 'Vendor #$effectiveVendorId'
@@ -507,7 +509,7 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
                   contentPadding: const EdgeInsets.symmetric(horizontal: 8),
                   title: const Text("Vendor (optional)"),
                   subtitle: Text(
-                    _selectedVendor?['name']?.toString() ?? 'None selected',
+                    _selectedVendor?['first_name']?.toString() ?? 'None selected',
                   ),
                   trailing: Row(
                     mainAxisSize: MainAxisSize.min,
@@ -534,6 +536,15 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
                 const SizedBox(height: 12),
               ],
 
+              TextFormField(
+                controller: _stockController,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: "Opening Stock",
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
               TextFormField(
                 controller: _priceController,
                 keyboardType: TextInputType.number,
