@@ -34,6 +34,7 @@ class SaleService {
             (it) => {
               "product_id": it["product_id"],
               "quantity": it["quantity"],
+              "discount_pct": it["discount_pct"],
               "price": it["price"],
             },
           )

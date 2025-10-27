@@ -487,7 +487,7 @@ class _PurchasesScreenState extends State<PurchasesScreen> {
                               final paid   = _toDouble(p['paid_amount']);
                               final balance = (total - paid).clamp(0, double.infinity);
 
-                              final st = _paymentStatus(p);
+                              // final st = _paymentStatus(p);
                               final recvStatus = (p['receive_status'] ?? 'ordered').toString();
 
                               final createdAtStr = (p['created_at'] ?? p['date'] ?? '').toString();
@@ -544,18 +544,18 @@ class _PurchasesScreenState extends State<PurchasesScreen> {
                                         style: const TextStyle(fontWeight: FontWeight.w700),
                                       ),
                                     ),
-                                    const SizedBox(width: 6),
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                      decoration: BoxDecoration(
-                                        color: st.color,
-                                        borderRadius: BorderRadius.circular(6),
-                                      ),
-                                      child: Text(
-                                        st.label,
-                                        style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w700),
-                                      ),
-                                    ),
+                                    // const SizedBox(width: 6),
+                                    // Container(
+                                    //   padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                    //   decoration: BoxDecoration(
+                                    //     color: st.color,
+                                    //     borderRadius: BorderRadius.circular(6),
+                                    //   ),
+                                    //   child: Text(
+                                    //     st.label,
+                                    //     style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w700),
+                                    //   ),
+                                    // ),
                                   ],
                                 ),
 
@@ -572,50 +572,52 @@ class _PurchasesScreenState extends State<PurchasesScreen> {
                                               overflow: TextOverflow.ellipsis,
                                             ),
                                           ),
-                                          if (dt != null)
-                                            Text(
-                                              "$dateLabel • $timeLabel",
-                                              style: const TextStyle(color: Colors.grey, fontSize: 11, fontWeight: FontWeight.w500),
-                                            ),
+                                          _amountChip(context, "Date", dateLabel, Colors.blue, icon: Icons.calendar_month),
+                                          _amountChip(context, "Amount", _currency.format(total), Colors.red, icon: Icons.summarize),
+                                          // if (dt != null)
+                                          //   Text(
+                                          //     "$dateLabel • $timeLabel",
+                                          //     style: const TextStyle(color: Colors.grey, fontSize: 11, fontWeight: FontWeight.w500),
+                                          //   ),
                                         ],
                                       ),
                                       const SizedBox(height: 2),
-                                      Wrap(
-                                        spacing: 0,
-                                        runSpacing: 0,
-                                        children: [
-                                          _amountChip(context, "Total", _currency.format(total), Colors.blue, icon: Icons.summarize),
-                                          _amountChip(context, "Paid",  _currency.format(paid),  Colors.green, icon: Icons.payments),
-                                          _amountChip(
-                                            context,
-                                            "Bal",
-                                            _currency.format(balance),
-                                            balance <= 0 ? Colors.teal : Colors.deepOrange,
-                                            icon: balance <= 0 ? Icons.check_circle : Icons.account_balance_wallet_outlined,
-                                          ),
-                                          // Receive status mini-chip
-                                          Container(
-                                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                            margin: const EdgeInsets.only(right: 6, top: 2),
-                                            decoration: BoxDecoration(
-                                              color: Colors.purple.withOpacity(.12),
-                                              borderRadius: BorderRadius.circular(8),
-                                              border: Border.all(color: Colors.purple.withOpacity(.35), width: 1),
-                                            ),
-                                            child: Row(
-                                              mainAxisSize: MainAxisSize.min,
-                                              children: [
-                                                const Icon(Icons.inventory_2, size: 12, color: Colors.purple),
-                                                const SizedBox(width: 4),
-                                                Text(
-                                                  "Recv: ${recvStatus.toString().toUpperCase()}",
-                                                  style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Colors.purple),
-                                                ),
-                                              ],
-                                            ),
-                                          ),
-                                        ],
-                                      ),
+                                      // Wrap(
+                                      //   spacing: 0,
+                                      //   runSpacing: 0,
+                                      //   children: [
+                                      //     _amountChip(context, "Total", _currency.format(total), Colors.blue, icon: Icons.summarize),
+                                      //     _amountChip(context, "Paid",  _currency.format(paid),  Colors.green, icon: Icons.payments),
+                                      //     _amountChip(
+                                      //       context,
+                                      //       "Bal",
+                                      //       _currency.format(balance),
+                                      //       balance <= 0 ? Colors.teal : Colors.deepOrange,
+                                      //       icon: balance <= 0 ? Icons.check_circle : Icons.account_balance_wallet_outlined,
+                                      //     ),
+                                      //     // Receive status mini-chip
+                                      //     Container(
+                                      //       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                      //       margin: const EdgeInsets.only(right: 6, top: 2),
+                                      //       decoration: BoxDecoration(
+                                      //         color: Colors.purple.withOpacity(.12),
+                                      //         borderRadius: BorderRadius.circular(8),
+                                      //         border: Border.all(color: Colors.purple.withOpacity(.35), width: 1),
+                                      //       ),
+                                      //       child: Row(
+                                      //         mainAxisSize: MainAxisSize.min,
+                                      //         children: [
+                                      //           const Icon(Icons.inventory_2, size: 12, color: Colors.purple),
+                                      //           const SizedBox(width: 4),
+                                      //           Text(
+                                      //             "Recv: ${recvStatus.toString().toUpperCase()}",
+                                      //             style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Colors.purple),
+                                      //           ),
+                                      //         ],
+                                      //       ),
+                                      //     ),
+                                      //   ],
+                                      // ),
                                     ],
                                   ),
                                 ),

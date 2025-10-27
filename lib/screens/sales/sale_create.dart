@@ -2,6 +2,7 @@ import 'package:enterprise_pos/api/product_service.dart';
 import 'package:enterprise_pos/api/sale_service.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/providers/branch_provider.dart';
+import 'package:enterprise_pos/screens/sales/parts/create_sale_items_section.dart';
 import 'package:enterprise_pos/widgets/branch_indicator.dart';
 import 'package:enterprise_pos/widgets/product_picker_sheet.dart';
 import 'package:enterprise_pos/widgets/customer_picker_sheet.dart';
@@ -142,7 +143,8 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     final user = await showModalBottomSheet<Map<String, dynamic>?>(
       context: context,
       isScrollControlled: true,
-      builder: (_) => UserPickerSheet(token: token, branchId: effectiveBranchId),
+      builder: (_) =>
+          UserPickerSheet(token: token, branchId: effectiveBranchId),
     );
     if (!mounted) return;
     setState(() {
@@ -162,24 +164,30 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     );
     if (product == null) return;
 
+    final price = double.tryParse(product['price']?.toString() ?? '') ?? 0.0;
+
     setState(() {
       _items.add({
         "product_id": product['id'],
         "name": product['name'],
         "cost_price": product['cost_price'],
         "wholesale_price": product['wholesale_price'],
-        "quantity": 1,
-        "price": double.tryParse(product['price'].toString()) ?? 0.0,
+        "quantity": 1.0,
+        "price": price,
+        "discount_pct": 0.0,
+        "total": _lineTotal(price: price, qty: 1.0, discPct: 0.0),
       });
     });
   }
 
   void _editItem(int index) {
     final item = _items[index];
-    final qtyController =
-        TextEditingController(text: item['quantity'].toString());
-    final priceController =
-        TextEditingController(text: item['price'].toString());
+    final qtyController = TextEditingController(
+      text: item['quantity'].toString(),
+    );
+    final priceController = TextEditingController(
+      text: item['price'].toString(),
+    );
 
     final costPrice = item['cost_price'] ?? 0.0;
     final wholesalePrice = item['wholesale_price'] ?? 0.0;
@@ -208,8 +216,12 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
                 ),
                 const SizedBox(height: 12),
                 TextButton.icon(
-                  icon: Icon(showHidden ? Icons.visibility_off : Icons.visibility),
-                  label: Text(showHidden ? "Hide Cost/Wholesale" : "Show Cost/Wholesale"),
+                  icon: Icon(
+                    showHidden ? Icons.visibility_off : Icons.visibility,
+                  ),
+                  label: Text(
+                    showHidden ? "Hide Cost/Wholesale" : "Show Cost/Wholesale",
+                  ),
                   onPressed: () => setLocal(() => showHidden = !showHidden),
                 ),
                 if (showHidden) ...[
@@ -219,10 +231,14 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text("Cost Price: \$${costPrice.toString()}",
-                            style: const TextStyle(color: Colors.grey)),
-                        Text("Wholesale Price: \$${wholesalePrice.toString()}",
-                            style: const TextStyle(color: Colors.grey)),
+                        Text(
+                          "Cost Price: \$${costPrice.toString()}",
+                          style: const TextStyle(color: Colors.grey),
+                        ),
+                        Text(
+                          "Wholesale Price: \$${wholesalePrice.toString()}",
+                          style: const TextStyle(color: Colors.grey),
+                        ),
                       ],
                     ),
                   ),
@@ -230,12 +246,17 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
               ],
             ),
             actions: [
-              TextButton(onPressed: () => Navigator.pop(context), child: const Text("Cancel")),
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text("Cancel"),
+              ),
               ElevatedButton(
                 onPressed: () {
                   setState(() {
-                    _items[index]['quantity'] = int.tryParse(qtyController.text) ?? 1;
-                    _items[index]['price'] = double.tryParse(priceController.text) ?? 0.0;
+                    _items[index]['quantity'] =
+                        int.tryParse(qtyController.text) ?? 1;
+                    _items[index]['price'] =
+                        double.tryParse(priceController.text) ?? 0.0;
                   });
                   Navigator.pop(context);
                 },
@@ -280,12 +301,20 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
           ],
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text("Cancel")),
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text("Cancel"),
+          ),
           ElevatedButton(
             onPressed: () {
               final amt = double.tryParse(amountController.text) ?? 0.0;
               if (amt > 0) {
-                setState(() => _payments.add({"amount": amt.toString(), "method": method}));
+                setState(
+                  () => _payments.add({
+                    "amount": amt.toString(),
+                    "method": method,
+                  }),
+                );
                 Navigator.pop(context);
               }
             },
@@ -299,27 +328,45 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
   // ---------------- Barcode ----------------
   Future<void> _onBarcodeScanned(String code) async {
     if (code.isEmpty) return;
-    
-    final product = await _productService.getProductByBarcode(code, vendorId: _selectedVendorId);
+
+    final product = await _productService.getProductByBarcode(
+      code,
+      vendorId: _selectedVendorId,
+    );
     if (product != null) {
+      final price = double.tryParse(product['price']?.toString() ?? '') ?? 0.0;
       setState(() {
         _items.add({
           "product_id": product['id'],
           "name": product['name'],
           "cost_price": product['cost_price'],
           "wholesale_price": product['wholesale_price'],
-          "quantity": 1,
-          "price": double.tryParse(product['price'].toString()) ?? 0.0,
+          "quantity": 1.0,
+          "price": price,
+          "discount_pct": 0.0,
+          "total": _lineTotal(price: price, qty: 1.0, discPct: 0.0),
         });
       });
     } else {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Product not found: $code")));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text("Product not found: $code")));
     }
     _barcodeController.clear();
     Future.delayed(const Duration(milliseconds: 50), () {
       if (mounted) _barcodeFocusNode.requestFocus();
     });
+  }
+
+  double _lineTotal({
+    required double price,
+    required double qty,
+    required double discPct,
+  }) {
+    final d = (discPct / 100.0).clamp(0.0, 100.0);
+    final t = qty * price * (1.0 - d);
+    return t.isFinite ? (t < 0 ? 0.0 : t) : 0.0;
   }
 
   Widget _hiddenBarcodeField() {
@@ -337,7 +384,9 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
   // ---------------- Submit ----------------
   Future<void> _submitSale() async {
     if (_items.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Add at least 1 item")));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text("Add at least 1 item")));
       return;
     }
 
@@ -350,11 +399,13 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     //   );
     //   return;
     // }
-
-    double subtotal = _items.fold<double>(
-      0,
-      (sum, i) => sum + ((i['quantity'] as num) * (i['price'] as num)),
-    ).toDouble();
+    double _rowNum(v) => double.tryParse(v?.toString() ?? '') ?? 0.0;
+    final subtotal = _items.fold<double>(0.0, (sum, i) {
+      final price = _rowNum(i['price']);
+      final qty = _rowNum(i['quantity']);
+      final disc = _rowNum(i['discount_pct']); // may be null -> 0
+      return sum + _lineTotal(price: price, qty: qty, discPct: disc);
+    });
     double discount = double.tryParse(discountController.text.trim()) ?? 0.0;
     double tax = double.tryParse(taxController.text.trim()) ?? 0.0;
     double total = (subtotal - discount + tax).clamp(0, double.infinity);
@@ -388,9 +439,60 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       Navigator.pop(context, true);
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Failed to create sale: $e")));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text("Failed to create sale: $e")));
     } finally {
       if (mounted) setState(() => _submitting = false);
+    }
+  }
+
+  Future<List<ProductRef>> _queryProducts(String q) async {
+    try {
+      final res = await _productService.getProducts(
+        page: 1,
+        search: q,
+        vendorId: _selectedVendorId,
+      );
+      final data = res['data'];
+      List list = const [];
+
+      if (data is List && data.isNotEmpty) {
+        final first = data.first;
+        if (first is Map && first['products'] is List) {
+          list = first['products'] as List;
+        }
+      }
+
+      double _tp(Map m) {
+        for (final k in [
+          'tp',
+          'sell_price',
+          'price',
+          'unit_price',
+          'default_price',
+        ]) {
+          final v = m[k];
+          if (v != null) {
+            final n = double.tryParse(v.toString());
+            if (n != null) return n;
+          }
+        }
+        return 0.0;
+      }
+
+      return list
+          .map<ProductRef>((raw) {
+            final m = raw as Map<String, dynamic>;
+            return ProductRef(
+              id: (m['id'] ?? m['product_id']) as int,
+              name: (m['name'] ?? m['title'] ?? 'Unnamed').toString(),
+              tp: _tp(m),
+            );
+          })
+          .toList(growable: false);
+    } catch (_) {
+      return const <ProductRef>[];
     }
   }
 
@@ -407,11 +509,13 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
   @override
   Widget build(BuildContext context) {
     final isAll = context.watch<BranchProvider>().isAll;
-
-    final subtotal = _items.fold<double>(
-      0,
-      (sum, i) => sum + ((i['quantity'] as num) * (i['price'] as num)),
-    ).toDouble();
+    double _rowNum(v) => double.tryParse(v?.toString() ?? '') ?? 0.0;
+    final subtotal = _items.fold<double>(0.0, (sum, i) {
+      final price = _rowNum(i['price']);
+      final qty = _rowNum(i['quantity']);
+      final disc = _rowNum(i['discount_pct']); // may be null -> 0
+      return sum + _lineTotal(price: price, qty: qty, discPct: disc);
+    });
     final discount = _toDouble(discountController);
     final tax = _toDouble(taxController);
     final total = (subtotal - discount + tax).clamp(0, double.infinity);
@@ -470,11 +574,19 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
                 },
               ),
               const SizedBox(height: 8),
-              ItemsCard(
+              // ItemsCard(
+              //   items: _items,
+              //   onAddItem: _addItemManual,
+              //   onEditItem: _editItem,
+              //   onRemoveItem: (idx) => setState(() => _items.removeAt(idx)),
+              // ),
+              // --- FAST TABULAR ITEMS ---
+              ItemsTable(
                 items: _items,
-                onAddItem: _addItemManual,
-                onEditItem: _editItem,
-                onRemoveItem: (idx) => setState(() => _items.removeAt(idx)),
+                onQueryProducts: _queryProducts, // implemented below
+                onItemsChanged: (next) {
+                  setState(() => _items = next);
+                },
               ),
 
               const SizedBox(height: 12),
@@ -485,7 +597,8 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
                 autoCashIfEmpty: _autoCashIfEmpty,
                 onToggleAutoCash: (v) => setState(() => _autoCashIfEmpty = v),
                 onAddPayment: _addPaymentDialog,
-                onRemovePayment: (idx) => setState(() => _payments.removeAt(idx)),
+                onRemovePayment: (idx) =>
+                    setState(() => _payments.removeAt(idx)),
               ),
 
               const SizedBox(height: 12),

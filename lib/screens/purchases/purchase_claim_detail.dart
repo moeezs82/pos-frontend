@@ -393,15 +393,15 @@ class _PurchaseClaimDetailScreenState extends State<PurchaseClaimDetailScreen> {
                 const SizedBox(height: 12),
 
                 // KPI summary: Total / Received / Left
-                Row(
-                  children: [
-                    Expanded(child: _KpiTile(title: "Total", value: _currency.format(_total), icon: Icons.summarize)),
-                    const SizedBox(width: 8),
-                    Expanded(child: _KpiTile(title: "Received", value: _currency.format(_received), icon: Icons.download)),
-                    const SizedBox(width: 8),
-                    Expanded(child: _KpiTile(title: "Left", value: _currency.format(_left), icon: Icons.account_balance_wallet_outlined)),
-                  ],
-                ),
+                // Row(
+                //   children: [
+                //     Expanded(child: _KpiTile(title: "Total", value: _currency.format(_total), icon: Icons.summarize)),
+                //     const SizedBox(width: 8),
+                //     Expanded(child: _KpiTile(title: "Received", value: _currency.format(_received), icon: Icons.download)),
+                //     const SizedBox(width: 8),
+                //     Expanded(child: _KpiTile(title: "Left", value: _currency.format(_left), icon: Icons.account_balance_wallet_outlined)),
+                //   ],
+                // ),
 
                 const SizedBox(height: 20),
 
@@ -473,28 +473,28 @@ class _PurchaseClaimDetailScreenState extends State<PurchaseClaimDetailScreen> {
                 const SizedBox(height: 20),
 
                 // Receipts
-                _SectionHeader(title: "Receipts"),
-                if (receipts.isEmpty)
-                  const _EmptyNote(text: "No receipts posted yet.")
-                else
-                  Column(
-                    children: receipts.map((r) {
-                      final amount = _toDouble(r['amount']);
-                      final method = (r['method'] ?? '—').toString();
-                      final ref = (r['reference'] ?? '').toString();
-                      final dateStr = (r['received_at'] ?? r['created_at'] ?? '').toString();
-                      String when = "—";
-                      if (dateStr.isNotEmpty) {
-                        try { when = DateFormat.yMMMd().format(DateTime.parse(dateStr)); } catch (_) {}
-                      }
-                      return _ListCard(
-                        leading: const CircleAvatar(child: Icon(Icons.download_done)),
-                        title: _currency.format(amount),
-                        subtitle: "Method: $method${ref.isNotEmpty ? " • Ref: $ref" : ""}",
-                        trailing: Text(when),
-                      );
-                    }).toList(),
-                  ),
+                // _SectionHeader(title: "Receipts"),
+                // if (receipts.isEmpty)
+                //   const _EmptyNote(text: "No receipts posted yet.")
+                // else
+                //   Column(
+                //     children: receipts.map((r) {
+                //       final amount = _toDouble(r['amount']);
+                //       final method = (r['method'] ?? '—').toString();
+                //       final ref = (r['reference'] ?? '').toString();
+                //       final dateStr = (r['received_at'] ?? r['created_at'] ?? '').toString();
+                //       String when = "—";
+                //       if (dateStr.isNotEmpty) {
+                //         try { when = DateFormat.yMMMd().format(DateTime.parse(dateStr)); } catch (_) {}
+                //       }
+                //       return _ListCard(
+                //         leading: const CircleAvatar(child: Icon(Icons.download_done)),
+                //         title: _currency.format(amount),
+                //         subtitle: "Method: $method${ref.isNotEmpty ? " • Ref: $ref" : ""}",
+                //         trailing: Text(when),
+                //       );
+                //     }).toList(),
+                //   ),
 
                 const SizedBox(height: 16),
 

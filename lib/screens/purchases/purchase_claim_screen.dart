@@ -595,33 +595,35 @@ class _PurchaseClaimsScreenState extends State<PurchaseClaimsScreen> {
                                               overflow: TextOverflow.ellipsis,
                                             ),
                                           ),
-                                          if (dt != null)
-                                            Text(
-                                              "$dateLabel • $timeLabel",
-                                              style: const TextStyle(
-                                                color: Colors.grey,
-                                                fontSize: 11,
-                                                fontWeight: FontWeight.w500,
-                                              ),
-                                            ),
+                                          _amountChip(context, "Date", dateLabel, Colors.blue, icon: Icons.calendar_month),
+                                          _amountChip(context, "Amount", dateLabel, Colors.red, icon: Icons.summarize),
+                                          // if (dt != null)
+                                          //   Text(
+                                          //     "$dateLabel • $timeLabel",
+                                          //     style: const TextStyle(
+                                          //       color: Colors.grey,
+                                          //       fontSize: 11,
+                                          //       fontWeight: FontWeight.w500,
+                                          //     ),
+                                          //   ),
                                         ],
                                       ),
                                       const SizedBox(height: 2),
-                                      Wrap(
-                                        spacing: 0,
-                                        runSpacing: 0,
-                                        children: [
-                                          _amountChip(context, "Total", _currency.format(total), Colors.blue, icon: Icons.summarize),
-                                          _amountChip(context, "Received", _currency.format(received), Colors.green, icon: Icons.move_to_inbox),
-                                          _amountChip(
-                                            context,
-                                            "Bal",
-                                            _currency.format(balance),
-                                            balance <= 0 ? Colors.teal : Colors.deepOrange,
-                                            icon: balance <= 0 ? Icons.check_circle : Icons.account_balance_wallet_outlined,
-                                          ),
-                                        ],
-                                      ),
+                                      // Wrap(
+                                      //   spacing: 0,
+                                      //   runSpacing: 0,
+                                      //   children: [
+                                      //     _amountChip(context, "Total", _currency.format(total), Colors.blue, icon: Icons.summarize),
+                                      //     _amountChip(context, "Received", _currency.format(received), Colors.green, icon: Icons.move_to_inbox),
+                                      //     _amountChip(
+                                      //       context,
+                                      //       "Bal",
+                                      //       _currency.format(balance),
+                                      //       balance <= 0 ? Colors.teal : Colors.deepOrange,
+                                      //       icon: balance <= 0 ? Icons.check_circle : Icons.account_balance_wallet_outlined,
+                                      //     ),
+                                      //   ],
+                                      // ),
                                     ],
                                   ),
                                 ),

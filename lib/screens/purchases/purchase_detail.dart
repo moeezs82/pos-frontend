@@ -903,64 +903,64 @@ class _PurchaseDetailScreenState extends State<PurchaseDetailScreen> {
                     const SizedBox(height: 12),
 
                     // Payments
-                    Card(
-                      elevation: 2,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Padding(
-                            padding: EdgeInsets.all(12),
-                            child: Text(
-                              "Payments",
-                              style: TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 16,
-                              ),
-                            ),
-                          ),
-                          const Divider(height: 1),
-                          if (payments.isEmpty)
-                            const ListTile(title: Text("No payments yet")),
-                          ...payments.map(
-                            (p) => ListTile(
-                              title: Text("\$${_money(p['amount'])}"),
-                              subtitle: Text("Method: ${p['method'] ?? '-'}"),
-                              trailing: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  // IconButton(
-                                  //   icon: const Icon(Icons.edit),
-                                  //   onPressed: () =>
-                                  //       _editPayment(p as Map<String, dynamic>),
-                                  // ),
-                                  IconButton(
-                                    icon: const Icon(
-                                      Icons.delete,
-                                      color: Colors.red,
-                                    ),
-                                    onPressed: () =>
-                                        _deletePayment(_intVal(p['id'])),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                          Padding(
-                            padding: const EdgeInsets.all(12.0),
-                            child: ElevatedButton.icon(
-                              onPressed: _addPayment,
-                              icon: const Icon(Icons.add),
-                              label: const Text("Add Payment"),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
+                    // Card(
+                    //   elevation: 2,
+                    //   shape: RoundedRectangleBorder(
+                    //     borderRadius: BorderRadius.circular(12),
+                    //   ),
+                    //   child: Column(
+                    //     crossAxisAlignment: CrossAxisAlignment.start,
+                    //     children: [
+                    //       const Padding(
+                    //         padding: EdgeInsets.all(12),
+                    //         child: Text(
+                    //           "Payments",
+                    //           style: TextStyle(
+                    //             fontWeight: FontWeight.bold,
+                    //             fontSize: 16,
+                    //           ),
+                    //         ),
+                    //       ),
+                    //       const Divider(height: 1),
+                    //       if (payments.isEmpty)
+                    //         const ListTile(title: Text("No payments yet")),
+                    //       ...payments.map(
+                    //         (p) => ListTile(
+                    //           title: Text("\$${_money(p['amount'])}"),
+                    //           subtitle: Text("Method: ${p['method'] ?? '-'}"),
+                    //           trailing: Row(
+                    //             mainAxisSize: MainAxisSize.min,
+                    //             children: [
+                    //               // IconButton(
+                    //               //   icon: const Icon(Icons.edit),
+                    //               //   onPressed: () =>
+                    //               //       _editPayment(p as Map<String, dynamic>),
+                    //               // ),
+                    //               IconButton(
+                    //                 icon: const Icon(
+                    //                   Icons.delete,
+                    //                   color: Colors.red,
+                    //                 ),
+                    //                 onPressed: () =>
+                    //                     _deletePayment(_intVal(p['id'])),
+                    //               ),
+                    //             ],
+                    //           ),
+                    //         ),
+                    //       ),
+                    //       Padding(
+                    //         padding: const EdgeInsets.all(12.0),
+                    //         child: ElevatedButton.icon(
+                    //           onPressed: _addPayment,
+                    //           icon: const Icon(Icons.add),
+                    //           label: const Text("Add Payment"),
+                    //         ),
+                    //       ),
+                    //     ],
+                    //   ),
+                    // ),
 
-                    const SizedBox(height: 12),
+                    // const SizedBox(height: 12),
 
                     // Summary
                     Card(
@@ -1080,20 +1080,20 @@ class _PurchaseDetailScreenState extends State<PurchaseDetailScreen> {
                               ),
                             ),
                           ),
-                          ListTile(
-                            title: const Text("Paid"),
-                            trailing: Text("\$${_money(paid)}"),
-                          ),
-                          ListTile(
-                            title: const Text("Remaining"),
-                            trailing: Text(
-                              "\$${_money(remaining)}",
-                              style: TextStyle(
-                                fontWeight: FontWeight.bold,
-                                color: balanceColor,
-                              ),
-                            ),
-                          ),
+                          // ListTile(
+                          //   title: const Text("Paid"),
+                          //   trailing: Text("\$${_money(paid)}"),
+                          // ),
+                          // ListTile(
+                          //   title: const Text("Remaining"),
+                          //   trailing: Text(
+                          //     "\$${_money(remaining)}",
+                          //     style: TextStyle(
+                          //       fontWeight: FontWeight.bold,
+                          //       color: balanceColor,
+                          //     ),
+                          //   ),
+                          // ),
                         ],
                       ),
                     ),

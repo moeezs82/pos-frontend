@@ -590,24 +590,38 @@ class _SalesScreenState extends State<SalesScreen> {
                                       ),
                                     ),
                                     const SizedBox(width: 6),
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 6,
-                                        vertical: 2,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        color: st.color,
-                                        borderRadius: BorderRadius.circular(6),
-                                      ),
-                                      child: Text(
-                                        st.label,
-                                        style: const TextStyle(
-                                          color: Colors.white,
-                                          fontSize: 11,
-                                          fontWeight: FontWeight.w700,
-                                        ),
-                                      ),
+                                    _amountChip(
+                                      context,
+                                      "Date",
+                                      dateLabel,
+                                      Colors.blue,
+                                      icon: Icons.calendar_month,
                                     ),
+                                    _amountChip(
+                                      context,
+                                      "Amount",
+                                      _currency.format(total),
+                                      Colors.red,
+                                      icon: Icons.summarize,
+                                    ),
+                                    // Container(
+                                    //   padding: const EdgeInsets.symmetric(
+                                    //     horizontal: 6,
+                                    //     vertical: 2,
+                                    //   ),
+                                    //   decoration: BoxDecoration(
+                                    //     color: st.color,
+                                    //     borderRadius: BorderRadius.circular(6),
+                                    //   ),
+                                    //   child: Text(
+                                    //     st.label,
+                                    //     style: const TextStyle(
+                                    //       color: Colors.white,
+                                    //       fontSize: 11,
+                                    //       fontWeight: FontWeight.w700,
+                                    //     ),
+                                    //   ),
+                                    // ),
                                   ],
                                 ),
 
@@ -628,15 +642,15 @@ class _SalesScreenState extends State<SalesScreen> {
                                               overflow: TextOverflow.ellipsis,
                                             ),
                                           ),
-                                          if (dt != null)
-                                            Text(
-                                              "$dateLabel • $timeLabel",
-                                              style: const TextStyle(
-                                                color: Colors.grey,
-                                                fontSize: 11,
-                                                fontWeight: FontWeight.w500,
-                                              ),
-                                            ),
+                                          // if (dt != null)
+                                          //   Text(
+                                          //     "$dateLabel • $timeLabel",
+                                          //     style: const TextStyle(
+                                          //       color: Colors.grey,
+                                          //       fontSize: 11,
+                                          //       fontWeight: FontWeight.w500,  
+                                          //     ),
+                                          //   ),
                                         ],
                                       ),
                                       const SizedBox(height: 2),
@@ -644,33 +658,33 @@ class _SalesScreenState extends State<SalesScreen> {
                                         spacing: 0,
                                         runSpacing: 0,
                                         children: [
-                                          _amountChip(
-                                            context,
-                                            "Total",
-                                            _currency.format(total),
-                                            Colors.blue,
-                                            icon: Icons.summarize,
-                                          ),
-                                          _amountChip(
-                                            context,
-                                            "Paid",
-                                            _currency.format(paid),
-                                            Colors.green,
-                                            icon: Icons.payments,
-                                          ),
-                                          _amountChip(
-                                            context,
-                                            "Bal",
-                                            _currency.format(balance),
-                                            balance <= 0
-                                                ? Colors.teal
-                                                : Colors
-                                                      .deepOrange, // green if cleared, orange if due
-                                            icon: balance <= 0
-                                                ? Icons.check_circle
-                                                : Icons
-                                                      .account_balance_wallet_outlined,
-                                          ),
+                                          // _amountChip(
+                                          //   context,
+                                          //   "Total",
+                                          //   _currency.format(total),
+                                          //   Colors.blue,
+                                          //   icon: Icons.summarize,
+                                          // ),
+                                          // _amountChip(
+                                          //   context,
+                                          //   "Paid",
+                                          //   _currency.format(paid),
+                                          //   Colors.green,
+                                          //   icon: Icons.payments,
+                                          // ),
+                                          // _amountChip(
+                                          //   context,
+                                          //   "Bal",
+                                          //   _currency.format(balance),
+                                          //   balance <= 0
+                                          //       ? Colors.teal
+                                          //       : Colors
+                                          //             .deepOrange, // green if cleared, orange if due
+                                          //   icon: balance <= 0
+                                          //       ? Icons.check_circle
+                                          //       : Icons
+                                          //             .account_balance_wallet_outlined,
+                                          // ),
                                         ],
                                       ),
                                     ],

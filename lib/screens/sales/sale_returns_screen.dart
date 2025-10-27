@@ -584,15 +584,17 @@ class _SaleReturnsScreenState extends State<SaleReturnsScreen> {
                                               overflow: TextOverflow.ellipsis,
                                             ),
                                           ),
-                                          if (dt != null)
-                                            Text(
-                                              "$dateLabel • $timeLabel",
-                                              style: const TextStyle(
-                                                color: Colors.grey,
-                                                fontSize: 11,
-                                                fontWeight: FontWeight.w500,
-                                              ),
-                                            ),
+                                          _amountChip(context, "Date", dateLabel, Colors.red, icon: Icons.calendar_month),
+                                          _amountChip(context, "Amount", _currency.format(total), Colors.red, icon: Icons.summarize),
+                                          // if (dt != null)
+                                          //   Text(
+                                          //     "$dateLabel • $timeLabel",
+                                          //     style: const TextStyle(
+                                          //       color: Colors.grey,
+                                          //       fontSize: 11,
+                                          //       fontWeight: FontWeight.w500,
+                                          //     ),
+                                          //   ),
                                         ],
                                       ),
                                       const SizedBox(height: 2),

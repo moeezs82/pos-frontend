@@ -1,8 +1,6 @@
 import 'package:flutter/material.dart';
 import 'dart:ui' show FontFeature;
 
-/// Summary card with inline editable Discount & Tax and a Save button.
-/// Shows subtle edit affordances and only enables Save when value changed.
 class SaleTotalsEditable extends StatefulWidget {
   final Map<String, dynamic> sale;
   final TextEditingController discountController;
@@ -47,104 +45,52 @@ class _SaleTotalsEditableState extends State<SaleTotalsEditable> {
   }
 
   void _onChanged() => setState(() {});
-
   bool get _dirty =>
       widget.discountController.text.trim() != _initialDiscount.trim() ||
       widget.taxController.text.trim() != _initialTax.trim();
 
-  @override
-  Widget build(BuildContext context) {
-    final t = Theme.of(context);
+  // -------- Helpers --------
+  String _money(num v) => "\$${v.toStringAsFixed(2)}";
 
-    final subtotal = double.tryParse(widget.sale['subtotal'].toString()) ?? 0.0;
-    final discount = double.tryParse(widget.discountController.text.trim()) ?? 0.0;
-    final tax = double.tryParse(widget.taxController.text.trim()) ?? 0.0;
-    final total = (subtotal - discount + tax).clamp(0, double.infinity);
-    final remaining = total - widget.paid;
-
-    return Card(
-      elevation: 2,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 6),
-        child: Column(
-          children: [
-            // little tip
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 6, 16, 0),
-              child: Row(
-                children: [
-                  Icon(Icons.edit_outlined, size: 14, color: t.hintColor),
-                  const SizedBox(width: 6),
-                  Text(
-                    "Tip: tap Discount/Tax to edit, then Save",
-                    style: t.textTheme.labelSmall?.copyWith(color: t.hintColor),
-                  ),
-                ],
-              ),
+  Widget _sectionHeader(String title) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 6),
+      child: Row(
+        children: [
+          Text(
+            title,
+            style: const TextStyle(
+              fontWeight: FontWeight.w700,
+              fontSize: 13,
+              letterSpacing: .2,
             ),
-
-            _rowStatic("Subtotal", "\$${subtotal.toStringAsFixed(2)}"),
-            _rowEditable(
-              context,
-              label: "Discount",
-              controller: widget.discountController,
-              prefix: "-\$",
-              textColor: Colors.red,
-            ),
-            _rowEditable(
-              context,
-              label: "Tax",
-              controller: widget.taxController,
-              prefix: "\$",
-              textColor: Colors.orange,
-            ),
-            const Divider(height: 8),
-            ListTile(
-              title: const Text("Total", style: TextStyle(fontWeight: FontWeight.bold)),
-              trailing: Text(
-                "\$${total.toStringAsFixed(2)}",
-                style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 20),
-              ),
-            ),
-            _rowStatic("Paid", "\$${widget.paid.toStringAsFixed(2)}"),
-            ListTile(
-              dense: true,
-              title: const Text("Remaining"),
-              trailing: Text(
-                "\$${remaining.toStringAsFixed(2)}",
-                style: TextStyle(fontWeight: FontWeight.w800, color: widget.balanceColor),
-              ),
-            ),
-
-            // Save row
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 6, 12, 10),
-              child: Row(
-                children: [
-                  const Spacer(),
-                  ElevatedButton.icon(
-                    onPressed: _dirty ? widget.onSave : null,
-                    icon: const Icon(Icons.save_outlined),
-                    label: const Text("Save"),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
 
-  Widget _rowStatic(String label, String value) {
+  Widget _rowStatic(
+    String label,
+    String value, {
+    FontWeight weight = FontWeight.w600,
+    Color? color,
+    double size = 14,
+  }) {
     return ListTile(
       dense: true,
       title: Text(label),
       trailing: Text(
         value,
-        style: const TextStyle(fontWeight: FontWeight.w600),
+        style: TextStyle(
+          fontWeight: weight,
+          color: color,
+          fontSize: size,
+          fontFeatures: const [FontFeature.tabularFigures()],
+        ),
       ),
+      visualDensity: const VisualDensity(vertical: -2),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16),
     );
   }
 
@@ -187,15 +133,265 @@ class _SaleTotalsEditableState extends State<SaleTotalsEditable> {
             border: InputBorder.none,
             enabledBorder: InputBorder.none,
             focusedBorder: const UnderlineInputBorder(),
-            contentPadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 0),
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 4,
+              vertical: 0,
+            ),
             suffixIcon: Icon(Icons.edit_outlined, size: 16, color: t.hintColor),
-            suffixIconConstraints: const BoxConstraints(minWidth: 20, minHeight: 20),
+            suffixIconConstraints: const BoxConstraints(
+              minWidth: 20,
+              minHeight: 20,
+            ),
           ),
           style: t.textTheme.titleSmall?.copyWith(
             fontWeight: FontWeight.w600,
             color: textColor,
             fontFeatures: const [FontFeature.tabularFigures()],
           ),
+        ),
+      ),
+      visualDensity: const VisualDensity(vertical: -2),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+      onTap: () {
+        // Make the whole row focus the field
+        FocusScope.of(context).requestFocus(FocusNode());
+      },
+    );
+  }
+
+  Widget _chip(BuildContext context, String text) {
+    final t = Theme.of(context);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      margin: const EdgeInsets.only(left: 8),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(999),
+        color: t.colorScheme.surfaceVariant.withOpacity(.6),
+      ),
+      child: Text(
+        text,
+        style: t.textTheme.labelSmall?.copyWith(
+          color: t.colorScheme.onSurfaceVariant,
+          fontFeatures: const [FontFeature.tabularFigures()],
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = Theme.of(context);
+
+    // -------- Parse inputs --------
+    final subtotal = double.tryParse(widget.sale['subtotal'].toString()) ?? 0.0;
+    final discount =
+        double.tryParse(widget.discountController.text.trim()) ?? 0.0;
+    final tax = double.tryParse(widget.taxController.text.trim()) ?? 0.0;
+    final total = (subtotal - discount + tax).clamp(0, double.infinity);
+    final paid = widget.paid;
+    final outstanding = (total - paid).clamp(0, double.infinity);
+
+    final ar = widget.sale['customer']?['ar_summary'];
+    final hasAR = ar is Map && ar.isNotEmpty;
+    final balance = hasAR
+        ? (double.tryParse((ar['balance'] ?? 0).toString()) ?? 0.0)
+        : 0.0;
+    final String? asOf = hasAR
+        ? (ar['as_of']?.toString().trim().isEmpty ?? true
+              ? null
+              : ar['as_of'].toString())
+        : null;
+
+    // --- Determine if AR includes this invoice ---
+    final String? createdAtStr = widget.sale['created_at']?.toString();
+    DateTime? createdAtDT = DateTime.tryParse(createdAtStr ?? '');
+
+    DateTime? asOfDT;
+    if (asOf != null) {
+      asOfDT = DateTime.tryParse(asOf);
+    }
+    // Rules:
+    // - If AR missing: assume excludes (can't include).
+    // - If as_of is null: treat as live/now => includes.
+    // - Else includes when as_of >= created_at.
+    bool includesThisInvoice = false;
+    if (hasAR) {
+      if (asOfDT == null || createdAtDT == null) {
+        includesThisInvoice = true; // safest: assume AR includes it
+      } else {
+        includesThisInvoice = !asOfDT.isBefore(createdAtDT);
+      }
+    }
+
+    // Correct exposure:
+    // - If AR already includes this invoice -> exposure = AR balance
+    // - Else -> exposure = AR balance + current invoice total
+    // final double exposure = includesThisInvoice ? balance : (balance + total);
+    final double exposure = balance + total;
+
+    // UI colors
+    Color outstandingColor = outstanding > 0
+        ? Colors.amber[800]!
+        : t.textTheme.bodyMedium!.color!;
+    Color balanceColor = balance > 0
+        ? Colors.amber[800]!
+        : (balance < 0 ? Colors.green[700]! : t.textTheme.bodyMedium!.color!);
+
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // Tip
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+              child: Row(
+                children: [
+                  Icon(Icons.edit_outlined, size: 14, color: t.hintColor),
+                  const SizedBox(width: 6),
+                  Text(
+                    "Tip: tap Discount/Tax to edit, then Save",
+                    style: t.textTheme.labelSmall?.copyWith(color: t.hintColor),
+                  ),
+                ],
+              ),
+            ),
+
+            // -------- Invoice block --------
+            _sectionHeader("Invoice"),
+            _rowStatic("Subtotal", _money(subtotal)),
+            _rowEditable(
+              context,
+              label: "Discount",
+              controller: widget.discountController,
+              prefix: "-\$",
+              textColor: Colors.red[700],
+            ),
+            _rowEditable(
+              context,
+              label: "Tax",
+              controller: widget.taxController,
+              prefix: "\$",
+              textColor: Colors.orange[800],
+            ),
+            const Divider(height: 12),
+            _rowStatic(
+              "Total (Invoice)",
+              _money(total),
+              weight: FontWeight.w800,
+              size: 18,
+            ),
+            // _rowStatic("Paid", _money(paid)),
+            // _rowStatic(
+            //   "Invoice Outstanding",
+            //   _money(outstanding),
+            //   weight: FontWeight.w800,
+            //   color: outstandingColor,
+            // ),
+
+            const SizedBox(height: 6),
+            const Divider(height: 12),
+
+            // -------- Customer AR block (ignoring branch) --------
+            _sectionHeader("Customer Balance"),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      hasAR ? _money(balance) : "Balance unavailable",
+                      textAlign: TextAlign.right,
+                      style: TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 18,
+                        color: hasAR ? balanceColor : t.hintColor,
+                        fontFeatures: const [FontFeature.tabularFigures()],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (hasAR) // show "As of" chip when present; ignoring branch per your ask
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 6),
+                child: Row(
+                  children: [
+                    if (asOf != null) _chip(context, "As of: $asOfDT"),
+                    if (asOf == null) _chip(context, "As of: Now"),
+                  ],
+                ),
+              ),
+
+            // -------- Exposure (optional but helpful) --------
+            if (hasAR) ...[
+              const SizedBox(height: 2),
+              _sectionHeader("Exposure"),
+              ListTile(
+                dense: true,
+                title: Row(
+                  children: [
+                    Text(
+                      includesThisInvoice
+                          ? "Exposure (AR already includes this invoice)"
+                          : "Exposure (AR excludes this invoice)",
+                    ),
+                    const SizedBox(width: 6),
+                    Tooltip(
+                      message: includesThisInvoice
+                          ? "Exposure equals the AR balance because the snapshot already contains this invoice."
+                          : "AR snapshot predates this invoice, so exposure adds this invoice’s total.",
+                      child: Icon(
+                        Icons.info_outline,
+                        size: 14,
+                        color: t.hintColor,
+                      ),
+                    ),
+                  ],
+                ),
+                trailing: Text(
+                  _money(exposure),
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 16,
+                    fontFeatures: [FontFeature.tabularFigures()],
+                  ),
+                ),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+                visualDensity: const VisualDensity(vertical: -2),
+              ),
+            ],
+
+            const SizedBox(height: 8),
+
+            // -------- Save row --------
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 4, 12, 10),
+              child: Row(
+                children: [
+                  TextButton(
+                    onPressed: _dirty
+                        ? () {
+                            widget.discountController.text = _initialDiscount;
+                            widget.taxController.text = _initialTax;
+                          }
+                        : null,
+                    child: const Text("Reset"),
+                  ),
+                  const Spacer(),
+                  ElevatedButton.icon(
+                    onPressed: _dirty ? widget.onSave : null,
+                    icon: const Icon(Icons.save_outlined),
+                    label: const Text("Save"),
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
       ),
     );
