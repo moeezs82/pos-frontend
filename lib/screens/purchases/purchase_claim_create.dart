@@ -11,7 +11,8 @@ class CreatePurchaseClaimScreen extends StatefulWidget {
   const CreatePurchaseClaimScreen({super.key});
 
   @override
-  State<CreatePurchaseClaimScreen> createState() => _CreatePurchaseClaimScreenState();
+  State<CreatePurchaseClaimScreen> createState() =>
+      _CreatePurchaseClaimScreenState();
 }
 
 class _CreatePurchaseClaimScreenState extends State<CreatePurchaseClaimScreen> {
@@ -85,12 +86,16 @@ class _CreatePurchaseClaimScreenState extends State<CreatePurchaseClaimScreen> {
             onPressed: () async {
               if (invCtrl.text.isEmpty) return;
 
-              final listUri = Uri.parse("${ApiClient.baseUrl}/purchases")
-                  .replace(queryParameters: {"search": invCtrl.text});
-              final listRes = await http.get(listUri, headers: {
-                "Authorization": "Bearer $token",
-                "Accept": "application/json",
-              });
+              final listUri = Uri.parse(
+                "${ApiClient.baseUrl}/purchases",
+              ).replace(queryParameters: {"search": invCtrl.text});
+              final listRes = await http.get(
+                listUri,
+                headers: {
+                  "Authorization": "Bearer $token",
+                  "Accept": "application/json",
+                },
+              );
 
               if (listRes.statusCode == 200) {
                 final listData = jsonDecode(listRes.body);
@@ -99,7 +104,9 @@ class _CreatePurchaseClaimScreenState extends State<CreatePurchaseClaimScreen> {
                   final purchase = purchases.first;
 
                   final detailRes = await http.get(
-                    Uri.parse("${ApiClient.baseUrl}/purchases/${purchase['id']}"),
+                    Uri.parse(
+                      "${ApiClient.baseUrl}/purchases/${purchase['id']}",
+                    ),
                     headers: {
                       "Authorization": "Bearer $token",
                       "Accept": "application/json",
@@ -128,7 +135,8 @@ class _CreatePurchaseClaimScreenState extends State<CreatePurchaseClaimScreen> {
                         _remarksCtrls[pid] = TextEditingController();
                         _batchCtrls[pid] = TextEditingController();
                         _expiryCtrls[pid] = TextEditingController();
-                        _affectsStock[pid] = _type != 'shortage'; // default by type
+                        _affectsStock[pid] =
+                            _type != 'shortage'; // default by type
                       }
                     });
                   }
@@ -152,7 +160,10 @@ class _CreatePurchaseClaimScreenState extends State<CreatePurchaseClaimScreen> {
       lastDate: DateTime(now.year + 10),
     );
     if (picked != null) {
-      _expiryCtrls[purchaseItemId]?.text = picked.toIso8601String().split('T').first;
+      _expiryCtrls[purchaseItemId]?.text = picked
+          .toIso8601String()
+          .split('T')
+          .first;
       setState(() {});
     }
   }
@@ -188,11 +199,15 @@ class _CreatePurchaseClaimScreenState extends State<CreatePurchaseClaimScreen> {
             "purchase_item_id": pid,
             "quantity": int.parse(_qtyCtrls[pid]!.text),
             "affects_stock": _affectsStock[pid] ?? (_type != 'shortage'),
-            if (_remarksCtrls[pid]!.text.isNotEmpty) "remarks": _remarksCtrls[pid]!.text,
-            if (_batchCtrls[pid]!.text.isNotEmpty) "batch_no": _batchCtrls[pid]!.text,
-            if (_expiryCtrls[pid]!.text.isNotEmpty) "expiry_date": _expiryCtrls[pid]!.text,
+            if (_remarksCtrls[pid]!.text.isNotEmpty)
+              "remarks": _remarksCtrls[pid]!.text,
+            if (_batchCtrls[pid]!.text.isNotEmpty)
+              "batch_no": _batchCtrls[pid]!.text,
+            if (_expiryCtrls[pid]!.text.isNotEmpty)
+              "expiry_date": _expiryCtrls[pid]!.text,
           };
-        }).toList();
+        })
+        .toList();
 
     if (itemsPayload.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -213,7 +228,11 @@ class _CreatePurchaseClaimScreenState extends State<CreatePurchaseClaimScreen> {
       }
       if (requested > total + 0.0001) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Receipt cannot exceed claim total (${_currency.format(total)})")),
+          SnackBar(
+            content: Text(
+              "Receipt cannot exceed claim total (${_currency.format(total)})",
+            ),
+          ),
         );
         return;
       }
@@ -233,8 +252,10 @@ class _CreatePurchaseClaimScreenState extends State<CreatePurchaseClaimScreen> {
         "receipt": {
           "amount": double.tryParse(_receiptAmountCtrl.text.trim()) ?? total,
           "method": _receiptMethod,
-          if (_receiptRefCtrl.text.trim().isNotEmpty) "reference": _receiptRefCtrl.text.trim(),
-          if (_receiptDate != null) "received_at": DateFormat("yyyy-MM-dd").format(_receiptDate!),
+          if (_receiptRefCtrl.text.trim().isNotEmpty)
+            "reference": _receiptRefCtrl.text.trim(),
+          if (_receiptDate != null)
+            "received_at": DateFormat("yyyy-MM-dd").format(_receiptDate!),
         },
     };
 
@@ -257,8 +278,8 @@ class _CreatePurchaseClaimScreenState extends State<CreatePurchaseClaimScreen> {
           content: Text(
             _approveNow
                 ? (_receiveNow
-                    ? "Claim created, approved and receipt posted ${_currency.format(double.tryParse(_receiptAmountCtrl.text) ?? total)}"
-                    : "Claim created and approved")
+                      ? "Claim created, approved and receipt posted ${_currency.format(double.tryParse(_receiptAmountCtrl.text) ?? total)}"
+                      : "Claim created and approved")
                 : "Claim created",
           ),
         ),
@@ -276,8 +297,10 @@ class _CreatePurchaseClaimScreenState extends State<CreatePurchaseClaimScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final vendorName = _selectedPurchase?['vendor']?['name'] ??
-        _selectedPurchase?['vendor']?['first_name'] ?? 'N/A';
+    final vendorName =
+        _selectedPurchase?['vendor']?['name'] ??
+        _selectedPurchase?['vendor']?['first_name'] ??
+        'N/A';
     final invoiceNo = _selectedPurchase?['invoice_no'] ?? 'N/A';
     final total = _computeClaimTotal();
 
@@ -295,7 +318,9 @@ class _CreatePurchaseClaimScreenState extends State<CreatePurchaseClaimScreen> {
               // 🔍 Select Purchase
               ListTile(
                 title: Text(
-                  _selectedPurchase == null ? "No purchase selected" : "Invoice: $invoiceNo",
+                  _selectedPurchase == null
+                      ? "No purchase selected"
+                      : "Invoice: $invoiceNo",
                 ),
                 subtitle: Text(
                   _selectedPurchase == null
@@ -316,10 +341,22 @@ class _CreatePurchaseClaimScreenState extends State<CreatePurchaseClaimScreen> {
                     child: DropdownButtonFormField<String>(
                       value: _type,
                       items: const [
-                        DropdownMenuItem(value: 'shortage', child: Text('Shortage')),
-                        DropdownMenuItem(value: 'damaged', child: Text('Damaged')),
-                        DropdownMenuItem(value: 'wrong_item', child: Text('Wrong Item')),
-                        DropdownMenuItem(value: 'expired', child: Text('Expired')),
+                        DropdownMenuItem(
+                          value: 'shortage',
+                          child: Text('Shortage'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'damaged',
+                          child: Text('Damaged'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'wrong_item',
+                          child: Text('Wrong Item'),
+                        ),
+                        DropdownMenuItem(
+                          value: 'expired',
+                          child: Text('Expired'),
+                        ),
                         DropdownMenuItem(value: 'other', child: Text('Other')),
                       ],
                       onChanged: _onTypeChanged,
@@ -343,101 +380,165 @@ class _CreatePurchaseClaimScreenState extends State<CreatePurchaseClaimScreen> {
               ),
               const SizedBox(height: 12),
 
-              // 🧾 Purchase items
-              Expanded(
-                child: _purchaseItems.isEmpty
-                    ? const Center(child: Text("No purchase items"))
-                    : ListView.builder(
-                        itemCount: _purchaseItems.length,
-                        itemBuilder: (_, i) {
-                          final item = _purchaseItems[i];
-                          final pid = item['id'] as int; // purchase_item_id
-                          final productName = item['product']?['name'] ?? 'Product';
-                          final sku = item['product']?['sku'];
-                          final qtyReceived = item['quantity'];
-                          final price = _toDouble(item['price']);
+              // 🧾 Purchase Claim – Items table
+              if (_purchaseItems.isEmpty)
+                const Expanded(child: Center(child: Text("No purchase items")))
+              else
+                Expanded(
+                  child: Column(
+                    children: [
+                      const _ClaimTableHeader(),
+                      const SizedBox(height: 6),
+                      Expanded(
+                        child: ListView.separated(
+                          itemCount: _purchaseItems.length,
+                          separatorBuilder: (_, __) => const Divider(height: 8),
+                          itemBuilder: (_, i) {
+                            final item = _purchaseItems[i];
+                            final pid = item['id'] as int; // purchase_item_id
+                            final name =
+                                item['product']?['name']?.toString() ?? '—';
+                            final sku = item['product']?['sku']?.toString();
+                            final receivedQty =
+                                (item['quantity'] ?? 0)
+                                    as int; // received/accepted qty
+                            final price = _toDouble(
+                              item['price'],
+                            ); // P.P (unit price)
 
-                          return Card(
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 8),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
+                            final claimQty =
+                                int.tryParse(_qtyCtrls[pid]?.text ?? '0') ?? 0;
+                            final amount = (claimQty * price);
+
+                            return SizedBox(
+                              height: 44,
+                              child: Row(
                                 children: [
-                                  ListTile(
-                                    contentPadding: EdgeInsets.zero,
-                                    title: Text(productName, style: const TextStyle(fontWeight: FontWeight.bold)),
-                                    subtitle: Text(
-                                      "SKU: ${sku ?? '-'} • Qty received: $qtyReceived • Price: ${_currency.format(price)}",
-                                    ),
-                                    trailing: SizedBox(
-                                      width: 90,
-                                      child: TextFormField(
-                                        controller: _qtyCtrls[pid],
-                                        keyboardType: TextInputType.number,
-                                        decoration: const InputDecoration(labelText: "Claim"),
-                                      ),
-                                    ),
-                                  ),
-                                  Row(
-                                    children: [
-                                      Switch(
-                                        value: _affectsStock[pid] ?? (_type != 'shortage'),
-                                        onChanged: (v) => setState(() => _affectsStock[pid] = v),
-                                      ),
-                                      const Text('Affects Stock'),
-                                    ],
-                                  ),
-                                  Row(
-                                    children: [
-                                      Expanded(
-                                        child: TextFormField(
-                                          controller: _remarksCtrls[pid],
-                                          decoration: const InputDecoration(
-                                            labelText: "Remarks",
-                                            border: OutlineInputBorder(),
-                                          ),
-                                        ),
-                                      ),
-                                      const SizedBox(width: 8),
-                                      Expanded(
-                                        child: TextFormField(
-                                          controller: _batchCtrls[pid],
-                                          decoration: const InputDecoration(
-                                            labelText: "Batch No",
-                                            border: OutlineInputBorder(),
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                  const SizedBox(height: 8),
-                                  Row(
-                                    children: [
-                                      Expanded(
-                                        child: TextFormField(
-                                          controller: _expiryCtrls[pid],
-                                          readOnly: true,
-                                          decoration: InputDecoration(
-                                            labelText: "Expiry (YYYY-MM-DD)",
-                                            border: const OutlineInputBorder(),
-                                            suffixIcon: IconButton(
-                                              icon: const Icon(Icons.date_range),
-                                              onPressed: () => _pickDateFor(pid),
+                                  // Product (+ SKU caption)
+                                  Expanded(
+                                    flex: 5,
+                                    child: Padding(
+                                      padding: const EdgeInsets.only(right: 8),
+                                      child: Column(
+                                        mainAxisAlignment:
+                                            MainAxisAlignment.center,
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            name,
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: const TextStyle(
+                                              fontWeight: FontWeight.w600,
                                             ),
                                           ),
+                                          if (sku != null && sku.isNotEmpty)
+                                            Text(
+                                              "SKU: $sku",
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: Theme.of(context)
+                                                  .textTheme
+                                                  .bodySmall
+                                                  ?.copyWith(
+                                                    color: Theme.of(
+                                                      context,
+                                                    ).hintColor,
+                                                  ),
+                                            ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                  // P.P
+                                  Expanded(
+                                    flex: 2,
+                                    child: Align(
+                                      alignment: Alignment.centerRight,
+                                      child: Text(_currency.format(price)),
+                                    ),
+                                  ),
+                                  // Received
+                                  Expanded(
+                                    flex: 2,
+                                    child: Align(
+                                      alignment: Alignment.centerRight,
+                                      child: Text("$receivedQty"),
+                                    ),
+                                  ),
+                                  // Claim (editable)
+                                  Expanded(
+                                    flex: 2,
+                                    child: TextFormField(
+                                      controller: _qtyCtrls[pid],
+                                      textAlign: TextAlign.right,
+                                      keyboardType: TextInputType.number,
+                                      decoration: const InputDecoration(
+                                        isDense: true,
+                                        contentPadding: EdgeInsets.symmetric(
+                                          horizontal: 8,
+                                          vertical: 10,
+                                        ),
+                                        border: OutlineInputBorder(),
+                                      ),
+                                      onChanged: (v) {
+                                        final parsed =
+                                            int.tryParse(v.trim()) ?? 0;
+                                        // clamp 0..receivedQty
+                                        if (parsed < 0 ||
+                                            parsed > receivedQty) {
+                                          final clamped = parsed.clamp(
+                                            0,
+                                            receivedQty,
+                                          );
+                                          _qtyCtrls[pid]!.text = clamped
+                                              .toString();
+                                          _qtyCtrls[pid]!.selection =
+                                              TextSelection.fromPosition(
+                                                TextPosition(
+                                                  offset: _qtyCtrls[pid]!
+                                                      .text
+                                                      .length,
+                                                ),
+                                              );
+                                        } else {
+                                          setState(() {
+                                            // if you compute overall totals/refund elsewhere, trigger it here
+                                            // _recalcClaimTotals(); // optional
+                                          });
+                                        }
+                                      },
+                                    ),
+                                  ),
+                                  // Amount (claimQty * price)
+                                  Expanded(
+                                    flex: 2,
+                                    child: Align(
+                                      alignment: Alignment.centerRight,
+                                      child: Text(
+                                        _currency.format(
+                                          (int.tryParse(
+                                                    _qtyCtrls[pid]?.text ?? '0',
+                                                  ) ??
+                                                  0) *
+                                              price,
+                                        ),
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.w700,
                                         ),
                                       ),
-                                      const SizedBox(width: 8),
-                                      const Expanded(child: SizedBox.shrink()),
-                                    ],
+                                    ),
                                   ),
                                 ],
                               ),
-                            ),
-                          );
-                        },
+                            );
+                          },
+                        ),
                       ),
-              ),
+                    ],
+                  ),
+                ),
 
               // ✅ Approve & 📥 Receive Now (optional)
               Card(
@@ -452,94 +553,20 @@ class _CreatePurchaseClaimScreenState extends State<CreatePurchaseClaimScreen> {
                           setState(() {
                             _approveNow = v;
                             if (!_approveNow) _receiveNow = false;
-                            if (_approveNow && _receiveNow) _syncDefaultReceipt();
+                            if (_approveNow && _receiveNow)
+                              _syncDefaultReceipt();
                           });
                         },
                       ),
-                      // if (_approveNow) ...[
-                      //   SwitchListTile(
-                      //     title: const Text("Receive now"),
-                      //     value: _receiveNow,
-                      //     onChanged: (v) {
-                      //       setState(() {
-                      //         _receiveNow = v;
-                      //         if (_receiveNow) _syncDefaultReceipt();
-                      //       });
-                      //     },
-                      //   ),
-                      //   if (_receiveNow) ...[
-                      //     Row(
-                      //       children: [
-                      //         Expanded(
-                      //           child: TextField(
-                      //             controller: _receiptAmountCtrl,
-                      //             keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                      //             decoration: InputDecoration(
-                      //               labelText: "Receipt Amount (max ${_currency.format(total)})",
-                      //               border: const OutlineInputBorder(),
-                      //             ),
-                      //           ),
-                      //         ),
-                      //         const SizedBox(width: 8),
-                      //         Expanded(
-                      //           child: DropdownButtonFormField<String>(
-                      //             value: _receiptMethod,
-                      //             decoration: const InputDecoration(
-                      //               labelText: "Method",
-                      //               border: OutlineInputBorder(),
-                      //             ),
-                      //             items: const [
-                      //               DropdownMenuItem(value: "cash", child: Text("Cash")),
-                      //               DropdownMenuItem(value: "bank", child: Text("Bank")),
-                      //               DropdownMenuItem(value: "credit_note", child: Text("Credit Note")),
-                      //               DropdownMenuItem(value: "wallet", child: Text("Wallet")),
-                      //             ],
-                      //             onChanged: (v) => setState(() => _receiptMethod = v ?? 'cash'),
-                      //           ),
-                      //         ),
-                      //       ],
-                      //     ),
-                      //     const SizedBox(height: 8),
-                      //     TextField(
-                      //       controller: _receiptRefCtrl,
-                      //       decoration: const InputDecoration(
-                      //         labelText: "Reference (optional)",
-                      //         border: OutlineInputBorder(),
-                      //       ),
-                      //     ),
-                      //     const SizedBox(height: 8),
-                      //     Row(
-                      //       children: [
-                      //         Expanded(
-                      //           child: OutlinedButton.icon(
-                      //             icon: const Icon(Icons.calendar_today),
-                      //             label: Text(
-                      //               _receiptDate == null
-                      //                   ? "Receipt Date (optional)"
-                      //                   : DateFormat.yMMMd().format(_receiptDate!),
-                      //             ),
-                      //             onPressed: () async {
-                      //               final now = DateTime.now();
-                      //               final d = await showDatePicker(
-                      //                 context: context,
-                      //                 initialDate: _receiptDate ?? now,
-                      //                 firstDate: DateTime(now.year - 5),
-                      //                 lastDate: DateTime(now.year + 5),
-                      //               );
-                      //               if (d != null) setState(() => _receiptDate = d);
-                      //             },
-                      //           ),
-                      //         ),
-                      //       ],
-                      //     ),
-                      //   ],
-                      // ],
                       const Divider(),
                       Align(
                         alignment: Alignment.centerRight,
                         child: Text(
                           "Claim Total: ${_currency.format(total)}",
-                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                          style: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
+                          ),
                         ),
                       ),
                     ],
@@ -556,7 +583,9 @@ class _CreatePurchaseClaimScreenState extends State<CreatePurchaseClaimScreen> {
                   onPressed: _submitting ? null : () => _submitClaim(context),
                   icon: _submitting
                       ? const SizedBox(
-                          height: 16, width: 16, child: CircularProgressIndicator(strokeWidth: 2),
+                          height: 16,
+                          width: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : const Icon(Icons.save),
                   label: Text(_submitting ? "Submitting..." : "Submit Claim"),
@@ -565,6 +594,31 @@ class _CreatePurchaseClaimScreenState extends State<CreatePurchaseClaimScreen> {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+
+class _ClaimTableHeader extends StatelessWidget {
+  const _ClaimTableHeader();
+
+  @override
+  Widget build(BuildContext context) {
+    final style = Theme.of(context).textTheme.labelMedium?.copyWith(
+          fontWeight: FontWeight.w700,
+          color: Theme.of(context).hintColor,
+        );
+    return SizedBox(
+      height: 28,
+      child: Row(
+        children: [
+          const Expanded(flex: 5, child: Text("Product")),
+          Expanded(flex: 2, child: Text("P.P", style: style, textAlign: TextAlign.right)),
+          Expanded(flex: 2, child: Text("Received", style: style, textAlign: TextAlign.right)),
+          Expanded(flex: 2, child: Text("Claim", style: style, textAlign: TextAlign.right)),
+          Expanded(flex: 2, child: Text("Amount", style: style, textAlign: TextAlign.right)),
+        ],
       ),
     );
   }

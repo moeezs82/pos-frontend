@@ -1,7 +1,7 @@
 import 'package:enterprise_pos/api/purchase_service.dart';
 import 'package:enterprise_pos/api/core/api_client.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
-import 'package:enterprise_pos/widgets/branch_indicator.dart';
+import 'package:enterprise_pos/screens/purchases/purchase_items_section.dart';
 import 'package:enterprise_pos/widgets/product_picker_sheet.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -99,20 +99,6 @@ class _PurchaseDetailScreenState extends State<PurchaseDetailScreen> {
       ).showSnackBar(SnackBar(content: Text("Update failed: $e")));
     } finally {
       if (mounted) setState(() => _savingHeader = false);
-    }
-  }
-
-  Color _chipColor(String status) {
-    switch (status) {
-      case 'paid':
-      case 'received':
-        return Colors.green;
-      case 'partial':
-        return Colors.orange;
-      case 'cancelled':
-        return Colors.grey;
-      default:
-        return Colors.red;
     }
   }
 
@@ -297,6 +283,8 @@ class _PurchaseDetailScreenState extends State<PurchaseDetailScreen> {
   Future<void> _addItem() async {
     final token = Provider.of<AuthProvider>(context, listen: false).token!;
     final vendorId = _purchase?['vendor_id'];
+
+    // 1) Pick product (same as sales flow)
     final product = await showModalBottomSheet<Map<String, dynamic>?>(
       context: context,
       isScrollControlled: true,
@@ -307,21 +295,287 @@ class _PurchaseDetailScreenState extends State<PurchaseDetailScreen> {
     );
     if (product == null) return;
 
-    final qtyCtl = TextEditingController(text: "1");
+    // --- helpers (same styling/logic as sales) ---
+    double _num(dynamic v) => double.tryParse(v?.toString() ?? '') ?? 0.0;
+    String _money(num v) => v.toStringAsFixed(2);
+    double _calcTotal(double price, double qty, double discPct) {
+      final d = (discPct / 100.0).clamp(0, 100);
+      final t = qty * price * (1 - d);
+      return t.isFinite ? (t < 0 ? 0 : t) : 0.0;
+    }
+
+    // 2) Tabular editor state
     final priceCtl = TextEditingController(
-      text:
-          (product['cost_price'] ??
-                  product['wholesale_price'] ??
-                  product['price'] ??
-                  0)
-              .toString(),
+      text: _money(
+        _num(
+          product['cost_price'] ??
+              product['wholesale_price'] ??
+              product['price'] ??
+              0,
+        ),
+      ),
     );
-    final rcvCtl = TextEditingController(text: "0"); // optional spot receipt
+    final discCtl = TextEditingController(text: "0");
+    final qtyCtl = TextEditingController(text: "1");
+
+    final priceFn = FocusNode();
+    final discFn = FocusNode();
+    final qtyFn = FocusNode();
+
+    await showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocal) {
+          final price = _num(priceCtl.text);
+          final qty = _num(qtyCtl.text); // keep integer gate below
+          final disc = _num(discCtl.text);
+          final total = _calcTotal(price, qty, disc);
+
+          InputDecoration _cellDec({String? label, String? suffix}) =>
+              InputDecoration(
+                labelText: label,
+                isDense: true,
+                border: const OutlineInputBorder(),
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 10,
+                ),
+                suffixText: suffix,
+              );
+
+          Widget _numberField({
+            required TextEditingController c,
+            required FocusNode fn,
+            String? label,
+            String? suffix,
+            bool integer = false,
+            VoidCallback? onNext,
+          }) {
+            return TextField(
+              controller: c,
+              focusNode: fn,
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
+              textInputAction: onNext == null
+                  ? TextInputAction.done
+                  : TextInputAction.next,
+              onSubmitted: (_) => onNext?.call(),
+              onTap: () => c.selection = TextSelection(
+                baseOffset: 0,
+                extentOffset: c.text.length,
+              ),
+              onChanged: (v) {
+                if (integer) {
+                  final only = int.tryParse(
+                    v.replaceAll(RegExp(r'[^0-9]'), ''),
+                  );
+                  if (only != null && only.toString() != v) {
+                    c.text = only.toString();
+                    c.selection = TextSelection.fromPosition(
+                      TextPosition(offset: c.text.length),
+                    );
+                  }
+                }
+                setLocal(() {}); // refresh total
+              },
+              textAlign: TextAlign.right,
+              decoration: _cellDec(label: label, suffix: suffix),
+              style: const TextStyle(
+                fontWeight: FontWeight.w600,
+                fontFeatures: [FontFeature.tabularFigures()],
+              ),
+            );
+          }
+
+          return AlertDialog(
+            title: Text("Add ${product['name']}"),
+            content: SizedBox(
+              width: 520,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Header row
+                  SizedBox(
+                    height: 28,
+                    child: Row(
+                      children: const [
+                        Expanded(
+                          flex: 6,
+                          child: Text(
+                            "Product",
+                            style: TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                        ),
+                        Expanded(
+                          flex: 2,
+                          child: Align(
+                            alignment: Alignment.centerRight,
+                            child: Text("P.P"),
+                          ),
+                        ),
+                        Expanded(
+                          flex: 2,
+                          child: Align(
+                            alignment: Alignment.centerRight,
+                            child: Text("Discount (%)"),
+                          ),
+                        ),
+                        Expanded(
+                          flex: 2,
+                          child: Align(
+                            alignment: Alignment.centerRight,
+                            child: Text("Qty"),
+                          ),
+                        ),
+                        Expanded(
+                          flex: 2,
+                          child: Align(
+                            alignment: Alignment.centerRight,
+                            child: Text("Total"),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const Divider(height: 8),
+
+                  // Single row
+                  SizedBox(
+                    height: 64,
+                    child: Row(
+                      children: [
+                        // Product name
+                        Expanded(
+                          flex: 6,
+                          child: Container(
+                            alignment: Alignment.centerLeft,
+                            padding: const EdgeInsets.only(right: 8),
+                            child: Text(
+                              (product['name'] ?? '').toString(),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ),
+                        // Purchase Price
+                        Expanded(
+                          flex: 2,
+                          child: Padding(
+                            padding: const EdgeInsets.only(left: 6),
+                            child: _numberField(
+                              c: priceCtl,
+                              fn: priceFn,
+                              label: "P.P",
+                              onNext: () => discFn.requestFocus(),
+                            ),
+                          ),
+                        ),
+                        // Discount %
+                        Expanded(
+                          flex: 2,
+                          child: Padding(
+                            padding: const EdgeInsets.only(left: 6),
+                            child: _numberField(
+                              c: discCtl,
+                              fn: discFn,
+                              label: "Discount",
+                              suffix: "%",
+                              onNext: () => qtyFn.requestFocus(),
+                            ),
+                          ),
+                        ),
+                        // Qty
+                        Expanded(
+                          flex: 2,
+                          child: Padding(
+                            padding: const EdgeInsets.only(left: 6),
+                            child: _numberField(
+                              c: qtyCtl,
+                              fn: qtyFn,
+                              label: "Qty",
+                              integer: true,
+                              onNext: null,
+                            ),
+                          ),
+                        ),
+                        // Total
+                        Expanded(
+                          flex: 2,
+                          child: Align(
+                            alignment: Alignment.centerRight,
+                            child: Text(
+                              _money(total),
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w800,
+                                fontFeatures: [FontFeature.tabularFigures()],
+                                fontSize: 16,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text("Cancel"),
+              ),
+              ElevatedButton(
+                onPressed: () async {
+                  try {
+                    await _api.post(
+                      "/purchases/${widget.purchaseId}/items",
+                      body: {
+                        "product_id": product['id'],
+                        "quantity": int.tryParse(qtyCtl.text) ?? 1,
+                        "price": _num(priceCtl.text),
+                        "discount": _num(
+                          discCtl.text,
+                        ), // <- change to "discount" if your API expects it
+                      },
+                    );
+                    if (!mounted) return;
+                    Navigator.pop(ctx);
+                    await _fetchPurchase();
+                    _updated = true;
+                  } catch (e) {
+                    if (!mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text("Add item failed: $e")),
+                    );
+                  }
+                },
+                child: const Text("Add"),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+  Future<void> _editItem(Map<String, dynamic> item) async {
+    final qtyCtl = TextEditingController(
+      text: _intVal(item['quantity']).toString(),
+    );
+    final priceCtl = TextEditingController(text: _money(item['price']));
+    final rcvCtl = TextEditingController(
+      text: _intVal(item['received_qty']).toString(),
+    );
+
+    final ordered = _intVal(item['quantity']);
 
     await showDialog(
       context: context,
       builder: (_) => AlertDialog(
-        title: Text("Add ${product['name']}"),
+        title: const Text("Edit Item"),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -329,9 +583,15 @@ class _PurchaseDetailScreenState extends State<PurchaseDetailScreen> {
               controller: qtyCtl,
               keyboardType: TextInputType.number,
               decoration: const InputDecoration(
-                labelText: "Quantity",
+                labelText: "Quantity (ordered)",
                 border: OutlineInputBorder(),
               ),
+              onChanged: (v) {
+                // keep received within range in UI
+                final newQty = int.tryParse(v) ?? ordered;
+                final r = int.tryParse(rcvCtl.text) ?? 0;
+                if (r > newQty) rcvCtl.text = newQty.toString();
+              },
             ),
             const SizedBox(height: 12),
             TextField(
@@ -347,9 +607,15 @@ class _PurchaseDetailScreenState extends State<PurchaseDetailScreen> {
               controller: rcvCtl,
               keyboardType: TextInputType.number,
               decoration: const InputDecoration(
-                labelText: "Receive Now (optional)",
+                labelText: "Received Qty",
                 border: OutlineInputBorder(),
               ),
+              onChanged: (v) {
+                final q = int.tryParse(qtyCtl.text) ?? ordered;
+                final r = int.tryParse(v) ?? 0;
+                if (r > q) rcvCtl.text = q.toString();
+                if (r < 0) rcvCtl.text = '0';
+              },
             ),
           ],
         ),
@@ -360,19 +626,20 @@ class _PurchaseDetailScreenState extends State<PurchaseDetailScreen> {
           ),
           ElevatedButton(
             onPressed: () async {
-              final qty = int.tryParse(qtyCtl.text.trim()) ?? 1;
-              final price = double.tryParse(priceCtl.text.trim()) ?? 0.0;
-              var rcv = int.tryParse(rcvCtl.text.trim()) ?? 0;
-              rcv = rcv.clamp(0, qty);
+              final body = <String, dynamic>{};
+              if (qtyCtl.text.trim().isNotEmpty)
+                body['quantity'] = int.tryParse(qtyCtl.text.trim());
+              if (priceCtl.text.trim().isNotEmpty)
+                body['price'] = double.tryParse(priceCtl.text.trim());
+              if (rcvCtl.text.trim().isNotEmpty) {
+                final q = body['quantity'] ?? ordered;
+                final r = (int.tryParse(rcvCtl.text.trim()) ?? 0).clamp(0, q);
+                body['received_qty'] = r;
+              }
               try {
-                await _api.post(
-                  "/purchases/${widget.purchaseId}/items",
-                  body: {
-                    "product_id": product['id'],
-                    "quantity": qty,
-                    "price": price,
-                    if (rcv > 0) "received_qty": rcv,
-                  },
+                await _api.put(
+                  "/purchases/${widget.purchaseId}/items/${item['id']}",
+                  body: body,
                 );
                 if (!mounted) return;
                 Navigator.pop(context);
@@ -382,113 +649,15 @@ class _PurchaseDetailScreenState extends State<PurchaseDetailScreen> {
                 if (!mounted) return;
                 ScaffoldMessenger.of(
                   context,
-                ).showSnackBar(SnackBar(content: Text("Add item failed: $e")));
+                ).showSnackBar(SnackBar(content: Text("Update failed: $e")));
               }
             },
-            child: const Text("Add"),
+            child: const Text("Save"),
           ),
         ],
       ),
     );
   }
-
-  // Future<void> _editItem(Map<String, dynamic> item) async {
-  //   final qtyCtl = TextEditingController(
-  //     text: _intVal(item['quantity']).toString(),
-  //   );
-  //   final priceCtl = TextEditingController(text: _money(item['price']));
-  //   final rcvCtl = TextEditingController(
-  //     text: _intVal(item['received_qty']).toString(),
-  //   );
-
-  //   final ordered = _intVal(item['quantity']);
-
-  //   await showDialog(
-  //     context: context,
-  //     builder: (_) => AlertDialog(
-  //       title: const Text("Edit Item"),
-  //       content: Column(
-  //         mainAxisSize: MainAxisSize.min,
-  //         children: [
-  //           TextField(
-  //             controller: qtyCtl,
-  //             keyboardType: TextInputType.number,
-  //             decoration: const InputDecoration(
-  //               labelText: "Quantity (ordered)",
-  //               border: OutlineInputBorder(),
-  //             ),
-  //             onChanged: (v) {
-  //               // keep received within range in UI
-  //               final newQty = int.tryParse(v) ?? ordered;
-  //               final r = int.tryParse(rcvCtl.text) ?? 0;
-  //               if (r > newQty) rcvCtl.text = newQty.toString();
-  //             },
-  //           ),
-  //           const SizedBox(height: 12),
-  //           TextField(
-  //             controller: priceCtl,
-  //             keyboardType: TextInputType.number,
-  //             decoration: const InputDecoration(
-  //               labelText: "Purchase Price",
-  //               border: OutlineInputBorder(),
-  //             ),
-  //           ),
-  //           const SizedBox(height: 12),
-  //           TextField(
-  //             controller: rcvCtl,
-  //             keyboardType: TextInputType.number,
-  //             decoration: const InputDecoration(
-  //               labelText: "Received Qty",
-  //               border: OutlineInputBorder(),
-  //             ),
-  //             onChanged: (v) {
-  //               final q = int.tryParse(qtyCtl.text) ?? ordered;
-  //               final r = int.tryParse(v) ?? 0;
-  //               if (r > q) rcvCtl.text = q.toString();
-  //               if (r < 0) rcvCtl.text = '0';
-  //             },
-  //           ),
-  //         ],
-  //       ),
-  //       actions: [
-  //         TextButton(
-  //           onPressed: () => Navigator.pop(context),
-  //           child: const Text("Cancel"),
-  //         ),
-  //         ElevatedButton(
-  //           onPressed: () async {
-  //             final body = <String, dynamic>{};
-  //             if (qtyCtl.text.trim().isNotEmpty)
-  //               body['quantity'] = int.tryParse(qtyCtl.text.trim());
-  //             if (priceCtl.text.trim().isNotEmpty)
-  //               body['price'] = double.tryParse(priceCtl.text.trim());
-  //             if (rcvCtl.text.trim().isNotEmpty) {
-  //               final q = body['quantity'] ?? ordered;
-  //               final r = (int.tryParse(rcvCtl.text.trim()) ?? 0).clamp(0, q);
-  //               body['received_qty'] = r;
-  //             }
-  //             try {
-  //               await _api.put(
-  //                 "/purchases/${widget.purchaseId}/items/${item['id']}",
-  //                 body: body,
-  //               );
-  //               if (!mounted) return;
-  //               Navigator.pop(context);
-  //               _updated = true;
-  //               _fetchPurchase();
-  //             } catch (e) {
-  //               if (!mounted) return;
-  //               ScaffoldMessenger.of(
-  //                 context,
-  //               ).showSnackBar(SnackBar(content: Text("Update failed: $e")));
-  //             }
-  //           },
-  //           child: const Text("Save"),
-  //         ),
-  //       ],
-  //     ),
-  //   );
-  // }
 
   Future<void> _deleteItem(int itemId) async {
     final ok = await showDialog<bool>(
@@ -524,218 +693,10 @@ class _PurchaseDetailScreenState extends State<PurchaseDetailScreen> {
     }
   }
 
-  /* ===================== Receive / Cancel ===================== */
-
-  Future<void> _receiveItems() async {
-    if (_purchase == null) return;
-
-    final items = (_purchase!['items'] as List).cast<Map<String, dynamic>>();
-    final remainingMap = <int, int>{};
-    final controllers = <int, TextEditingController>{};
-
-    for (final i in items) {
-      final pid = _intVal(i['product_id']);
-      final ordered = _intVal(i['quantity']);
-      final received = _intVal(i['received_qty']);
-      final remaining = (ordered - received).clamp(0, ordered);
-      remainingMap[pid] = remaining;
-      if (remaining > 0)
-        controllers[pid] = TextEditingController(text: remaining.toString());
-    }
-
-    final refCtl = TextEditingController();
-
-    await showDialog(
-      context: context,
-      builder: (_) => StatefulBuilder(
-        builder: (context, setLocal) {
-          return AlertDialog(
-            title: const Text("Receive Items"),
-            content: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  TextField(
-                    controller: refCtl,
-                    decoration: const InputDecoration(
-                      labelText: "Reference (GRN)",
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  ...items.map((i) {
-                    final pid = _intVal(i['product_id']);
-                    final name = i['product']?['name'] ?? 'Product #$pid';
-                    final remain = remainingMap[pid] ?? 0;
-
-                    if (remain == 0) {
-                      return ListTile(
-                        dense: true,
-                        title: Text(name),
-                        subtitle: const Text("Already fully received"),
-                      );
-                    }
-
-                    return Padding(
-                      padding: const EdgeInsets.only(bottom: 8.0),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              name,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          SizedBox(
-                            width: 90,
-                            child: TextField(
-                              controller: controllers[pid],
-                              keyboardType: TextInputType.number,
-                              decoration: InputDecoration(
-                                labelText: "0-$remain",
-                                border: const OutlineInputBorder(),
-                                isDense: true,
-                              ),
-                              onChanged: (v) {
-                                final val = int.tryParse(v) ?? 0;
-                                if (val > remain) {
-                                  controllers[pid]!.text = remain.toString();
-                                  controllers[pid]!.selection =
-                                      TextSelection.fromPosition(
-                                        TextPosition(
-                                          offset: controllers[pid]!.text.length,
-                                        ),
-                                      );
-                                } else if (val < 0) {
-                                  controllers[pid]!.text = '0';
-                                  controllers[pid]!.selection =
-                                      const TextSelection.collapsed(offset: 1);
-                                }
-                              },
-                            ),
-                          ),
-                        ],
-                      ),
-                    );
-                  }).toList(),
-                ],
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text("Cancel"),
-              ),
-              ElevatedButton(
-                onPressed: () async {
-                  final itemsPayload = <Map<String, dynamic>>[];
-                  controllers.forEach((pid, ctl) {
-                    final qty = int.tryParse(ctl.text.trim()) ?? 0;
-                    if (qty > 0)
-                      itemsPayload.add({"product_id": pid, "receive_qty": qty});
-                  });
-
-                  if (itemsPayload.isEmpty) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text("Enter at least one receive quantity"),
-                      ),
-                    );
-                    return;
-                  }
-
-                  try {
-                    await _purchaseService.receive(widget.purchaseId, {
-                      if (refCtl.text.trim().isNotEmpty)
-                        "reference": refCtl.text.trim(),
-                      "items": itemsPayload,
-                    });
-                    if (!mounted) return;
-                    Navigator.pop(context);
-                    _updated = true;
-                    _fetchPurchase();
-                  } catch (e) {
-                    if (!mounted) return;
-                    Navigator.pop(context);
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text(
-                          e.toString().replaceFirst('Exception: ', ''),
-                        ),
-                      ),
-                    );
-                  }
-                },
-                child: const Text("Receive"),
-              ),
-            ],
-          );
-        },
-      ),
-    );
-  }
-
-  Future<void> _cancelPurchase() async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text("Cancel Purchase"),
-        content: const Text(
-          "Are you sure? You can only cancel if nothing has been received.",
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text("No"),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text("Yes, cancel"),
-          ),
-        ],
-      ),
-    );
-
-    if (ok != true) return;
-
-    try {
-      await _purchaseService.cancel(widget.purchaseId);
-      _updated = true;
-      _fetchPurchase();
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(e.toString().replaceFirst('Exception: ', ''))),
-      );
-    }
-  }
-
   /* ===================== Build ===================== */
 
   @override
   Widget build(BuildContext context) {
-    final payments = (_purchase?['payments'] as List?) ?? [];
-    final paid = payments.fold<double>(
-      0.0,
-      (sum, p) => sum + _doubleVal(p['amount']),
-    );
-    final total = _doubleVal(_purchase?['total']);
-    final remaining = total - paid;
-
-    Color balanceColor;
-    if (remaining > 0) {
-      balanceColor = Colors.red;
-    } else if (remaining < 0) {
-      balanceColor = Colors.orange;
-    } else {
-      balanceColor = Colors.green;
-    }
-
-    final payStatus = (_purchase?['status'] ?? 'pending').toString();
-    final recvStatus = (_purchase?['receive_status'] ?? 'ordered').toString();
-
     return WillPopScope(
       onWillPop: () async {
         Navigator.pop(context, _updated);
@@ -745,15 +706,6 @@ class _PurchaseDetailScreenState extends State<PurchaseDetailScreen> {
         appBar: AppBar(
           title: const Text("Purchase Detail"),
           actions: [
-            BranchIndicator(tappable: false),
-            if (_purchase != null &&
-                recvStatus != 'cancelled' &&
-                recvStatus != 'received')
-              IconButton(
-                tooltip: "Receive",
-                icon: const Icon(Icons.inventory_2),
-                onPressed: _receiveItems,
-              ),
             IconButton(
               tooltip: "Refresh",
               icon: const Icon(Icons.refresh),
@@ -798,106 +750,16 @@ class _PurchaseDetailScreenState extends State<PurchaseDetailScreen> {
                             ),
                           ],
                         ),
-                        trailing: FittedBox(
-                          fit: BoxFit.scaleDown,
-                          alignment: Alignment.centerRight,
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            crossAxisAlignment: CrossAxisAlignment.end,
-                            children: [
-                              Chip(
-                                label: Text(
-                                  "Pay: ${payStatus.toUpperCase()}",
-                                  style: const TextStyle(color: Colors.white),
-                                ),
-                                backgroundColor: _chipColor(payStatus),
-                                visualDensity: VisualDensity.compact,
-                                padding: EdgeInsets.zero,
-                              ),
-                              const SizedBox(height: 4),
-                              Chip(
-                                label: Text(
-                                  "Recv: ${recvStatus.toUpperCase()}",
-                                  style: const TextStyle(color: Colors.white),
-                                ),
-                                backgroundColor: _chipColor(recvStatus),
-                                visualDensity: VisualDensity.compact,
-                                padding: EdgeInsets.zero,
-                              ),
-                            ],
-                          ),
-                        ),
                       ),
                     ),
 
                     const SizedBox(height: 12),
 
                     // Items
-                    Card(
-                      elevation: 2,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Padding(
-                            padding: EdgeInsets.all(12),
-                            child: Text(
-                              "Items",
-                              style: TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 16,
-                              ),
-                            ),
-                          ),
-                          const Divider(height: 1),
-                          ...((_purchase!['items'] as List)
-                                  .cast<Map<String, dynamic>>())
-                              .map((i) {
-                                final name =
-                                    i['product']?['name'] ??
-                                    'Product #${_intVal(i['product_id'])}';
-                                final qty = _intVal(i['quantity']);
-                                final rec = _intVal(i['received_qty']);
-                                final price = _doubleVal(i['price']);
-                                final totalLine = i['total'] != null
-                                    ? _doubleVal(i['total'])
-                                    : (qty * price);
-                                return ListTile(
-                                  title: Text(name),
-                                  subtitle: Text(
-                                    "Ordered: $qty | Received: $rec | Price: \$${_money(price)}",
-                                  ),
-                                  trailing: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      // IconButton(
-                                      //   icon: const Icon(Icons.edit),
-                                      //   onPressed: () => _editItem(i),
-                                      // ),
-                                      // IconButton(
-                                      //   icon: const Icon(
-                                      //     Icons.delete,
-                                      //     color: Colors.red,
-                                      //   ),
-                                      //   onPressed: () =>
-                                      //       _deleteItem(i['id'] as int),
-                                      // ),
-                                    ],
-                                  ),
-                                );
-                              }),
-                          Padding(
-                            padding: const EdgeInsets.all(12.0),
-                            child: OutlinedButton.icon(
-                              onPressed: _addItem,
-                              icon: const Icon(Icons.add),
-                              label: const Text("Add Item"),
-                            ),
-                          ),
-                        ],
-                      ),
+                    PurchaseItemsSection(
+                      purchase: _purchase!,
+                      onAddItem: _addItem, // your purchase _addItem dialog
+                      onDeleteItem: (id) => _deleteItem(id),
                     ),
 
                     const SizedBox(height: 12),

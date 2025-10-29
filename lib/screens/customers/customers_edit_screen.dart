@@ -19,6 +19,11 @@ class _CustomerEditScreenState extends State<CustomerEditScreen>
   late CustomerService _service;
   late TabController _tab;
 
+  bool _postingReceipt = false; // NEW
+  final _amountController = TextEditingController(); // NEW
+  final _referenceController = TextEditingController(); // NEW
+  String methodPay = "cash";
+
   bool _loadingHeader = true;
   String? _errorHeader;
 
@@ -59,6 +64,7 @@ class _CustomerEditScreenState extends State<CustomerEditScreen>
   void dispose() {
     _tab.removeListener(_onTabChanged);
     _tab.dispose();
+    _amountController.dispose();
     super.dispose();
   }
 
@@ -87,6 +93,196 @@ class _CustomerEditScreenState extends State<CustomerEditScreen>
       setState(() => _errorHeader = "Failed to load customer: $e");
     } finally {
       setState(() => _loadingHeader = false);
+    }
+  }
+
+  Future<void> _openReceiveModal() async {
+    if (customer == null || _postingReceipt) return;
+    _amountController.text = "";
+    _referenceController.text = "";
+    
+
+    final formKey = GlobalKey<FormState>();
+
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false, // force explicit action
+      builder: (dlgCtx) {
+        return StatefulBuilder(
+          builder: (ctx, setLocal) {
+            return AlertDialog(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14),
+              ),
+              titlePadding: const EdgeInsets.fromLTRB(20, 16, 12, 0),
+              contentPadding: const EdgeInsets.fromLTRB(20, 12, 20, 6),
+              title: Row(
+                children: [
+                  const Icon(Icons.payments_rounded, size: 20),
+                  const SizedBox(width: 8),
+                  const Text(
+                    "Record Receipt",
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
+                  ),
+                  const Spacer(),
+                  IconButton(
+                    tooltip: "Close",
+                    icon: const Icon(Icons.close),
+                    onPressed: _postingReceipt
+                        ? null
+                        : () => Navigator.pop(dlgCtx),
+                  ),
+                ],
+              ),
+              content: Form(
+                key: formKey,
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(
+                    minWidth: 320,
+                    maxWidth: 420,
+                  ),
+                  child: SingleChildScrollView(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        TextFormField(
+                          controller: _amountController,
+                          autofocus: true,
+                          keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true,
+                          ),
+                          decoration: const InputDecoration(
+                            labelText: "Amount",
+                            hintText: "0.00",
+                            prefixIcon: Icon(Icons.currency_exchange_rounded),
+                            border: OutlineInputBorder(),
+                          ),
+                          validator: (v) {
+                            final t = (v ?? "").trim();
+                            if (t.isEmpty) return "Amount is required";
+                            final parsed = double.tryParse(t);
+                            if (parsed == null) return "Enter a valid number";
+                            return null;
+                          },
+                          onFieldSubmitted: (_) async {
+                            if (_postingReceipt) return;
+                            if (!(formKey.currentState?.validate() ?? false))
+                              return;
+                            await _submitReceipt(dlgCtx);
+                            setLocal(() {}); // refresh local UI if still open
+                          },
+                        ),
+                        const SizedBox(height: 12),
+                        TextFormField(
+                          controller: _referenceController,
+                          autofocus: true,
+                          keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true,
+                          ),
+                          decoration: const InputDecoration(
+                            labelText: "Reference",
+                            hintText: "Reference Note",
+                            prefixIcon: Icon(Icons.file_present),
+                            border: OutlineInputBorder(),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        DropdownButtonFormField<String>(
+                          value: methodPay,
+                          decoration: const InputDecoration(
+                            labelText: "Method",
+                            border: OutlineInputBorder(),
+                          ),
+                          items: const [
+                            DropdownMenuItem(
+                              value: "cash",
+                              child: Text("Cash"),
+                            ),
+                            DropdownMenuItem(
+                              value: "bank",
+                              child: Text("Bank"),
+                            ),
+                          ],
+                          onChanged: (val) => methodPay = val!,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              actionsPadding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+              actionsAlignment: MainAxisAlignment.end,
+              actions: [
+                OutlinedButton(
+                  onPressed: _postingReceipt
+                      ? null
+                      : () => Navigator.pop(dlgCtx),
+                  child: const Text("Cancel"),
+                ),
+                FilledButton.icon(
+                  onPressed: _postingReceipt
+                      ? null
+                      : () async {
+                          if (!(formKey.currentState?.validate() ?? false))
+                            return;
+                          await _submitReceipt(dlgCtx);
+                          setLocal(() {}); // keep dialog reactive if needed
+                        },
+                  icon: _postingReceipt
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.check),
+                  label: const Text("Save"),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<void> _submitReceipt(BuildContext sheetCtx) async {
+    setState(() => _postingReceipt = true);
+    try {
+      final branchId = context.read<BranchProvider>().selectedBranchId;
+      final amount = double.parse(_amountController.text.trim());
+      final reference = _referenceController.text.trim();
+      final method = methodPay;
+
+      await _service.createReceipt(
+        customerId: widget.customerId,
+        amount: amount,
+        branchId: branchId,
+        method: method,
+        reference: reference,
+      );
+
+      if (mounted) {
+        Navigator.pop(sheetCtx); // close modal
+        // Refresh header + whichever tab is visible
+        await _loadHeader();
+        if (_tab.index == 0 && _loadedSalesOnce) {
+          await _loadSales(page: _salesPage);
+        } else if (_tab.index == 1 && _loadedLedgerOnce) {
+          await _loadLedger(page: _ldgPage);
+        }
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text("Receipt recorded")));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text("Failed to save receipt: $e")));
+      }
+    } finally {
+      if (mounted) setState(() => _postingReceipt = false);
     }
   }
 
@@ -251,6 +447,17 @@ class _CustomerEditScreenState extends State<CustomerEditScreen>
         title: const Text("Customer"),
         actions: [
           IconButton(
+            tooltip: 'Receive',
+            icon: const Icon(Icons.payments_rounded),
+            onPressed:
+                (_loadingHeader ||
+                    _loadingSales ||
+                    _loadingLedger ||
+                    _postingReceipt)
+                ? null
+                : _openReceiveModal, // NEW
+          ),
+          IconButton(
             tooltip: 'Refresh',
             icon: const Icon(Icons.refresh),
             onPressed: (_loadingHeader || _loadingSales || _loadingLedger)
@@ -278,6 +485,20 @@ class _CustomerEditScreenState extends State<CustomerEditScreen>
                       ],
                     ),
                   ),
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    const SizedBox(width: 12),
+                    FilledButton.icon(
+                      onPressed: (_loadingHeader || _postingReceipt)
+                          ? null
+                          : _openReceiveModal,
+                      icon: const Icon(Icons.payments_rounded),
+                      label: const Text("Receive"),
+                    ),
+                    const SizedBox(width: 8),
+                  ],
                 ),
 
                 // Tabs
@@ -695,6 +916,19 @@ class _HeaderBlock extends StatelessWidget {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        const SizedBox(width: 6),
+        Tooltip(
+          message: "Record receipt",
+          child: InkWell(
+            onTap:
+                onEdit
+                    is VoidCallback // keep original param signature
+                ? null
+                : null, // placeholder (ignore) – we'll wire from parent container
+            borderRadius: BorderRadius.circular(8),
+            child: const SizedBox.shrink(),
+          ),
+        ),
         CircleAvatar(
           radius: 20,
           backgroundColor: theme.colorScheme.primaryContainer,

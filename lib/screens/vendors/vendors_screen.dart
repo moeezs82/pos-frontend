@@ -401,7 +401,7 @@ class _VendorsScreenState extends State<VendorsScreen> {
                                     // builder: (_) => VendorFormScreen(vendor: v),
                                   ),
                                 );
-                                if (result == true) _fetchVendors(reset: true);
+                                _fetchVendors(reset: true);
                               },
                             );
                           },

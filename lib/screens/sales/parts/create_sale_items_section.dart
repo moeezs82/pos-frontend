@@ -38,6 +38,10 @@ class _ItemsTableState extends State<ItemsTable> {
   // per-row commit debounce (keeps parent totals live but efficient)
   final Map<int, Timer?> _rowDebounce = {};
 
+  // NEW: anchor for the product cell
+  final LayerLink _productSearchLink = LayerLink();
+  final GlobalKey _productSearchKey = GlobalKey();
+
   @override
   void initState() {
     super.initState();
@@ -114,7 +118,7 @@ class _ItemsTableState extends State<ItemsTable> {
 
   void _scheduleCommitRow(int i) {
     _rowDebounce[i]?.cancel();
-    _rowDebounce[i] = Timer(const Duration(milliseconds: 520), () {
+    _rowDebounce[i] = Timer(const Duration(milliseconds: 1000), () {
       _commitRow(i);
     });
   }
@@ -238,28 +242,43 @@ class _ItemsTableState extends State<ItemsTable> {
         padding: const EdgeInsets.all(12),
         child: Column(
           children: [
-            Row(
-              children: [
-                const Expanded(
-                  child: Text(
-                    "Items",
-                    style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
-                  ),
-                ),
-                SizedBox(
-                  width: 360,
-                  child: _AddProductBox(
-                    controller: _addController,
-                    focusNode: _addFocus,
-                    onQuery: widget.onQueryProducts,
-                    onSelected: _addProduct,
-                  ),
-                ),
-              ],
+            // Row(
+            //   children: [
+            //     const Expanded(
+            //       child: Text(
+            //         "Items",
+            //         style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
+            //       ),
+            //     ),
+            //     SizedBox(
+            //       width: 360,
+            //       child: _AddProductBox(
+            //         controller: _addController,
+            //         focusNode: _addFocus,
+            //         onQuery: widget.onQueryProducts,
+            //         onSelected: _addProduct,
+            //       ),
+            //     ),
+            //   ],
+            // ),
+            // const SizedBox(height: 8),
+            // _TableHeader(),
+            // const Divider(height: 8),
+            // Title only (no search here)
+            const Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                "Items",
+                style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
+              ),
             ),
             const SizedBox(height: 8),
+
+            // Table header
             _TableHeader(),
-            const Divider(height: 8),
+
+            // Inline search row aligned with table columns
+            const SizedBox(height: 6),
 
             if (widget.items.isEmpty)
               Padding(
@@ -383,7 +402,19 @@ class _ItemsTableState extends State<ItemsTable> {
                   ],
                 );
               }),
-
+            _InlineSearchRow(
+              productField: _AddProductBox(
+                controller: _addController,
+                focusNode: _addFocus,
+                onQuery: widget.onQueryProducts,
+                onSelected: _addProduct,
+                anchorKey: _productSearchKey,
+                link: _productSearchLink,
+              ),
+              anchorKey: _productSearchKey,
+              link: _productSearchLink,
+            ),
+            const Divider(height: 8),
             if (widget.items.isNotEmpty)
               Align(
                 alignment: Alignment.centerRight,
@@ -401,6 +432,62 @@ class _ItemsTableState extends State<ItemsTable> {
               ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _InlineSearchRow extends StatelessWidget {
+  final Widget productField;
+  final GlobalKey anchorKey;
+  final LayerLink link;
+
+  const _InlineSearchRow({
+    required this.productField,
+    required this.anchorKey,
+    required this.link,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final t = Theme.of(context);
+    return SizedBox(
+      height: 44,
+      child: Row(
+        children: [
+          // Product column (flex: 5) – the anchor wraps the whole cell box
+          Expanded(
+            flex: 5,
+            child: CompositedTransformTarget(
+              link: link,
+              child: Container(
+                key: anchorKey, // we still measure this; now it has a max width
+                margin: const EdgeInsets.only(right: 8),
+                decoration: BoxDecoration(
+                  color: t.colorScheme.surfaceVariant.withOpacity(.35),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: t.dividerColor.withOpacity(.6)),
+                ),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                alignment: Alignment.centerLeft,
+
+                // ⬇️ NEW: keep the field visually compact (e.g., 420px)
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 420),
+                    child: productField,
+                  ),
+                ),
+              ),
+            ),
+          ),
+          const Expanded(flex: 2, child: SizedBox()), // T.P
+          const Expanded(flex: 2, child: SizedBox()), // Discount
+          const Expanded(flex: 2, child: SizedBox()), // Qty
+          const Expanded(flex: 2, child: SizedBox()), // Total
+          const SizedBox(width: 44), // Remove
+        ],
       ),
     );
   }
@@ -453,11 +540,17 @@ class _AddProductBox extends StatefulWidget {
   final Future<List<ProductRef>> Function(String) onQuery;
   final void Function(ProductRef) onSelected;
 
+  // NEW: injected anchor
+  final GlobalKey anchorKey;
+  final LayerLink link;
+
   const _AddProductBox({
     required this.controller,
     required this.focusNode,
     required this.onQuery,
     required this.onSelected,
+    required this.anchorKey,
+    required this.link,
   });
 
   @override
@@ -465,7 +558,6 @@ class _AddProductBox extends StatefulWidget {
 }
 
 class _AddProductBoxState extends State<_AddProductBox> {
-  final LayerLink _link = LayerLink();
   OverlayEntry? _entry;
   List<ProductRef> _options = const [];
   bool _loading = false;
@@ -560,31 +652,38 @@ class _AddProductBoxState extends State<_AddProductBox> {
 
   void _select(ProductRef p) {
     widget.onSelected(p);
-    // reset field & keep focus for rapid add
     widget.controller.clear();
     _options = const [];
     _highlightIndex = -1;
-    _showOrUpdateOverlay(); // will hide since list is empty
-    // keep focus to continue scanning/typing
+    _showOrUpdateOverlay(); // hides (empty list)
     Future.microtask(() => widget.focusNode.requestFocus());
   }
 
   Widget _buildOverlay() {
     if (!mounted) return const SizedBox.shrink();
-    final box = context.findRenderObject() as RenderBox?;
-    if (box == null || !box.attached) return const SizedBox.shrink();
+
+    final anchorBox =
+        widget.anchorKey.currentContext?.findRenderObject() as RenderBox?;
+    if (anchorBox == null || !anchorBox.attached)
+      return const SizedBox.shrink();
+
+    const double kSearchMaxWidth = 420;
+    final anchorWidth = anchorBox.size.width;
+    final popupWidth = anchorWidth.clamp(0, kSearchMaxWidth);
 
     final theme = Theme.of(context);
 
-    return Positioned.fill(
-      child: CompositedTransformFollower(
-        link: _link,
-        showWhenUnlinked: false,
-        offset: const Offset(0, 44), // below the TextField height
-        child: Material(
-          elevation: 4,
+    return CompositedTransformFollower(
+      link: widget.link,
+      showWhenUnlinked: false,
+      targetAnchor: Alignment.bottomLeft, // align edges
+      followerAnchor: Alignment.topLeft,
+      child: Material(
+        elevation: 4,
+        child: SizedBox(
+          width: popupWidth.toDouble(),
           child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 360, maxHeight: 260),
+            constraints: const BoxConstraints(maxHeight: 260),
             child: _options.isEmpty
                 ? (_loading
                       ? Container(
@@ -649,41 +748,38 @@ class _AddProductBoxState extends State<_AddProductBox> {
 
   @override
   Widget build(BuildContext context) {
-    return CompositedTransformTarget(
-      link: _link,
-      child: Focus(
-        focusNode: widget.focusNode,
-        onKey: (node, RawKeyEvent event) {
-          // Only act on key **down** to avoid double handling
-          if (event is! RawKeyDownEvent) return KeyEventResult.ignored;
-          if (_entry == null) return KeyEventResult.ignored;
+    return Focus(
+      focusNode: widget.focusNode,
+      onKey: (node, RawKeyEvent event) {
+        if (event is! RawKeyDownEvent) return KeyEventResult.ignored;
+        if (_entry == null) return KeyEventResult.ignored;
 
-          final key = event.logicalKey;
-
-          if (key == LogicalKeyboardKey.arrowDown) {
-            _moveHighlight(1);
-            return KeyEventResult.handled;
-          }
-          if (key == LogicalKeyboardKey.arrowUp) {
-            _moveHighlight(-1);
-            return KeyEventResult.handled;
-          }
-          if (key == LogicalKeyboardKey.enter ||
-              key == LogicalKeyboardKey.numpadEnter) {
-            _pickHighlighted();
-            return KeyEventResult.handled;
-          }
-          if (key == LogicalKeyboardKey.tab) {
-            _pickHighlighted();
-            return KeyEventResult.handled; // prevent focus change
-          }
-          if (key == LogicalKeyboardKey.escape) {
-            _removeOverlay();
-            return KeyEventResult.handled;
-          }
-
-          return KeyEventResult.ignored;
-        },
+        final key = event.logicalKey;
+        if (key == LogicalKeyboardKey.arrowDown) {
+          _moveHighlight(1);
+          return KeyEventResult.handled;
+        }
+        if (key == LogicalKeyboardKey.arrowUp) {
+          _moveHighlight(-1);
+          return KeyEventResult.handled;
+        }
+        if (key == LogicalKeyboardKey.enter ||
+            key == LogicalKeyboardKey.numpadEnter) {
+          _pickHighlighted();
+          return KeyEventResult.handled;
+        }
+        if (key == LogicalKeyboardKey.tab) {
+          _pickHighlighted();
+          return KeyEventResult.handled; // keep focus here
+        }
+        if (key == LogicalKeyboardKey.escape) {
+          _removeOverlay();
+          return KeyEventResult.handled;
+        }
+        return KeyEventResult.ignored;
+      },
+      child: SizedBox(
+        width: double.infinity,
         child: TextField(
           controller: widget.controller,
           decoration: InputDecoration(
@@ -699,10 +795,10 @@ class _AddProductBoxState extends State<_AddProductBox> {
                   )
                 : const Icon(Icons.search, size: 18),
             isDense: true,
-            border: const OutlineInputBorder(),
+            border: InputBorder.none, // merges into the cell styling
             contentPadding: const EdgeInsets.symmetric(
-              horizontal: 10,
-              vertical: 9,
+              horizontal: 6,
+              vertical: 6,
             ),
           ),
           textInputAction: TextInputAction.search,

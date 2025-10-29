@@ -103,6 +103,21 @@ class CustomerService {
     };
     return await _client.get('/customers/$id/receipts', query: params);
   }
+  Future<Map<String, dynamic>> createReceipt({
+    required int customerId,
+    required double amount,
+    required String method,
+    String? reference,
+    int? branchId,
+  }) async {
+    final params = {
+      "amount": amount,
+      "method": method,
+      if (reference != null && reference.isNotEmpty) "reference": reference,
+      if (branchId != null) "branch_id": branchId,
+    };
+    return await _client.post('/customers/$customerId/receipts', body: params);
+  }
 
   Future<Map<String, dynamic>> getCustomerLedger({
     required int id,

@@ -1,7 +1,6 @@
 import 'dart:convert';
 import 'package:enterprise_pos/api/core/api_client.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
-import 'package:enterprise_pos/widgets/branch_indicator.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
@@ -19,13 +18,16 @@ class _CreateSaleReturnScreenState extends State<CreateSaleReturnScreen> {
 
   Map<String, dynamic>? _selectedSale;
   List<dynamic> _saleItems = [];
+
+  /// Controllers + cached numbers per line
   final Map<int, TextEditingController> _qtyControllers = {};
-  final Map<int, double> _itemPrices = {}; // sale price for computing totals
+  final Map<int, double> _unitPrice = {};
+  final Map<int, double> _discountPct = {}; // <- your DB column: discount (percentage)
 
   final TextEditingController _reasonController = TextEditingController();
   bool _submitting = false;
 
-  // Approve + Refund options
+  // Approve + Refund (kept but can be hidden if not used)
   bool _approveNow = false;
   bool _refundNow = false;
   final _refundAmountCtrl = TextEditingController();
@@ -41,10 +43,15 @@ class _CreateSaleReturnScreenState extends State<CreateSaleReturnScreen> {
     return double.tryParse(v.toString()) ?? 0.0;
   }
 
-  void _recalcRefundDefault() {
-    // Set default refund = computed total (clamped later by submit)
-    final t = _computeReturnTotal();
-    _refundAmountCtrl.text = t.toStringAsFixed(2);
+  /// qty * price * (1 - discount/100)
+  double _lineAmount({
+    required int itemId,
+    required int qty,
+  }) {
+    final price = _unitPrice[itemId] ?? 0.0;
+    final disc = (_discountPct[itemId] ?? 0.0).clamp(0.0, 100.0);
+    final net = price * (1 - disc / 100.0);
+    return qty * (net < 0 ? 0 : net);
   }
 
   double _computeReturnTotal() {
@@ -52,12 +59,15 @@ class _CreateSaleReturnScreenState extends State<CreateSaleReturnScreen> {
     for (final it in _saleItems) {
       final id = it['id'] as int;
       final qty = int.tryParse(_qtyControllers[id]?.text ?? '0') ?? 0;
-      final price = _itemPrices[id] ?? _toDouble(it['price']); // fallback
       if (qty > 0) {
-        total += qty * price;
+        total += _lineAmount(itemId: id, qty: qty);
       }
     }
     return total;
+  }
+
+  void _recalcRefundDefault() {
+    _refundAmountCtrl.text = _computeReturnTotal().toStringAsFixed(2);
   }
 
   Future<void> _searchSale(BuildContext context) async {
@@ -81,9 +91,8 @@ class _CreateSaleReturnScreenState extends State<CreateSaleReturnScreen> {
             onPressed: () async {
               if (controller.text.isEmpty) return;
 
-              final uri = Uri.parse(
-                "${ApiClient.baseUrl}/sales",
-              ).replace(queryParameters: {"search": controller.text});
+              final uri = Uri.parse("${ApiClient.baseUrl}/sales")
+                  .replace(queryParameters: {"search": controller.text});
 
               final res = await http.get(
                 uri,
@@ -111,19 +120,23 @@ class _CreateSaleReturnScreenState extends State<CreateSaleReturnScreen> {
                       _selectedSale = detail;
                       _saleItems = (detail['items'] as List?) ?? [];
                       _qtyControllers.clear();
-                      _itemPrices.clear();
+                      _unitPrice.clear();
+                      _discountPct.clear();
 
                       for (var item in _saleItems) {
                         final id = item['id'] as int;
+
+                        // cache unit TP and discount (%) from your columns
+                        _unitPrice[id] = _toDouble(item['price']);      // TP
+                        _discountPct[id] = _toDouble(item['discount']); // <-- your column name
+
+                        // start at 0 return qty
                         _qtyControllers[id] = TextEditingController(text: "0")
                           ..addListener(() {
                             setState(() {
-                              // live total update
-                              if (_refundNow) _recalcRefundDefault();
+                              if (_approveNow && _refundNow) _recalcRefundDefault();
                             });
                           });
-                        // Cache price for total calc
-                        _itemPrices[id] = _toDouble(item['price']);
                       }
                     });
                   }
@@ -140,51 +153,42 @@ class _CreateSaleReturnScreenState extends State<CreateSaleReturnScreen> {
 
   Future<void> _submitReturn(BuildContext context) async {
     if (_selectedSale == null) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text("Please select a sale")));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text("Please select a sale")));
       return;
     }
 
-    // Build items from entered qty
+    // Build items with >0 return qty
     final items = _saleItems
         .where((i) {
           final id = i['id'] as int;
           final q = int.tryParse(_qtyControllers[id]?.text ?? "0") ?? 0;
           return q > 0;
         })
-        .map(
-          (i) => {
-            "sale_item_id": i['id'],
-            "quantity": int.parse(_qtyControllers[i['id']]!.text),
-          },
-        )
+        .map((i) => {
+              "sale_item_id": i['id'],
+              "quantity": int.parse(_qtyControllers[i['id']]!.text),
+            })
         .toList();
 
     if (items.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text("Please enter at least 1 return quantity"),
-        ),
+        const SnackBar(content: Text("Please enter at least 1 return quantity")),
       );
       return;
     }
 
-    // If refund chosen, clamp to computed total
+    // Clamp refund if used
     final computedTotal = _computeReturnTotal();
     if (_approveNow && _refundNow) {
       final requested = double.tryParse(_refundAmountCtrl.text.trim()) ?? 0.0;
-      if (requested <= 0) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Enter a valid refund amount")),
-        );
-        return;
-      }
-      if (requested > computedTotal + 0.0001) {
+      if (requested <= 0 || requested > computedTotal + 0.0001) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              "Refund cannot exceed return total (${_currency.format(computedTotal)})",
+              requested <= 0
+                  ? "Enter a valid refund amount"
+                  : "Refund cannot exceed return total (${_currency.format(computedTotal)})",
             ),
           ),
         );
@@ -214,9 +218,8 @@ class _CreateSaleReturnScreenState extends State<CreateSaleReturnScreen> {
 
     if (createRes.statusCode != 200) {
       setState(() => _submitting = false);
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text("Failed to create return")));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text("Failed to create return")));
       return;
     }
 
@@ -224,7 +227,6 @@ class _CreateSaleReturnScreenState extends State<CreateSaleReturnScreen> {
     int? returnId;
     try {
       final data = jsonDecode(createRes.body);
-      // API example earlier returns { data: { id, ... } } or { data: return }
       final raw = data['data'];
       if (raw is Map && raw['id'] != null) {
         returnId = (raw['id'] as num).toInt();
@@ -240,11 +242,10 @@ class _CreateSaleReturnScreenState extends State<CreateSaleReturnScreen> {
       return;
     }
 
-    // 2) If approveNow (+ optional refund)
+    // 2) Optional approve (+ refund)
     if (_approveNow) {
-      final approveUri = Uri.parse(
-        "${ApiClient.baseUrl}/sales/returns/$returnId/approve",
-      );
+      final approveUri =
+          Uri.parse("${ApiClient.baseUrl}/sales/returns/$returnId/approve");
 
       Map<String, String>? approveBody;
       if (_refundNow) {
@@ -256,9 +257,8 @@ class _CreateSaleReturnScreenState extends State<CreateSaleReturnScreen> {
           if (_refundRefCtrl.text.trim().isNotEmpty)
             "refund[reference]": _refundRefCtrl.text.trim(),
           if (_refundDate != null)
-            "refund[refunded_at]": DateFormat(
-              "yyyy-MM-dd",
-            ).format(_refundDate!),
+            "refund[refunded_at]":
+                DateFormat("yyyy-MM-dd").format(_refundDate!),
         };
       }
 
@@ -268,7 +268,7 @@ class _CreateSaleReturnScreenState extends State<CreateSaleReturnScreen> {
           "Authorization": "Bearer $token",
           "Accept": "application/json",
         },
-        body: approveBody, // null if no refund
+        body: approveBody,
       );
 
       if (approveRes.statusCode != 200) {
@@ -278,26 +278,19 @@ class _CreateSaleReturnScreenState extends State<CreateSaleReturnScreen> {
           final d = jsonDecode(approveRes.body);
           if (d is Map && d['message'] != null) msg = d['message'].toString();
         } catch (_) {}
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(msg)));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
         return;
       }
     }
 
     setState(() => _submitting = false);
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            _approveNow
-                ? (_refundNow
-                      ? "Return created, approved and refunded ${_currency.format(double.tryParse(_refundAmountCtrl.text) ?? _computeReturnTotal())}"
-                      : "Return created and approved")
-                : "Return created",
-          ),
-        ),
-      );
+      final msg = _approveNow
+          ? (_refundNow
+              ? "Return created, approved and refunded ${_currency.format(double.tryParse(_refundAmountCtrl.text) ?? _computeReturnTotal())}"
+              : "Return created and approved")
+          : "Return created";
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
       Navigator.pop(context, true);
     }
   }
@@ -309,12 +302,6 @@ class _CreateSaleReturnScreenState extends State<CreateSaleReturnScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text("Create Sale Return"),
-        actions: const [
-          Padding(
-            padding: EdgeInsets.only(right: 8),
-            // child: BranchIndicator(tappable: false),
-          ),
-        ],
       ),
       body: Padding(
         padding: const EdgeInsets.all(12),
@@ -322,7 +309,7 @@ class _CreateSaleReturnScreenState extends State<CreateSaleReturnScreen> {
           key: _formKey,
           child: Column(
             children: [
-              // 🔍 Select Sale
+              // 🔍 Selected sale / pick sale
               ListTile(
                 title: Text(
                   _selectedSale == null
@@ -341,41 +328,145 @@ class _CreateSaleReturnScreenState extends State<CreateSaleReturnScreen> {
               ),
               const Divider(),
 
-              // 🛒 Sale items
-              Expanded(
-                child: _saleItems.isEmpty
-                    ? const Center(child: Text("No sale items"))
-                    : ListView.builder(
-                        itemCount: _saleItems.length,
-                        itemBuilder: (_, i) {
-                          final item = _saleItems[i];
-                          final name = item['product']?['name'] ?? '—';
-                          final soldQty = item['quantity'];
-                          final id = item['id'] as int;
-                          final price =
-                              _itemPrices[id] ?? _toDouble(item['price']);
+              // 🛒 Items table
+              if (_saleItems.isEmpty)
+                const Expanded(
+                  child: Center(child: Text("No sale items")),
+                )
+              else
+                Expanded(
+                  child: Column(
+                    children: [
+                      _ReturnTableHeader(),
+                      const SizedBox(height: 6),
+                      Expanded(
+                        child: ListView.separated(
+                          itemCount: _saleItems.length,
+                          separatorBuilder: (_, __) => const Divider(height: 8),
+                          itemBuilder: (_, i) {
+                            final item = _saleItems[i];
+                            final id = item['id'] as int;
+                            final name = item['product']?['name'] ?? '—';
+                            final soldQty = item['quantity'] ?? 0;
+                            final price = _unitPrice[id] ?? 0.0;       // TP
+                            final disc = (_discountPct[id] ?? 0.0)
+                                .clamp(0.0, 100.0);                    // %
 
-                          return Card(
-                            child: ListTile(
-                              title: Text(name),
-                              subtitle: Text(
-                                "Qty sold: $soldQty  |  Price: ${_currency.format(price)}",
-                              ),
-                              trailing: SizedBox(
-                                width: 90,
-                                child: TextFormField(
-                                  controller: _qtyControllers[id],
-                                  keyboardType: TextInputType.number,
-                                  decoration: const InputDecoration(
-                                    labelText: "Return",
+                            // return qty in controller
+                            final retQty =
+                                int.tryParse(_qtyControllers[id]?.text ?? '0') ??
+                                    0;
+                            final amount = _lineAmount(
+                                itemId: id, qty: retQty); // with discount
+
+                            return SizedBox(
+                              height: 44,
+                              child: Row(
+                                children: [
+                                  // Product
+                                  Expanded(
+                                    flex: 5,
+                                    child: Padding(
+                                      padding:
+                                          const EdgeInsets.only(right: 8.0),
+                                      child: Text(
+                                        name,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(
+                                            fontWeight: FontWeight.w600),
+                                      ),
+                                    ),
                                   ),
-                                ),
+                                  // TP
+                                  Expanded(
+                                    flex: 2,
+                                    child: Align(
+                                      alignment: Alignment.centerRight,
+                                      child: Text(_currency.format(price)),
+                                    ),
+                                  ),
+                                  // Discount (%)
+                                  Expanded(
+                                    flex: 2,
+                                    child: Align(
+                                      alignment: Alignment.centerRight,
+                                      child: Text("${disc.toStringAsFixed(0)}%"),
+                                    ),
+                                  ),
+                                  // Sold
+                                  Expanded(
+                                    flex: 2,
+                                    child: Align(
+                                      alignment: Alignment.centerRight,
+                                      child: Text("$soldQty"),
+                                    ),
+                                  ),
+                                  // Return (editable)
+                                  Expanded(
+                                    flex: 2,
+                                    child: TextFormField(
+                                      controller: _qtyControllers[id],
+                                      textAlign: TextAlign.right,
+                                      keyboardType: TextInputType.number,
+                                      decoration: const InputDecoration(
+                                        isDense: true,
+                                        contentPadding: EdgeInsets.symmetric(
+                                            horizontal: 8, vertical: 10),
+                                        border: OutlineInputBorder(),
+                                      ),
+                                      onChanged: (v) {
+                                        final parsed =
+                                            int.tryParse(v.trim()) ?? 0;
+                                        // clamp 0..soldQty
+                                        if (parsed < 0 ||
+                                            parsed > (soldQty as int)) {
+                                          final clamped = parsed
+                                              .clamp(0, soldQty as int);
+                                          _qtyControllers[id]!.text =
+                                              clamped.toString();
+                                          _qtyControllers[id]!.selection =
+                                              TextSelection.fromPosition(
+                                            TextPosition(
+                                              offset: _qtyControllers[id]!
+                                                  .text
+                                                  .length,
+                                            ),
+                                          );
+                                        } else {
+                                          setState(() {
+                                            if (_approveNow && _refundNow) {
+                                              _recalcRefundDefault();
+                                            }
+                                          });
+                                        }
+                                      },
+                                    ),
+                                  ),
+                                  // Amount (qty * price * (1 - disc%))
+                                  Expanded(
+                                    flex: 2,
+                                    child: Align(
+                                      alignment: Alignment.centerRight,
+                                      child: Text(
+                                        _currency.format(amount),
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.w700,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ],
                               ),
-                            ),
-                          );
-                        },
+                            );
+                          },
+                        ),
                       ),
-              ),
+                    ],
+                  ),
+                ),
+
+              const SizedBox(height: 8),
 
               // 📝 Reason
               TextFormField(
@@ -387,7 +478,7 @@ class _CreateSaleReturnScreenState extends State<CreateSaleReturnScreen> {
               ),
               const SizedBox(height: 12),
 
-              // ✅ Approve + 💵 Refund options
+              // ✅ Approve / Refund section (kept minimal here)
               Card(
                 child: Padding(
                   padding: const EdgeInsets.all(12),
@@ -400,125 +491,21 @@ class _CreateSaleReturnScreenState extends State<CreateSaleReturnScreen> {
                           setState(() {
                             _approveNow = v;
                             if (!_approveNow) _refundNow = false;
-                            if (_approveNow && _refundNow)
+                            if (_approveNow && _refundNow) {
                               _recalcRefundDefault();
+                            }
                           });
                         },
                       ),
-                      // if (_approveNow) ...[
-                      //   SwitchListTile(
-                      //     title: const Text("Refund now"),
-                      //     value: _refundNow,
-                      //     onChanged: (v) {
-                      //       setState(() {
-                      //         _refundNow = v;
-                      //         if (_refundNow) _recalcRefundDefault();
-                      //       });
-                      //     },
-                      //   ),
-                        // if (_refundNow) ...[
-                        //   Row(
-                        //     children: [
-                        //       Expanded(
-                        //         child: TextField(
-                        //           controller: _refundAmountCtrl,
-                        //           keyboardType:
-                        //               const TextInputType.numberWithOptions(
-                        //                 decimal: true,
-                        //               ),
-                        //           decoration: InputDecoration(
-                        //             labelText:
-                        //                 "Refund Amount (max ${_currency.format(total)})",
-                        //             border: const OutlineInputBorder(),
-                        //           ),
-                        //         ),
-                        //       ),
-                        //       const SizedBox(width: 8),
-                        //       Expanded(
-                        //         child: DropdownButtonFormField<String>(
-                        //           value: _refundMethod,
-                        //           decoration: const InputDecoration(
-                        //             labelText: "Method",
-                        //             border: OutlineInputBorder(),
-                        //           ),
-                        //           items: const [
-                        //             DropdownMenuItem(
-                        //               value: "cash",
-                        //               child: Text("Cash"),
-                        //             ),
-                        //             DropdownMenuItem(
-                        //               value: "card",
-                        //               child: Text("Card"),
-                        //             ),
-                        //             DropdownMenuItem(
-                        //               value: "bank",
-                        //               child: Text("Bank"),
-                        //             ),
-                        //             DropdownMenuItem(
-                        //               value: "wallet",
-                        //               child: Text("Wallet"),
-                        //             ),
-                        //           ],
-                        //           onChanged: (v) => setState(
-                        //             () => _refundMethod = v ?? 'cash',
-                        //           ),
-                        //         ),
-                        //       ),
-                        //     ],
-                        //   ),
-                        //   const SizedBox(height: 8),
-                        //   TextField(
-                        //     controller: _refundRefCtrl,
-                        //     decoration: const InputDecoration(
-                        //       labelText: "Reference (optional)",
-                        //       border: OutlineInputBorder(),
-                        //     ),
-                        //   ),
-                        //   const SizedBox(height: 8),
-                        //   Row(
-                        //     children: [
-                        //       Expanded(
-                        //         child: OutlinedButton.icon(
-                        //           icon: const Icon(Icons.calendar_today),
-                        //           label: Text(
-                        //             _refundDate == null
-                        //                 ? "Refund Date (optional)"
-                        //                 : DateFormat.yMMMd().format(
-                        //                     _refundDate!,
-                        //                   ),
-                        //           ),
-                        //           onPressed: () async {
-                        //             final now = DateTime.now();
-                        //             final d = await showDatePicker(
-                        //               context: context,
-                        //               initialDate: _refundDate ?? now,
-                        //               firstDate: DateTime(now.year - 5),
-                        //               lastDate: DateTime(now.year + 5),
-                        //             );
-                        //             if (d != null)
-                        //               setState(() => _refundDate = d);
-                        //           },
-                        //         ),
-                        //       ),
-                        //     ],
-                        //   ),
-                        // ],
-                      // ],
                       const Divider(),
-                      // 💰 Summary
                       Align(
                         alignment: Alignment.centerRight,
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.end,
-                          children: [
-                            Text(
-                              "Return Total: ${_currency.format(total)}",
-                              style: const TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 16,
-                              ),
-                            ),
-                          ],
+                        child: Text(
+                          "Return Total: ${_currency.format(total)}",
+                          style: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
+                          ),
                         ),
                       ),
                     ],
@@ -528,7 +515,7 @@ class _CreateSaleReturnScreenState extends State<CreateSaleReturnScreen> {
 
               const SizedBox(height: 12),
 
-              // Submit button
+              // Submit
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton.icon(
@@ -546,6 +533,29 @@ class _CreateSaleReturnScreenState extends State<CreateSaleReturnScreen> {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _ReturnTableHeader extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    final style = Theme.of(context).textTheme.labelMedium?.copyWith(
+          fontWeight: FontWeight.w700,
+          color: Theme.of(context).hintColor,
+        );
+    return SizedBox(
+      height: 28,
+      child: Row(
+        children: [
+          const Expanded(flex: 5, child: Text("Product")),
+          Expanded(flex: 2, child: Text("T.P", style: style, textAlign: TextAlign.right)),
+          Expanded(flex: 2, child: Text("Discount (%)", style: style, textAlign: TextAlign.right)),
+          Expanded(flex: 2, child: Text("Sold", style: style, textAlign: TextAlign.right)),
+          Expanded(flex: 2, child: Text("Return", style: style, textAlign: TextAlign.right)),
+          Expanded(flex: 2, child: Text("Amount", style: style, textAlign: TextAlign.right)),
+        ],
       ),
     );
   }

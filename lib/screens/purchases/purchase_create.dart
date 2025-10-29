@@ -2,6 +2,7 @@ import 'package:enterprise_pos/api/purchase_service.dart';
 import 'package:enterprise_pos/api/product_service.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/providers/branch_provider.dart';
+import 'package:enterprise_pos/screens/sales/parts/create_sale_items_section.dart';
 import 'package:enterprise_pos/widgets/branch_indicator.dart';
 
 // pickers
@@ -78,6 +79,55 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
         _selectedBranch = branch;
         _selectedBranchId = branch['id'].toString();
       });
+    }
+  }
+
+  Future<List<ProductRef>> _queryProducts(String q) async {
+    try {
+      final res = await _productService.getProducts(
+        page: 1,
+        search: q,
+        vendorId: _selectedVendorId,
+      );
+      final data = res['data'];
+      List list = const [];
+
+      if (data is List && data.isNotEmpty) {
+        final first = data.first;
+        if (first is Map && first['products'] is List) {
+          list = first['products'] as List;
+        }
+      }
+
+      double _tp(Map m) {
+        for (final k in [
+          'tp',
+          'cost_price',
+          // 'price',
+          'unit_price',
+          'default_price',
+        ]) {
+          final v = m[k];
+          if (v != null) {
+            final n = double.tryParse(v.toString());
+            if (n != null) return n;
+          }
+        }
+        return 0.0;
+      }
+
+      return list
+          .map<ProductRef>((raw) {
+            final m = raw as Map<String, dynamic>;
+            return ProductRef(
+              id: (m['id'] ?? m['product_id']) as int,
+              name: (m['name'] ?? m['title'] ?? 'Unnamed').toString(),
+              tp: _tp(m),
+            );
+          })
+          .toList(growable: false);
+    } catch (_) {
+      return const <ProductRef>[];
     }
   }
 
@@ -325,8 +375,10 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
           "cost_price": product['cost_price'],
           "wholesale_price": product['wholesale_price'],
           "quantity": 1,
+          "discount_pct": 0.0,
           "price": unitCost, // <-- use cost_price by default
           "received_qty": _receiveNow ? 1 : 0,
+          "total": _lineTotal(price: unitCost, qty: 1.0, discPct: 0.0),
         });
       });
     } else {
@@ -339,6 +391,16 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
     Future.delayed(const Duration(milliseconds: 50), () {
       if (mounted) _barcodeFocusNode.requestFocus();
     });
+  }
+
+  double _lineTotal({
+    required double price,
+    required double qty,
+    required double discPct,
+  }) {
+    final d = (discPct / 100.0).clamp(0.0, 100.0);
+    final t = qty * price * (1.0 - d);
+    return t.isFinite ? (t < 0 ? 0.0 : t) : 0.0;
   }
 
   Widget _hiddenBarcodeInput() {
@@ -384,6 +446,7 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
           "product_id": i['product_id'],
           "quantity": i['quantity'],
           "price": i['price'],
+          "discount": i['discount_pct'],
         };
         if (_receiveNow) {
           // only send if >0; controller clamps later too
@@ -465,9 +528,28 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
   }
 
   /* ----------------- totals ----------------- */
+  double _toNum(dynamic v) {
+    if (v == null) return 0.0;
+    if (v is num) return v.toDouble();
+    return double.tryParse(v.toString()) ?? 0.0;
+  }
 
-  double get _subtotal =>
-      _items.fold<double>(0, (sum, i) => sum + (i['quantity'] * i['price']));
+  double get _subtotal => _items.fold<double>(0.0, (sum, it) {
+    final qty = _toNum(it['quantity']);
+    final price = _toNum(it['price']);
+
+    // Prefer `discount_pct` if present, otherwise fall back to `discount`.
+    final rawPct = it.containsKey('discount_pct')
+        ? _toNum(it['discount_pct'])
+        : _toNum(it['discount']);
+
+    // Clamp 0–100 and compute net multiplier
+    final pct = rawPct.clamp(0.0, 100.0);
+    final net = 1.0 - (pct / 100.0);
+
+    final line = qty * price * net;
+    return sum + (line.isFinite ? line : 0.0);
+  });
   double get _discount => double.tryParse(discountController.text).absOrZero();
   double get _tax => double.tryParse(taxController.text).absOrZero();
   double get _total => _subtotal - _discount + _tax;
@@ -583,7 +665,6 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
               //     ),
               //   ),
               // ),
-
               const SizedBox(height: 12),
 
               // Scanner toggle
@@ -606,62 +687,71 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
 
               const SizedBox(height: 12),
 
-              // Items
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        "Items",
-                        style: TextStyle(fontWeight: FontWeight.bold),
-                      ),
-                      const Divider(),
-                      if (_items.isEmpty) const Text("No items added"),
-                      ..._items.asMap().entries.map((entry) {
-                        final idx = entry.key;
-                        final i = entry.value;
-                        final q = i['quantity'];
-                        final price = i['price'];
-                        final cost = i['cost_price'];
-                        final rcv = i['received_qty'] ?? 0;
-                        final unitCost =
-                            double.tryParse(
-                              i['cost_price']?.toString() ?? '',
-                            ) ??
-                            double.tryParse(i['price']?.toString() ?? '') ??
-                            0.0;
+              // // Items
+              // Card(
+              //   child: Padding(
+              //     padding: const EdgeInsets.all(12),
+              //     child: Column(
+              //       crossAxisAlignment: CrossAxisAlignment.start,
+              //       children: [
+              //         const Text(
+              //           "Items",
+              //           style: TextStyle(fontWeight: FontWeight.bold),
+              //         ),
+              //         const Divider(),
+              //         if (_items.isEmpty) const Text("No items added"),
+              //         ..._items.asMap().entries.map((entry) {
+              //           final idx = entry.key;
+              //           final i = entry.value;
+              //           final q = i['quantity'];
+              //           final price = i['price'];
+              //           final cost = i['cost_price'];
+              //           final rcv = i['received_qty'] ?? 0;
+              //           final unitCost =
+              //               double.tryParse(
+              //                 i['cost_price']?.toString() ?? '',
+              //               ) ??
+              //               double.tryParse(i['price']?.toString() ?? '') ??
+              //               0.0;
 
-                        final subtitle = _receiveNow
-                            ? "Qty: $q | Price: \$$price | Receive: $rcv"
-                            : "Qty: $q | Price: \$$price";
+              //           final subtitle = _receiveNow
+              //               ? "Qty: $q | Price: \$$price | Receive: $rcv"
+              //               : "Qty: $q | Price: \$$price";
 
-                        return ListTile(
-                          title: Text(
-                            i['name'],
-                            style: const TextStyle(fontWeight: FontWeight.bold),
-                          ),
-                          subtitle: Text(subtitle),
-                          trailing: IconButton(
-                            icon: const Icon(Icons.delete, color: Colors.red),
-                            onPressed: () =>
-                                setState(() => _items.removeAt(idx)),
-                          ),
-                          onTap: () => _editItem(idx),
-                        );
-                      }),
-                      Align(
-                        alignment: Alignment.centerRight,
-                        child: TextButton.icon(
-                          onPressed: _addItemManual,
-                          icon: const Icon(Icons.add),
-                          label: const Text("Add Product"),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
+              //           return ListTile(
+              //             title: Text(
+              //               i['name'],
+              //               style: const TextStyle(fontWeight: FontWeight.bold),
+              //             ),
+              //             subtitle: Text(subtitle),
+              //             trailing: IconButton(
+              //               icon: const Icon(Icons.delete, color: Colors.red),
+              //               onPressed: () =>
+              //                   setState(() => _items.removeAt(idx)),
+              //             ),
+              //             onTap: () => _editItem(idx),
+              //           );
+              //         }),
+              //         Align(
+              //           alignment: Alignment.centerRight,
+              //           child: TextButton.icon(
+              //             onPressed: _addItemManual,
+              //             icon: const Icon(Icons.add),
+              //             label: const Text("Add Product"),
+              //           ),
+              //         ),
+              //       ],
+              //     ),
+              //   ),
+              // ),
+
+              // const SizedBox(height: 12),
+              ItemsTable(
+                items: _items,
+                onQueryProducts: _queryProducts, // implemented below
+                onItemsChanged: (next) {
+                  setState(() => _items = next);
+                },
               ),
 
               const SizedBox(height: 12),

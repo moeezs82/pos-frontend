@@ -104,6 +104,24 @@ class VendorService {
     return await _client.get('/vendors/$id/payments', query: params);
   }
 
+  Future<Map<String, dynamic>> createPayment({
+    required int vendorId,
+    required double amount,
+    required String method,
+    String? reference,
+    int? branchId,
+  }) async {
+    final params = {
+      "amount": amount,
+      "method": method,
+      if (reference != null && reference.isNotEmpty) "reference": reference,
+      if (branchId != null) "branch_id": branchId,
+    };
+    return await _client.post('/vendors/$vendorId/payments', body: params);
+  }
+
+
+
   Future<Map<String, dynamic>> getVendorLedger({
     required int id,
     int page = 1,

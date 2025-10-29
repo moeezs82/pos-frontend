@@ -291,6 +291,8 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
 
   Future<void> _addItem() async {
     final token = Provider.of<AuthProvider>(context, listen: false).token!;
+
+    // 1) Pick product (your existing sheet)
     final product = await showModalBottomSheet<Map<String, dynamic>?>(
       context: context,
       isScrollControlled: true,
@@ -301,69 +303,271 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
     );
     if (product == null) return;
 
-    final qtyCtl = TextEditingController(text: "1");
+    // --- helpers ---
+    double _num(dynamic v) => double.tryParse(v?.toString() ?? '') ?? 0.0;
+    String _money(num v) => v.toStringAsFixed(2);
+    double _calcTotal(double price, double qty, double discPct) {
+      final d = (discPct / 100.0).clamp(0, 100);
+      final t = qty * price * (1 - d);
+      return t.isFinite ? (t < 0 ? 0 : t) : 0.0;
+    }
+
+    // 2) Tabular editor state
     final priceCtl = TextEditingController(
-      text: (product['price'] ?? 0).toString(),
+      text: _money(_num(product['price'] ?? 0)),
     );
+    final discCtl = TextEditingController(text: "0");
+    final qtyCtl = TextEditingController(text: "1");
+
+    final priceFn = FocusNode();
+    final discFn = FocusNode();
+    final qtyFn = FocusNode();
 
     await showDialog(
       context: context,
-      builder: (_) => AlertDialog(
-        title: Text("Add ${product['name']}"),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: qtyCtl,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(
-                labelText: "Quantity",
-                border: OutlineInputBorder(),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocal) {
+          final price = _num(priceCtl.text);
+          final qty = _num(qtyCtl.text); // allow decimals if you want; or round
+          final disc = _num(discCtl.text);
+          final total = _calcTotal(price, qty, disc);
+
+          InputDecoration _cellDec({String? label, String? suffix}) =>
+              InputDecoration(
+                labelText: label,
+                isDense: true,
+                border: const OutlineInputBorder(),
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 10,
+                ),
+                suffixText: suffix,
+              );
+
+          Widget _numberField({
+            required TextEditingController c,
+            required FocusNode fn,
+            String? label,
+            String? suffix,
+            bool integer = false,
+            VoidCallback? onNext,
+          }) {
+            return TextField(
+              controller: c,
+              focusNode: fn,
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
+              textInputAction: onNext == null
+                  ? TextInputAction.done
+                  : TextInputAction.next,
+              onSubmitted: (_) => onNext?.call(),
+              onTap: () => c.selection = TextSelection(
+                baseOffset: 0,
+                extentOffset: c.text.length,
+              ),
+              onChanged: (v) {
+                if (integer) {
+                  final only = int.tryParse(
+                    v.replaceAll(RegExp(r'[^0-9]'), ''),
+                  );
+                  if (only != null && only.toString() != v) {
+                    c.text = only.toString();
+                    c.selection = TextSelection.fromPosition(
+                      TextPosition(offset: c.text.length),
+                    );
+                  }
+                }
+                setLocal(() {}); // refresh total
+              },
+              textAlign: TextAlign.right,
+              decoration: _cellDec(label: label, suffix: suffix),
+              style: const TextStyle(
+                fontWeight: FontWeight.w600,
+                fontFeatures: [FontFeature.tabularFigures()],
+              ),
+            );
+          }
+
+          return AlertDialog(
+            title: Text("Add ${product['name']}"),
+            content: SizedBox(
+              width: 520, // nice compact width; grows on wider screens
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Header row
+                  SizedBox(
+                    height: 28,
+                    child: Row(
+                      children: const [
+                        Expanded(
+                          flex: 6,
+                          child: Text(
+                            "Product",
+                            style: TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                        ),
+                        Expanded(
+                          flex: 2,
+                          child: Align(
+                            alignment: Alignment.centerRight,
+                            child: Text("T.P"),
+                          ),
+                        ),
+                        Expanded(
+                          flex: 2,
+                          child: Align(
+                            alignment: Alignment.centerRight,
+                            child: Text("Discount (%)"),
+                          ),
+                        ),
+                        Expanded(
+                          flex: 2,
+                          child: Align(
+                            alignment: Alignment.centerRight,
+                            child: Text("Qty"),
+                          ),
+                        ),
+                        Expanded(
+                          flex: 2,
+                          child: Align(
+                            alignment: Alignment.centerRight,
+                            child: Text("Total"),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const Divider(height: 8),
+
+                  // One tabular row
+                  SizedBox(
+                    height: 64,
+                    child: Row(
+                      children: [
+                        // Product name
+                        Expanded(
+                          flex: 6,
+                          child: Container(
+                            alignment: Alignment.centerLeft,
+                            padding: const EdgeInsets.only(right: 8),
+                            child: Text(
+                              (product['name'] ?? '').toString(),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ),
+                        // Price
+                        Expanded(
+                          flex: 2,
+                          child: Padding(
+                            padding: const EdgeInsets.only(left: 6),
+                            child: _numberField(
+                              c: priceCtl,
+                              fn: priceFn,
+                              label: "T.P",
+                              onNext: () => discFn.requestFocus(),
+                            ),
+                          ),
+                        ),
+                        // Discount %
+                        Expanded(
+                          flex: 2,
+                          child: Padding(
+                            padding: const EdgeInsets.only(left: 6),
+                            child: _numberField(
+                              c: discCtl,
+                              fn: discFn,
+                              label: "Discount",
+                              suffix: "%",
+                              onNext: () => qtyFn.requestFocus(),
+                            ),
+                          ),
+                        ),
+                        // Qty
+                        Expanded(
+                          flex: 2,
+                          child: Padding(
+                            padding: const EdgeInsets.only(left: 6),
+                            child: _numberField(
+                              c: qtyCtl,
+                              fn: qtyFn,
+                              label: "Qty",
+                              integer:
+                                  true, // set to false if you allow decimals
+                              onNext: null,
+                            ),
+                          ),
+                        ),
+                        // Total
+                        Expanded(
+                          flex: 2,
+                          child: Align(
+                            alignment: Alignment.centerRight,
+                            child: Text(
+                              _money(total),
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w800,
+                                fontFeatures: [FontFeature.tabularFigures()],
+                                fontSize: 16,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
               ),
             ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: priceCtl,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(
-                labelText: "Price",
-                border: OutlineInputBorder(),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text("Cancel"),
               ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text("Cancel"),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              try {
-                await _api.post(
-                  "/sales/${widget.saleId}/items",
-                  body: {
-                    "product_id": product['id'],
-                    "quantity": int.tryParse(qtyCtl.text) ?? 1,
-                    "price": double.tryParse(priceCtl.text) ?? 0.0,
-                  },
-                );
-                if (!mounted) return;
-                Navigator.pop(context);
-                await _fetchSale();
-                _updated = true;
-              } catch (e) {
-                if (!mounted) return;
-                ScaffoldMessenger.of(
-                  context,
-                ).showSnackBar(SnackBar(content: Text("Add item failed: $e")));
-              }
-            },
-            child: const Text("Add"),
-          ),
-        ],
+              ElevatedButton(
+                onPressed: () async {
+                  try {
+                    await _api.post(
+                      "/sales/${widget.saleId}/items",
+                      body: {
+                        "product_id": product['id'],
+                        "quantity": int.tryParse(qtyCtl.text) ?? 1,
+                        "price": _num(priceCtl.text),
+                        "discount_pct": _num(discCtl.text),
+                      },
+                    );
+                    if (!mounted) return;
+                    Navigator.pop(ctx); // close dialog
+                    await _fetchSale(); // reload sale details
+                    _updated = true;
+                  } catch (e) {
+                    if (!mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text("Add item failed: $e")),
+                    );
+                  }
+                },
+                child: const Text("Add"),
+              ),
+            ],
+          );
+        },
       ),
     );
+
+    // Cleanup (optional)
+    priceFn.dispose();
+    discFn.dispose();
+    qtyFn.dispose();
+    priceCtl.dispose();
+    discCtl.dispose();
+    qtyCtl.dispose();
   }
 
   Future<void> _editItem(Map item) async {

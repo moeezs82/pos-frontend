@@ -13,7 +13,8 @@ class PurchaseClaimDetailScreen extends StatefulWidget {
   const PurchaseClaimDetailScreen({super.key, required this.claimId});
 
   @override
-  State<PurchaseClaimDetailScreen> createState() => _PurchaseClaimDetailScreenState();
+  State<PurchaseClaimDetailScreen> createState() =>
+      _PurchaseClaimDetailScreenState();
 }
 
 class _PurchaseClaimDetailScreenState extends State<PurchaseClaimDetailScreen> {
@@ -57,7 +58,10 @@ class _PurchaseClaimDetailScreenState extends State<PurchaseClaimDetailScreen> {
 
     // Otherwise sum receipts array
     final receipts = (map['receipts'] as List?) ?? const [];
-    _received = receipts.fold<double>(0.0, (sum, r) => sum + _toDouble((r as Map)['amount']));
+    _received = receipts.fold<double>(
+      0.0,
+      (sum, r) => sum + _toDouble((r as Map)['amount']),
+    );
     _left = (_total - _received);
     if (_left < 0) _left = 0;
   }
@@ -65,12 +69,17 @@ class _PurchaseClaimDetailScreenState extends State<PurchaseClaimDetailScreen> {
   Future<void> _fetchDetail() async {
     setState(() => _loading = true);
     final token = Provider.of<AuthProvider>(context, listen: false).token!;
-    final uri = Uri.parse("${ApiClient.baseUrl}/purchase-claims/${widget.claimId}");
+    final uri = Uri.parse(
+      "${ApiClient.baseUrl}/purchase-claims/${widget.claimId}",
+    );
 
     try {
       final res = await http.get(
         uri,
-        headers: {"Authorization": "Bearer $token", "Accept": "application/json"},
+        headers: {
+          "Authorization": "Bearer $token",
+          "Accept": "application/json",
+        },
       );
 
       if (!mounted) return;
@@ -103,7 +112,9 @@ class _PurchaseClaimDetailScreenState extends State<PurchaseClaimDetailScreen> {
     } catch (e) {
       if (!mounted) return;
       setState(() => _loading = false);
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text("Error: $e")));
     }
   }
 
@@ -121,7 +132,9 @@ class _PurchaseClaimDetailScreenState extends State<PurchaseClaimDetailScreen> {
     // if (decision == null) return;
 
     final token = Provider.of<AuthProvider>(context, listen: false).token!;
-    final uri = Uri.parse("${ApiClient.baseUrl}/purchase-claims/${widget.claimId}/approve");
+    final uri = Uri.parse(
+      "${ApiClient.baseUrl}/purchase-claims/${widget.claimId}/approve",
+    );
 
     final body = <String, String>{};
     // if (decision.receiveNow && decision.amount > 0) {
@@ -167,7 +180,9 @@ class _PurchaseClaimDetailScreenState extends State<PurchaseClaimDetailScreen> {
 
   Future<void> _postReceipt() async {
     if (_left <= 0) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Nothing left to receive.")));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text("Nothing left to receive.")));
       return;
     }
 
@@ -180,16 +195,21 @@ class _PurchaseClaimDetailScreenState extends State<PurchaseClaimDetailScreen> {
       ),
     );
 
-    if (decision == null || !decision.receiveNow || decision.amount <= 0) return;
+    if (decision == null || !decision.receiveNow || decision.amount <= 0)
+      return;
 
     final token = Provider.of<AuthProvider>(context, listen: false).token!;
-    final uri = Uri.parse("${ApiClient.baseUrl}/purchase-claims/${widget.claimId}/receipt");
+    final uri = Uri.parse(
+      "${ApiClient.baseUrl}/purchase-claims/${widget.claimId}/receipt",
+    );
 
     final body = <String, String>{
       "amount": decision.amount.toStringAsFixed(2),
       "method": decision.method,
-      if (decision.reference?.trim().isNotEmpty == true) "reference": decision.reference!.trim(),
-      if (decision.date != null) "received_at": DateFormat("yyyy-MM-dd").format(decision.date!),
+      if (decision.reference?.trim().isNotEmpty == true)
+        "reference": decision.reference!.trim(),
+      if (decision.date != null)
+        "received_at": DateFormat("yyyy-MM-dd").format(decision.date!),
     };
 
     final res = await http.post(
@@ -208,7 +228,8 @@ class _PurchaseClaimDetailScreenState extends State<PurchaseClaimDetailScreen> {
         final data = jsonDecode(res.body);
         final receivedTotal = _toDouble(data['data']?['received_total']);
         final left = _toDouble(data['data']?['receivable_left']);
-        msg = "Received ${_currency.format(decision.amount)} "
+        msg =
+            "Received ${_currency.format(decision.amount)} "
             "(Total received: ${_currency.format(receivedTotal)}, Left: ${_currency.format(left)})";
       } catch (_) {}
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
@@ -224,23 +245,30 @@ class _PurchaseClaimDetailScreenState extends State<PurchaseClaimDetailScreen> {
 
   Future<void> _rejectClaim({String? reason}) async {
     final token = Provider.of<AuthProvider>(context, listen: false).token!;
-    final uri = Uri.parse("${ApiClient.baseUrl}/purchase-claims/${widget.claimId}/reject");
+    final uri = Uri.parse(
+      "${ApiClient.baseUrl}/purchase-claims/${widget.claimId}/reject",
+    );
 
     final res = await http.post(
       uri,
       headers: {
         "Authorization": "Bearer $token",
         "Accept": "application/json",
-        if (reason != null && reason.trim().isNotEmpty) "Content-Type": "application/json",
+        if (reason != null && reason.trim().isNotEmpty)
+          "Content-Type": "application/json",
       },
-      body: (reason != null && reason.trim().isNotEmpty) ? jsonEncode({"reason": reason.trim()}) : null,
+      body: (reason != null && reason.trim().isNotEmpty)
+          ? jsonEncode({"reason": reason.trim()})
+          : null,
     );
 
     if (!mounted) return;
     if (res.statusCode == 200) {
       _changed = true;
       await _fetchDetail();
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Claim rejected")));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text("Claim rejected")));
     } else {
       String msg = "Failed to reject claim";
       try {
@@ -259,11 +287,17 @@ class _PurchaseClaimDetailScreenState extends State<PurchaseClaimDetailScreen> {
         title: const Text("Reject Claim"),
         content: TextField(
           controller: controller,
-          decoration: const InputDecoration(hintText: "Optional reason...", border: OutlineInputBorder()),
+          decoration: const InputDecoration(
+            hintText: "Optional reason...",
+            border: OutlineInputBorder(),
+          ),
           maxLines: 3,
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text("Cancel")),
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text("Cancel"),
+          ),
           ElevatedButton(
             onPressed: () => Navigator.pop(context, true),
             style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
@@ -327,7 +361,12 @@ class _PurchaseClaimDetailScreenState extends State<PurchaseClaimDetailScreen> {
       child: Scaffold(
         appBar: AppBar(
           title: Text("Claim #${_claim!['claim_no']}"),
-          actions: const [Padding(padding: EdgeInsets.only(right: 8), child: BranchIndicator(tappable: false))],
+          actions: const [
+            Padding(
+              padding: EdgeInsets.only(right: 8),
+              child: BranchIndicator(tappable: false),
+            ),
+          ],
         ),
         body: RefreshIndicator(
           onRefresh: _fetchDetail,
@@ -341,12 +380,19 @@ class _PurchaseClaimDetailScreenState extends State<PurchaseClaimDetailScreen> {
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Chip(
-                      label: Text(status.toUpperCase(), style: const TextStyle(color: Colors.white)),
+                      label: Text(
+                        status.toUpperCase(),
+                        style: const TextStyle(color: Colors.white),
+                      ),
                       backgroundColor: _statusColor(status),
                     ),
                     Text(
-                      created != null ? DateFormat.yMMMd().add_jm().format(created) : '',
-                      style: theme.textTheme.bodySmall?.copyWith(color: Colors.grey),
+                      created != null
+                          ? DateFormat.yMMMd().add_jm().format(created)
+                          : '',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: Colors.grey,
+                      ),
                     ),
                   ],
                 ),
@@ -357,10 +403,16 @@ class _PurchaseClaimDetailScreenState extends State<PurchaseClaimDetailScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text("Invoice: ${purchase?['invoice_no'] ?? 'N/A'}",
-                          style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
+                      Text(
+                        "Invoice: ${purchase?['invoice_no'] ?? 'N/A'}",
+                        style: theme.textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
                       const SizedBox(height: 6),
-                      Text("Vendor: ${purchase?['vendor']?['name'] ?? purchase?['vendor']?['first_name'] ?? 'N/A'}"),
+                      Text(
+                        "Vendor: ${purchase?['vendor']?['name'] ?? purchase?['vendor']?['first_name'] ?? 'N/A'}",
+                      ),
                       Text("Branch: ${_claim?['branch']?['name'] ?? 'N/A'}"),
                       Text("Type: ${_claim!['type'] ?? 'N/A'}"),
                       if ((_claim!['reason'] ?? '').toString().isNotEmpty) ...[
@@ -377,8 +429,9 @@ class _PurchaseClaimDetailScreenState extends State<PurchaseClaimDetailScreen> {
                                   Navigator.push(
                                     context,
                                     MaterialPageRoute(
-                                      builder: (_) =>
-                                          PurchaseDetailScreen(purchaseId: purchase['id'] as int),
+                                      builder: (_) => PurchaseDetailScreen(
+                                        purchaseId: purchase['id'] as int,
+                                      ),
                                     ),
                                   );
                                 },
@@ -402,7 +455,6 @@ class _PurchaseClaimDetailScreenState extends State<PurchaseClaimDetailScreen> {
                 //     Expanded(child: _KpiTile(title: "Left", value: _currency.format(_left), icon: Icons.account_balance_wallet_outlined)),
                 //   ],
                 // ),
-
                 const SizedBox(height: 20),
 
                 // Items
@@ -410,47 +462,13 @@ class _PurchaseClaimDetailScreenState extends State<PurchaseClaimDetailScreen> {
                 if (items.isEmpty)
                   const _EmptyNote(text: "No items found for this claim.")
                 else
-                  Column(
-                    children: items.map((item) {
-                      final prod = item['product'] ?? {};
-                      final name = prod['name'] ?? 'Product';
-                      final sku = prod['sku'] ?? '-';
-                      final qty = (item['quantity'] as num?)?.toInt() ??
-                          int.tryParse(item['quantity'].toString()) ??
-                          0;
-                      final price = _toDouble(item['price']);
-                      final lineTotal = _toDouble(item['total']);
-                      final affectsStock = (item['affects_stock'] == true);
-                      final batch = (item['batch_no'] ?? '').toString();
-                      final expiry = (item['expiry_date'] ?? '').toString();
-                      final remarks = (item['remarks'] ?? '').toString();
-
-                      final extras = <String>[
-                        if (batch.isNotEmpty) "Batch: $batch",
-                        if (expiry.isNotEmpty) "Expiry: $expiry",
-                        if (remarks.isNotEmpty) "Remarks: $remarks",
-                      ].join(" • ");
-
-                      return _ListCard(
-                        leading: _QtyBubble(qty: qty, color: Colors.teal),
-                        title: name,
-                        subtitle: [
-                          "SKU: $sku",
-                          "Affects stock: ${affectsStock ? 'Yes' : 'No'}",
-                          if (extras.isNotEmpty) extras,
-                        ].join(" • "),
-                        trailing: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          crossAxisAlignment: CrossAxisAlignment.end,
-                          children: [
-                            Text("Price: ${_currency.format(price)}"),
-                            Text("Total: ${_currency.format(lineTotal)}"),
-                          ],
-                        ),
-                      );
-                    }).toList(),
+                  _SectionCard(
+                    padding: EdgeInsets.zero,
+                    child: _ItemsTable(
+                      items: items.cast<Map<String, dynamic>>(),
+                      currency: _currency,
+                    ),
                   ),
-
                 const SizedBox(height: 20),
 
                 // Summary (Subtotal / Tax / Total)
@@ -461,10 +479,17 @@ class _PurchaseClaimDetailScreenState extends State<PurchaseClaimDetailScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.end,
                       children: [
-                        _RowPrice(label: "Subtotal", value: _currency.format(_subtotal)),
+                        _RowPrice(
+                          label: "Subtotal",
+                          value: _currency.format(_subtotal),
+                        ),
                         _RowPrice(label: "Tax", value: _currency.format(_tax)),
                         const Divider(height: 14),
-                        _RowPrice(label: "Total", value: _currency.format(_total), isBold: true),
+                        _RowPrice(
+                          label: "Total",
+                          value: _currency.format(_total),
+                          isBold: true,
+                        ),
                       ],
                     ),
                   ),
@@ -495,7 +520,6 @@ class _PurchaseClaimDetailScreenState extends State<PurchaseClaimDetailScreen> {
                 //       );
                 //     }).toList(),
                 //   ),
-
                 const SizedBox(height: 16),
 
                 // Actions
@@ -521,7 +545,10 @@ class _PurchaseClaimDetailScreenState extends State<PurchaseClaimDetailScreen> {
                             backgroundColor: Colors.green,
                             foregroundColor: Colors.white,
                             padding: const EdgeInsets.symmetric(vertical: 14),
-                            textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                            textStyle: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                            ),
                           ),
                         ),
                       ),
@@ -535,7 +562,10 @@ class _PurchaseClaimDetailScreenState extends State<PurchaseClaimDetailScreen> {
                             backgroundColor: Colors.red,
                             foregroundColor: Colors.white,
                             padding: const EdgeInsets.symmetric(vertical: 14),
-                            textStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                            textStyle: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                            ),
                           ),
                         ),
                       ),
@@ -546,6 +576,121 @@ class _PurchaseClaimDetailScreenState extends State<PurchaseClaimDetailScreen> {
               ],
             ),
           ),
+        ),
+      ),
+    );
+  }
+}
+
+class _ItemsTable extends StatelessWidget {
+  final List<Map<String, dynamic>> items;
+  final NumberFormat currency;
+
+  const _ItemsTable({required this.items, required this.currency});
+
+  double _toD(dynamic v) {
+    if (v == null) return 0.0;
+    if (v is num) return v.toDouble();
+    return double.tryParse(v.toString()) ?? 0.0;
+  }
+
+  String _fmtQty(num q) {
+    // show 0 decimals when whole number, else up to 3
+    final d = q.toDouble();
+    if (d % 1 == 0) return NumberFormat('#,##0').format(d);
+    return NumberFormat('#,##0.###').format(d);
+  }
+
+  Widget _right(String s, {FontWeight? weight}) => Align(
+    alignment: Alignment.centerRight,
+    child: Text(s, style: TextStyle(fontWeight: weight)),
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    final rows = items.map((item) {
+      final prod = (item['product'] ?? {}) as Map;
+      final name = (prod['name'] ?? 'Product').toString();
+      final sku = (prod['sku'] ?? '-').toString();
+      final price = _toD(item['price']);
+      final discount = _toD(item['discount']);
+      final qty = _toD(item['quantity']);
+      final total = _toD(item['total']);
+
+      final batch = (item['batch_no'] ?? '').toString();
+      final expiry = (item['expiry_date'] ?? '').toString();
+      final remarks = (item['remarks'] ?? '').toString();
+      final notes = [
+        if (batch.isNotEmpty) "Batch: $batch",
+        if (expiry.isNotEmpty) "Exp: $expiry",
+        if (remarks.isNotEmpty) remarks,
+      ].join(" • ");
+
+      return DataRow(
+        cells: [
+          DataCell(
+            SizedBox(
+              width: 260, // keeps product cell tidy
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    name,
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    "SKU: $sku",
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: Colors.grey[700],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          DataCell(_right(currency.format(price))),
+          DataCell(_right(currency.format(discount))),
+          DataCell(_right(_fmtQty(qty))),
+          DataCell(_right(currency.format(total), weight: FontWeight.w600)),
+          DataCell(
+            SizedBox(
+              width: 320,
+              child: Text(
+                notes.isEmpty ? '—' : notes,
+                overflow: TextOverflow.ellipsis,
+                maxLines: 2,
+              ),
+            ),
+          ),
+        ],
+      );
+    }).toList();
+
+    return Padding(
+      padding: const EdgeInsets.all(12),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: DataTable(
+          headingRowHeight: 44,
+          columns: const [
+            DataColumn(label: Text('Product')),
+            DataColumn(label: Text('Price'), numeric: true),
+            DataColumn(label: Text('Discount'), numeric: true),
+            DataColumn(label: Text('Qty'), numeric: true),
+            DataColumn(label: Text('Total'), numeric: true),
+            DataColumn(label: Text('Notes')),
+          ],
+          rows: rows,
+          // Subtle, professional density
+          dataRowMinHeight: 44,
+          dataRowMaxHeight: 60,
+          dividerThickness: 0.6,
         ),
       ),
     );
@@ -571,7 +716,12 @@ class _SectionHeader extends StatelessWidget {
     final theme = Theme.of(context);
     return Row(
       children: [
-        Text(title, style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
+        Text(
+          title,
+          style: theme.textTheme.titleMedium?.copyWith(
+            fontWeight: FontWeight.w700,
+          ),
+        ),
         const Expanded(child: Divider(indent: 12)),
       ],
     );
@@ -581,13 +731,16 @@ class _SectionHeader extends StatelessWidget {
 class _SectionCard extends StatelessWidget {
   final Widget child;
   final EdgeInsetsGeometry padding;
-  const _SectionCard({required this.child, this.padding = const EdgeInsets.all(16)});
+  const _SectionCard({
+    required this.child,
+    this.padding = const EdgeInsets.all(16),
+  });
   @override
   Widget build(BuildContext context) => Card(
-        elevation: 3,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-        child: Padding(padding: padding, child: child),
-      );
+    elevation: 3,
+    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+    child: Padding(padding: padding, child: child),
+  );
 }
 
 class _ListCard extends StatelessWidget {
@@ -595,7 +748,12 @@ class _ListCard extends StatelessWidget {
   final String title;
   final String? subtitle;
   final Widget? trailing;
-  const _ListCard({this.leading, required this.title, this.subtitle, this.trailing});
+  const _ListCard({
+    this.leading,
+    required this.title,
+    this.subtitle,
+    this.trailing,
+  });
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -604,7 +762,12 @@ class _ListCard extends StatelessWidget {
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: ListTile(
         leading: leading,
-        title: Text(title, style: theme.textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w600)),
+        title: Text(
+          title,
+          style: theme.textTheme.bodyLarge?.copyWith(
+            fontWeight: FontWeight.w600,
+          ),
+        ),
         subtitle: subtitle == null ? null : Text(subtitle!),
         trailing: trailing,
       ),
@@ -616,7 +779,11 @@ class _KpiTile extends StatelessWidget {
   final String title;
   final String value;
   final IconData icon;
-  const _KpiTile({required this.title, required this.value, required this.icon});
+  const _KpiTile({
+    required this.title,
+    required this.value,
+    required this.icon,
+  });
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -630,9 +797,19 @@ class _KpiTile extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
-                Text(value, style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700)),
+                Text(
+                  value,
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
                 const SizedBox(height: 2),
-                Text(title, style: theme.textTheme.bodySmall?.copyWith(color: Colors.grey[700])),
+                Text(
+                  title,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: Colors.grey[700],
+                  ),
+                ),
               ],
             ),
           ),
@@ -648,22 +825,37 @@ class _QtyBubble extends StatelessWidget {
   const _QtyBubble({required this.qty, this.color = Colors.blue});
   @override
   Widget build(BuildContext context) => CircleAvatar(
-        backgroundColor: color.withOpacity(0.1),
-        child: Text(qty.toString(), style: TextStyle(fontWeight: FontWeight.bold, color: color)),
-      );
+    backgroundColor: color.withOpacity(0.1),
+    child: Text(
+      qty.toString(),
+      style: TextStyle(fontWeight: FontWeight.bold, color: color),
+    ),
+  );
 }
 
 class _RowPrice extends StatelessWidget {
   final String label;
   final String value;
   final bool isBold;
-  const _RowPrice({required this.label, required this.value, this.isBold = false});
+  const _RowPrice({
+    required this.label,
+    required this.value,
+    this.isBold = false,
+  });
   @override
   Widget build(BuildContext context) {
-    final style = isBold ? const TextStyle(fontSize: 16, fontWeight: FontWeight.w700) : const TextStyle(fontWeight: FontWeight.w500);
+    final style = isBold
+        ? const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)
+        : const TextStyle(fontWeight: FontWeight.w500);
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 2),
-      child: Row(mainAxisSize: MainAxisSize.min, children: [Text("$label: ", style: style), Text(value, style: style)]),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text("$label: ", style: style),
+          Text(value, style: style),
+        ],
+      ),
     );
   }
 }
@@ -671,7 +863,11 @@ class _RowPrice extends StatelessWidget {
 class _EmptyNote extends StatelessWidget {
   final String text;
   final IconData icon;
-  const _EmptyNote({super.key, required this.text, this.icon = Icons.info_outline});
+  const _EmptyNote({
+    super.key,
+    required this.text,
+    this.icon = Icons.info_outline,
+  });
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -684,7 +880,14 @@ class _EmptyNote extends StatelessWidget {
           children: [
             CircleAvatar(radius: 18, child: Icon(icon, size: 20)),
             const SizedBox(width: 12),
-            Expanded(child: Text(text, style: theme.textTheme.bodyMedium?.copyWith(color: Colors.grey[700]))),
+            Expanded(
+              child: Text(
+                text,
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: Colors.grey[700],
+                ),
+              ),
+            ),
           ],
         ),
       ),
@@ -733,7 +936,9 @@ class _ReceiptDialogState extends State<_ReceiptDialog> {
   @override
   void initState() {
     super.initState();
-    _amountCtrl = TextEditingController(text: widget.defaultAmount.toStringAsFixed(2));
+    _amountCtrl = TextEditingController(
+      text: widget.defaultAmount.toStringAsFixed(2),
+    );
   }
 
   double _toDouble(String s) => double.tryParse(s.trim()) ?? 0.0;
@@ -754,20 +959,29 @@ class _ReceiptDialogState extends State<_ReceiptDialog> {
             const SizedBox(height: 8),
             TextField(
               controller: _amountCtrl,
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
               decoration: InputDecoration(
-                labelText: "Receipt Amount (max ${widget.maxAmount.toStringAsFixed(2)})",
+                labelText:
+                    "Receipt Amount (max ${widget.maxAmount.toStringAsFixed(2)})",
                 border: const OutlineInputBorder(),
               ),
             ),
             const SizedBox(height: 10),
             DropdownButtonFormField<String>(
               value: _method,
-              decoration: const InputDecoration(labelText: "Method", border: OutlineInputBorder()),
+              decoration: const InputDecoration(
+                labelText: "Method",
+                border: OutlineInputBorder(),
+              ),
               items: const [
                 DropdownMenuItem(value: "cash", child: Text("Cash")),
                 DropdownMenuItem(value: "bank", child: Text("Bank")),
-                DropdownMenuItem(value: "credit_note", child: Text("Credit Note")),
+                DropdownMenuItem(
+                  value: "credit_note",
+                  child: Text("Credit Note"),
+                ),
                 DropdownMenuItem(value: "wallet", child: Text("Wallet")),
               ],
               onChanged: (v) => setState(() => _method = v ?? 'cash'),
@@ -775,7 +989,10 @@ class _ReceiptDialogState extends State<_ReceiptDialog> {
             const SizedBox(height: 10),
             TextField(
               controller: _refCtrl,
-              decoration: const InputDecoration(labelText: "Reference (optional)", border: OutlineInputBorder()),
+              decoration: const InputDecoration(
+                labelText: "Reference (optional)",
+                border: OutlineInputBorder(),
+              ),
             ),
             const SizedBox(height: 10),
             Row(
@@ -783,7 +1000,11 @@ class _ReceiptDialogState extends State<_ReceiptDialog> {
                 Expanded(
                   child: OutlinedButton.icon(
                     icon: const Icon(Icons.calendar_today),
-                    label: Text(_pickedDate == null ? "Pick Date" : DateFormat.yMMMd().format(_pickedDate!)),
+                    label: Text(
+                      _pickedDate == null
+                          ? "Pick Date"
+                          : DateFormat.yMMMd().format(_pickedDate!),
+                    ),
                     onPressed: () async {
                       final now = DateTime.now();
                       final d = await showDatePicker(
@@ -802,23 +1023,35 @@ class _ReceiptDialogState extends State<_ReceiptDialog> {
         ],
       ),
       actions: [
-        TextButton(onPressed: () => Navigator.pop(context), child: const Text("Cancel")),
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text("Cancel"),
+        ),
         ElevatedButton.icon(
           icon: const Icon(Icons.check),
           label: const Text("Confirm"),
           onPressed: () {
             if (!_receiveNow) {
-              Navigator.pop(context, _ReceiptDecision(receiveNow: false, amount: 0, method: 'cash'));
+              Navigator.pop(
+                context,
+                _ReceiptDecision(receiveNow: false, amount: 0, method: 'cash'),
+              );
               return;
             }
             final amt = _toDouble(_amountCtrl.text);
             if (amt <= 0) {
-              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Enter a valid receipt amount")));
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text("Enter a valid receipt amount")),
+              );
               return;
             }
             if (amt > widget.maxAmount + 0.0001) {
               ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(content: Text("Amount cannot exceed ${widget.maxAmount.toStringAsFixed(2)}")),
+                SnackBar(
+                  content: Text(
+                    "Amount cannot exceed ${widget.maxAmount.toStringAsFixed(2)}",
+                  ),
+                ),
               );
               return;
             }

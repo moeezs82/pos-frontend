@@ -403,7 +403,7 @@ class _CustomersScreenState extends State<CustomersScreen> {
                                     builder: (_) => CustomerEditScreen(customerId: c['id']),
                                   ),
                                 );
-                                if (result == true) _fetchCustomers(reset: true);
+                                _fetchCustomers(reset: true);
                               },
                             );
                           },
