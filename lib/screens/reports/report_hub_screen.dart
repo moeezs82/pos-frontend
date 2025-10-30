@@ -1,3 +1,6 @@
+import 'package:enterprise_pos/screens/reports/report_daily_summary_screen.dart';
+import 'package:enterprise_pos/screens/reports/report_ledger_screen.dart';
+import 'package:enterprise_pos/screens/reports/report_top_bottom_products_screen.dart';
 import 'package:flutter/material.dart';
 
 class ReportsHubScreen extends StatelessWidget {
@@ -8,10 +11,7 @@ class ReportsHubScreen extends StatelessWidget {
     final groups = _reportGroups;
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Reports'),
-        centerTitle: false,
-      ),
+      appBar: AppBar(title: const Text('Reports'), centerTitle: false),
       body: ListView.builder(
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
         itemCount: groups.length,
@@ -37,9 +37,12 @@ class _GroupBlock extends StatelessWidget {
   Widget build(BuildContext context) {
     final w = MediaQuery.of(context).size.width;
     int cols = 1;
-    if (w >= 1200) cols = 4;
-    else if (w >= 920) cols = 3;
-    else if (w >= 640) cols = 2;
+    if (w >= 1200)
+      cols = 4;
+    else if (w >= 920)
+      cols = 3;
+    else if (w >= 640)
+      cols = 2;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -85,17 +88,18 @@ class _GroupHeader extends StatelessWidget {
         Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(title,
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    )),
+            Text(
+              title,
+              style: Theme.of(
+                context,
+              ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+            ),
             const SizedBox(height: 2),
             Text(
               caption,
-              style: Theme.of(context)
-                  .textTheme
-                  .bodySmall
-                  ?.copyWith(color: scheme.onSurfaceVariant),
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
             ),
           ],
         ),
@@ -114,6 +118,22 @@ class _ReportCard extends StatefulWidget {
   State<_ReportCard> createState() => _ReportCardState();
 }
 
+typedef ScreenBuilder = Widget Function(BuildContext);
+
+final Map<String, ScreenBuilder> _reportRouteBuilders = {
+  'sales_day_summary': (_) => const ReportDailySummaryScreen(),
+  'top_bottom_products':         (_) => const ReportTopBottomProductsScreen(),
+  // 'sales_by_category':           (_) => const SalesByCategoryScreen(),
+  // 'hourly_heatmap':              (_) => const HourlyHeatmapScreen(),
+  'customer_ledger':             (_) => const ReportLedgerScreen(partyType: "customer"),
+  'vendor_ap':                   (_) => const ReportLedgerScreen(partyType: 'vendor'),
+  // 'cashbook_daily':              (_) => const CashbookDailyScreen(),
+  // 'tax_summary':                 (_) => const TaxSummaryScreen(),
+  // 'stock_movement':              (_) => const StockMovementScreen(),
+  // 'gross_margin':                (_) => const GrossMarginScreen(),
+  // 'returns_analytics':           (_) => const ReturnsAnalyticsScreen(),
+};
+
 class _ReportCardState extends State<_ReportCard>
     with SingleTickerProviderStateMixin {
   late AnimationController _c;
@@ -128,9 +148,10 @@ class _ReportCardState extends State<_ReportCard>
       lowerBound: 0.0,
       upperBound: 0.06,
     );
-    _scale = Tween<double>(begin: 1, end: 0.94).animate(
-      CurvedAnimation(parent: _c, curve: Curves.easeOut),
-    );
+    _scale = Tween<double>(
+      begin: 1,
+      end: 0.94,
+    ).animate(CurvedAnimation(parent: _c, curve: Curves.easeOut));
   }
 
   @override
@@ -150,14 +171,19 @@ class _ReportCardState extends State<_ReportCard>
       onTapCancel: () => _c.reverse(),
       onTapUp: (_) => _c.reverse(),
       onTap: () {
-        // TODO: hook navigation
-        // Navigator.pushNamed(context, '/reports/${widget.item.key}');
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Open: ${widget.item.title}')));
+        final builder = _reportRouteBuilders[widget.item.key];
+        if (builder != null) {
+          Navigator.of(context).push(MaterialPageRoute(builder: builder));
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('No route for ${widget.item.title}')),
+          );
+        }
       },
       child: AnimatedBuilder(
         animation: _c,
-        builder: (_, child) => Transform.scale(scale: _scale.value, child: child),
+        builder: (_, child) =>
+            Transform.scale(scale: _scale.value, child: child),
         child: Container(
           decoration: BoxDecoration(
             color: surface,
@@ -213,8 +239,8 @@ class _ReportCardState extends State<_ReportCard>
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                       style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                            fontWeight: FontWeight.w700,
-                          ),
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                     if ((widget.item.subtitle ?? '').isNotEmpty) ...[
                       const SizedBox(height: 6),
@@ -222,10 +248,9 @@ class _ReportCardState extends State<_ReportCard>
                         widget.item.subtitle!,
                         maxLines: 2,
                         overflow: TextOverflow.ellipsis,
-                        style: Theme.of(context)
-                            .textTheme
-                            .bodySmall
-                            ?.copyWith(color: scheme.onSurfaceVariant),
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: scheme.onSurfaceVariant,
+                        ),
                       ),
                     ],
                     const Spacer(),
@@ -234,8 +259,10 @@ class _ReportCardState extends State<_ReportCard>
                         if (widget.item.meta != null)
                           _MetaRow(meta: widget.item.meta!),
                         const Spacer(),
-                        Icon(Icons.chevron_right_rounded,
-                            color: scheme.onSurfaceVariant),
+                        Icon(
+                          Icons.chevron_right_rounded,
+                          color: scheme.onSurfaceVariant,
+                        ),
                       ],
                     ),
                   ],
@@ -272,10 +299,9 @@ class _IconPill extends StatelessWidget {
           const SizedBox(width: 8),
           Text(
             'Report',
-            style: Theme.of(context)
-                .textTheme
-                .labelMedium
-                ?.copyWith(color: scheme.onSurfaceVariant),
+            style: Theme.of(
+              context,
+            ).textTheme.labelMedium?.copyWith(color: scheme.onSurfaceVariant),
           ),
         ],
       ),
@@ -295,18 +321,21 @@ class _MetaRow extends StatelessWidget {
       spacing: 14,
       runSpacing: 4,
       children: entries
-          .map((e) => Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(e.key,
-                      style: Theme.of(context)
-                          .textTheme
-                          .labelSmall
-                          ?.copyWith(color: scheme.onSurfaceVariant)),
-                  const SizedBox(width: 6),
-                  Text(e.value, style: Theme.of(context).textTheme.labelSmall),
-                ],
-              ))
+          .map(
+            (e) => Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  e.key,
+                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Text(e.value, style: Theme.of(context).textTheme.labelSmall),
+              ],
+            ),
+          )
           .toList(),
     );
   }
@@ -318,7 +347,11 @@ class _ReportGroup {
   final String title;
   final String caption;
   final List<_ReportItem> items;
-  _ReportGroup({required this.title, required this.caption, required this.items});
+  _ReportGroup({
+    required this.title,
+    required this.caption,
+    required this.items,
+  });
 }
 
 class _ReportItem {
@@ -358,20 +391,20 @@ final _reportGroups = <_ReportGroup>[
         icon: Icons.bar_chart_rounded,
         meta: const {'Sort': 'Revenue'},
       ),
-      _ReportItem(
-        key: 'sales_by_category',
-        title: 'Sales by Category',
-        subtitle: 'Contribution & mix',
-        icon: Icons.category_rounded,
-        meta: const {'View': 'GM%'},
-      ),
-      _ReportItem(
-        key: 'hourly_heatmap',
-        title: 'Hourly Heatmap',
-        subtitle: 'Traffic vs sales by hour',
-        icon: Icons.schedule_rounded,
-        meta: const {'TZ': 'Branch'},
-      ),
+      // _ReportItem(
+      //   key: 'sales_by_category',
+      //   title: 'Sales by Category',
+      //   subtitle: 'Contribution & mix',
+      //   icon: Icons.category_rounded,
+      //   meta: const {'View': 'GM%'},
+      // ),
+      // _ReportItem(
+      //   key: 'hourly_heatmap',
+      //   title: 'Hourly Heatmap',
+      //   subtitle: 'Traffic vs sales by hour',
+      //   icon: Icons.schedule_rounded,
+      //   meta: const {'TZ': 'Branch'},
+      // ),
     ],
   ),
   _ReportGroup(
@@ -399,13 +432,13 @@ final _reportGroups = <_ReportGroup>[
         icon: Icons.receipt_long_rounded,
         meta: const {'Status': 'Balanced'},
       ),
-      _ReportItem(
-        key: 'tax_summary',
-        title: 'Tax Summary',
-        subtitle: 'Collected & payable',
-        icon: Icons.account_balance_rounded,
-        meta: const {'VAT': 'Enabled'},
-      ),
+      // _ReportItem(
+      //   key: 'tax_summary',
+      //   title: 'Tax Summary',
+      //   subtitle: 'Collected & payable',
+      //   icon: Icons.account_balance_rounded,
+      //   meta: const {'VAT': 'Enabled'},
+      // ),
     ],
   ),
   _ReportGroup(
@@ -419,13 +452,13 @@ final _reportGroups = <_ReportGroup>[
         icon: Icons.swap_vert_circle_rounded,
         meta: const {'Basis': 'Avg Cost'},
       ),
-      _ReportItem(
-        key: 'gross_margin',
-        title: 'Gross Margin',
-        subtitle: 'GM% by product/category',
-        icon: Icons.pie_chart_rounded,
-        meta: const {'Period': 'MTD'},
-      ),
+      // _ReportItem(
+      //   key: 'gross_margin',
+      //   title: 'Gross Margin',
+      //   subtitle: 'GM% by product/category',
+      //   icon: Icons.pie_chart_rounded,
+      //   meta: const {'Period': 'MTD'},
+      // ),
       _ReportItem(
         key: 'returns_analytics',
         title: 'Returns Analytics',
