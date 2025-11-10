@@ -6,8 +6,14 @@ import 'package:flutter/material.dart';
 class ProductPickerSheet extends StatefulWidget {
   final String token;
   final int? vendorId;
+  final bool multi; // NEW
 
-  const ProductPickerSheet({super.key, required this.token, this.vendorId});
+  const ProductPickerSheet({
+    super.key,
+    required this.token,
+    this.vendorId,
+    this.multi = false,
+  });
 
   @override
   State<ProductPickerSheet> createState() => _ProductPickerSheetState();
@@ -131,6 +137,55 @@ class _ProductPickerSheetState extends State<ProductPickerSheet> {
     });
   }
 
+  final Set<int> _selectedIds = {}; // NEW
+  // helper to toggle selection
+  void _toggleSelect(Map<String, dynamic> p) {
+    final id = (p['id'] as num).toInt();
+    setState(() {
+      if (_selectedIds.contains(id)) {
+        _selectedIds.remove(id);
+      } else {
+        _selectedIds.add(id);
+      }
+    });
+  }
+
+  // build Done bar (only in multi mode)
+  Widget _buildMultiDoneBar() {
+    if (!widget.multi) return const SizedBox.shrink();
+    final picked = _products
+        .where((p) => _selectedIds.contains((p['id'] as num).toInt()))
+        .toList();
+    return SafeArea(
+      top: false,
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.surface,
+          border: Border(
+            top: BorderSide(color: Theme.of(context).dividerColor),
+          ),
+        ),
+        child: Row(
+          children: [
+            Text(
+              "${picked.length} selected",
+              style: const TextStyle(fontWeight: FontWeight.w600),
+            ),
+            const Spacer(),
+            FilledButton.icon(
+              onPressed: picked.isEmpty
+                  ? null
+                  : () => Navigator.pop(context, picked),
+              icon: const Icon(Icons.check_rounded, size: 18),
+              label: const Text("Done"),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final t = Theme.of(context);
@@ -249,6 +304,8 @@ class _ProductPickerSheetState extends State<ProductPickerSheet> {
                                 .toString();
                         final priceStr = (p['price']?.toString() ?? '0');
                         final discountStr = (p['discount']?.toString() ?? '0');
+                        final id = (p['id'] as num).toInt();
+                        final selected = _selectedIds.contains(id);
 
                         return ListTile(
                           dense: true,
@@ -294,8 +351,19 @@ class _ProductPickerSheetState extends State<ProductPickerSheet> {
                                 ),
                             ],
                           ),
-                          trailing: const Icon(Icons.chevron_right, size: 18),
-                          onTap: () => Navigator.pop(context, p),
+                          trailing: widget.multi
+                              ? Checkbox(
+                                  value: selected,
+                                  onChanged: (_) => _toggleSelect(p),
+                                )
+                              : const Icon(Icons.chevron_right, size: 18),
+                          onTap: () {
+                            if (widget.multi) {
+                              _toggleSelect(p);
+                            } else {
+                              Navigator.pop(context, p); // single
+                            }
+                          },
                         );
                       },
                     ),
@@ -325,6 +393,9 @@ class _ProductPickerSheetState extends State<ProductPickerSheet> {
                 ),
               ],
             ),
+
+            // multi-done bar
+            _buildMultiDoneBar(),
           ],
         ),
       ),

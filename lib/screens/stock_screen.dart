@@ -41,7 +41,8 @@ class _StockScreenState extends State<StockScreen> {
   }
 
   Future<void> _fetchInitialData() async {
-    await Future.wait([_fetchStocks(page: 1), _fetchBranches()]);
+    await Future.wait([_fetchStocks(page: 1)]);
+    // await Future.wait([_fetchStocks(page: 1), _fetchBranches()]);
   }
 
   Future<void> _fetchStocks({int page = 1}) async {
@@ -50,10 +51,10 @@ class _StockScreenState extends State<StockScreen> {
 
     final query = {
       "page": page.toString(),
-      if (globalBranchId != null)
-        "branch_id": globalBranchId.toString()
-      else if (_selectedBranchId != null)
-        "branch_id": _selectedBranchId!, // local filter only when global is All
+      // if (globalBranchId != null)
+      //   "branch_id": globalBranchId.toString()
+      // else if (_selectedBranchId != null)
+      //   "branch_id": _selectedBranchId!, // local filter only when global is All
       if (_selectedProduct != null)
         "product_id": _selectedProduct!['id'].toString(),
     };
@@ -80,10 +81,10 @@ class _StockScreenState extends State<StockScreen> {
     }
   }
 
-  Future<void> _fetchBranches() async {
-    final result = await _commonService.getBranches();
-    setState(() => _branches = result);
-  }
+  // Future<void> _fetchBranches() async {
+  //   final result = await _commonService.getBranches();
+  //   setState(() => _branches = result);
+  // }
 
   // ✅ Product picker bottom sheet
   Future<Map<String, dynamic>?> _pickProduct(BuildContext context) async {
@@ -137,22 +138,22 @@ class _StockScreenState extends State<StockScreen> {
                 ),
               ),
               const SizedBox(height: 12),
-              DropdownButtonFormField<String>(
-                value: selectedBranchId,
-                decoration: const InputDecoration(
-                  labelText: "Branch",
-                  border: OutlineInputBorder(),
-                ),
-                items: _branches.map<DropdownMenuItem<String>>((b) {
-                  return DropdownMenuItem(
-                    value: b['id'].toString(),
-                    child: Text(b['name']),
-                  );
-                }).toList(),
-                onChanged: (val) =>
-                    setStateDialog(() => selectedBranchId = val),
-              ),
-              const SizedBox(height: 12),
+              // DropdownButtonFormField<String>(
+              //   value: selectedBranchId,
+              //   decoration: const InputDecoration(
+              //     labelText: "Branch",
+              //     border: OutlineInputBorder(),
+              //   ),
+              //   items: _branches.map<DropdownMenuItem<String>>((b) {
+              //     return DropdownMenuItem(
+              //       value: b['id'].toString(),
+              //       child: Text(b['name']),
+              //     );
+              //   }).toList(),
+              //   onChanged: (val) =>
+              //       setStateDialog(() => selectedBranchId = val),
+              // ),
+              // const SizedBox(height: 12),
               TextField(
                 controller: qtyController,
                 keyboardType: TextInputType.number,
@@ -186,7 +187,7 @@ class _StockScreenState extends State<StockScreen> {
                     },
                     body: {
                       "product_id": selectedProduct!['id'].toString(),
-                      "branch_id": selectedBranchId!,
+                      // "branch_id": selectedBranchId!,
                       "quantity": qty.toString(),
                       "reason": "manual adjustment",
                     },
@@ -322,7 +323,7 @@ class _StockScreenState extends State<StockScreen> {
       appBar: AppBar(
         title: const Text("Stocks"),
         actions: [
-          BranchIndicator(tappable: false),
+          // BranchIndicator(tappable: false),
           IconButton(
             onPressed: () => _fetchStocks(page: 1),
             icon: const Icon(Icons.refresh),
@@ -416,7 +417,8 @@ class _StockScreenState extends State<StockScreen> {
                                     fontWeight: FontWeight.bold,
                                   ),
                                 ),
-                                subtitle: Text("Branch: $branch | Qty: $qty"),
+                                subtitle: Text("Qty: $qty"),
+                                // subtitle: Text("Branch: $branch | Qty: $qty"),
                                 trailing: PopupMenuButton<String>(
                                   onSelected: (val) {
                                     if (val == "adjust") _adjustStock(s);
@@ -427,10 +429,10 @@ class _StockScreenState extends State<StockScreen> {
                                       value: "adjust",
                                       child: Text("Adjust Stock"),
                                     ),
-                                    PopupMenuItem(
-                                      value: "transfer",
-                                      child: Text("Transfer Stock"),
-                                    ),
+                                    // PopupMenuItem(
+                                    //   value: "transfer",
+                                    //   child: Text("Transfer Stock"),
+                                    // ),
                                   ],
                                 ),
                               ),

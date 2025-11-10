@@ -1,5 +1,8 @@
+import 'package:enterprise_pos/screens/cashbook/widgets/cashbook_daily_summary_screen.dart';
+import 'package:enterprise_pos/screens/reports/report_cashbook_screen.dart';
 import 'package:enterprise_pos/screens/reports/report_daily_summary_screen.dart';
 import 'package:enterprise_pos/screens/reports/report_ledger_screen.dart';
+import 'package:enterprise_pos/screens/reports/report_stock_movement_screen.dart';
 import 'package:enterprise_pos/screens/reports/report_top_bottom_products_screen.dart';
 import 'package:flutter/material.dart';
 
@@ -127,9 +130,9 @@ final Map<String, ScreenBuilder> _reportRouteBuilders = {
   // 'hourly_heatmap':              (_) => const HourlyHeatmapScreen(),
   'customer_ledger':             (_) => const ReportLedgerScreen(partyType: "customer"),
   'vendor_ap':                   (_) => const ReportLedgerScreen(partyType: 'vendor'),
-  // 'cashbook_daily':              (_) => const CashbookDailyScreen(),
+  'cashbook_daily':              (_) => const ReportCashbookScreen(),
   // 'tax_summary':                 (_) => const TaxSummaryScreen(),
-  // 'stock_movement':              (_) => const StockMovementScreen(),
+  'stock_movement':              (_) => const ReportStockMovementScreen(),
   // 'gross_margin':                (_) => const GrossMarginScreen(),
   // 'returns_analytics':           (_) => const ReturnsAnalyticsScreen(),
 };

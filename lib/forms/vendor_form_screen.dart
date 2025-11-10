@@ -149,11 +149,11 @@ class _VendorFormScreenState extends State<VendorFormScreen> {
               if (!isEdit)
                 _buildTextField(
                   controller: _passwordController,
-                  label: "Password *",
+                  label: "Password",
                   obscure: true,
-                  validator: (v) => !isEdit && (v == null || v.length < 6)
-                      ? "Password must be at least 6 characters"
-                      : null,
+                  // validator: (v) => !isEdit && (v == null || v.length < 6)
+                  //     ? "Password must be at least 6 characters"
+                  //     : null,
                 ),
               if (!isEdit) const SizedBox(height: 16),
               DropdownButtonFormField<String>(

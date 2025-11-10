@@ -15,6 +15,7 @@ class ProductRef {
 /// ======= Fast POS Items Table =======
 class ItemsTable extends StatefulWidget {
   final List<Map<String, dynamic>> items;
+  final VoidCallback onAddItem;
   final Future<List<ProductRef>> Function(String query) onQueryProducts;
   final void Function(List<Map<String, dynamic>> nextItems) onItemsChanged;
 
@@ -23,6 +24,7 @@ class ItemsTable extends StatefulWidget {
     required this.items,
     required this.onQueryProducts,
     required this.onItemsChanged,
+    required this.onAddItem,
   });
 
   @override
@@ -265,12 +267,39 @@ class _ItemsTableState extends State<ItemsTable> {
             // _TableHeader(),
             // const Divider(height: 8),
             // Title only (no search here)
-            const Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                "Items",
-                style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
-              ),
+            // const Align(
+            //   alignment: Alignment.centerLeft,
+            //   child: Text(
+            //     "Items",
+            //     style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
+            //   ),
+            // ),
+            Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    "Items",
+                    style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
+                  ),
+                ),
+                // If you want the vendor filter back, uncomment:
+                // OutlinedButton.icon(
+                //   onPressed: onPickVendor,
+                //   icon: const Icon(Icons.storefront_outlined),
+                //   label: Text(
+                //     selectedVendor == null
+                //         ? "Filter Vendor"
+                //         : "Vendor: ${selectedVendor?['first_name'] ?? ''}",
+                //     overflow: TextOverflow.ellipsis,
+                //   ),
+                // ),
+                // const SizedBox(width: 8),
+                ElevatedButton.icon(
+                  onPressed: widget.onAddItem,
+                  icon: const Icon(Icons.add),
+                  label: const Text("Add Item"),
+                ),
+              ],
             ),
             const SizedBox(height: 8),
 

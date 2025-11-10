@@ -4,6 +4,7 @@ import 'package:enterprise_pos/screens/cashbook/daybook_screen.dart';
 import 'package:enterprise_pos/screens/customers/customers_screen.dart';
 import 'package:enterprise_pos/screens/product_screen.dart';
 import 'package:enterprise_pos/screens/purchases/purchase_claim_screen.dart';
+import 'package:enterprise_pos/screens/reports/report_cashbook_screen.dart';
 import 'package:enterprise_pos/screens/reports/report_hub_screen.dart';
 import 'package:enterprise_pos/screens/sales/sale_returns_screen.dart';
 import 'package:enterprise_pos/screens/sales/sale_screen.dart';
@@ -108,7 +109,7 @@ class HomeScreen extends StatelessWidget {
         color: Colors.teal,
         onTap: () => Navigator.push(
           context,
-          MaterialPageRoute(builder: (_) => const DayBookScreen()),
+          MaterialPageRoute(builder: (_) => const ReportCashbookScreen()),
         ),
       ),
 

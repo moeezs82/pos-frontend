@@ -581,7 +581,8 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
               // --- FAST TABULAR ITEMS ---
               ItemsTable(
                 items: _items,
-                onQueryProducts: _queryProducts, // implemented below
+                onQueryProducts: _queryProducts, // implemented below,
+                onAddItem: _addItemManual,
                 onItemsChanged: (next) {
                   setState(() => _items = next);
                 },

@@ -748,6 +748,7 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
               // const SizedBox(height: 12),
               ItemsTable(
                 items: _items,
+                onAddItem: _addItemManual,
                 onQueryProducts: _queryProducts, // implemented below
                 onItemsChanged: (next) {
                   setState(() => _items = next);
