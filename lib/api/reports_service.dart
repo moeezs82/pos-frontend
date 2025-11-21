@@ -171,4 +171,23 @@ class ReportsService {
     }
     throw Exception(res['message'] ?? 'Failed to load stock movement');
   }
+
+  // GET /reports/pnl?from=&to=&branch_id=
+  Future<Map<String, dynamic>> getProfitAndLoss({
+    String? from, // 'YYYY-MM-DD'
+    String? to, // 'YYYY-MM-DD'
+    int? branchId,
+  }) async {
+    final q = <String, String>{
+      if (from != null && from.isNotEmpty) 'from': from,
+      if (to != null && to.isNotEmpty) 'to': to,
+      if (branchId != null) 'branch_id': '$branchId',
+    };
+
+    final res = await _client.get('/reports/profit-loss', query: q);
+    if (res['success'] == true && res['data'] is Map<String, dynamic>) {
+      return res['data'] as Map<String, dynamic>;
+    }
+    throw Exception(res['message'] ?? 'Failed to load P&L report');
+  }
 }
