@@ -93,7 +93,7 @@ class _UsersScreenState extends State<UsersScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text("Users"),
-        actions: const [Padding(padding: EdgeInsets.only(right: 8.0), child: BranchIndicator(tappable: false))],
+        // actions: const [Padding(padding: EdgeInsets.only(right: 8.0), child: BranchIndicator(tappable: false))],
       ),
 
       floatingActionButton: FloatingActionButton.extended(
