@@ -10,9 +10,11 @@ class ProductService {
     int page = 1,
     String? search,
     int? vendorId,
+    int per_page= 20
   }) async {
     final queryParams = {
       "page": page.toString(),
+      "per_page": per_page.toString(),
       if (search != null && search.isNotEmpty) "search": search,
       if (vendorId != null) "vendor_id": vendorId.toString(),
     };

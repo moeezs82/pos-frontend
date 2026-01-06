@@ -4,10 +4,10 @@ import 'package:enterprise_pos/widgets/branch_indicator.dart';
 import 'package:enterprise_pos/widgets/product_picker_sheet.dart';
 import 'package:enterprise_pos/widgets/vendor_picker_sheet.dart';
 import 'package:flutter/material.dart';
-import 'package:pdf/pdf.dart';
-import 'package:pdf/widgets.dart' as pw;
-import 'package:printing/printing.dart';
 import 'package:provider/provider.dart';
+import 'package:enterprise_pos/services/thermal_printer_service.dart';
+import 'package:enterprise_pos/services/receipt_preview_service.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 
 // parts
 import 'package:enterprise_pos/screens/sales/parts/sale_items_section.dart';
@@ -673,252 +673,129 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
   Future<void> _printInvoice() async {
     if (_sale == null) return;
 
-    // ---- Money helpers -------------------------------------------------
-    String fmt(num? v) => (v ?? 0).toStringAsFixed(2);
+    double _d(v) => double.tryParse(v?.toString() ?? '') ?? 0.0;
 
-    // ---- Amounts -------------------------------------------------------
-    final payments = (_sale!['payments'] as List? ?? const []);
-    final paid = payments.fold<double>(
+    final sale = _sale!;
+    final itemsRaw = (sale['items'] as List?) ?? const [];
+    final paymentsRaw = (sale['payments'] as List?) ?? const [];
+
+    final subtotal = _d(sale['subtotal']);
+    final discount = _d(sale['discount']);
+    final tax = _d(sale['tax']);
+    final delivery = _d(sale['delivery']); // if your API returns it
+    final total = _d(sale['total']);
+
+    final paid = paymentsRaw.fold<double>(
       0,
-      (sum, p) => sum + (double.tryParse(p['amount'].toString()) ?? 0.0),
+      (sum, p) => sum + _d((p as Map)['amount']),
     );
 
-    final total = double.tryParse(_sale!['total']?.toString() ?? '') ?? 0.0;
-    final subtotal =
-        double.tryParse(_sale!['subtotal']?.toString() ?? '') ?? 0.0;
-    final discount =
-        double.tryParse(_sale!['discount']?.toString() ?? '') ?? 0.0;
-    final tax = double.tryParse(_sale!['tax']?.toString() ?? '') ?? 0.0;
-    final remaining = (total - paid);
-    final outstanding = (total - paid).clamp(0, double.infinity);
+    // ---- meta from response (preferred) ----
+    final metaRaw = sale['meta'];
+    final meta = (metaRaw is Map)
+        ? metaRaw.cast<String, dynamic>()
+        : <String, dynamic>{};
 
-    // ---- AR & Exposure -------------------------------------------------
-    final ar = _sale!['customer']?['ar_summary'];
-    final hasAR = ar is Map && ar.isNotEmpty;
-    final balance = hasAR
-        ? (double.tryParse((ar['balance'] ?? 0).toString()) ?? 0.0)
-        : 0.0;
-    final String? asOf = hasAR
-        ? ((ar['as_of']?.toString().trim().isEmpty ?? true)
-              ? null
-              : ar['as_of'].toString())
-        : null;
-
-    // Determine if AR includes this invoice (kept here if you want to switch logic)
-    final String? createdAtStr = _sale!['created_at']?.toString();
-    final DateTime? createdAtDT = DateTime.tryParse(createdAtStr ?? '');
-    final DateTime? asOfDT = (asOf != null) ? DateTime.tryParse(asOf) : null;
-
-    bool includesThisInvoice = false;
-    if (hasAR) {
-      if (asOfDT == null || createdAtDT == null) {
-        includesThisInvoice = true; // treat as live => includes
+    // ---- build customer snapshot: from meta, otherwise from customer object ----
+    Map<String, dynamic> customerSnap = {};
+    final snapRaw = meta['customer_snapshot'];
+    if (snapRaw is Map) {
+      customerSnap = snapRaw.cast<String, dynamic>();
+    } else {
+      final c = sale['customer'];
+      if (c is Map) {
+        customerSnap = {
+          "name":
+              ((c['first_name'] ?? c['name'] ?? "Walk-in").toString() +
+                      " " +
+                      (c['last_name'] ?? "").toString())
+                  .trim(),
+          "phone": (c['phone'] ?? c['mobile'] ?? c['mobile_no'] ?? "")
+              .toString(),
+          "address": (c['address'] ?? c['full_address'] ?? "").toString(),
+        };
       } else {
-        includesThisInvoice = !asOfDT.isBefore(createdAtDT);
+        customerSnap = {"name": "Walk-in", "phone": "", "address": ""};
       }
     }
 
-    // If you prefer strict logic, use:
-    // final double exposure = includesThisInvoice ? balance : (balance + total);
-    // Per your current rule we show: AR balance + current invoice total
-    final double exposure = balance + total;
+    // ---- cash received: from meta first, otherwise assume paid (cash sale) ----
+    final cashReceived = (meta['cash_received'] is num)
+        ? (meta['cash_received'] as num).toDouble()
+        : _d(meta['cash_received']) != 0
+        ? _d(meta['cash_received'])
+        : paid;
 
-    // ---- PDF -----------------------------------------------------------
-    final pdf = pw.Document();
+    // change amount
+    final changeAmount = (cashReceived - total)
+        .clamp(0, double.infinity)
+        .toDouble();
 
-    pdf.addPage(
-      pw.MultiPage(
-        pageFormat: PdfPageFormat.a4,
-        build: (_) => [
-          pw.Header(
-            level: 0,
-            child: pw.Text(
-              "Invoice",
-              style: pw.TextStyle(fontSize: 24, fontWeight: pw.FontWeight.bold),
-            ),
-          ),
-          pw.Text("Invoice No: ${_sale!['invoice_no']}"),
-          pw.Text(
-            "Date: ${_sale!['created_at']?.toString().substring(0, 10) ?? '-'}",
-          ),
-          pw.SizedBox(height: 10),
-          pw.Text("Salesman: ${_sale!['salesman']?['name'] ?? "-"}"),
-          pw.SizedBox(height: 10),
-          pw.Text(
-            "Vendor: ${_sale!['vendor']?['first_name'] ?? "No Vendor"} ${_sale!['vendor']?['last_name'] ?? ""}",
-          ),
-          pw.SizedBox(height: 10),
-          pw.Text(
-            "Customer:",
-            style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
-          ),
-          pw.Text(
-            "${_sale!['customer']?['first_name'] ?? "Walk-in"} ${_sale!['customer']?['last_name'] ?? ""}",
-          ),
-          pw.Text("Email: ${_sale!['customer']?['email'] ?? ""}"),
-          pw.Text("Phone: ${_sale!['customer']?['phone'] ?? ""}"),
-          pw.SizedBox(height: 20),
+    // delivery: from meta if exists else from sale['delivery']
+    final metaDelivery = (meta['delivery'] is num)
+        ? (meta['delivery'] as num).toDouble()
+        : _d(meta['delivery']);
+    final effectiveDelivery = metaDelivery != 0 ? metaDelivery : delivery;
 
-          pw.Text(
-            "Items",
-            style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 16),
-          ),
-          pw.Table.fromTextArray(
-            headers: ["Product", "Qty", "Price", "Total"],
-            data: (_sale!['items'] as List? ?? const [])
-                .map(
-                  (i) => [
-                    i['product']?['name'] ?? '-',
-                    "${i['quantity']}",
-                    "${fmt(double.tryParse(i['price']?.toString() ?? '') ?? 0)}",
-                    "${fmt(double.tryParse(i['total']?.toString() ?? '') ?? 0)}",
-                  ],
-                )
-                .toList(),
-          ),
+    // ---- final meta for printing (ensure keys exist) ----
+    final printMeta = <String, dynamic>{
+      ...meta,
+      "customer_snapshot": customerSnap,
+      "cash_received": cashReceived,
+      "delivery": effectiveDelivery,
+      "payments": paymentsRaw,
+    };
 
-          pw.SizedBox(height: 20),
-          pw.Text(
-            "Summary",
-            style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 16),
-          ),
-          pw.Table(
-            columnWidths: {
-              0: const pw.FlexColumnWidth(2),
-              1: const pw.FlexColumnWidth(1),
-            },
-            border: null,
-            children: [
-              pw.TableRow(
-                children: [
-                  pw.Text("Subtotal"),
-                  pw.Align(
-                    alignment: pw.Alignment.centerRight,
-                    child: pw.Text(fmt(subtotal)),
-                  ),
-                ],
-              ),
-              pw.TableRow(
-                children: [
-                  pw.Text("Discount"),
-                  pw.Align(
-                    alignment: pw.Alignment.centerRight,
-                    child: pw.Text(fmt(discount)),
-                  ),
-                ],
-              ),
-              pw.TableRow(
-                children: [
-                  pw.Text("Tax"),
-                  pw.Align(
-                    alignment: pw.Alignment.centerRight,
-                    child: pw.Text(fmt(tax)),
-                  ),
-                ],
-              ),
-              pw.TableRow(
-                children: [
-                  pw.Text(
-                    "Total",
-                    style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
-                  ),
-                  pw.Align(
-                    alignment: pw.Alignment.centerRight,
-                    child: pw.Text(
-                      fmt(total),
-                      style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
-                    ),
-                  ),
-                ],
-              ),
-              pw.TableRow(
-                children: [pw.SizedBox(height: 6), pw.SizedBox(height: 6)],
-              ),
-              // pw.TableRow(
-              //   children: [
-              //     pw.Text("Paid"),
-              //     pw.Align(
-              //       alignment: pw.Alignment.centerRight,
-              //       child: pw.Text(fmt(paid)),
-              //     ),
-              //   ],
-              // ),
-              // pw.TableRow(
-              //   children: [
-              //     pw.Text("Remaining"),
-              //     pw.Align(
-              //       alignment: pw.Alignment.centerRight,
-              //       child: pw.Text(fmt(remaining)),
-              //     ),
-              //   ],
-              // ),
-              // pw.TableRow(
-              //   children: [
-              //     pw.Text("Outstanding"),
-              //     pw.Align(
-              //       alignment: pw.Alignment.centerRight,
-              //       child: pw.Text(fmt(outstanding)),
-              //     ),
-              //   ],
-              // ),
-              if (hasAR) ...[
-                pw.TableRow(
-                  children: [
-                    pw.Row(
-                      mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-                      children: [
-                        pw.Text(
-                          "AR Balance",
-                          style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
-                        ),
-                        pw.Container(
-                          padding: const pw.EdgeInsets.symmetric(
-                            horizontal: 6,
-                            vertical: 2,
-                          ),
-                          decoration: pw.BoxDecoration(
-                            border: pw.Border.all(width: 0.5),
-                            borderRadius: pw.BorderRadius.circular(6),
-                          ),
-                          child: pw.Text(
-                            "As of: ${asOf ?? "Now"}",
-                            style: const pw.TextStyle(fontSize: 10),
-                          ),
-                        ),
-                      ],
-                    ),
-                    pw.Align(
-                      alignment: pw.Alignment.centerRight,
-                      child: pw.Text(
-                        fmt(balance),
-                        style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
-                      ),
-                    ),
-                  ],
-                ),
-                pw.TableRow(
-                  children: [
-                    pw.Text(
-                      "Exposure (AR + Current Invoice)",
-                      style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
-                    ),
-                    pw.Align(
-                      alignment: pw.Alignment.centerRight,
-                      child: pw.Text(
-                        fmt(exposure),
-                        style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ],
-          ),
-        ],
-      ),
-    );
+    final receiptNo = (sale['invoice_no'] ?? sale['id'] ?? 'N/A').toString();
+    final createdAtStr = sale['created_at']?.toString();
+    final dateTime = DateTime.tryParse(createdAtStr ?? '') ?? DateTime.now();
 
-    await Printing.layoutPdf(onLayout: (format) async => pdf.save());
+    // Build ReceiptItem list
+    final receiptItems = itemsRaw.map((i) {
+      final m = (i as Map);
+      final name = (m['product']?['name'] ?? m['name'] ?? '-').toString();
+      final price = _d(m['price']);
+      final qty = _d(m['quantity']);
+      final lineTotal = _d(m['total']) != 0 ? _d(m['total']) : (price * qty);
+
+      return ReceiptItem(name: name, price: price, qty: qty, total: lineTotal);
+    }).toList();
+
+    // 🟡 set from your settings later
+    final hasPrinter = false;
+
+    if (!kIsWeb && hasPrinter) {
+      const printerIp = "192.168.1.50";
+
+      await ThermalPrinterService.instance.printSaleReceipt(
+        printerIp: printerIp,
+        shopName: "HT COMPUTERS",
+        shopAddress: "HT Computers Clock Tower Sukkur",
+        shopPhone: "+92 333 7155125",
+        receiptNo: receiptNo,
+        dateTime: dateTime,
+        items: receiptItems,
+        subtotal: subtotal,
+        discount: discount,
+        tax: tax,
+        grandTotal: total,
+        meta: printMeta,
+      );
+    } else {
+      await ReceiptPreviewService.instance.previewReceipt(
+        shopName: "HT COMPUTERS",
+        shopAddress: "HT Computers Clock Tower Sukkur",
+        shopPhone: "+92 333 7155125",
+        receiptNo: receiptNo,
+        dateTime: dateTime,
+        items: receiptItems,
+        subtotal: subtotal,
+        discount: discount,
+        tax: tax,
+        grandTotal: total,
+        meta: printMeta,
+      );
+    }
   }
 
   /* ====================== Build ====================== */

@@ -471,13 +471,13 @@ final _reportGroups = <_ReportGroup>[
       //   icon: Icons.pie_chart_rounded,
       //   meta: const {'Period': 'MTD'},
       // ),
-      _ReportItem(
-        key: 'returns_analytics',
-        title: 'Returns Analytics',
-        subtitle: 'Rate, reasons, impact',
-        icon: Icons.undo_rounded,
-        meta: const {'Trend': '3 mo'},
-      ),
+      // _ReportItem(
+      //   key: 'returns_analytics',
+      //   title: 'Returns Analytics',
+      //   subtitle: 'Rate, reasons, impact',
+      //   icon: Icons.undo_rounded,
+      //   meta: const {'Trend': '3 mo'},
+      // ),
     ],
   ),
 ];

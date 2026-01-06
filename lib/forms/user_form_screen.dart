@@ -32,6 +32,7 @@ class _UserFormScreenState extends State<UserFormScreen> {
   late RolesService _rolesApi;
   bool _loading = true;
   bool _saving = false;
+  bool _creatingRole = false;
 
   @override
   void initState() {
@@ -71,8 +72,9 @@ class _UserFormScreenState extends State<UserFormScreen> {
       setState(() => _allRoles = items);
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Failed to load roles: $e')));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Failed to load roles: $e')));
       }
     } finally {
       if (mounted) setState(() => _loading = false);
@@ -104,8 +106,9 @@ class _UserFormScreenState extends State<UserFormScreen> {
       if (mounted) Navigator.pop(context, true);
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Error: $e')));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error: $e')));
       }
     } finally {
       if (mounted) setState(() => _saving = false);
@@ -128,11 +131,40 @@ class _UserFormScreenState extends State<UserFormScreen> {
       decoration: InputDecoration(
         labelText: label,
         border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-        contentPadding:
-            const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 14,
+          vertical: 12,
+        ),
       ),
       validator: validator,
     );
+  }
+
+  Future<List<String>> _fetchAllPermissions() async {
+    final res = await _rolesApi.availablePermissions(
+      guardName: 'web',
+      all: true,
+      perPage: 500,
+    );
+
+    final data = res['data'];
+    List permsRaw;
+    if (data is List) {
+      permsRaw = data;
+    } else if (data is Map && data['data'] is List) {
+      permsRaw = data['data'] as List; // paginated style
+    } else {
+      permsRaw = const [];
+    }
+
+    final perms = permsRaw
+        .map((p) => p is Map ? (p['name'] ?? '') : p.toString())
+        .where((s) => s.toString().isNotEmpty)
+        .cast<String>()
+        .toList();
+
+    perms.sort();
+    return perms;
   }
 
   List<Map<String, dynamic>> get _filteredRoles {
@@ -146,6 +178,442 @@ class _UserFormScreenState extends State<UserFormScreen> {
           .toLowerCase();
       return name.contains(q) || perms.contains(q);
     }).toList();
+  }
+
+  Future<void> _openCreateRoleDialog() async {
+    final theme = Theme.of(context);
+
+    // 1) Load all permissions from API
+    setState(() => _creatingRole = true);
+    List<String> allPermissions = [];
+
+    try {
+      allPermissions = await _fetchAllPermissions();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to load permissions: $e')),
+        );
+      }
+      if (mounted) setState(() => _creatingRole = false);
+      return;
+    }
+
+    if (mounted) setState(() => _creatingRole = false);
+
+    // 2) Open dialog for role name + permission selection
+    final nameCtrl = TextEditingController();
+    final searchCtrl = TextEditingController();
+    final formKey = GlobalKey<FormState>();
+
+    final createdRole = await showDialog<Map<String, dynamic>?>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) {
+        Set<String> pickedPerms = {};
+        String query = '';
+
+        return StatefulBuilder(
+          builder: (ctx, setLocal) {
+            final filtered = allPermissions
+                .where((p) => p.toLowerCase().contains(query.toLowerCase()))
+                .toList();
+
+            return AlertDialog(
+              title: const Text('Create Role'),
+              content: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 500),
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // Role name
+                      Form(
+                        key: formKey,
+                        child: TextFormField(
+                          controller: nameCtrl,
+                          decoration: const InputDecoration(
+                            labelText: 'Role name',
+                            border: OutlineInputBorder(),
+                          ),
+                          autofocus: true,
+                          validator: (v) {
+                            if (v == null || v.trim().isEmpty) {
+                              return 'Role name is required';
+                            }
+                            return null;
+                          },
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+
+                      // Permission search
+                      TextField(
+                        controller: searchCtrl,
+                        onChanged: (v) =>
+                            setLocal(() => query = v.trim().toLowerCase()),
+                        decoration: InputDecoration(
+                          hintText: 'Search permissions…',
+                          prefixIcon: const Icon(Icons.search),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          isDense: true,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+
+                      // Permissions chips
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          'Permissions (${pickedPerms.length} selected)',
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      ConstrainedBox(
+                        constraints: const BoxConstraints(maxHeight: 260),
+                        child: Scrollbar(
+                          child: SingleChildScrollView(
+                            child: Wrap(
+                              spacing: 6,
+                              runSpacing: 6,
+                              children: filtered.isEmpty
+                                  ? [
+                                      const Text(
+                                        'No permissions match your search',
+                                        style: TextStyle(color: Colors.grey),
+                                      ),
+                                    ]
+                                  : filtered.map((permName) {
+                                      final selected = pickedPerms.contains(
+                                        permName,
+                                      );
+                                      return FilterChip(
+                                        label: Text(
+                                          permName,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                        selected: selected,
+                                        onSelected: (v) {
+                                          setLocal(() {
+                                            if (v) {
+                                              pickedPerms.add(permName);
+                                            } else {
+                                              pickedPerms.remove(permName);
+                                            }
+                                          });
+                                        },
+                                        visualDensity: VisualDensity.compact,
+                                        materialTapTargetSize:
+                                            MaterialTapTargetSize.shrinkWrap,
+                                      );
+                                    }).toList(),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(ctx).pop(null),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: () async {
+                    if (!formKey.currentState!.validate()) return;
+
+                    try {
+                      final role = await _rolesApi.createRole(
+                        name: nameCtrl.text.trim(),
+                        permissions: pickedPerms.toList(),
+                      );
+                      Navigator.of(ctx).pop(role);
+                    } catch (e) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text('Failed to create role: $e'),
+                          backgroundColor: theme.colorScheme.error,
+                        ),
+                      );
+                    }
+                  },
+                  child: const Text('Create'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    // 3) After dialog: update roles list + auto-select
+    if (createdRole != null && mounted) {
+      setState(() {
+        _allRoles.insert(0, createdRole);
+        final newName = (createdRole['name'] ?? '').toString();
+        if (newName.isNotEmpty) {
+          _pickedRoles.add(newName); // auto-assign new role to this user
+        }
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Role created successfully')),
+      );
+    }
+  }
+
+  Future<void> _openEditRoleDialog(Map<String, dynamic> role) async {
+    final theme = Theme.of(context);
+    setState(() => _creatingRole = true);
+
+    List<String> allPermissions;
+    try {
+      allPermissions = await _fetchAllPermissions();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to load permissions: $e')),
+        );
+      }
+      if (mounted) setState(() => _creatingRole = false);
+      return;
+    }
+    if (mounted) setState(() => _creatingRole = false);
+
+    final roleId = role['id'] as int;
+    final originalName = (role['name'] ?? '').toString();
+    final currentPerms = ((role['permissions'] as List?) ?? [])
+        .map((p) => p is Map ? (p['name'] ?? '') : p.toString())
+        .where((s) => s.toString().isNotEmpty)
+        .cast<String>()
+        .toSet();
+
+    final nameCtrl = TextEditingController(text: originalName);
+    final searchCtrl = TextEditingController();
+    final formKey = GlobalKey<FormState>();
+
+    final updated = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) {
+        Set<String> pickedPerms = {...currentPerms};
+        String query = '';
+
+        return StatefulBuilder(
+          builder: (ctx, setLocal) {
+            final filtered = allPermissions
+                .where((p) => p.toLowerCase().contains(query.toLowerCase()))
+                .toList();
+
+            return AlertDialog(
+              title: const Text('Edit Role'),
+              content: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 500),
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Form(
+                        key: formKey,
+                        child: TextFormField(
+                          controller: nameCtrl,
+                          decoration: const InputDecoration(
+                            labelText: 'Role name',
+                            border: OutlineInputBorder(),
+                          ),
+                          validator: (v) {
+                            if (v == null || v.trim().isEmpty) {
+                              return 'Role name is required';
+                            }
+                            return null;
+                          },
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        controller: searchCtrl,
+                        onChanged: (v) =>
+                            setLocal(() => query = v.trim().toLowerCase()),
+                        decoration: InputDecoration(
+                          hintText: 'Search permissions…',
+                          prefixIcon: const Icon(Icons.search),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          isDense: true,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          'Permissions (${pickedPerms.length} selected)',
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      ConstrainedBox(
+                        constraints: const BoxConstraints(maxHeight: 260),
+                        child: Scrollbar(
+                          child: SingleChildScrollView(
+                            child: Wrap(
+                              spacing: 6,
+                              runSpacing: 6,
+                              children: filtered.isEmpty
+                                  ? [
+                                      const Text(
+                                        'No permissions match your search',
+                                        style: TextStyle(color: Colors.grey),
+                                      ),
+                                    ]
+                                  : filtered.map((permName) {
+                                      final selected = pickedPerms.contains(
+                                        permName,
+                                      );
+                                      return FilterChip(
+                                        label: Text(
+                                          permName,
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                        selected: selected,
+                                        onSelected: (v) {
+                                          setLocal(() {
+                                            if (v) {
+                                              pickedPerms.add(permName);
+                                            } else {
+                                              pickedPerms.remove(permName);
+                                            }
+                                          });
+                                        },
+                                        visualDensity: VisualDensity.compact,
+                                        materialTapTargetSize:
+                                            MaterialTapTargetSize.shrinkWrap,
+                                      );
+                                    }).toList(),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(ctx).pop(false),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: () async {
+                    if (!formKey.currentState!.validate()) return;
+
+                    try {
+                      await _rolesApi.updateRole(
+                        roleId,
+                        name: nameCtrl.text.trim(),
+                        permissions: pickedPerms.toList(),
+                      );
+                      Navigator.of(ctx).pop(true);
+                    } catch (e) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text('Failed to update role: $e'),
+                          backgroundColor: theme.colorScheme.error,
+                        ),
+                      );
+                    }
+                  },
+                  child: const Text('Save'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    if (updated == true && mounted) {
+      final newName = nameCtrl.text.trim();
+
+      setState(() {
+        final idx = _allRoles.indexWhere((r) => r['id'] == roleId);
+        if (idx != -1) {
+          _allRoles[idx] = {
+            ..._allRoles[idx],
+            'name': newName,
+            'permissions': currentPerms.toList(), // or re-fetch later if needed
+          };
+        }
+
+        // If this role was selected for this user and name changed, update the set
+        if (originalName != newName && _pickedRoles.remove(originalName)) {
+          _pickedRoles.add(newName);
+        }
+      });
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Role updated')));
+    }
+  }
+
+  Future<void> _confirmDeleteRole(Map<String, dynamic> role) async {
+    final theme = Theme.of(context);
+    final roleId = role['id'] as int;
+    final roleName = (role['name'] ?? '').toString();
+
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete role?'),
+        content: Text(
+          'Are you sure you want to delete the role "$roleName"? This cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: theme.colorScheme.error,
+            ),
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+
+    if (ok != true) return;
+
+    try {
+      await _rolesApi.deleteRole(roleId);
+      if (!mounted) return;
+
+      setState(() {
+        _allRoles.removeWhere((r) => r['id'] == roleId);
+        _pickedRoles.remove(roleName); // if assigned to this user
+      });
+
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Role "$roleName" deleted')));
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Failed to delete role: $e')));
+    }
   }
 
   @override
@@ -191,14 +659,17 @@ class _UserFormScreenState extends State<UserFormScreen> {
                           children: [
                             Row(
                               children: [
-                                Icon(Icons.person,
-                                    color: theme.colorScheme.primary),
+                                Icon(
+                                  Icons.person,
+                                  color: theme.colorScheme.primary,
+                                ),
                                 const SizedBox(width: 8),
-                                Text('User details',
-                                    style:
-                                        theme.textTheme.titleMedium?.copyWith(
-                                      fontWeight: FontWeight.w600,
-                                    )),
+                                Text(
+                                  'User details',
+                                  style: theme.textTheme.titleMedium?.copyWith(
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
                               ],
                             ),
                             const SizedBox(height: 12),
@@ -239,8 +710,7 @@ class _UserFormScreenState extends State<UserFormScreen> {
                               contentPadding: EdgeInsets.zero,
                               title: const Text('Active'),
                               value: _isActive,
-                              onChanged: (v) =>
-                                  setState(() => _isActive = v),
+                              onChanged: (v) => setState(() => _isActive = v),
                             ),
                           ],
                         ),
@@ -265,13 +735,14 @@ class _UserFormScreenState extends State<UserFormScreen> {
                           children: [
                             Row(
                               children: [
-                                Icon(Icons.security,
-                                    color: theme.colorScheme.primary),
+                                Icon(
+                                  Icons.security,
+                                  color: theme.colorScheme.primary,
+                                ),
                                 const SizedBox(width: 8),
                                 Text(
                                   'Roles & Permissions',
-                                  style:
-                                      theme.textTheme.titleMedium?.copyWith(
+                                  style: theme.textTheme.titleMedium?.copyWith(
                                     fontWeight: FontWeight.w600,
                                   ),
                                 ),
@@ -280,10 +751,27 @@ class _UserFormScreenState extends State<UserFormScreen> {
                                   message:
                                       'Selected: ${_pickedRoles.length} role(s)',
                                   child: Chip(
-                                    label: Text('${_pickedRoles.length} selected'),
+                                    label: Text(
+                                      '${_pickedRoles.length} selected',
+                                    ),
                                     visualDensity: VisualDensity.compact,
                                   ),
-                                )
+                                ),
+                                const SizedBox(width: 8),
+                                OutlinedButton.icon(
+                                  onPressed: _creatingRole
+                                      ? null
+                                      : _openCreateRoleDialog, // 👈 NEW
+                                  icon: const Icon(Icons.add, size: 18),
+                                  label: const Text('New role'),
+                                  style: OutlinedButton.styleFrom(
+                                    visualDensity: VisualDensity.compact,
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 10,
+                                      vertical: 8,
+                                    ),
+                                  ),
+                                ),
                               ],
                             ),
                             const SizedBox(height: 12),
@@ -299,49 +787,50 @@ class _UserFormScreenState extends State<UserFormScreen> {
                                 ),
                                 isDense: true,
                               ),
-                              onChanged: (v) =>
-                                  setState(() => _roleQuery = v),
+                              onChanged: (v) => setState(() => _roleQuery = v),
                             ),
                             const SizedBox(height: 12),
 
                             // list of role cards
                             if (_filteredRoles.isEmpty)
                               Padding(
-                                padding:
-                                    const EdgeInsets.symmetric(vertical: 24),
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 24,
+                                ),
                                 child: Center(
                                   child: Text(
                                     'No roles match your search',
-                                    style: theme.textTheme.bodyMedium
-                                        ?.copyWith(color: Colors.grey),
+                                    style: theme.textTheme.bodyMedium?.copyWith(
+                                      color: Colors.grey,
+                                    ),
                                   ),
                                 ),
                               )
                             else
                               ListView.separated(
                                 shrinkWrap: true,
-                                physics:
-                                    const NeverScrollableScrollPhysics(),
+                                physics: const NeverScrollableScrollPhysics(),
                                 itemCount: _filteredRoles.length,
                                 separatorBuilder: (_, __) =>
                                     const SizedBox(height: 10),
                                 itemBuilder: (_, i) {
                                   final r = _filteredRoles[i];
+                                  final id = r['id'] as int?;
                                   final name = r['name'] as String? ?? '—';
                                   final permsRaw =
                                       (r['permissions'] as List?) ?? [];
                                   final perms = permsRaw
-                                      .map((e) => (e is Map)
-                                          ? (e['name'] ?? '')
-                                          : e.toString())
+                                      .map(
+                                        (e) => (e is Map)
+                                            ? (e['name'] ?? '')
+                                            : e.toString(),
+                                      )
                                       .where((s) => s.toString().isNotEmpty)
                                       .cast<String>()
                                       .toList();
 
-                                  final selected =
-                                      _pickedRoles.contains(name);
+                                  final selected = _pickedRoles.contains(name);
 
-                                  // short badges preview (max 4)
                                   final preview = perms.take(4).toList();
                                   final moreCount =
                                       (perms.length - preview.length);
@@ -361,6 +850,12 @@ class _UserFormScreenState extends State<UserFormScreen> {
                                     },
                                     preview: preview,
                                     moreCount: moreCount,
+                                    onEdit: id == null
+                                        ? null
+                                        : () => _openEditRoleDialog(r),
+                                    onDelete: id == null
+                                        ? null
+                                        : () => _confirmDeleteRole(r),
                                   );
                                 },
                               ),
@@ -375,7 +870,11 @@ class _UserFormScreenState extends State<UserFormScreen> {
                     FilledButton.icon(
                       onPressed: _saving ? null : _save,
                       icon: const Icon(Icons.save),
-                      label: Text(_saving ? 'Saving…' : (isEdit ? 'Update User' : 'Create User')),
+                      label: Text(
+                        _saving
+                            ? 'Saving…'
+                            : (isEdit ? 'Update User' : 'Create User'),
+                      ),
                       style: FilledButton.styleFrom(
                         minimumSize: const Size.fromHeight(48),
                       ),
@@ -398,6 +897,10 @@ class _RoleCard extends StatefulWidget {
   final List<String> preview;
   final int moreCount;
 
+  // NEW:
+  final VoidCallback? onEdit;
+  final VoidCallback? onDelete;
+
   const _RoleCard({
     required this.name,
     required this.permissions,
@@ -405,6 +908,8 @@ class _RoleCard extends StatefulWidget {
     required this.onChanged,
     required this.preview,
     required this.moreCount,
+    this.onEdit,
+    this.onDelete,
   });
 
   @override
@@ -455,11 +960,48 @@ class _RoleCardState extends State<_RoleCard> {
                     ),
                   ),
                 ),
+                if (widget.onEdit != null || widget.onDelete != null)
+                  PopupMenuButton<String>(
+                    tooltip: 'Manage role',
+                    onSelected: (value) {
+                      if (value == 'edit') {
+                        widget.onEdit?.call();
+                      } else if (value == 'delete') {
+                        widget.onDelete?.call();
+                      }
+                    },
+                    itemBuilder: (ctx) => [
+                      if (widget.onEdit != null)
+                        const PopupMenuItem(
+                          value: 'edit',
+                          child: Row(
+                            children: [
+                              Icon(Icons.edit, size: 18),
+                              SizedBox(width: 8),
+                              Text('Edit'),
+                            ],
+                          ),
+                        ),
+                      if (widget.onDelete != null)
+                        const PopupMenuItem(
+                          value: 'delete',
+                          child: Row(
+                            children: [
+                              Icon(Icons.delete, size: 18),
+                              SizedBox(width: 8),
+                              Text('Delete'),
+                            ],
+                          ),
+                        ),
+                    ],
+                  ),
                 if (widget.permissions.isNotEmpty)
                   IconButton(
                     splashRadius: 22,
                     onPressed: () => setState(() => _expanded = !_expanded),
-                    icon: Icon(_expanded ? Icons.expand_less : Icons.expand_more),
+                    icon: Icon(
+                      _expanded ? Icons.expand_less : Icons.expand_more,
+                    ),
                     tooltip: 'Show permissions',
                   ),
               ],
@@ -501,7 +1043,9 @@ class _RoleCardState extends State<_RoleCard> {
               secondChild: Padding(
                 padding: const EdgeInsets.only(top: 8),
                 child: ConstrainedBox(
-                  constraints: const BoxConstraints(maxHeight: 240), // ✅ caps height
+                  constraints: const BoxConstraints(
+                    maxHeight: 240,
+                  ), // ✅ caps height
                   child: Scrollbar(
                     thumbVisibility: true,
                     child: SingleChildScrollView(
@@ -514,8 +1058,7 @@ class _RoleCardState extends State<_RoleCard> {
                             visualDensity: VisualDensity.compact,
                             materialTapTargetSize:
                                 MaterialTapTargetSize.shrinkWrap,
-                            padding:
-                                const EdgeInsets.symmetric(horizontal: 6),
+                            padding: const EdgeInsets.symmetric(horizontal: 6),
                           );
                         }).toList(),
                       ),
@@ -551,8 +1094,8 @@ class _RoleCardState extends State<_RoleCard> {
           filtered = q.isEmpty
               ? List.from(widget.permissions)
               : widget.permissions
-                  .where((p) => p.toLowerCase().contains(q))
-                  .toList();
+                    .where((p) => p.toLowerCase().contains(q))
+                    .toList();
           (ctx as Element).markNeedsBuild();
         }
 
@@ -568,16 +1111,15 @@ class _RoleCardState extends State<_RoleCard> {
                   Expanded(
                     child: Text(
                       '${widget.name} • ${widget.permissions.length} permissions',
-                      style: Theme.of(context)
-                          .textTheme
-                          .titleMedium
-                          ?.copyWith(fontWeight: FontWeight.w600),
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                   ),
                   IconButton(
                     icon: const Icon(Icons.close),
                     onPressed: () => Navigator.pop(ctx),
-                  )
+                  ),
                 ],
               ),
               const SizedBox(height: 12),
@@ -603,13 +1145,13 @@ class _RoleCardState extends State<_RoleCard> {
                       children: filtered
                           .map(
                             (p) => Chip(
-                              label: Text(p,
-                                  overflow: TextOverflow.ellipsis),
+                              label: Text(p, overflow: TextOverflow.ellipsis),
                               visualDensity: VisualDensity.compact,
                               materialTapTargetSize:
                                   MaterialTapTargetSize.shrinkWrap,
                               padding: const EdgeInsets.symmetric(
-                                  horizontal: 6),
+                                horizontal: 6,
+                              ),
                             ),
                           )
                           .toList(),

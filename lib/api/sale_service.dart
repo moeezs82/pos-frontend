@@ -20,6 +20,7 @@ class SaleService {
     List<Map<String, dynamic>> payments = const [],
     double discount = 0.0,
     double tax = 0.0,
+    Map<String, dynamic>? meta,
   }) async {
     final payload = <String, dynamic>{
       // "branch_id": branchId,
@@ -29,6 +30,7 @@ class SaleService {
       if (customerId != null) "customer_id": customerId,
       if (vendorId != null) "vendor_id": vendorId,
       if (userId != null) "salesman_id": userId,
+      if (meta != null) "meta": meta,
       "items": items
           .map(
             (it) => {

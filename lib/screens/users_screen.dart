@@ -40,7 +40,7 @@ class _UsersScreenState extends State<UsersScreen> {
     }
 
     try {
-      final branchId = context.read<BranchProvider?>()?.selectedBranchId as String?;
+      final branchId = context.read<BranchProvider?>()?.selectedBranchId?.toString();
       final data = await _usersService.getUsers(
         page: _page,
         search: _search,
@@ -93,7 +93,7 @@ class _UsersScreenState extends State<UsersScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text("Users"),
-        actions: const [Padding(padding: EdgeInsets.only(right: 8.0), child: BranchIndicator(tappable: false))],
+        // actions: const [Padding(padding: EdgeInsets.only(right: 8.0), child: BranchIndicator(tappable: false))],
       ),
 
       floatingActionButton: FloatingActionButton.extended(

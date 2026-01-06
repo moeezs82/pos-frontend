@@ -102,27 +102,27 @@ class HomeScreen extends StatelessWidget {
         ),
       ),
 
-      _Tile(
-        icon: Icons.receipt_long_rounded,
-        title: "Cash Book",
-        subtitle: "Receipts • Payments • Expenses",
-        color: Colors.teal,
-        onTap: () => Navigator.push(
-          context,
-          MaterialPageRoute(builder: (_) => const ReportCashbookScreen()),
-        ),
-      ),
+      // _Tile(
+      //   icon: Icons.receipt_long_rounded,
+      //   title: "Cash Book",
+      //   subtitle: "Receipts • Payments • Expenses",
+      //   color: Colors.teal,
+      //   onTap: () => Navigator.push(
+      //     context,
+      //     MaterialPageRoute(builder: (_) => const ReportCashbookScreen()),
+      //   ),
+      // ),
 
-      _Tile(
-        icon: Icons.receipt_long_rounded,
-        title: "Accounts",
-        subtitle: "ASSET • Libilities • Expenses",
-        color: Colors.teal,
-        onTap: () => Navigator.push(
-          context,
-          MaterialPageRoute(builder: (_) => const AccountsScreen()),
-        ),
-      ),
+      // _Tile(
+      //   icon: Icons.receipt_long_rounded,
+      //   title: "Accounts",
+      //   subtitle: "ASSET • Libilities • Expenses",
+      //   color: Colors.teal,
+      //   onTap: () => Navigator.push(
+      //     context,
+      //     MaterialPageRoute(builder: (_) => const AccountsScreen()),
+      //   ),
+      // ),
 
       _Tile(
         icon: Icons.people,
@@ -144,16 +144,16 @@ class HomeScreen extends StatelessWidget {
           MaterialPageRoute(builder: (_) => const VendorsScreen()),
         ),
       ),
-      _Tile(
-        icon: Icons.groups_2,
-        title: "Users",
-        subtitle: "App Users / Salesmen",
-        color: Colors.orange,
-        onTap: () => Navigator.push(
-          context,
-          MaterialPageRoute(builder: (_) => const UsersScreen()),
-        ),
-      ),
+      // _Tile(
+      //   icon: Icons.groups_2,
+      //   title: "Users",
+      //   subtitle: "App Users / Salesmen",
+      //   color: Colors.orange,
+      //   onTap: () => Navigator.push(
+      //     context,
+      //     MaterialPageRoute(builder: (_) => const UsersScreen()),
+      //   ),
+      // ),
       _Tile(
         icon: Icons.bar_chart,
         title: "Reports",
@@ -164,13 +164,13 @@ class HomeScreen extends StatelessWidget {
           MaterialPageRoute(builder: (_) => const ReportsHubScreen()),
         ),
       ),
-      _Tile(
-        icon: Icons.settings,
-        title: "Settings",
-        subtitle: "Configuration",
-        color: Colors.blueGrey,
-        onTap: () {}, // hook up later
-      ),
+      // _Tile(
+      //   icon: Icons.settings,
+      //   title: "Settings",
+      //   subtitle: "Configuration",
+      //   color: Colors.blueGrey,
+      //   onTap: () {}, // hook up later
+      // ),
     ];
 
     // Responsive columns

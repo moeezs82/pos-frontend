@@ -102,9 +102,9 @@ class _SalesScreenState extends State<SalesScreen> {
     final params = <String, String>{
       "page": page.toString(),
       "sort_by": _sortBy == 'total' ? 'total' : 'date',
-      if (!isAll && globalBranchId != null)
-        "branch_id": globalBranchId.toString(),
-      if (isAll && _selectedBranchId != null) "branch_id": _selectedBranchId!,
+      // if (!isAll && globalBranchId != null)
+      //   "branch_id": globalBranchId.toString(),
+      // if (isAll && _selectedBranchId != null) "branch_id": _selectedBranchId!,
       if (_selectedCustomerId != null)
         "customer_id": _selectedCustomerId!.toString(),
       if (_searchQuery.isNotEmpty) "search": _searchQuery,
