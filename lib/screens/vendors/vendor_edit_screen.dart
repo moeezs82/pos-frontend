@@ -992,9 +992,15 @@ class _VendorHeaderBlock extends StatelessWidget {
 class _VendorTotalsRow extends StatelessWidget {
   const _VendorTotalsRow({required this.vendor});
   final Map<String, dynamic> vendor;
+  double _toDouble(dynamic v) {
+    if (v == null) return 0.0;
+    if (v is num) return v.toDouble();
+    if (v is String) return double.tryParse(v.trim()) ?? 0.0;
+    return 0.0;
+  }
 
-  String _m(num? v) => (v ?? 0).toStringAsFixed(2);
-
+  String _m(dynamic v) => _toDouble(v).toStringAsFixed(2);
+  
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);

@@ -116,8 +116,14 @@ class _VendorsScreenState extends State<VendorsScreen> {
           .showSnackBar(SnackBar(content: Text("Delete failed: $e")));
     }
   }
+  double _toDouble(dynamic v) {
+    if (v == null) return 0.0;
+    if (v is num) return v.toDouble();
+    if (v is String) return double.tryParse(v.trim()) ?? 0.0;
+    return 0.0;
+  }
 
-  String _money(num? v) => (v ?? 0).toStringAsFixed(2);
+  String _money(dynamic v) => _toDouble(v).toStringAsFixed(2);
   String _initials(String? first, String? last) {
     final a = (first ?? '').trim();
     final b = (last ?? '').trim();

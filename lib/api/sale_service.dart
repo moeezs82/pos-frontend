@@ -26,7 +26,7 @@ class SaleService {
       // "branch_id": branchId,
       "discount": discount,
       "tax": tax,
-      if (branchId != null) "branch_id": branchId,
+      // if (branchId != null) "branch_id": branchId,
       if (customerId != null) "customer_id": customerId,
       if (vendorId != null) "vendor_id": vendorId,
       if (userId != null) "salesman_id": userId,

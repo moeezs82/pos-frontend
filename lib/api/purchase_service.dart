@@ -19,7 +19,7 @@ class PurchaseService {
       "page": page.toString(),
       "sort_by": sortBy == "total" ? "total" : "date",
       if (search != null && search.isNotEmpty) "search": search,
-      if (branchId != null) "branch_id": branchId.toString(),
+      // if (branchId != null) "branch_id": branchId.toString(),
       if (vendorId != null) "vendor_id": vendorId.toString(),
       if (perPage != null) "per_page": perPage.toString(),
     };

@@ -100,7 +100,6 @@ class _CustomerEditScreenState extends State<CustomerEditScreen>
     if (customer == null || _postingReceipt) return;
     _amountController.text = "";
     _referenceController.text = "";
-    
 
     final formKey = GlobalKey<FormState>();
 
@@ -378,7 +377,14 @@ class _CustomerEditScreenState extends State<CustomerEditScreen>
     }
   }
 
-  String _m(num? v) => (v ?? 0).toStringAsFixed(2);
+  double _toDouble(dynamic v) {
+    if (v == null) return 0.0;
+    if (v is num) return v.toDouble();
+    if (v is String) return double.tryParse(v.trim()) ?? 0.0;
+    return 0.0;
+  }
+
+  String _m(dynamic v) => _toDouble(v).toStringAsFixed(2);
 
   Future<void> _openEdit() async {
     if (customer == null) return;

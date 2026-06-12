@@ -15,7 +15,7 @@ class CustomerService {
     final queryParams = {
       "page": page.toString(),
       if (search != null && search.isNotEmpty) "search": search,
-      if (branchId != null) 'branch_id': branchId.toString(),
+      // if (branchId != null) 'branch_id': branchId.toString(),
       if (includeBalance == true) 'include_balance': '1',
     };
 
@@ -70,9 +70,12 @@ class CustomerService {
     required int id,
     int? branchId,
   }) async {
-    final params = {if (branchId != null) 'branch_id': '$branchId'};
+    // final params = {
+    //   if (branchId != null) 'branch_id': '$branchId'
+    //   };
     // GET /api/customers/{id}?branch_id=..&invoice_limit=..&receipt_limit=..
-    final res = await _client.get('/customers/$id', query: params);
+    // final res = await _client.get('/customers/$id', query: params);
+    final res = await _client.get('/customers/$id');
     return res; // expects { data: { customer:{..}, ar:{..}, aging:{..}, recent:{open_invoices:[], receipts:[]} } }
   }
 
@@ -85,7 +88,7 @@ class CustomerService {
     final params = {
       'page': '$page',
       'per_page': '$perPage',
-      if (branchId != null) 'branch_id': '$branchId',
+      // if (branchId != null) 'branch_id': '$branchId',
     };
     return await _client.get('/customers/$id/sales', query: params);
   }
@@ -99,7 +102,7 @@ class CustomerService {
     final params = {
       'page': '$page',
       'per_page': '$perPage',
-      if (branchId != null) 'branch_id': '$branchId',
+      // if (branchId != null) 'branch_id': '$branchId',
     };
     return await _client.get('/customers/$id/receipts', query: params);
   }
@@ -114,7 +117,7 @@ class CustomerService {
       "amount": amount,
       "method": method,
       if (reference != null && reference.isNotEmpty) "reference": reference,
-      if (branchId != null) "branch_id": branchId,
+      // if (branchId != null) "branch_id": branchId,
     };
     return await _client.post('/customers/$customerId/receipts', body: params);
   }
@@ -130,7 +133,7 @@ class CustomerService {
     final params = {
       'page': '$page',
       'per_page': '$perPage',
-      if (branchId != null) 'branch_id': '$branchId',
+      // if (branchId != null) 'branch_id': '$branchId',
       if (from != null) 'from': from,
       if (to != null) 'to': to,
     };

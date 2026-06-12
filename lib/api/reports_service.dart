@@ -19,7 +19,7 @@ class ReportsService {
       'per_page': '$perPage',
       if (from != null && from.isNotEmpty) 'from': from,
       if (to != null && to.isNotEmpty) 'to': to,
-      if (branchId != null) 'branch_id': '$branchId',
+      // if (branchId != null) 'branch_id': '$branchId',
       if (salesmanId != null) 'salesman_id': '$salesmanId',
       if (customerId != null) 'customer_id': '$customerId',
     };
@@ -52,7 +52,7 @@ class ReportsService {
       'direction': direction,
       if (from != null && from.isNotEmpty) 'from': from,
       if (to != null && to.isNotEmpty) 'to': to,
-      if (branchId != null) 'branch_id': '$branchId',
+      // if (branchId != null) 'branch_id': '$branchId',
       if (salesmanId != null) 'salesman_id': '$salesmanId',
       if (customerId != null) 'customer_id': '$customerId',
       if (categoryId != null) 'category_id': '$categoryId',
@@ -82,7 +82,7 @@ class ReportsService {
       if (partyId != null) 'party_id': '$partyId', // only send when not null
       if (from != null && from.isNotEmpty) 'from': from,
       if (to != null && to.isNotEmpty) 'to': to,
-      if (branchId != null) 'branch_id': '$branchId',
+      // if (branchId != null) 'branch_id': '$branchId',
     };
 
     final res = await _client.get('/reports/ledger', query: q);
@@ -105,7 +105,7 @@ class ReportsService {
     final q = <String, dynamic>{
       if (from != null && from.isNotEmpty) 'from': from,
       if (to != null && to.isNotEmpty) 'to': to,
-      if (branchId != null) 'branch_id': '$branchId',
+      // if (branchId != null) 'branch_id': '$branchId',
       if (includeBank != null) 'include_bank': includeBank ? '1' : '0',
       if (page != null) 'page': '$page',
       'per_page': '$perPage',
@@ -181,7 +181,7 @@ class ReportsService {
     final q = <String, String>{
       if (from != null && from.isNotEmpty) 'from': from,
       if (to != null && to.isNotEmpty) 'to': to,
-      if (branchId != null) 'branch_id': '$branchId',
+      // if (branchId != null) 'branch_id': '$branchId',
     };
 
     final res = await _client.get('/reports/profit-loss', query: q);
