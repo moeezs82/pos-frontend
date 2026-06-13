@@ -2,17 +2,21 @@ import 'package:enterprise_pos/api/product_service.dart';
 import 'package:enterprise_pos/api/sale_service.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/providers/branch_provider.dart';
+import 'package:enterprise_pos/providers/printer_config_provider.dart';
 import 'package:enterprise_pos/screens/sales/parts/create_sale_items_section.dart';
 import 'package:enterprise_pos/widgets/product_picker_grid_sheet.dart';
-import 'package:enterprise_pos/widgets/product_picker_sheet.dart';
 import 'package:enterprise_pos/widgets/customer_picker_sheet.dart';
 import 'package:enterprise_pos/widgets/user_picker_sheet.dart';
 import 'package:enterprise_pos/widgets/vendor_picker_sheet.dart';
+import 'package:enterprise_pos/theme/app_theme.dart';
+import 'package:enterprise_pos/widgets/enterprise/enterprise_panel.dart';
+import 'package:enterprise_pos/widgets/app_feedback.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:enterprise_pos/services/thermal_printer_service.dart';
 import 'package:enterprise_pos/services/receipt_preview_service.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' 
+  show TargetPlatform, defaultTargetPlatform, kIsWeb;
 
 // local widgets split into small files
 import 'package:enterprise_pos/screens/sales/parts/sale_party_section.dart';
@@ -20,7 +24,9 @@ import 'package:enterprise_pos/screens/sales/parts/sale_items_payments.dart';
 import 'package:enterprise_pos/screens/sales/parts/sale_totals_card.dart';
 
 class CreateSaleScreen extends StatefulWidget {
-  const CreateSaleScreen({super.key});
+  final Map<String, dynamic>? initialCustomer;
+
+  const CreateSaleScreen({super.key, this.initialCustomer});
 
   @override
   State<CreateSaleScreen> createState() => _CreateSaleScreenState();
@@ -46,6 +52,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
   // discount/tax live controllers (now edited inline in totals)
   final discountController = TextEditingController(text: "0");
   final taxController = TextEditingController(text: "0");
+  final cashReceivedController = TextEditingController();
 
   final TextEditingController addressController = TextEditingController();
   final TextEditingController customerNameController = TextEditingController();
@@ -59,6 +66,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
 
   bool _submitting = false;
   bool _autoCashIfEmpty = true;
+  bool _didAutoOpenPicker = false;
 
   late ProductService _productService;
   late SaleService _saleService;
@@ -74,15 +82,40 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       setState(() => _scannerEnabled = _barcodeFocusNode.hasFocus);
     });
 
+    if (widget.initialCustomer != null) {
+      final customer = widget.initialCustomer!;
+      _selectedCustomer = customer;
+      _selectedCustomerId = customer['id']?.toString();
+      customerNameController.text = (customer['first_name'] ?? customer['name'] ?? '').toString();
+      customerPhoneController.text = (customer['phone'] ?? '').toString();
+      addressController.text = (customer['address'] ?? '').toString();
+      _customerLocked = _selectedCustomerId != null;
+    }
+
     void _recalc() => setState(() {});
     discountController.addListener(_recalc);
     taxController.addListener(_recalc);
+    cashReceivedController.addListener(_recalc);
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _openItemPickerOnFirstLoad();
+    });
+  }
+
+
+  Future<void> _openItemPickerOnFirstLoad() async {
+    if (_didAutoOpenPicker || !mounted) return;
+    _didAutoOpenPicker = true;
+    await Future.delayed(const Duration(milliseconds: 280));
+    if (!mounted || _items.isNotEmpty) return;
+    await _addItemManual();
   }
 
   @override
   void dispose() {
     discountController.dispose();
     taxController.dispose();
+    cashReceivedController.dispose();
     _barcodeController.dispose();
     _barcodeFocusNode.dispose();
     addressController.dispose();
@@ -163,7 +196,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     if (!mounted) return;
     setState(() {
       _selectedVendor = vendor;
-      _selectedVendorId = vendor?['id'] as int?;
+      _selectedVendorId = _metaInt(vendor?['id']);
       _items = []; // avoid cross-vendor mix
     });
   }
@@ -184,7 +217,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     if (!mounted) return;
     setState(() {
       _selectedUser = user;
-      _selectedUserId = user?['id'] as int?;
+      _selectedUserId = _metaInt(user?['id']);
     });
   }
 
@@ -204,30 +237,21 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
             (double.tryParse(it["quantity"].toString()) ?? 1.0),
     }..removeWhere((k, _) => k == 0);
 
-    final size = MediaQuery.of(context).size;
-
-    final picked = await showModalBottomSheet<List<Map<String, dynamic>>>(
-      context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      backgroundColor: Colors.transparent,
-      constraints: BoxConstraints.tightFor(
-        width: size.width,
-        height: size.height, // ✅ force full height
-      ),
-      builder: (sheetCtx) => ClipRRect(
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
-        child: Material(
-          color: Theme.of(sheetCtx).colorScheme.surface,
-          child: ProductPickerGridSheet(
-            token: token,
-            vendorId: _selectedVendorId,
-            multi: true,
-            alreadySelectedIds: alreadySelectedIds,
-            alreadySelectedQty: alreadySelectedQty,
-          ),
-        ),
-      ),
+    final picked = await ProductPickerGridSheet.openMulti(
+      context,
+      token: token,
+      vendorId: _selectedVendorId,
+      alreadySelectedIds: alreadySelectedIds,
+      alreadySelectedQty: alreadySelectedQty,
+      alreadySelectedProducts: _items.map((item) {
+        return {
+          'id': item['product_id'],
+          'name': item['name'],
+          'price': item['price'],
+          'cost_price': item['cost_price'],
+          'wholesale_price': item['wholesale_price'],
+        };
+      }).toList(),
     );
 
     if (picked == null || picked.isEmpty) return;
@@ -308,7 +332,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
               children: [
                 TextField(
                   controller: qtyController,
-                  keyboardType: TextInputType.number,
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
                   decoration: const InputDecoration(labelText: "Quantity"),
                 ),
                 const SizedBox(height: 12),
@@ -357,7 +381,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
                 onPressed: () {
                   setState(() {
                     _items[index]['quantity'] =
-                        int.tryParse(qtyController.text) ?? 1;
+                        double.tryParse(qtyController.text.trim()) ?? 1.0;
                     _items[index]['price'] =
                         double.tryParse(priceController.text) ?? 0.0;
                   });
@@ -368,62 +392,6 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
             ],
           );
         },
-      ),
-    );
-  }
-
-  // ---------------- Payments ----------------
-  Future<void> _addPaymentDialog() async {
-    final amountController = TextEditingController();
-    String method = "cash";
-
-    await showDialog(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text("Add Payment"),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: amountController,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(labelText: "Amount"),
-            ),
-            const SizedBox(height: 12),
-            DropdownButtonFormField<String>(
-              value: method,
-              decoration: const InputDecoration(labelText: "Method"),
-              items: const [
-                DropdownMenuItem(value: "cash", child: Text("Cash")),
-                DropdownMenuItem(value: "card", child: Text("Card")),
-                DropdownMenuItem(value: "bank", child: Text("Bank")),
-                DropdownMenuItem(value: "wallet", child: Text("Wallet")),
-              ],
-              onChanged: (val) => method = val!,
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text("Cancel"),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              final amt = double.tryParse(amountController.text) ?? 0.0;
-              if (amt > 0) {
-                setState(
-                  () => _payments.add({
-                    "amount": amt.toString(),
-                    "method": method,
-                  }),
-                );
-                Navigator.pop(context);
-              }
-            },
-            child: const Text("Add"),
-          ),
-        ],
       ),
     );
   }
@@ -452,9 +420,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       });
     } else {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text("Product not found: $code")));
+      AppFeedback.warning(context, "Product not found: $code");
     }
     _barcodeController.clear();
     Future.delayed(const Duration(milliseconds: 50), () {
@@ -469,27 +435,152 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
   }) {
     final d = (discPct / 100.0).clamp(0.0, 100.0);
     final t = qty * price * (1.0 - d);
-    return t.isFinite ? (t < 0 ? 0.0 : t) : 0.0;
+    return t.isFinite ? t : 0.0;
   }
 
   Widget _hiddenBarcodeField() {
-    return Opacity(
-      opacity: 0,
-      child: TextField(
-        controller: _barcodeController,
-        focusNode: _barcodeFocusNode,
-        autofocus: false,
-        onSubmitted: _onBarcodeScanned,
+    return SizedBox(
+      width: 1,
+      height: 1,
+      child: Opacity(
+        opacity: 0,
+        child: TextField(
+          controller: _barcodeController,
+          focusNode: _barcodeFocusNode,
+          autofocus: false,
+          onSubmitted: _onBarcodeScanned,
+        ),
       ),
     );
+  }
+
+
+  double _metaNum(dynamic value) {
+    if (value is num) return value.toDouble();
+    return double.tryParse(value?.toString() ?? '') ?? 0.0;
+  }
+
+  int? _metaInt(dynamic value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    return int.tryParse(value?.toString() ?? '');
+  }
+
+  String _metaText(dynamic value) => (value ?? '').toString().trim();
+
+  Map<String, dynamic>? _partySnapshot(
+    Map<String, dynamic>? source, {
+    dynamic id,
+    String fallbackName = '',
+  }) {
+    if (source == null && id == null && fallbackName.trim().isEmpty) return null;
+
+    dynamic read(String key) => source == null ? null : source[key];
+
+    final firstName = _metaText(read('first_name'));
+    final lastName = _metaText(read('last_name'));
+    final directName = _metaText(read('name'));
+    final fallback = fallbackName.trim();
+    final combinedName = directName.isNotEmpty
+        ? directName
+        : [firstName, lastName].where((v) => v.isNotEmpty).join(' ').trim();
+
+    final snapshot = <String, dynamic>{};
+    final resolvedId = id ?? read('id');
+    if (resolvedId != null) snapshot['id'] = resolvedId;
+
+    final resolvedName = combinedName.isNotEmpty ? combinedName : fallback;
+    if (resolvedName.isNotEmpty) snapshot['name'] = resolvedName;
+
+    for (final key in const ['first_name', 'last_name', 'phone', 'mobile', 'email', 'address']) {
+      final value = _metaText(read(key));
+      if (value.isNotEmpty) snapshot[key] = value;
+    }
+
+    return snapshot.isEmpty ? null : snapshot;
+  }
+
+  Map<String, dynamic> _buildSaleMeta({
+    required String? effectiveBranchId,
+    required double subtotal,
+    required double discount,
+    required double tax,
+    required double total,
+    required double paid,
+    required double balance,
+    required double cashReceived,
+    required double changeAmount,
+    required List<Map<String, dynamic>> paymentsToSend,
+  }) {
+    final typedPayments = paymentsToSend.map((payment) {
+      return <String, dynamic>{
+        'method': _metaText(payment['method']).isEmpty
+            ? 'cash'
+            : _metaText(payment['method']),
+        'amount': _metaNum(payment['amount']),
+      };
+    }).toList(growable: false);
+
+    final customerSnapshot = <String, dynamic>{
+      if (_selectedCustomerId != null) 'id': _selectedCustomerId,
+      'name': customerNameController.text.trim().isEmpty
+          ? (_metaText(_selectedCustomer?['first_name']).isEmpty
+              ? 'Walk-in customer'
+              : [
+                  _metaText(_selectedCustomer?['first_name']),
+                  _metaText(_selectedCustomer?['last_name']),
+                ].where((v) => v.isNotEmpty).join(' ').trim())
+          : customerNameController.text.trim(),
+      'phone': customerPhoneController.text.trim(),
+      'address': addressController.text.trim(),
+    };
+
+    final meta = <String, dynamic>{
+      'customer_snapshot': customerSnapshot,
+      'branch_snapshot': {
+        if (effectiveBranchId != null && effectiveBranchId.isNotEmpty)
+          'id': effectiveBranchId,
+        if (_selectedBranch != null) ...{
+          if (_selectedBranch!['name'] != null) 'name': _selectedBranch!['name'],
+          if (_selectedBranch!['location'] != null) 'location': _selectedBranch!['location'],
+        },
+      },
+      'salesman_snapshot': _partySnapshot(
+        _selectedUser,
+        id: _selectedUserId,
+        fallbackName: _metaText(_selectedUser?['name']),
+      ),
+      'vendor_snapshot': _partySnapshot(
+        _selectedVendor,
+        id: _selectedVendorId,
+      ),
+      'totals_snapshot': {
+        'subtotal': subtotal,
+        'discount': discount,
+        'tax': tax,
+        'delivery': 0.0,
+        'total': total,
+        'paid': paid,
+        'balance': balance,
+      },
+      'payments_snapshot': typedPayments,
+      'cash_received': cashReceived,
+      'change_amount': changeAmount,
+      'delivery': 0.0,
+      'sale_type': 'counter',
+    };
+
+    meta.removeWhere((_, value) =>
+        value == null ||
+        (value is Map && value.isEmpty) ||
+        (value is List && value.isEmpty));
+    return meta;
   }
 
   // ---------------- Submit ----------------
   Future<void> _submitSale() async {
     if (_items.isEmpty) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text("Add at least 1 item")));
+      AppFeedback.warning(context, "Add at least 1 item before creating sale.");
       return;
     }
 
@@ -511,27 +602,45 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     });
     double discount = double.tryParse(discountController.text.trim()) ?? 0.0;
     double tax = double.tryParse(taxController.text.trim()) ?? 0.0;
-    double total = (subtotal - discount + tax).clamp(0, double.infinity);
+    double total = subtotal - discount + tax;
 
-    final List<Map<String, dynamic>> paymentsToSend =
-        List<Map<String, dynamic>>.from(_payments);
-    if (_autoCashIfEmpty && paymentsToSend.isEmpty) {
+    final List<Map<String, dynamic>> paymentsToSend = [];
+    if (_autoCashIfEmpty && total > 0) {
       paymentsToSend.add({
         "amount": total.toStringAsFixed(2),
         "method": "cash",
       });
     }
 
+    final paid = paymentsToSend.fold<double>(
+      0.0,
+      (sum, payment) => sum + _metaNum(payment['amount']),
+    );
+    final balance = total - paid;
+
+    final enteredCashReceived = _toDouble(cashReceivedController);
+    final cashReceived = enteredCashReceived > 0
+        ? enteredCashReceived
+        : (_autoCashIfEmpty && total > 0 ? total : 0.0);
+    final changeAmount = (cashReceived - total)
+        .clamp(0.0, double.infinity)
+        .toDouble();
+
     setState(() => _submitting = true);
 
     try {
-      final meta = <String, dynamic>{
-        "customer_snapshot": {
-          "name": customerNameController.text.trim(),
-          "phone": customerPhoneController.text.trim(),
-          "address": addressController.text.trim(),
-        },
-      };
+      final meta = _buildSaleMeta(
+        effectiveBranchId: effectiveBranchId,
+        subtotal: subtotal,
+        discount: discount,
+        tax: tax,
+        total: total,
+        paid: paid,
+        balance: balance,
+        cashReceived: cashReceived,
+        changeAmount: changeAmount,
+        paymentsToSend: paymentsToSend,
+      );
       final res = await _saleService.createSale(
         branchId: effectiveBranchId,
         customerId: _selectedCustomerId != null
@@ -555,32 +664,98 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         final qty = double.tryParse(i['quantity']?.toString() ?? '') ?? 0.0;
         final lineTotal =
             double.tryParse(i['total']?.toString() ?? '') ?? (price * qty);
-        return ReceiptItem(
+        return SaleReceiptItem(
           name: name,
           price: price,
           qty: qty,
           total: lineTotal,
         );
       }).toList();
-      final hasPrinter = false;
+      final printerConfig = context.read<PrinterConfigProvider>();
+
+      if ((printerConfig.mainPrinterName ?? '').isEmpty) {
+        try {
+          await printerConfig.refresh();
+        } catch (e, s) {
+          debugPrint('Printer config refresh failed: $e');
+          debugPrintStack(stackTrace: s);
+        }
+      }
+
+      final mainPrinter = printerConfig.mainPrinterName;
+      final kitchenPrinter = printerConfig.kitchenPrinterName;
+      final hasPrinter = !kIsWeb && (mainPrinter ?? '').trim().isNotEmpty;
+      final isKitchenPrintEnabled = hasPrinter && (kitchenPrinter ?? '').trim().isNotEmpty;
+
+      debugPrint('Using main printer: $mainPrinter');
+      debugPrint('Using kitchen printer: $kitchenPrinter');
       if (!kIsWeb && hasPrinter) {
         try {
-          const printerIp = "192.168.1.50";
-          await ThermalPrinterService.instance.printSaleReceipt(
-            printerIp: printerIp,
-            shopName: "HT COMPUTERS",
-            shopAddress: "HT Computers Clock Tower Sukkur",
-            shopPhone: "+92 333 7155125",
-            receiptNo: receiptNo,
-            dateTime: DateTime.now(),
-            items: receiptItems,
-            subtotal: subtotal,
-            discount: discount,
-            tax: tax,
-            grandTotal: total,
-            meta: meta,
-          );
-        } catch (e) {
+          if (defaultTargetPlatform == TargetPlatform.windows) {
+            await ThermalPrinterService.instance.printSaleReceiptWindows(
+              printerName: mainPrinter ?? 'main-shop',
+              shopName: printerConfig.shopName.isNotEmpty
+                  ? printerConfig.shopName
+                  : "Pizza 360",
+              shopAddress: printerConfig.shopAddress.isNotEmpty
+                  ? printerConfig.shopAddress
+                  : "Pizza 360 Miani Road Sukkur",
+              shopPhone: printerConfig.shopPhone.isNotEmpty
+                  ? printerConfig.shopPhone
+                  : "+923702183106",
+              receiptNo: receiptNo,
+              dateTime: DateTime.now(),
+              items: receiptItems,
+              subtotal: subtotal,
+              discount: discount,
+              tax: tax,
+              grandTotal: total,
+              cashReceived: cashReceived,
+              changeAmount: changeAmount,
+              meta: meta,
+            );
+            if (isKitchenPrintEnabled) {
+              await ThermalPrinterService.instance.printSaleReceiptWindows(
+                printerName: kitchenPrinter ?? 'kitchen',
+                shopName:
+                    "${printerConfig.shopName.isNotEmpty ? printerConfig.shopName : "Pizza 360"} - KITCHEN COPY",
+                shopAddress: "KITCHEN COPY",
+                shopPhone: printerConfig.shopPhone.isNotEmpty
+                    ? printerConfig.shopPhone
+                    : "+923702183106",
+                receiptNo: receiptNo,
+                dateTime: DateTime.now(),
+                items: receiptItems,
+                subtotal: subtotal,
+                discount: discount,
+                tax: tax,
+                grandTotal: total,
+                cashReceived: cashReceived,
+                changeAmount: changeAmount,
+                meta: meta,
+              );
+            }
+          } else {
+            await ThermalPrinterService.instance.printSaleReceiptNetwork(
+              printerIp: "192.168.1.50",
+              shopName: "Pizza 360",
+              shopAddress: "Pizza 360 Miani Road Sukkur",
+              shopPhone: "+923702183106",
+              receiptNo: receiptNo,
+              dateTime: DateTime.now(),
+              items: receiptItems,
+              subtotal: subtotal,
+              discount: discount,
+              tax: tax,
+              grandTotal: total,
+              cashReceived: cashReceived,
+              changeAmount: changeAmount,
+              meta: meta,
+            );
+          }
+        } catch (e, s) {
+          debugPrint('PRINT ERROR: $e');
+          debugPrintStack(stackTrace: s);
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(content: Text("Sale created but printing failed: $e")),
@@ -604,15 +779,41 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       }
 
       if (!mounted) return;
-      Navigator.pop(context, true);
+      _resetForNextSale(keepInitialCustomer: widget.initialCustomer != null);
+      AppFeedback.success(context, "Sale $receiptNo created successfully. Ready for next sale.");
+      Future.delayed(const Duration(milliseconds: 450), () {
+        if (mounted && _items.isEmpty) _addItemManual();
+      });
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text("Failed to create sale: $e")));
+      AppFeedback.error(context, "Failed to create sale: $e");
     } finally {
       if (mounted) setState(() => _submitting = false);
     }
+  }
+
+  void _resetForNextSale({bool keepInitialCustomer = false}) {
+    setState(() {
+      _items = [];
+      _payments = [];
+      discountController.text = '0';
+      taxController.text = '0';
+      cashReceivedController.clear();
+      _selectedVendor = null;
+      _selectedVendorId = null;
+      _selectedUser = null;
+      _selectedUserId = null;
+      _autoCashIfEmpty = true;
+
+      if (!keepInitialCustomer) {
+        _selectedCustomer = null;
+        _selectedCustomerId = null;
+        _customerLocked = false;
+        customerNameController.clear();
+        customerPhoneController.clear();
+        addressController.clear();
+      }
+    });
   }
 
   Future<List<ProductRef>> _queryProducts(String q) async {
@@ -653,7 +854,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
           .map<ProductRef>((raw) {
             final m = raw as Map<String, dynamic>;
             return ProductRef(
-              id: (m['id'] ?? m['product_id']) as int,
+              id: _metaInt(m['id'] ?? m['product_id']) ?? 0,
               name: (m['name'] ?? m['title'] ?? 'Unnamed').toString(),
               tp: _tp(m),
             );
@@ -677,205 +878,525 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
   @override
   Widget build(BuildContext context) {
     final isAll = context.watch<BranchProvider>().isAll;
-    double _rowNum(v) => double.tryParse(v?.toString() ?? '') ?? 0.0;
+    final width = MediaQuery.of(context).size.width;
+    final wide = width >= 1080;
+
+    double rowNum(v) => double.tryParse(v?.toString() ?? '') ?? 0.0;
     final subtotal = _items.fold<double>(0.0, (sum, i) {
-      final price = _rowNum(i['price']);
-      final qty = _rowNum(i['quantity']);
-      final disc = _rowNum(i['discount_pct']); // may be null -> 0
+      final price = rowNum(i['price']);
+      final qty = rowNum(i['quantity']);
+      final disc = rowNum(i['discount_pct']);
       return sum + _lineTotal(price: price, qty: qty, discPct: disc);
     });
     final discount = _toDouble(discountController);
     final tax = _toDouble(taxController);
-    final total = (subtotal - discount + tax).clamp(0, double.infinity);
+    final total = subtotal - discount + tax;
 
-    final paid = _payments.fold<double>(
-      0,
-      (sum, p) => sum + (double.tryParse(p['amount'].toString()) ?? 0.0),
-    );
+    final paid = _autoCashIfEmpty && total > 0 ? total : 0.0;
     final balance = total - paid;
+    final enteredCashReceived = _toDouble(cashReceivedController);
+    final effectiveCashReceived = enteredCashReceived > 0
+        ? enteredCashReceived
+        : (_autoCashIfEmpty && total > 0 ? total : 0.0);
+    final changeAmount = (effectiveCashReceived - total)
+        .clamp(0.0, double.infinity)
+        .toDouble();
+
+    final customerLabel = customerNameController.text.trim().isEmpty
+        ? (_selectedCustomer == null ? 'Walk-in customer' : 'Selected customer')
+        : customerNameController.text.trim();
+
+    final partyPanel = Column(
+      children: [
+        PartySectionCard(
+          isAll: isAll,
+          selectedCustomer: _selectedCustomer,
+          selectedUser: _selectedUser,
+          selectedBranch: _selectedBranch,
+          selectedVendor: _selectedVendor,
+          onPickCustomer: _pickCustomer,
+          onPickUser: _pickUser,
+          onPickVendor: _pickVendor,
+          onClearVendor: () => setState(() {
+            _selectedVendor = null;
+            _selectedVendorId = null;
+            _items = [];
+          }),
+        ),
+        const SizedBox(height: 14),
+        _CustomerInfoPanel(
+          customerNameController: customerNameController,
+          customerPhoneController: customerPhoneController,
+          addressController: addressController,
+          selectedCustomerId: _selectedCustomerId,
+          onClearCustomer: _clearCustomerSelection,
+        ),
+      ],
+    );
+
+    final itemsPanel = Column(
+      children: [
+        _ScannerPanel(
+          scannerEnabled: _scannerEnabled,
+          onActivateScanner: () {
+            Future.delayed(const Duration(milliseconds: 50), () {
+              _barcodeFocusNode.requestFocus();
+            });
+          },
+          onOpenPicker: _addItemManual,
+        ),
+        const SizedBox(height: 14),
+        ItemsTable(
+          items: _items,
+          onQueryProducts: _queryProducts,
+          onAddItem: _addItemManual,
+          onItemsChanged: (next) {
+            setState(() => _items = next);
+          },
+        ),
+      ],
+    );
+
+    final paymentAndTotalsPanel = Column(
+      children: [
+        PaymentsCard(
+          autoCashIfEmpty: _autoCashIfEmpty,
+          onToggleAutoCash: (v) => setState(() => _autoCashIfEmpty = v),
+          cashReceivedController: cashReceivedController,
+          changeAmount: _money(changeAmount),
+        ),
+        const SizedBox(height: 14),
+        TotalsCardInline(
+          subtotal: _money(subtotal),
+          discountController: discountController,
+          taxController: taxController,
+          total: _money(total),
+          paid: _money(paid),
+          balance: _money(balance),
+          balanceColor: _balanceColor(balance),
+        ),
+      ],
+    );
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text("Create Sale"),
-        actions: const [
+        title: const Text('Create Sale'),
+        actions: [
           Padding(
-            padding: EdgeInsets.only(right: 8.0),
-            // child: BranchIndicator(tappable: false),
+            padding: const EdgeInsets.only(right: 8),
+            child: OutlinedButton.icon(
+              onPressed: _addItemManual,
+              icon: const Icon(Icons.inventory_2_outlined, size: 18),
+              label: const Text('Select items'),
+            ),
           ),
         ],
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(12),
-        child: Form(
-          key: _formKey,
-          child: Column(
+      body: Stack(
+        children: [
+          Column(
             children: [
-              _hiddenBarcodeField(),
-
-              // Party (customer/salesman/branch/vendor)
-              PartySectionCard(
-                isAll: isAll,
-                selectedCustomer: _selectedCustomer,
-                selectedUser: _selectedUser,
-                selectedBranch: _selectedBranch,
-                selectedVendor: _selectedVendor,
-                onPickCustomer: _pickCustomer,
-                onPickUser: _pickUser,
-                // onPickBranch: _pickBranch,
-                onPickVendor: _pickVendor,
-                onClearVendor: () => setState(() {
-                  _selectedVendor = null;
-                  _selectedVendorId = null;
-                  _items = [];
-                }),
-              ),
-
-              const SizedBox(height: 12),
-              Card(
-                elevation: 1,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+                child: _SaleWorkspaceHeader(
+                  customerLabel: customerLabel,
+                  itemCount: _items.length,
+                  total: _money(total),
+                  balance: _money(balance),
+                  onAddItems: _addItemManual,
                 ),
-                child: Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          const Text(
-                            "Customer Info",
-                            style: TextStyle(fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: 12),
+              Expanded(
+                child: Form(
+                  key: _formKey,
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 120),
+                    child: wide
+                        ? Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Expanded(
+                                flex: 7,
+                                child: Column(
+                                  children: [
+                                    partyPanel,
+                                    const SizedBox(height: 14),
+                                    itemsPanel,
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(width: 16),
+                              SizedBox(
+                                width: 390,
+                                child: paymentAndTotalsPanel,
+                              ),
+                            ],
+                          )
+                        : Column(
+                            children: [
+                              partyPanel,
+                              const SizedBox(height: 14),
+                              itemsPanel,
+                              const SizedBox(height: 14),
+                              paymentAndTotalsPanel,
+                            ],
                           ),
-                          const Spacer(),
-                          if (_selectedCustomerId != null)
-                            TextButton.icon(
-                              onPressed: _clearCustomerSelection,
-                              icon: const Icon(Icons.close, size: 18),
-                              label: const Text("Clear"),
-                            ),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-
-                      TextFormField(
-                        controller: customerNameController,
-                        // readOnly: _customerLocked,
-                        decoration: InputDecoration(
-                          labelText: "Customer Name",
-                          hintText: "Walk-in customer name",
-                          prefixIcon: const Icon(Icons.person_outline),
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-
-                      TextFormField(
-                        controller: customerPhoneController,
-                        // readOnly: _customerLocked,
-                        keyboardType: TextInputType.phone,
-                        decoration: InputDecoration(
-                          labelText: "Phone",
-                          hintText: "03xx-xxxxxxx",
-                          prefixIcon: const Icon(Icons.phone_outlined),
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-
-                      TextFormField(
-                        controller: addressController,
-                        // readOnly: _customerLocked,
-                        maxLines: 2,
-                        decoration: InputDecoration(
-                          labelText: "Address",
-                          hintText: "Customer address",
-                          prefixIcon: const Icon(Icons.location_on_outlined),
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                        ),
-                      ),
-                    ],
                   ),
                 ),
               ),
-              const SizedBox(height: 12),
-
-              // Scanner + Items
-              ScannerToggleButton(
-                enabled: _scannerEnabled,
-                onActivate: () {
-                  Future.delayed(const Duration(milliseconds: 50), () {
-                    _barcodeFocusNode.requestFocus();
-                  });
-                },
-              ),
-              const SizedBox(height: 8),
-              // ItemsCard(
-              //   items: _items,
-              //   onAddItem: _addItemManual,
-              //   onEditItem: _editItem,
-              //   onRemoveItem: (idx) => setState(() => _items.removeAt(idx)),
-              // ),
-              // --- FAST TABULAR ITEMS ---
-              ItemsTable(
-                items: _items,
-                onQueryProducts: _queryProducts, // implemented below,
-                onAddItem: _addItemManual,
-                onItemsChanged: (next) {
-                  setState(() => _items = next);
-                },
-              ),
-
-              const SizedBox(height: 12),
-
-              // Payments
-              PaymentsCard(
-                payments: _payments,
-                autoCashIfEmpty: _autoCashIfEmpty,
-                onToggleAutoCash: (v) => setState(() => _autoCashIfEmpty = v),
-                onAddPayment: _addPaymentDialog,
-                onRemovePayment: (idx) =>
-                    setState(() => _payments.removeAt(idx)),
-              ),
-
-              const SizedBox(height: 12),
-
-              // Totals (discount & tax editable inline here)
-              TotalsCardInline(
-                subtotal: _money(subtotal),
-                discountController: discountController,
-                taxController: taxController,
+              _CreateSaleBottomBar(
+                itemCount: _items.length,
                 total: _money(total),
                 paid: _money(paid),
                 balance: _money(balance),
-                balanceColor: _balanceColor(balance),
-              ),
-
-              const SizedBox(height: 20),
-
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton.icon(
-                  onPressed: _submitting ? null : _submitSale,
-                  icon: const Icon(Icons.check),
-                  label: _submitting
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Text("Create Sale"),
-                ),
+                submitting: _submitting,
+                onSubmit: _submitSale,
               ),
             ],
           ),
-        ),
+          Positioned(left: 0, top: 0, child: _hiddenBarcodeField()),
+        ],
+      ),
+    );
+  }
+
+}
+
+class _SaleWorkspaceHeader extends StatelessWidget {
+  final String customerLabel;
+  final int itemCount;
+  final String total;
+  final String balance;
+  final VoidCallback onAddItems;
+
+  const _SaleWorkspaceHeader({
+    required this.customerLabel,
+    required this.itemCount,
+    required this.total,
+    required this.balance,
+    required this.onAddItems,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppTheme.border),
+      ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final compact = constraints.maxWidth < 760;
+          final title = Row(
+            children: [
+              Container(
+                height: 44,
+                width: 44,
+                decoration: BoxDecoration(
+                  color: AppTheme.primarySoft,
+                  borderRadius: BorderRadius.circular(13),
+                ),
+                child: const Icon(Icons.point_of_sale_rounded, color: AppTheme.primary),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('New Sale', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
+                    const SizedBox(height: 2),
+                    Text(
+                      customerLabel,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(color: AppTheme.textMuted, fontWeight: FontWeight.w600),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          );
+          final stats = Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              _PlainStat(label: 'Items', value: itemCount.toString()),
+              _PlainStat(label: 'Total', value: '\$$total'),
+              _PlainStat(label: 'Balance', value: '\$$balance'),
+            ],
+          );
+          final button = FilledButton.icon(
+            onPressed: onAddItems,
+            icon: const Icon(Icons.add_rounded),
+            label: const Text('Add Items'),
+          );
+
+          if (compact) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                title,
+                const SizedBox(height: 12),
+                stats,
+                const SizedBox(height: 12),
+                button,
+              ],
+            );
+          }
+          return Row(
+            children: [
+              Expanded(child: title),
+              const SizedBox(width: 16),
+              stats,
+              const SizedBox(width: 12),
+              button,
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _PlainStat extends StatelessWidget {
+  final String label;
+  final String value;
+
+  const _PlainStat({required this.label, required this.value});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+      decoration: BoxDecoration(
+        color: AppTheme.surfaceSoft,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppTheme.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(label, style: const TextStyle(color: AppTheme.textMuted, fontSize: 11, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 2),
+          Text(value, style: const TextStyle(fontWeight: FontWeight.w900)),
+        ],
+      ),
+    );
+  }
+}
+
+class _CustomerInfoPanel extends StatelessWidget {
+  final TextEditingController customerNameController;
+  final TextEditingController customerPhoneController;
+  final TextEditingController addressController;
+  final String? selectedCustomerId;
+  final VoidCallback onClearCustomer;
+
+  const _CustomerInfoPanel({
+    required this.customerNameController,
+    required this.customerPhoneController,
+    required this.addressController,
+    required this.selectedCustomerId,
+    required this.onClearCustomer,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return EnterprisePanel(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Expanded(child: Text('Walk-in details', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800))),
+              if (selectedCustomerId != null)
+                TextButton.icon(
+                  onPressed: onClearCustomer,
+                  icon: const Icon(Icons.close_rounded, size: 18),
+                  label: const Text('Clear'),
+                ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final wide = constraints.maxWidth >= 760;
+              final name = TextFormField(
+                controller: customerNameController,
+                decoration: const InputDecoration(
+                  labelText: 'Customer Name',
+                  hintText: 'Walk-in customer name',
+                  prefixIcon: Icon(Icons.person_outline),
+                ),
+              );
+              final phone = TextFormField(
+                controller: customerPhoneController,
+                keyboardType: TextInputType.phone,
+                decoration: const InputDecoration(
+                  labelText: 'Phone',
+                  hintText: '03xx-xxxxxxx',
+                  prefixIcon: Icon(Icons.phone_outlined),
+                ),
+              );
+              if (!wide) {
+                return Column(
+                  children: [
+                    name,
+                    const SizedBox(height: 10),
+                    phone,
+                    const SizedBox(height: 10),
+                    _addressField(),
+                  ],
+                );
+              }
+              return Column(
+                children: [
+                  Row(children: [Expanded(child: name), const SizedBox(width: 10), Expanded(child: phone)]),
+                  const SizedBox(height: 10),
+                  _addressField(),
+                ],
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _addressField() {
+    return TextFormField(
+      controller: addressController,
+      maxLines: 2,
+      decoration: const InputDecoration(
+        labelText: 'Address',
+        hintText: 'Customer address',
+        prefixIcon: Icon(Icons.location_on_outlined),
+      ),
+    );
+  }
+}
+
+class _ScannerPanel extends StatelessWidget {
+  final bool scannerEnabled;
+  final VoidCallback onActivateScanner;
+  final VoidCallback onOpenPicker;
+
+  const _ScannerPanel({
+    required this.scannerEnabled,
+    required this.onActivateScanner,
+    required this.onOpenPicker,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return EnterprisePanel(
+      padding: const EdgeInsets.all(12),
+      child: Row(
+        children: [
+          Icon(scannerEnabled ? Icons.check_circle_rounded : Icons.qr_code_scanner_rounded,
+              color: scannerEnabled ? AppTheme.success : AppTheme.primary),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              scannerEnabled ? 'Scanner active' : 'Search products or scan barcode',
+              style: const TextStyle(fontWeight: FontWeight.w700),
+            ),
+          ),
+          OutlinedButton.icon(
+            onPressed: onActivateScanner,
+            icon: const Icon(Icons.qr_code_scanner_rounded, size: 18),
+            label: const Text('Scan'),
+          ),
+          const SizedBox(width: 8),
+          FilledButton.icon(
+            onPressed: onOpenPicker,
+            icon: const Icon(Icons.add_rounded, size: 18),
+            label: const Text('Items'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CreateSaleBottomBar extends StatelessWidget {
+  final int itemCount;
+  final String total;
+  final String paid;
+  final String balance;
+  final bool submitting;
+  final VoidCallback onSubmit;
+
+  const _CreateSaleBottomBar({
+    required this.itemCount,
+    required this.total,
+    required this.paid,
+    required this.balance,
+    required this.submitting,
+    required this.onSubmit,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: EdgeInsets.fromLTRB(16, 10, 16, 10 + MediaQuery.of(context).padding.bottom),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: const Border(top: BorderSide(color: AppTheme.border)),
+        boxShadow: [
+          BoxShadow(
+            color: AppTheme.navy.withOpacity(.05),
+            blurRadius: 18,
+            offset: const Offset(0, -8),
+          ),
+        ],
+      ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final info = Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              EnterpriseStatPill(label: 'Items', value: itemCount.toString(), icon: Icons.inventory_2_outlined, color: AppTheme.primary),
+              EnterpriseStatPill(label: 'Total', value: '\$$total', icon: Icons.payments_outlined, color: AppTheme.success),
+              EnterpriseStatPill(label: 'Balance', value: '\$$balance', icon: Icons.account_balance_wallet_outlined, color: AppTheme.warning),
+            ],
+          );
+          final button = SizedBox(
+            height: 52,
+            child: FilledButton.icon(
+              onPressed: submitting ? null : onSubmit,
+              icon: submitting
+                  ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.check_circle_rounded),
+              label: Text(submitting ? 'Saving...' : 'Save Sale'),
+            ),
+          );
+
+          if (constraints.maxWidth < 760) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                info,
+                const SizedBox(height: 10),
+                button,
+              ],
+            );
+          }
+          return Row(
+            children: [
+              Expanded(child: info),
+              const SizedBox(width: 12),
+              button,
+            ],
+          );
+        },
       ),
     );
   }

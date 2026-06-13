@@ -1,8 +1,76 @@
+import 'dart:typed_data';
+
 import 'package:enterprise_pos/api/core/api_client.dart';
+
+
+class ReportExportFile {
+  final Uint8List bytes;
+  final String filename;
+  final String contentType;
+
+  const ReportExportFile({
+    required this.bytes,
+    required this.filename,
+    required this.contentType,
+  });
+}
 
 class ReportsService {
   final ApiClient _client;
   ReportsService({required String token}) : _client = ApiClient(token: token);
+
+
+  Future<Map<String, dynamic>> getEnterpriseCatalog() async {
+    final res = await _client.get('/reports/catalog');
+    if (res['success'] == true && res['data'] is Map<String, dynamic>) {
+      return res['data'] as Map<String, dynamic>;
+    }
+    throw Exception(res['message'] ?? 'Failed to load report catalog');
+  }
+
+  Future<Map<String, dynamic>> runEnterpriseReport({
+    required String reportKey,
+    Map<String, dynamic>? filters,
+  }) async {
+    final query = _cleanQuery(filters ?? const <String, dynamic>{});
+    final normalized = reportKey.trim().replaceAll('_', '-');
+    final res = await _client.get('/reports/run/$normalized', query: query);
+    if (res['success'] == true && res['data'] is Map<String, dynamic>) {
+      return res['data'] as Map<String, dynamic>;
+    }
+    throw Exception(res['message'] ?? 'Failed to load report');
+  }
+
+  Future<ReportExportFile> exportEnterpriseReport({
+    required String reportKey,
+    required String format, // xlsx | pdf
+    Map<String, dynamic>? filters,
+    String orientation = 'landscape',
+  }) async {
+    final query = _cleanQuery({
+      ...?filters,
+      'format': format,
+      if (format == 'pdf') 'orientation': orientation,
+    });
+    final normalized = reportKey.trim().replaceAll('_', '-');
+    final res = await _client.download('/reports/export/$normalized', query: query);
+    return ReportExportFile(
+      bytes: res.bytes,
+      filename: res.filename,
+      contentType: res.contentType,
+    );
+  }
+
+  Map<String, String> _cleanQuery(Map<String, dynamic> input) {
+    final out = <String, String>{};
+    input.forEach((key, value) {
+      if (value == null) return;
+      final stringValue = value.toString().trim();
+      if (stringValue.isEmpty || stringValue == 'null') return;
+      out[key] = stringValue;
+    });
+    return out;
+  }
 
   /// GET /reports/daily-summary?from=YYYY-MM-DD&to=YYYY-MM-DD&branch_id=&salesman_id=&customer_id=&page=&per_page=
   Future<Map<String, dynamic>> getDailySummary({

@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'package:enterprise_pos/api/product_service.dart';
 import 'package:enterprise_pos/forms/product_form_screen.dart';
+import 'package:enterprise_pos/theme/app_theme.dart';
+import 'package:enterprise_pos/widgets/enterprise/enterprise_panel.dart';
 import 'package:flutter/material.dart';
 
 /// ✅ Full-screen restaurant-style product picker (Grid + multi select + preselected + SET qty modal)
@@ -114,7 +116,7 @@ class _ProductPickerGridSheetState extends State<ProductPickerGridSheet> {
     // prefill qty
     for (final e in widget.alreadySelectedQty.entries) {
       final id = e.key;
-      final qty = (e.value <= 0) ? 1.0 : e.value;
+      final qty = e.value == 0 ? 1.0 : e.value;
       _selectedIds.add(id);
       _qtyById[id] = qty;
     }
@@ -181,7 +183,7 @@ class _ProductPickerGridSheetState extends State<ProductPickerGridSheet> {
 
   void _setQty(int id, double qty) {
     setState(() {
-      _qtyById[id] = qty <= 0 ? 1.0 : qty;
+      _qtyById[id] = qty == 0 ? 1.0 : qty;
     });
   }
 
@@ -281,15 +283,15 @@ class _ProductPickerGridSheetState extends State<ProductPickerGridSheet> {
             TextField(
               controller: ctrl,
               autofocus: true,
-              keyboardType: TextInputType.number,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
               decoration: const InputDecoration(
-                hintText: "e.g. 3",
+                hintText: "e.g. 3 or -1",
                 border: OutlineInputBorder(),
               ),
             ),
             const SizedBox(height: 8),
             Text(
-              "Enter 0 to remove the product.",
+              "Use negative quantity for exchange/return adjustment. Enter 0 to remove the product.",
               style: TextStyle(
                 fontSize: 12,
                 color: Theme.of(context).hintColor,
@@ -315,7 +317,7 @@ class _ProductPickerGridSheetState extends State<ProductPickerGridSheet> {
 
     if (newQty == null) return;
 
-    if (newQty <= 0) {
+    if (newQty == 0) {
       _unselect(id);
       return;
     }
@@ -371,212 +373,347 @@ class _ProductPickerGridSheetState extends State<ProductPickerGridSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final t = Theme.of(context);
-    final cs = t.colorScheme;
-
     final selectedCount = _selectedIds.length;
 
     return Scaffold(
-      backgroundColor: cs.surface,
-      appBar: AppBar(
-        title: Text(widget.multi ? "Select Products" : "Select Product"),
-        centerTitle: false,
-        actions: [
-          if (widget.multi)
+      backgroundColor: AppTheme.bg,
+      body: SafeArea(
+        child: Column(
+          children: [
             Padding(
-              padding: const EdgeInsets.only(right: 8),
-              child: FilledButton.icon(
-                onPressed: selectedCount == 0
-                    ? null
-                    : () => Navigator.pop(context, _pickedWithQty()),
-                icon: const Icon(Icons.check_rounded, size: 18),
-                label: Text("Done ($selectedCount)"),
-              ),
-            ),
-          IconButton(
-            tooltip: "Close",
-            icon: const Icon(Icons.close),
-            onPressed: () => Navigator.pop(context),
-          ),
-        ],
-      ),
-      body: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-            child: Column(
-              children: [
-                // Search
-                TextField(
-                  controller: _searchCtrl,
-                  focusNode: _searchFocus,
-                  textInputAction: TextInputAction.search,
-                  onChanged: _onSearchChanged,
-                  onSubmitted: (_) => _fetchProducts(page: 1, replace: true),
-                  decoration: InputDecoration(
-                    prefixIcon: const Icon(Icons.search),
-                    suffixIcon: _searchCtrl.text.isNotEmpty
-                        ? IconButton(
-                            icon: const Icon(Icons.clear),
-                            onPressed: () {
-                              _searchCtrl.clear();
-                              _onSearchChanged("");
-                            },
-                          )
-                        : null,
-                    hintText: "Search products…",
-                    isDense: true,
-                    border: const OutlineInputBorder(),
-                  ),
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 0),
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: AppTheme.border),
                 ),
-                const SizedBox(height: 10),
-
-                // Actions
-                Row(
+                child: Row(
                   children: [
+                    Container(
+                      height: 44,
+                      width: 44,
+                      decoration: BoxDecoration(
+                        color: AppTheme.primarySoft,
+                        borderRadius: BorderRadius.circular(13),
+                      ),
+                      child: const Icon(Icons.inventory_2_rounded, color: AppTheme.primary),
+                    ),
+                    const SizedBox(width: 12),
                     Expanded(
-                      child: _ThinAction(
-                        color: cs.surfaceContainerHighest.withOpacity(.55),
-                        borderColor: t.dividerColor,
-                        icon: const Icon(Icons.remove_circle_outline),
-                        label: "No Product",
-                        onTap: () => Navigator.pop(context, null),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            widget.multi ? 'Select Products' : 'Select Product',
+                            style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 20),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            widget.multi ? 'Search, tap products, then press Done.' : 'Search and choose one product.',
+                            style: const TextStyle(color: AppTheme.textMuted, fontWeight: FontWeight.w500),
+                          ),
+                        ],
                       ),
                     ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: _ThinAction(
-                        color: cs.primaryContainer.withOpacity(.55),
-                        borderColor: cs.primary.withOpacity(.25),
-                        icon: const Icon(Icons.add_circle_outline),
-                        label: "Quick Add",
-                        onTap: _quickAddProduct,
+                    if (widget.multi)
+                      FilledButton.icon(
+                        onPressed: selectedCount == 0 ? null : () => Navigator.pop(context, _pickedWithQty()),
+                        icon: const Icon(Icons.check_rounded, size: 18),
+                        label: Text('Done ($selectedCount)'),
                       ),
+                    const SizedBox(width: 8),
+                    IconButton(
+                      tooltip: 'Close',
+                      icon: const Icon(Icons.close_rounded),
+                      onPressed: () => Navigator.pop(context),
                     ),
                   ],
                 ),
-
-                // Selected chips
-                if (widget.multi && selectedCount > 0) ...[
-                  const SizedBox(height: 10),
-                  SizedBox(
-                    height: 44,
-                    child: ListView.separated(
-                      scrollDirection: Axis.horizontal,
-                      itemCount: _selectedIds.length,
-                      separatorBuilder: (_, __) => const SizedBox(width: 8),
-                      itemBuilder: (_, i) {
-                        final id = _selectedIds.elementAt(i);
-                        final p = _selectedMapById[id];
-                        final label = p != null ? _name(p['name']) : "ID: $id";
-                        final qty = _qtyOf(id);
-
-                        return InputChip(
-                          label: ConstrainedBox(
-                            constraints: const BoxConstraints(maxWidth: 240),
-                            child: Text(
-                              "$label × ${qty.toStringAsFixed(0)}",
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                          onPressed: () {
-                            final prod = _selectedMapById[id];
-                            if (prod != null) _promptSetQty(prod);
-                          },
-                          onDeleted: () => _unselect(id),
-                        );
-                      },
+              ),
+            ),
+Padding(
+              padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
+              child: EnterprisePanel(
+                padding: const EdgeInsets.all(14),
+                elevated: false,
+                child: Column(
+                  children: [
+                    TextField(
+                      controller: _searchCtrl,
+                      focusNode: _searchFocus,
+                      textInputAction: TextInputAction.search,
+                      onChanged: _onSearchChanged,
+                      onSubmitted: (_) => _fetchProducts(page: 1, replace: true),
+                      decoration: InputDecoration(
+                        prefixIcon: const Icon(Icons.search_rounded),
+                        suffixIcon: _searchCtrl.text.isNotEmpty
+                            ? IconButton(
+                                icon: const Icon(Icons.clear_rounded),
+                                onPressed: () {
+                                  _searchCtrl.clear();
+                                  _onSearchChanged('');
+                                },
+                              )
+                            : null,
+                        hintText: 'Search by name, SKU or barcode…',
+                      ),
                     ),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _ThinAction(
+                            color: AppTheme.surfaceSoft,
+                            borderColor: AppTheme.border,
+                            icon: const Icon(Icons.block_rounded, color: AppTheme.textMuted),
+                            label: 'No Product',
+                            onTap: () => Navigator.pop(context, null),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: _ThinAction(
+                            color: AppTheme.primarySoft,
+                            borderColor: AppTheme.primary.withOpacity(.18),
+                            icon: const Icon(Icons.add_circle_outline_rounded, color: AppTheme.primary),
+                            label: 'Quick Add Product',
+                            onTap: _quickAddProduct,
+                          ),
+                        ),
+                      ],
+                    ),
+                    if (widget.multi && selectedCount > 0) ...[
+                      const SizedBox(height: 12),
+                      SizedBox(
+                        height: 44,
+                        child: ListView.separated(
+                          scrollDirection: Axis.horizontal,
+                          itemCount: _selectedIds.length,
+                          separatorBuilder: (_, __) => const SizedBox(width: 8),
+                          itemBuilder: (_, i) {
+                            final id = _selectedIds.elementAt(i);
+                            final p = _selectedMapById[id];
+                            final label = p != null ? _name(p['name']) : 'ID: $id';
+                            final qty = _qtyOf(id);
+
+                            return _SelectedProductPill(
+                              label: label,
+                              qty: qty,
+                              onTap: () {
+                                final prod = _selectedMapById[id];
+                                if (prod != null) _promptSetQty(prod);
+                              },
+                              onRemove: () => _unselect(id),
+                            );
+                          },
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+            Expanded(
+              child: _loading && _products.isEmpty
+                  ? const Center(child: CircularProgressIndicator(strokeWidth: 2))
+                  : _products.isEmpty
+                      ? _EmptyProducts(onQuickAdd: _quickAddProduct)
+                      : LayoutBuilder(
+                          builder: (context, constraints) {
+                            final cols = _gridCrossAxisCount(constraints.maxWidth);
+                            return GridView.builder(
+                              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                                crossAxisCount: cols,
+                                crossAxisSpacing: 14,
+                                mainAxisSpacing: 14,
+                                childAspectRatio: 1.02,
+                              ),
+                              itemCount: _products.length,
+                              itemBuilder: (_, index) {
+                                final p = _products[index];
+                                final id = _asInt(p['id']) ?? -1;
+                                final selected = _selectedIds.contains(id);
+                                final qty = _qtyOf(id);
+
+                                return _ProductGridCard(
+                                  title: _name(p['name']),
+                                  price: _money(p['price']),
+                                  imageUrl: _imageUrl(p),
+                                  selected: selected,
+                                  qty: qty,
+                                  onTap: () {
+                                    if (!widget.multi) {
+                                      Navigator.pop(context, p);
+                                      return;
+                                    }
+                                    if (!selected) {
+                                      _selectDefault(p);
+                                    } else {
+                                      _promptSetQty(p);
+                                    }
+                                  },
+                                );
+                              },
+                            );
+                          },
+                        ),
+            ),
+            Container(
+              padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                border: Border(top: BorderSide(color: AppTheme.border)),
+              ),
+              child: Row(
+                children: [
+                  OutlinedButton.icon(
+                    onPressed: !_loading && _page > 1 ? () => _fetchProducts(page: _page - 1, replace: true) : null,
+                    icon: const Icon(Icons.chevron_left_rounded),
+                    label: const Text('Prev'),
+                  ),
+                  const Spacer(),
+                  Text('Page $_page of $_lastPage', style: const TextStyle(fontWeight: FontWeight.w900, color: AppTheme.textMuted)),
+                  const Spacer(),
+                  OutlinedButton.icon(
+                    onPressed: !_loading && _page < _lastPage ? () => _fetchProducts(page: _page + 1, replace: true) : null,
+                    icon: const Icon(Icons.chevron_right_rounded),
+                    label: const Text('Next'),
                   ),
                 ],
-              ],
+              ),
             ),
-          ),
+          ],
+        ),
+      ),
+    );
+  }
 
-          Expanded(
-            child: _loading && _products.isEmpty
-                ? const Center(child: CircularProgressIndicator(strokeWidth: 2))
-                : _products.isEmpty
-                    ? const Center(child: Text("No products found"))
-                    : LayoutBuilder(
-                        builder: (context, constraints) {
-                          final cols = _gridCrossAxisCount(constraints.maxWidth);
-                          return GridView.builder(
-                            padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-                            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                              crossAxisCount: cols,
-                              crossAxisSpacing: 12,
-                              mainAxisSpacing: 12,
-                              childAspectRatio: 0.88,
-                            ),
-                            itemCount: _products.length,
-                            itemBuilder: (_, index) {
-                              final p = _products[index];
-                              final id = _asInt(p['id']) ?? -1;
-                              final selected = _selectedIds.contains(id);
-                              final qty = _qtyOf(id);
+}
 
-                              return _ProductGridCard(
-                                title: _name(p['name']),
-                                price: _money(p['price']),
-                                imageUrl: _imageUrl(p),
-                                selected: selected,
-                                qty: qty,
-                                onTap: () {
-                                  if (!widget.multi) {
-                                    Navigator.pop(context, p);
-                                    return;
-                                  }
-                                  if (!selected) {
-                                    _selectDefault(p); // qty default 1
-                                  } else {
-                                    _promptSetQty(p); // set qty (not add)
-                                  }
-                                },
-                              );
-                            },
-                          );
-                        },
-                      ),
-          ),
+// ---------------- UI widgets ----------------
 
-          // Pagination bar
-          Container(
-            padding: const EdgeInsets.fromLTRB(12, 6, 12, 10),
-            decoration: BoxDecoration(
-              color: cs.surface,
-              border: Border(top: BorderSide(color: t.dividerColor)),
-            ),
-            child: Row(
-              children: [
-                TextButton.icon(
-                  onPressed: !_loading && _page > 1
-                      ? () => _fetchProducts(page: _page - 1, replace: true)
-                      : null,
-                  icon: const Icon(Icons.chevron_left),
-                  label: const Text("Prev"),
+
+class _SelectedProductPill extends StatelessWidget {
+  final String label;
+  final double qty;
+  final VoidCallback onTap;
+  final VoidCallback onRemove;
+
+  const _SelectedProductPill({
+    required this.label,
+    required this.qty,
+    required this.onTap,
+    required this.onRemove,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final qtyLabel = qty.toStringAsFixed(qty % 1 == 0 ? 0 : 2);
+    final isNegative = qty < 0;
+    final qtyColor = isNegative ? AppTheme.warning : AppTheme.primary;
+
+    return Material(
+      color: Colors.white,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(999),
+        side: const BorderSide(color: AppTheme.border),
+      ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(999),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(10, 6, 6, 6),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 210),
+                child: Text(
+                  label,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: AppTheme.navy,
+                    fontWeight: FontWeight.w900,
+                    fontSize: 12.5,
+                  ),
                 ),
-                const Spacer(),
-                Text("$_page / $_lastPage",
-                    style: const TextStyle(fontWeight: FontWeight.w700)),
-                const Spacer(),
-                TextButton.icon(
-                  onPressed: !_loading && _page < _lastPage
-                      ? () => _fetchProducts(page: _page + 1, replace: true)
-                      : null,
-                  icon: const Icon(Icons.chevron_right),
-                  label: const Text("Next"),
+              ),
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: qtyColor.withOpacity(.10),
+                  borderRadius: BorderRadius.circular(999),
+                  border: Border.all(color: qtyColor.withOpacity(.22)),
                 ),
-              ],
-            ),
+                child: Text(
+                  '× $qtyLabel',
+                  style: TextStyle(
+                    color: qtyColor,
+                    fontWeight: FontWeight.w900,
+                    fontSize: 12,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 3),
+              InkWell(
+                onTap: onRemove,
+                borderRadius: BorderRadius.circular(999),
+                child: const Padding(
+                  padding: EdgeInsets.all(3),
+                  child: Icon(Icons.close_rounded, size: 16, color: AppTheme.textMuted),
+                ),
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
 }
 
-// ---------------- UI widgets ----------------
+class _EmptyProducts extends StatelessWidget {
+  final VoidCallback onQuickAdd;
+
+  const _EmptyProducts({required this.onQuickAdd});
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: EnterprisePanel(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              height: 58,
+              width: 58,
+              decoration: BoxDecoration(
+                color: AppTheme.primarySoft,
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: const Icon(Icons.inventory_2_outlined, color: AppTheme.primary),
+            ),
+            const SizedBox(height: 12),
+            const Text('No products found', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 18)),
+            const SizedBox(height: 5),
+            const Text('Try another keyword or quickly create a new product.', style: TextStyle(color: AppTheme.textMuted, fontWeight: FontWeight.w600)),
+            const SizedBox(height: 16),
+            FilledButton.icon(
+              onPressed: onQuickAdd,
+              icon: const Icon(Icons.add_rounded),
+              label: const Text('Quick Add Product'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
 
 class _ProductGridCard extends StatelessWidget {
   final String title;
@@ -604,14 +741,14 @@ class _ProductGridCard extends StatelessWidget {
       color: cs.surface,
       elevation: 0,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(12),
         side: BorderSide(
           color: selected ? cs.primary : t.dividerColor.withOpacity(.9),
           width: selected ? 2 : 1,
         ),
       ),
       child: InkWell(
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(12),
         onTap: onTap,
         child: Stack(
           children: [
@@ -621,7 +758,7 @@ class _ProductGridCard extends StatelessWidget {
                 Expanded(
                   child: ClipRRect(
                     borderRadius:
-                        const BorderRadius.vertical(top: Radius.circular(14)),
+                        const BorderRadius.vertical(top: Radius.circular(12)),
                     child: Container(
                       width: double.infinity,
                       color: cs.surfaceContainerHighest.withOpacity(.35),

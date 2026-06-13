@@ -1,5 +1,8 @@
+import 'dart:convert';
+
 import 'package:enterprise_pos/api/core/api_client.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
+import 'package:enterprise_pos/providers/printer_config_provider.dart';
 import 'package:enterprise_pos/widgets/branch_indicator.dart';
 import 'package:enterprise_pos/widgets/product_picker_sheet.dart';
 import 'package:enterprise_pos/widgets/vendor_picker_sheet.dart';
@@ -7,7 +10,8 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:enterprise_pos/services/thermal_printer_service.dart';
 import 'package:enterprise_pos/services/receipt_preview_service.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' 
+  show TargetPlatform, defaultTargetPlatform, kIsWeb;
 
 // parts
 import 'package:enterprise_pos/screens/sales/parts/sale_items_section.dart';
@@ -37,6 +41,12 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
 
   ApiClient get _api =>
       ApiClient(token: Provider.of<AuthProvider>(context, listen: false).token);
+
+  int? _toInt(dynamic value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    return int.tryParse(value?.toString() ?? '');
+  }
 
   @override
   void initState() {
@@ -284,7 +294,7 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
         _selectedVendorId = null;
       } else {
         _selectedVendor = vendor;
-        _selectedVendorId = vendor['id'] as int?;
+        _selectedVendorId = _toInt(vendor['id']);
       }
     });
   }
@@ -668,6 +678,63 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
     }
   }
 
+
+  Map<String, dynamic> _mapFrom(dynamic value) {
+    if (value is Map) return value.cast<String, dynamic>();
+    if (value is String && value.trim().isNotEmpty) {
+      try {
+        final decoded = jsonDecode(value);
+        if (decoded is Map) return decoded.cast<String, dynamic>();
+      } catch (_) {
+        return <String, dynamic>{};
+      }
+    }
+    return <String, dynamic>{};
+  }
+
+  Map<String, dynamic> _metaMap() => _mapFrom(_sale?['meta']);
+
+  Map<String, dynamic> _metaSnapshot(String key) {
+    final meta = _metaMap();
+    return _mapFrom(meta[key]);
+  }
+
+  String _text(dynamic value) => (value ?? '').toString().trim();
+
+  String _nameFromMap(dynamic value, {String fallback = '-'}) {
+    final map = _mapFrom(value);
+    final directName = _text(map['name']);
+    if (directName.isNotEmpty) return directName;
+
+    final joined = [
+      _text(map['first_name']),
+      _text(map['last_name']),
+    ].where((part) => part.isNotEmpty).join(' ').trim();
+
+    return joined.isNotEmpty ? joined : fallback;
+  }
+
+  String _customerDisplayName() {
+    final snap = _metaSnapshot('customer_snapshot');
+    final fromSnapshot = _nameFromMap(snap, fallback: '');
+    if (fromSnapshot.isNotEmpty) return fromSnapshot;
+    return _nameFromMap(_sale?['customer'], fallback: 'Walk-in');
+  }
+
+  String _salesmanDisplayName() {
+    final snap = _metaSnapshot('salesman_snapshot');
+    final fromSnapshot = _nameFromMap(snap, fallback: '');
+    if (fromSnapshot.isNotEmpty) return fromSnapshot;
+    return _nameFromMap(_sale?['salesman'], fallback: '-');
+  }
+
+  String _vendorDisplayName() {
+    final snap = _metaSnapshot('vendor_snapshot');
+    final fromSnapshot = _nameFromMap(snap, fallback: '');
+    if (fromSnapshot.isNotEmpty) return fromSnapshot;
+    return _nameFromMap(_sale?['vendor'], fallback: 'No Vendor');
+  }
+
   /* ====================== Print ====================== */
 
   Future<void> _printInvoice() async {
@@ -691,16 +758,13 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
     );
 
     // ---- meta from response (preferred) ----
-    final metaRaw = sale['meta'];
-    final meta = (metaRaw is Map)
-        ? metaRaw.cast<String, dynamic>()
-        : <String, dynamic>{};
+    final meta = _mapFrom(sale['meta']);
 
     // ---- build customer snapshot: from meta, otherwise from customer object ----
     Map<String, dynamic> customerSnap = {};
-    final snapRaw = meta['customer_snapshot'];
-    if (snapRaw is Map) {
-      customerSnap = snapRaw.cast<String, dynamic>();
+    final snapRaw = _mapFrom(meta['customer_snapshot']);
+    if (snapRaw.isNotEmpty) {
+      customerSnap = snapRaw;
     } else {
       final c = sale['customer'];
       if (c is Map) {
@@ -758,29 +822,106 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
       final qty = _d(m['quantity']);
       final lineTotal = _d(m['total']) != 0 ? _d(m['total']) : (price * qty);
 
-      return ReceiptItem(name: name, price: price, qty: qty, total: lineTotal);
+      return SaleReceiptItem(
+        name: name,
+        price: price,
+        qty: qty,
+        total: lineTotal,
+      );
     }).toList();
 
-    // 🟡 set from your settings later
-    final hasPrinter = false;
+    final printerConfig = context.read<PrinterConfigProvider>();
+
+    if ((printerConfig.mainPrinterName ?? '').isEmpty) {
+      try {
+        await printerConfig.refresh();
+      } catch (e, s) {
+        debugPrint('Printer config refresh failed: $e');
+        debugPrintStack(stackTrace: s);
+      }
+    }
+
+    final mainPrinter = printerConfig.mainPrinterName;
+    final kitchenPrinter = printerConfig.kitchenPrinterName;
+    final hasPrinter = !kIsWeb && (mainPrinter ?? '').trim().isNotEmpty;
+    final isKitchenPrintEnabled = hasPrinter && (kitchenPrinter ?? '').trim().isNotEmpty;
+
+    debugPrint('Using main printer: $mainPrinter');
+    debugPrint('Using kitchen printer: $kitchenPrinter');
 
     if (!kIsWeb && hasPrinter) {
-      const printerIp = "192.168.1.50";
-
-      await ThermalPrinterService.instance.printSaleReceipt(
-        printerIp: printerIp,
-        shopName: "HT COMPUTERS",
-        shopAddress: "HT Computers Clock Tower Sukkur",
-        shopPhone: "+92 333 7155125",
-        receiptNo: receiptNo,
-        dateTime: dateTime,
-        items: receiptItems,
-        subtotal: subtotal,
-        discount: discount,
-        tax: tax,
-        grandTotal: total,
-        meta: printMeta,
-      );
+      try {
+        if (defaultTargetPlatform == TargetPlatform.windows) {
+          await ThermalPrinterService.instance.printSaleReceiptWindows(
+            printerName: mainPrinter ?? 'main-shop',
+            shopName: printerConfig.shopName.isNotEmpty
+                ? printerConfig.shopName
+                : "Pizza 360",
+            shopAddress: printerConfig.shopAddress.isNotEmpty
+                ? printerConfig.shopAddress
+                : "Pizza 360 Miani Road Sukkur",
+            shopPhone: printerConfig.shopPhone.isNotEmpty
+                ? printerConfig.shopPhone
+                : "+923702183106",
+            receiptNo: receiptNo,
+            dateTime: dateTime,
+            items: receiptItems,
+            subtotal: subtotal,
+            discount: discount,
+            tax: tax,
+            grandTotal: total,
+            cashReceived: cashReceived,
+            changeAmount: changeAmount,
+            meta: printMeta,
+          );
+          if (isKitchenPrintEnabled) {
+            await ThermalPrinterService.instance.printSaleReceiptWindows(
+              printerName: kitchenPrinter ?? 'kitchen',
+              shopName:
+                  "${printerConfig.shopName.isNotEmpty ? printerConfig.shopName : "Pizza 360"} - KITCHEN COPY",
+              shopAddress: "KITCHEN COPY",
+              shopPhone: printerConfig.shopPhone.isNotEmpty
+                  ? printerConfig.shopPhone
+                  : "+923702183106",
+              receiptNo: receiptNo,
+              dateTime: dateTime,
+              items: receiptItems,
+              subtotal: subtotal,
+              discount: discount,
+              tax: tax,
+              grandTotal: total,
+              cashReceived: cashReceived,
+              changeAmount: changeAmount,
+              meta: printMeta,
+            );
+          }
+        } else {
+          await ThermalPrinterService.instance.printSaleReceiptNetwork(
+            printerIp: "192.168.1.50",
+            shopName: "Pizza 360",
+            shopAddress: "Pizza 360 Miani Road Sukkur",
+            shopPhone: "+923702183106",
+            receiptNo: receiptNo,
+            dateTime: dateTime,
+            items: receiptItems,
+            subtotal: subtotal,
+            discount: discount,
+            tax: tax,
+            grandTotal: total,
+            cashReceived: cashReceived,
+            changeAmount: changeAmount,
+            meta: printMeta,
+          );
+        }
+      } catch (e, s) {
+        debugPrint('PRINT ERROR: $e');
+        debugPrintStack(stackTrace: s);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text("Sale created but printing failed: $e")),
+          );
+        }
+      }
     } else {
       await ReceiptPreviewService.instance.previewReceipt(
         shopName: "HT COMPUTERS",
@@ -855,15 +996,9 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
                             Text(
                               "Date: ${_sale!['created_at'].toString().substring(0, 10)}",
                             ),
-                            Text(
-                              "Salesman: ${_sale!['salesman']?['name'] ?? "-"}",
-                            ),
-                            Text(
-                              "Vendor: ${_sale!['vendor']?['first_name'] ?? "No Vendor"} ${_sale!['vendor']?['last_name'] ?? ""}",
-                            ),
-                            Text(
-                              "Customer: ${_sale!['customer']?['first_name'] ?? "Walk-in"} ${_sale!['customer']?['last_name'] ?? ""}",
-                            ),
+                            Text("Salesman: ${_salesmanDisplayName()}"),
+                            Text("Vendor: ${_vendorDisplayName()}"),
+                            Text("Customer: ${_customerDisplayName()}"),
                             // Text("Branch: ${_sale!['branch']?['name']}"),
                             // Text("Status: ${_sale!['status']}"),
                           ],

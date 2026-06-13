@@ -5,6 +5,8 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 
+typedef ReceiptItem = SaleReceiptItem;
+
 class ReceiptPreviewService {
   ReceiptPreviewService._();
   static final instance = ReceiptPreviewService._();
@@ -40,6 +42,13 @@ class ReceiptPreviewService {
     final delivery = (meta?["delivery"] is num)
         ? (meta!["delivery"] as num).toDouble()
         : double.tryParse((meta?["delivery"] ?? "").toString()) ?? 0.0;
+
+    final cashReceived = (meta?["cash_received"] is num)
+        ? (meta!["cash_received"] as num).toDouble()
+        : double.tryParse((meta?["cash_received"] ?? "").toString()) ?? 0.0;
+    final changeAmount = (meta?["change_amount"] is num)
+        ? (meta!["change_amount"] as num).toDouble()
+        : double.tryParse((meta?["change_amount"] ?? "").toString()) ?? 0.0;
 
     // ✅ Resolve logo asset: use provided OR default
     final String effectiveLogoAsset =
@@ -207,9 +216,8 @@ class ReceiptPreviewService {
               line(),
 
               kv("Grand Total", _m(grandTotal), bold: true),
-              pw.SizedBox(height: 6),
-              // kv("Cash Received", _m(cashReceived), bold: true),
-              // kv("Change Amount", _m(changeAmount), bold: true),
+              if (cashReceived > 0) kv("Cash Received", _m(cashReceived), bold: true),
+              if (changeAmount > 0) kv("Change Amount", _m(changeAmount), bold: true),
 
               line(),
 

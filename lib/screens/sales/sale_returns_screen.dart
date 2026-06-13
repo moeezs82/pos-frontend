@@ -188,6 +188,12 @@ class _SaleReturnsScreenState extends State<SaleReturnsScreen> {
     }
   }
 
+  int? _toInt(dynamic value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    return int.tryParse(value?.toString() ?? '');
+  }
+
   Future<void> _openCustomerPicker() async {
     final token = Provider.of<AuthProvider>(context, listen: false).token!;
     final picked = await showModalBottomSheet<Map<String, dynamic>?>(
@@ -204,7 +210,7 @@ class _SaleReturnsScreenState extends State<SaleReturnsScreen> {
         _selectedCustomerId = null;
         _selectedCustomerLabel = null;
       } else {
-        _selectedCustomerId = picked['id'] as int?;
+        _selectedCustomerId = _toInt(picked['id']);
         final first = (picked['first_name'] ?? '').toString();
         final last = (picked['last_name'] ?? '').toString();
         final full = [first, last].where((s) => s.trim().isNotEmpty).join(' ');
@@ -634,7 +640,7 @@ class _SaleReturnsScreenState extends State<SaleReturnsScreen> {
                                     context,
                                     MaterialPageRoute(
                                       builder: (_) => SaleReturnDetailScreen(
-                                        returnId: r['id'] as int,
+                                        returnId: _toInt(r['id']) ?? 0,
                                       ),
                                     ),
                                   );

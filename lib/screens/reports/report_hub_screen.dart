@@ -1,10 +1,13 @@
-import 'package:enterprise_pos/screens/cashbook/widgets/cashbook_daily_summary_screen.dart';
+import 'package:enterprise_pos/screens/cashbook/expense_create_screen.dart';
+import 'package:enterprise_pos/screens/reports/enterprise_reports_workspace_screen.dart';
+import 'package:enterprise_pos/screens/reports/party_balances_screen.dart';
 import 'package:enterprise_pos/screens/reports/report_cashbook_screen.dart';
 import 'package:enterprise_pos/screens/reports/report_daily_summary_screen.dart';
 import 'package:enterprise_pos/screens/reports/report_ledger_screen.dart';
 import 'package:enterprise_pos/screens/reports/report_pnl_screen.dart';
 import 'package:enterprise_pos/screens/reports/report_stock_movement_screen.dart';
 import 'package:enterprise_pos/screens/reports/report_top_bottom_products_screen.dart';
+import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 
 class ReportsHubScreen extends StatelessWidget {
@@ -12,301 +15,117 @@ class ReportsHubScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final groups = _reportGroups;
+    final width = MediaQuery.of(context).size.width;
+    final cols = width >= 1200 ? 4 : width >= 900 ? 3 : width >= 620 ? 2 : 1;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Reports'), centerTitle: false),
-      body: ListView.builder(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-        itemCount: groups.length,
-        itemBuilder: (_, gi) {
-          final g = groups[gi];
-          return Padding(
-            padding: const EdgeInsets.only(bottom: 20),
-            child: _GroupBlock(group: g),
-          );
-        },
-      ),
-    );
-  }
-}
-
-/* ----------------------------- Group Section ----------------------------- */
-
-class _GroupBlock extends StatelessWidget {
-  final _ReportGroup group;
-  const _GroupBlock({required this.group});
-
-  @override
-  Widget build(BuildContext context) {
-    final w = MediaQuery.of(context).size.width;
-    int cols = 1;
-    if (w >= 1200)
-      cols = 4;
-    else if (w >= 920)
-      cols = 3;
-    else if (w >= 640)
-      cols = 2;
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _GroupHeader(title: group.title, caption: group.caption),
-        const SizedBox(height: 12),
-        GridView.builder(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          itemCount: group.items.length,
-          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+      appBar: AppBar(title: const Text('Reports Command Center'), centerTitle: false),
+      body: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
+        children: [
+          _HeroHeader(
+            onOpenAll: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const EnterpriseReportsWorkspaceScreen())),
+          ),
+          const SizedBox(height: 16),
+          GridView.count(
             crossAxisCount: cols,
-            mainAxisSpacing: 12,
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
             crossAxisSpacing: 12,
-            childAspectRatio: 1.32,
-          ),
-          itemBuilder: (_, i) => _ReportCard(item: group.items[i]),
-        ),
-      ],
-    );
-  }
-}
-
-class _GroupHeader extends StatelessWidget {
-  final String title;
-  final String caption;
-  const _GroupHeader({required this.title, required this.caption});
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Row(
-      children: [
-        Container(
-          width: 4,
-          height: 20,
-          decoration: BoxDecoration(
-            color: scheme.primary,
-            borderRadius: BorderRadius.circular(2),
-          ),
-        ),
-        const SizedBox(width: 10),
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              title,
-              style: Theme.of(
-                context,
-              ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
-            ),
-            const SizedBox(height: 2),
-            Text(
-              caption,
-              style: Theme.of(
-                context,
-              ).textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-}
-
-/* --------------------------------- Cards -------------------------------- */
-
-class _ReportCard extends StatefulWidget {
-  final _ReportItem item;
-  const _ReportCard({required this.item});
-
-  @override
-  State<_ReportCard> createState() => _ReportCardState();
-}
-
-typedef ScreenBuilder = Widget Function(BuildContext);
-
-final Map<String, ScreenBuilder> _reportRouteBuilders = {
-  'sales_day_summary': (_) => const ReportDailySummaryScreen(),
-  'top_bottom_products': (_) => const ReportTopBottomProductsScreen(),
-  // 'sales_by_category':           (_) => const SalesByCategoryScreen(),
-  // 'hourly_heatmap':              (_) => const HourlyHeatmapScreen(),
-  'customer_ledger': (_) => const ReportLedgerScreen(partyType: "customer"),
-  'vendor_ap': (_) => const ReportLedgerScreen(partyType: 'vendor'),
-  'cashbook_daily': (_) => const ReportCashbookScreen(),
-  'profit_loss': (_) => const ReportPnLScreen(),
-  // 'tax_summary':                 (_) => const TaxSummaryScreen(),
-  'stock_movement': (_) => const ReportStockMovementScreen(),
-  // 'gross_margin':                (_) => const GrossMarginScreen(),
-  // 'returns_analytics':           (_) => const ReturnsAnalyticsScreen(),
-};
-
-class _ReportCardState extends State<_ReportCard>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _c;
-  late Animation<double> _scale;
-
-  @override
-  void initState() {
-    super.initState();
-    _c = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 120),
-      lowerBound: 0.0,
-      upperBound: 0.06,
-    );
-    _scale = Tween<double>(
-      begin: 1,
-      end: 0.94,
-    ).animate(CurvedAnimation(parent: _c, curve: Curves.easeOut));
-  }
-
-  @override
-  void dispose() {
-    _c.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final surface = scheme.surface;
-    final borderColor = scheme.outlineVariant;
-
-    return GestureDetector(
-      onTapDown: (_) => _c.forward(),
-      onTapCancel: () => _c.reverse(),
-      onTapUp: (_) => _c.reverse(),
-      onTap: () {
-        final builder = _reportRouteBuilders[widget.item.key];
-        if (builder != null) {
-          Navigator.of(context).push(MaterialPageRoute(builder: builder));
-        } else {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('No route for ${widget.item.title}')),
-          );
-        }
-      },
-      child: AnimatedBuilder(
-        animation: _c,
-        builder: (_, child) =>
-            Transform.scale(scale: _scale.value, child: child),
-        child: Container(
-          decoration: BoxDecoration(
-            color: surface,
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: borderColor),
-            boxShadow: [
-              // soft, professional shadow
-              BoxShadow(
-                color: Colors.black.withOpacity(0.04),
-                blurRadius: 14,
-                offset: const Offset(0, 8),
-              ),
-            ],
-          ),
-          clipBehavior: Clip.antiAlias,
-          child: Stack(
+            mainAxisSpacing: 12,
+            childAspectRatio: cols == 1 ? 2.7 : 1.28,
             children: [
-              // Accent strip
-              Positioned.fill(
-                child: Align(
-                  alignment: Alignment.topLeft,
-                  child: Container(
-                    height: 4,
-                    color: widget.item.accent ?? scheme.primary,
-                  ),
-                ),
+              _CommandCard(
+                icon: Icons.people_alt_rounded,
+                title: 'Customer Balances',
+                subtitle: 'All receivables, tap customer for ledger, receive payment, create sale, edit customer.',
+                accent: Colors.orange,
+                onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PartyBalancesScreen(partyType: 'customer'))),
               ),
-
-              // Watermark icon (very subtle)
-              Positioned(
-                right: -6,
-                bottom: -2,
-                child: Icon(
-                  widget.item.icon,
-                  size: 92,
-                  color: scheme.onSurface.withOpacity(0.04),
-                ),
+              _CommandCard(
+                icon: Icons.groups_2_rounded,
+                title: 'Vendor Balances',
+                subtitle: 'All payables, tap vendor for ledger, pay vendor, create purchase, edit vendor.',
+                accent: Colors.indigo,
+                onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PartyBalancesScreen(partyType: 'vendor'))),
               ),
-
-              // Content
-              Padding(
-                padding: const EdgeInsets.fromLTRB(14, 16, 14, 14),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _IconPill(
-                      icon: widget.item.icon,
-                      tint: widget.item.accent ?? scheme.primary,
-                    ),
-                    const SizedBox(height: 12),
-                    Text(
-                      widget.item.title,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                    if ((widget.item.subtitle ?? '').isNotEmpty) ...[
-                      const SizedBox(height: 6),
-                      Text(
-                        widget.item.subtitle!,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: scheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ],
-                    const Spacer(),
-                    Row(
-                      children: [
-                        if (widget.item.meta != null)
-                          _MetaRow(meta: widget.item.meta!),
-                        const Spacer(),
-                        Icon(
-                          Icons.chevron_right_rounded,
-                          color: scheme.onSurfaceVariant,
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
+              _CommandCard(
+                icon: Icons.receipt_long_rounded,
+                title: 'Create Expense',
+                subtitle: 'Record expense with backend customer/vendor counterparty, payment method, account, date and reference.',
+                accent: Colors.red,
+                onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ExpenseCreateScreen())),
+              ),
+              _CommandCard(
+                icon: Icons.dashboard_customize_rounded,
+                title: 'All Enterprise Reports',
+                subtitle: 'Sales, purchases, inventory, accounting, tax, returns, cashbook, P&L, trial balance.',
+                accent: Colors.purple,
+                onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const EnterpriseReportsWorkspaceScreen())),
+              ),
+              _CommandCard(
+                icon: Icons.point_of_sale_rounded,
+                title: 'Sales Performance',
+                subtitle: 'Open the new report workspace directly on sales summary.',
+                accent: Colors.green,
+                onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const EnterpriseReportsWorkspaceScreen(initialReportKey: 'sales-summary'))),
               ),
             ],
           ),
-        ),
+          const SizedBox(height: 22),
+          _SectionTitle(title: 'Enterprise report shortcuts', caption: 'One tap access to full backend reports with date-time filters and exports'),
+          const SizedBox(height: 10),
+          _ShortcutWrap(items: _enterpriseShortcuts),
+          const SizedBox(height: 22),
+          _SectionTitle(title: 'Existing focused views', caption: 'Kept for safety; these screens still work as before'),
+          const SizedBox(height: 10),
+          _ShortcutWrap(items: _legacyShortcuts),
+        ],
       ),
     );
   }
 }
 
-class _IconPill extends StatelessWidget {
-  final IconData icon;
-  final Color tint;
-  const _IconPill({required this.icon, required this.tint});
+class _HeroHeader extends StatelessWidget {
+  final VoidCallback onOpenAll;
+
+  const _HeroHeader({required this.onOpenAll});
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
     return Container(
-      height: 36,
-      padding: const EdgeInsets.symmetric(horizontal: 12),
+      padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        color: tint.withOpacity(0.08),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: tint.withOpacity(0.28)),
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppTheme.border),
       ),
       child: Row(
-        mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 18, color: tint),
-          const SizedBox(width: 8),
-          Text(
-            'Report',
-            style: Theme.of(
-              context,
-            ).textTheme.labelMedium?.copyWith(color: scheme.onSurfaceVariant),
+          Container(
+            height: 48,
+            width: 48,
+            decoration: BoxDecoration(
+              color: AppTheme.primarySoft,
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: const Icon(Icons.analytics_rounded, color: AppTheme.primary, size: 28),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Reports', style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800)),
+                const SizedBox(height: 3),
+                const Text('Balances, ledgers, PDF and Excel exports in one place.', style: TextStyle(color: AppTheme.textMuted, fontWeight: FontWeight.w500)),
+              ],
+            ),
+          ),
+          FilledButton.icon(
+            onPressed: onOpenAll,
+            icon: const Icon(Icons.open_in_new_rounded),
+            label: const Text('Open All'),
           ),
         ],
       ),
@@ -314,180 +133,128 @@ class _IconPill extends StatelessWidget {
   }
 }
 
-class _MetaRow extends StatelessWidget {
-  final Map<String, String> meta;
-  const _MetaRow({required this.meta});
+class _CommandCard extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final Color accent;
+  final VoidCallback onTap;
+
+  const _CommandCard({required this.icon, required this.title, required this.subtitle, required this.accent, required this.onTap});
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final entries = meta.entries.toList(growable: false);
-    return Wrap(
-      spacing: 14,
-      runSpacing: 4,
-      children: entries
-          .map(
-            (e) => Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  e.key,
-                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                    color: scheme.onSurfaceVariant,
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(16),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(16),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: AppTheme.border),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    height: 42,
+                    width: 42,
+                    decoration: BoxDecoration(color: accent.withOpacity(.10), borderRadius: BorderRadius.circular(13)),
+                    child: Icon(icon, color: accent),
                   ),
-                ),
-                const SizedBox(width: 6),
-                Text(e.value, style: Theme.of(context).textTheme.labelSmall),
-              ],
-            ),
-          )
-          .toList(),
+                  const Spacer(),
+                  const Icon(Icons.chevron_right_rounded, color: AppTheme.textMuted),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Text(title, maxLines: 1, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800)),
+              const SizedBox(height: 5),
+              Expanded(child: Text(subtitle, maxLines: 3, overflow: TextOverflow.ellipsis, style: const TextStyle(color: AppTheme.textMuted, fontWeight: FontWeight.w500, fontSize: 12))),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
 
-/* --------------------------------- Data --------------------------------- */
-
-class _ReportGroup {
+class _SectionTitle extends StatelessWidget {
   final String title;
   final String caption;
-  final List<_ReportItem> items;
-  _ReportGroup({
-    required this.title,
-    required this.caption,
-    required this.items,
-  });
+
+  const _SectionTitle({required this.title, required this.caption});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Container(width: 4, height: 22, decoration: BoxDecoration(color: Theme.of(context).colorScheme.primary, borderRadius: BorderRadius.circular(3))),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(title, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w900)),
+              const SizedBox(height: 2),
+              Text(caption, style: Theme.of(context).textTheme.bodySmall),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
 }
 
-class _ReportItem {
-  final String key;
+class _ShortcutWrap extends StatelessWidget {
+  final List<_ReportShortcut> items;
+
+  const _ShortcutWrap({required this.items});
+
+  @override
+  Widget build(BuildContext context) {
+    return Wrap(
+      spacing: 10,
+      runSpacing: 10,
+      children: items.map((item) => ActionChip(
+            avatar: Icon(item.icon, size: 18),
+            label: Text(item.title),
+            onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => item.builder(context))),
+          )).toList(),
+    );
+  }
+}
+
+class _ReportShortcut {
   final String title;
-  final String? subtitle;
   final IconData icon;
-  final Map<String, String>? meta;
-  final Color? accent;
-  _ReportItem({
-    required this.key,
-    required this.title,
-    required this.icon,
-    this.subtitle,
-    this.meta,
-    this.accent,
-  });
+  final Widget Function(BuildContext) builder;
+
+  const _ReportShortcut({required this.title, required this.icon, required this.builder});
 }
 
-final _reportGroups = <_ReportGroup>[
-  _ReportGroup(
-    title: 'Sales',
-    caption: 'Daily health & performance',
-    items: [
-      _ReportItem(
-        key: 'sales_day_summary',
-        title: 'Sales Day Summary',
-        subtitle: 'Totals, tenders, refunds',
-        icon: Icons.today_rounded,
-        meta: const {'Period': 'Today'},
-        accent: const Color(0xFF09142B), // brand accent
-      ),
-      _ReportItem(
-        key: 'top_bottom_products',
-        title: 'Top/Bottom Products',
-        subtitle: 'Best & worst performers',
-        icon: Icons.bar_chart_rounded,
-        meta: const {'Sort': 'Revenue'},
-      ),
-      // _ReportItem(
-      //   key: 'sales_by_category',
-      //   title: 'Sales by Category',
-      //   subtitle: 'Contribution & mix',
-      //   icon: Icons.category_rounded,
-      //   meta: const {'View': 'GM%'},
-      // ),
-      // _ReportItem(
-      //   key: 'hourly_heatmap',
-      //   title: 'Hourly Heatmap',
-      //   subtitle: 'Traffic vs sales by hour',
-      //   icon: Icons.schedule_rounded,
-      //   meta: const {'TZ': 'Branch'},
-      // ),
-    ],
-  ),
-  _ReportGroup(
-    title: 'Finance',
-    caption: 'Receivables, payables & cash',
-    items: [
-      _ReportItem(
-        key: 'customer_ledger',
-        title: 'Customer Ledger',
-        subtitle: 'AR balance & activity',
-        icon: Icons.account_balance_wallet_rounded,
-        meta: const {'Aging': 'Yes'},
-      ),
-      _ReportItem(
-        key: 'vendor_ap',
-        title: 'Vendor A/P',
-        subtitle: 'Payables & aging',
-        icon: Icons.inventory_2_rounded,
-        meta: const {'Due': 'This week'},
-      ),
-      _ReportItem(
-        key: 'cashbook_daily',
-        title: 'CashBook Daily',
-        subtitle: 'Opening, receipts, payments',
-        icon: Icons.receipt_long_rounded,
-        meta: const {'Status': 'Balanced'},
-      ),
-      _ReportItem(
-        key: 'profit_loss',
-        title: 'Profit & Loss',
-        subtitle: 'Income, Expense & Net Profit',
-        icon: Icons.receipt_long_rounded,
-        meta: const {'Period': 'MTD'},
-      ),
-      // _ReportItem(
-      //   key: 'tax_summary',
-      //   title: 'Tax Summary',
-      //   subtitle: 'Collected & payable',
-      //   icon: Icons.account_balance_rounded,
-      //   meta: const {'VAT': 'Enabled'},
-      // ),
-    ],
-  ),
-  _ReportGroup(
-    title: 'Inventory',
-    caption: 'Movement & profitability',
-    items: [
-      _ReportItem(
-        key: 'stock_movement',
-        title: 'Stock Movement',
-        subtitle: 'In/Out, adjustments',
-        icon: Icons.swap_vert_circle_rounded,
-        meta: const {'Basis': 'Avg Cost'},
-      ),
-      // _ReportItem(
-      //   key: 'gross_margin',
-      //   title: 'Gross Margin',
-      //   subtitle: 'GM% by product/category',
-      //   icon: Icons.pie_chart_rounded,
-      //   meta: const {'Period': 'MTD'},
-      // ),
-      // _ReportItem(
-      //   key: 'returns_analytics',
-      //   title: 'Returns Analytics',
-      //   subtitle: 'Rate, reasons, impact',
-      //   icon: Icons.undo_rounded,
-      //   meta: const {'Trend': '3 mo'},
-      // ),
-    ],
-  ),
+final _enterpriseShortcuts = <_ReportShortcut>[
+  _ReportShortcut(title: 'Sales Summary', icon: Icons.summarize_rounded, builder: (_) => const EnterpriseReportsWorkspaceScreen(initialReportKey: 'sales-summary')),
+  _ReportShortcut(title: 'Sales Detail', icon: Icons.receipt_long_rounded, builder: (_) => const EnterpriseReportsWorkspaceScreen(initialReportKey: 'sales-detail')),
+  _ReportShortcut(title: 'Sales by Product', icon: Icons.inventory_2_rounded, builder: (_) => const EnterpriseReportsWorkspaceScreen(initialReportKey: 'sales-by-product')),
+  _ReportShortcut(title: 'Purchases', icon: Icons.shopping_cart_checkout_rounded, builder: (_) => const EnterpriseReportsWorkspaceScreen(initialReportKey: 'purchase-summary')),
+  _ReportShortcut(title: 'Current Stock', icon: Icons.warehouse_rounded, builder: (_) => const EnterpriseReportsWorkspaceScreen(initialReportKey: 'current-stock')),
+  _ReportShortcut(title: 'Stock Valuation', icon: Icons.price_check_rounded, builder: (_) => const EnterpriseReportsWorkspaceScreen(initialReportKey: 'stock-valuation')),
+  _ReportShortcut(title: 'Cashbook', icon: Icons.account_balance_wallet_rounded, builder: (_) => const EnterpriseReportsWorkspaceScreen(initialReportKey: 'cashbook')),
+  _ReportShortcut(title: 'P&L', icon: Icons.trending_up_rounded, builder: (_) => const EnterpriseReportsWorkspaceScreen(initialReportKey: 'profit-loss')),
+  _ReportShortcut(title: 'Trial Balance', icon: Icons.balance_rounded, builder: (_) => const EnterpriseReportsWorkspaceScreen(initialReportKey: 'trial-balance')),
 ];
 
-/* --------------------------- Quick theming tip --------------------------- */
-/*
-In your MaterialApp theme, set:
-colorScheme: ColorScheme.fromSeed(
-  seedColor: const Color(0xFF09142B),
-  brightness: Brightness.light, // or dark
-),
-This screen will automatically pick subtle, professional colors.
-*/
+final _legacyShortcuts = <_ReportShortcut>[
+  _ReportShortcut(title: 'Old Daily Summary', icon: Icons.today_rounded, builder: (_) => const ReportDailySummaryScreen()),
+  _ReportShortcut(title: 'Top/Bottom Products', icon: Icons.bar_chart_rounded, builder: (_) => const ReportTopBottomProductsScreen()),
+  _ReportShortcut(title: 'Customer Ledger', icon: Icons.person_search_rounded, builder: (_) => const ReportLedgerScreen(partyType: 'customer')),
+  _ReportShortcut(title: 'Vendor Ledger', icon: Icons.group_work_rounded, builder: (_) => const ReportLedgerScreen(partyType: 'vendor')),
+  _ReportShortcut(title: 'Old Cashbook', icon: Icons.receipt_long_rounded, builder: (_) => const ReportCashbookScreen()),
+  _ReportShortcut(title: 'Old P&L', icon: Icons.query_stats_rounded, builder: (_) => const ReportPnLScreen()),
+  _ReportShortcut(title: 'Old Stock Movement', icon: Icons.swap_vert_circle_rounded, builder: (_) => const ReportStockMovementScreen()),
+];

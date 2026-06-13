@@ -16,21 +16,20 @@ class BranchProvider extends ChangeNotifier {
 
   int? get selectedBranchId => _selectedBranchId;
   String get label => _selectedBranchName ?? "All Branches";
-  bool get isAll => false;
-  // bool get isAll => _selectedBranchId == null;
+  bool get isAll => _selectedBranchId == null;
   bool get restored => _restored;
 
   Future<void> _restore() async {
+    // Enterprise-safe default: do not auto-select a previously cached branch.
+    // If the backend has no branches or the old branch was deleted, stale storage
+    // can silently filter sales/reports. Always start in All Branches mode; users
+    // can still select a branch manually for the current session.
     final sp = await SharedPreferences.getInstance();
+    await sp.remove(_kIdKey);
+    await sp.setString(_kNameKey, "All Branches");
 
-    if (sp.containsKey(_kIdKey)) {
-      _selectedBranchId = sp.getInt(_kIdKey);
-      _selectedBranchName = sp.getString(_kNameKey) ?? "All Branches";
-    } else {
-      _selectedBranchId = null;
-      _selectedBranchName = "All Branches";
-    }
-
+    _selectedBranchId = null;
+    _selectedBranchName = "All Branches";
     _restored = true;
     notifyListeners();
   }

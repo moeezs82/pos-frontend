@@ -75,10 +75,7 @@ class CashBookService {
   }) async {
     final body = <String, String>{
       if (accountId != null && accountId.isNotEmpty) "account_id": accountId,
-      if ((accountId == null || accountId.isEmpty) &&
-          method != null &&
-          method.isNotEmpty)
-        "method": method,
+      if (method != null && method.isNotEmpty) "method": method,
       "amount": amount,
       if (txnDate != null && txnDate.isNotEmpty) "txn_date": txnDate,
       // if (branchId != null && branchId.isNotEmpty) "branch_id": branchId,

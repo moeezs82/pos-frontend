@@ -38,6 +38,12 @@ class _SaleReturnDetailScreenState extends State<SaleReturnDetailScreen> {
     return double.tryParse(v.toString()) ?? 0.0;
   }
 
+  int? _toInt(dynamic value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    return int.tryParse(value?.toString() ?? '');
+  }
+
   void _deriveMoney(Map<String, dynamic> map) {
     _subtotal = _toDouble(map['subtotal']);
     _tax = _toDouble(map['tax']);
@@ -341,7 +347,7 @@ class _SaleReturnDetailScreenState extends State<SaleReturnDetailScreen> {
                                     context,
                                     MaterialPageRoute(
                                       builder: (_) => SaleDetailScreen(
-                                        saleId: sale['id'] as int,
+                                        saleId: _toInt(sale['id']) ?? 0,
                                       ),
                                     ),
                                   );

@@ -177,6 +177,12 @@ class _SalesScreenState extends State<SalesScreen> {
     return double.tryParse(v.toString()) ?? 0.0;
   }
 
+  int? _toInt(dynamic value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    return int.tryParse(value?.toString() ?? '');
+  }
+
   ({String label, Color color}) _paymentStatus(dynamic sale) {
     final total = _toDouble(sale['total']);
     final paid = _toDouble(sale['paid_amount']);
@@ -201,7 +207,7 @@ class _SalesScreenState extends State<SalesScreen> {
         _selectedCustomerId = null;
         _selectedCustomerLabel = null;
       } else {
-        _selectedCustomerId = picked['id'] as int?;
+        _selectedCustomerId = _toInt(picked['id']);
         final first = (picked['first_name'] ?? '').toString();
         final last = (picked['last_name'] ?? '').toString();
         final full = [first, last].where((s) => s.trim().isNotEmpty).join(' ');
@@ -509,6 +515,8 @@ class _SalesScreenState extends State<SalesScreen> {
                                   ? DateFormat('HH:mm').format(dt)
                                   : '';
 
+                              final invoiceDateStr = (s['invoice_date'] ?? '').toString();
+
                               return ListTile(
                                 dense: true,
                                 visualDensity: const VisualDensity(
@@ -593,7 +601,7 @@ class _SalesScreenState extends State<SalesScreen> {
                                     _amountChip(
                                       context,
                                       "Date",
-                                      dateLabel,
+                                      invoiceDateStr,
                                       Colors.blue,
                                       icon: Icons.calendar_month,
                                     ),
@@ -712,7 +720,7 @@ class _SalesScreenState extends State<SalesScreen> {
                                     context,
                                     MaterialPageRoute(
                                       builder: (_) => SaleDetailScreen(
-                                        saleId: s['id'] as int,
+                                        saleId: _toInt(s['id']) ?? 0,
                                       ),
                                     ),
                                   );

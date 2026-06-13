@@ -1,8 +1,8 @@
 import 'dart:ui';
 import 'package:enterprise_pos/api/reports_service.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
-import 'package:enterprise_pos/providers/branch_provider.dart';
 import 'package:flutter/material.dart';
+import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
@@ -39,7 +39,7 @@ class _ReportPnLScreenState extends State<ReportPnLScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final token = context.read<AuthProvider>().token!;
       _service = ReportsService(token: token);
-      _branchId = context.read<BranchProvider?>()?.selectedBranchId;
+      _branchId = null;
       _fetch();
     });
   }
@@ -376,13 +376,22 @@ class _FilterChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
-        color: Colors.grey.shade100,
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: Colors.grey.shade300),
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: AppTheme.border),
       ),
-      child: Text(label, style: const TextStyle(fontSize: 12)),
+      child: Text(
+        label,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(
+          fontSize: 12.5,
+          fontWeight: FontWeight.w900,
+          color: AppTheme.navy,
+        ),
+      ),
     );
   }
 }

@@ -43,6 +43,12 @@ class _CreateSaleReturnScreenState extends State<CreateSaleReturnScreen> {
     return double.tryParse(v.toString()) ?? 0.0;
   }
 
+  int _toInt(dynamic v) {
+    if (v is int) return v;
+    if (v is num) return v.toInt();
+    return int.tryParse(v?.toString() ?? '') ?? 0;
+  }
+
   /// qty * price * (1 - discount/100)
   double _lineAmount({
     required int itemId,
@@ -57,7 +63,7 @@ class _CreateSaleReturnScreenState extends State<CreateSaleReturnScreen> {
   double _computeReturnTotal() {
     double total = 0.0;
     for (final it in _saleItems) {
-      final id = it['id'] as int;
+      final id = _toInt(it['id']);
       final qty = int.tryParse(_qtyControllers[id]?.text ?? '0') ?? 0;
       if (qty > 0) {
         total += _lineAmount(itemId: id, qty: qty);
@@ -124,7 +130,7 @@ class _CreateSaleReturnScreenState extends State<CreateSaleReturnScreen> {
                       _discountPct.clear();
 
                       for (var item in _saleItems) {
-                        final id = item['id'] as int;
+                        final id = _toInt(item['id']);
 
                         // cache unit TP and discount (%) from your columns
                         _unitPrice[id] = _toDouble(item['price']);      // TP
@@ -161,14 +167,17 @@ class _CreateSaleReturnScreenState extends State<CreateSaleReturnScreen> {
     // Build items with >0 return qty
     final items = _saleItems
         .where((i) {
-          final id = i['id'] as int;
+          final id = _toInt(i['id']);
           final q = int.tryParse(_qtyControllers[id]?.text ?? "0") ?? 0;
           return q > 0;
         })
-        .map((i) => {
-              "sale_item_id": i['id'],
-              "quantity": int.parse(_qtyControllers[i['id']]!.text),
-            })
+        .map((i) {
+          final id = _toInt(i['id']);
+          return {
+            "sale_item_id": id,
+            "quantity": int.parse(_qtyControllers[id]!.text),
+          };
+        })
         .toList();
 
     if (items.isEmpty) {
@@ -345,7 +354,7 @@ class _CreateSaleReturnScreenState extends State<CreateSaleReturnScreen> {
                           separatorBuilder: (_, __) => const Divider(height: 8),
                           itemBuilder: (_, i) {
                             final item = _saleItems[i];
-                            final id = item['id'] as int;
+                            final id = _toInt(item['id']);
                             final name = item['product']?['name'] ?? '—';
                             final soldQty = item['quantity'] ?? 0;
                             final price = _unitPrice[id] ?? 0.0;       // TP
@@ -420,9 +429,9 @@ class _CreateSaleReturnScreenState extends State<CreateSaleReturnScreen> {
                                             int.tryParse(v.trim()) ?? 0;
                                         // clamp 0..soldQty
                                         if (parsed < 0 ||
-                                            parsed > (soldQty as int)) {
+                                            parsed > _toInt(soldQty)) {
                                           final clamped = parsed
-                                              .clamp(0, soldQty as int);
+                                              .clamp(0, _toInt(soldQty));
                                           _qtyControllers[id]!.text =
                                               clamped.toString();
                                           _qtyControllers[id]!.selection =
