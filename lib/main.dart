@@ -7,6 +7,8 @@ import 'providers/printer_config_provider.dart';
 import 'screens/login_screen.dart';
 import 'screens/home_screen.dart';
 import 'theme/app_theme.dart';
+import 'services/app_navigator.dart';
+import 'widgets/app_keyboard_shortcuts.dart';
 
 void main() {
   runApp(const MyApp());
@@ -25,11 +27,25 @@ class MyApp extends StatelessWidget {
       ],
       child: MaterialApp(
         debugShowCheckedModeBanner: false,
+        navigatorKey: appNavigatorKey,
+        scaffoldMessengerKey: appScaffoldMessengerKey,
         title: 'Enterprise POS',
         theme: AppTheme.light,
         scrollBehavior: const _AppScrollBehavior(),
-        home: Consumer<AuthProvider>(
-          builder: (ctx, auth, _) => auth.isAuthenticated ? const HomeScreen() : const LoginScreen(),
+        builder: (context, child) => AppKeyboardShortcuts(child: child ?? const SizedBox.shrink()),
+        home: Consumer2<AuthProvider, BranchProvider>(
+          builder: (ctx, auth, branchProvider, _) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (!ctx.mounted) return;
+              if (auth.isAuthenticated) {
+                branchProvider.syncFromAuthUser(auth.user);
+              } else {
+                branchProvider.reset();
+              }
+            });
+
+            return auth.isAuthenticated ? const HomeScreen() : const LoginScreen();
+          },
         ),
       ),
     );

@@ -318,12 +318,11 @@ class _StockScreenState extends State<StockScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final noBranch = context.watch<BranchProvider>().isAll;
     return Scaffold(
       appBar: AppBar(
         title: const Text("Stocks"),
         actions: [
-          // BranchIndicator(tappable: false),
+          const BranchIndicator(tappable: false),
           IconButton(
             onPressed: () => _fetchStocks(page: 1),
             icon: const Icon(Icons.refresh),
@@ -337,33 +336,6 @@ class _StockScreenState extends State<StockScreen> {
             padding: const EdgeInsets.all(8.0),
             child: Row(
               children: [
-                if (noBranch)
-                Expanded(
-                  child: DropdownButtonFormField<String>(
-                    value: _selectedBranchId,
-                    hint: const Text("Filter by Branch"),
-                    decoration: const InputDecoration(
-                      border: OutlineInputBorder(),
-                    ),
-                    items: [
-                      const DropdownMenuItem<String>(
-                        value: null,
-                        child: Text("All Branches"), // unselect option
-                      ),
-                      ..._branches.map<DropdownMenuItem<String>>(
-                        (b) => DropdownMenuItem(
-                          value: b['id'].toString(),
-                          child: Text(b['name']),
-                        ),
-                      ),
-                    ],
-                    onChanged: (val) {
-                      setState(() => _selectedBranchId = val);
-                      _fetchStocks(page: 1);
-                    },
-                  ),
-                ),
-                const SizedBox(width: 8),
                 Expanded(
                   child: InkWell(
                     onTap: () async {

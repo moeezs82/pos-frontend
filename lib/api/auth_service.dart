@@ -18,6 +18,15 @@ class AuthService {
     await _client.post("/logout");
   }
 
+  /// Master admin active-branch switch.
+  /// Backend updates users.branch_id, then all branch-scoped endpoints use it.
+  Future<Map<String, dynamic>> switchBranch(int? branchId) async {
+    return await _client.post(
+      "/switch-branch",
+      body: {"branch_id": branchId},
+    );
+  }
+
   /// Optional: register new account
   Future<Map<String, dynamic>> register(Map<String, dynamic> data) async {
     return await _client.post("/register", body: data);

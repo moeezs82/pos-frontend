@@ -6,11 +6,13 @@ class PartySectionCard extends StatelessWidget {
   final bool isAll;
   final Map<String, dynamic>? selectedCustomer;
   final Map<String, dynamic>? selectedUser;
+  final Map<String, dynamic>? selectedDeliveryBoy;
   final Map<String, dynamic>? selectedBranch;
   final Map<String, dynamic>? selectedVendor;
 
   final VoidCallback onPickCustomer;
   final VoidCallback onPickUser;
+  final VoidCallback onPickDeliveryBoy;
   final VoidCallback onPickVendor;
   final VoidCallback onClearVendor;
 
@@ -19,10 +21,12 @@ class PartySectionCard extends StatelessWidget {
     required this.isAll,
     required this.selectedCustomer,
     required this.selectedUser,
+    required this.selectedDeliveryBoy,
     required this.selectedBranch,
     required this.selectedVendor,
     required this.onPickCustomer,
     required this.onPickUser,
+    required this.onPickDeliveryBoy,
     required this.onPickVendor,
     required this.onClearVendor,
   });
@@ -34,7 +38,7 @@ class PartySectionCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('Customer & staff', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
+          const Text('Customer, staff & delivery', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
           const SizedBox(height: 12),
           LayoutBuilder(
             builder: (context, constraints) {
@@ -51,6 +55,12 @@ class PartySectionCard extends StatelessWidget {
                   icon: Icons.badge_outlined,
                   valueText: selectedUser?['name']?.toString() ?? 'Select salesman',
                   onTap: onPickUser,
+                ),
+                SelectField(
+                  label: 'Delivery Boy',
+                  icon: Icons.delivery_dining_rounded,
+                  valueText: selectedDeliveryBoy?['name']?.toString() ?? 'Optional',
+                  onTap: onPickDeliveryBoy,
                 ),
                 SelectField(
                   label: 'Vendor',
@@ -80,6 +90,8 @@ class PartySectionCard extends StatelessWidget {
                   Expanded(child: fields[1]),
                   const SizedBox(width: 10),
                   Expanded(child: fields[2]),
+                  const SizedBox(width: 10),
+                  Expanded(child: fields[3]),
                 ],
               );
             },

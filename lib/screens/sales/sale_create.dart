@@ -11,7 +11,10 @@ import 'package:enterprise_pos/widgets/vendor_picker_sheet.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/enterprise/enterprise_panel.dart';
 import 'package:enterprise_pos/widgets/app_feedback.dart';
+import 'package:enterprise_pos/widgets/branch_indicator.dart';
+import 'package:enterprise_pos/widgets/app_keyboard_shortcuts.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:enterprise_pos/services/thermal_printer_service.dart';
 import 'package:enterprise_pos/services/receipt_preview_service.dart';
@@ -44,6 +47,8 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
   int? _selectedVendorId;
   Map<String, dynamic>? _selectedUser;
   int? _selectedUserId;
+  Map<String, dynamic>? _selectedDeliveryBoy;
+  int? _selectedDeliveryBoyId;
 
   // cart & payments
   List<Map<String, dynamic>> _items = [];
@@ -108,6 +113,9 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     _didAutoOpenPicker = true;
     await Future.delayed(const Duration(milliseconds: 280));
     if (!mounted || _items.isNotEmpty) return;
+    final auth = context.read<AuthProvider>();
+    final branch = context.read<BranchProvider>();
+    if (auth.isMasterAdmin && !branch.hasActiveBranch) return;
     await _addItemManual();
   }
 
@@ -221,8 +229,40 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     });
   }
 
+  Future<void> _pickDeliveryBoy() async {
+    final globalBranchId = context.read<BranchProvider>().selectedBranchId;
+    final String? effectiveBranchIdStr =
+        globalBranchId?.toString() ?? _selectedBranchId;
+    final String effectiveBranchId = effectiveBranchIdStr ?? '';
+
+    final token = Provider.of<AuthProvider>(context, listen: false).token!;
+    final user = await showModalBottomSheet<Map<String, dynamic>?>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => UserPickerSheet(
+        token: token,
+        branchId: effectiveBranchId,
+        role: 'delivery',
+        title: 'Select Delivery Boy',
+        searchHint: 'Search delivery boy by name, email, phone…',
+        allowQuickAdd: false,
+      ),
+    );
+    if (!mounted) return;
+    setState(() {
+      _selectedDeliveryBoy = user;
+      _selectedDeliveryBoyId = _metaInt(user?['id']);
+    });
+  }
+
   // ---------------- Items ----------------
   Future<void> _addItemManual() async {
+    final auth = context.read<AuthProvider>();
+    final branch = context.read<BranchProvider>();
+    if (auth.isMasterAdmin && !branch.hasActiveBranch) {
+      AppFeedback.warning(context, 'Please select a working branch from Branch Control before selecting items.');
+      return;
+    }
     final token = Provider.of<AuthProvider>(context, listen: false).token!;
     // ✅ Already selected products in cart/items (for preselect)
     final alreadySelectedIds = _items
@@ -550,6 +590,11 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         id: _selectedUserId,
         fallbackName: _metaText(_selectedUser?['name']),
       ),
+      'delivery_boy_snapshot': _partySnapshot(
+        _selectedDeliveryBoy,
+        id: _selectedDeliveryBoyId,
+        fallbackName: _metaText(_selectedDeliveryBoy?['name']),
+      ),
       'vendor_snapshot': _partySnapshot(
         _selectedVendor,
         id: _selectedVendorId,
@@ -567,7 +612,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       'cash_received': cashReceived,
       'change_amount': changeAmount,
       'delivery': 0.0,
-      'sale_type': 'counter',
+      'sale_type': _selectedDeliveryBoyId != null ? 'delivery' : 'counter',
     };
 
     meta.removeWhere((_, value) =>
@@ -584,15 +629,14 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       return;
     }
 
+    final auth = context.read<AuthProvider>();
     final globalBranchId = context.read<BranchProvider>().selectedBranchId;
     final effectiveBranchId = globalBranchId?.toString() ?? _selectedBranchId;
 
-    // if (effectiveBranchId == null || effectiveBranchId.isEmpty) {
-    //   ScaffoldMessenger.of(context).showSnackBar(
-    //     const SnackBar(content: Text("Please select a branch (on Home)")),
-    //   );
-    //   return;
-    // }
+    if (auth.isMasterAdmin && globalBranchId == null) {
+      AppFeedback.warning(context, 'Please select a working branch from Branch Control before creating sale.');
+      return;
+    }
     double _rowNum(v) => double.tryParse(v?.toString() ?? '') ?? 0.0;
     final subtotal = _items.fold<double>(0.0, (sum, i) {
       final price = _rowNum(i['price']);
@@ -648,6 +692,8 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
             : null,
         vendorId: _selectedVendorId,
         userId: _selectedUserId,
+        deliveryBoyId: _selectedDeliveryBoyId,
+        saleType: _selectedDeliveryBoyId != null ? 'delivery' : null,
         items: _items,
         payments: paymentsToSend,
         discount: discount,
@@ -803,6 +849,8 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       _selectedVendorId = null;
       _selectedUser = null;
       _selectedUserId = null;
+      _selectedDeliveryBoy = null;
+      _selectedDeliveryBoyId = null;
       _autoCashIfEmpty = true;
 
       if (!keepInitialCustomer) {
@@ -875,6 +923,18 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     return Colors.green;
   }
 
+
+  static SingleActivator _ctrl(LogicalKeyboardKey key) => SingleActivator(key, control: true);
+  static SingleActivator _cmd(LogicalKeyboardKey key) => SingleActivator(key, meta: true);
+  static SingleActivator _ctrlShift(LogicalKeyboardKey key) => SingleActivator(key, control: true, shift: true);
+  static SingleActivator _cmdShift(LogicalKeyboardKey key) => SingleActivator(key, meta: true, shift: true);
+
+  void _focusBarcodeScanner() {
+    Future.delayed(const Duration(milliseconds: 50), () {
+      if (mounted) _barcodeFocusNode.requestFocus();
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final isAll = context.watch<BranchProvider>().isAll;
@@ -912,10 +972,12 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
           isAll: isAll,
           selectedCustomer: _selectedCustomer,
           selectedUser: _selectedUser,
+          selectedDeliveryBoy: _selectedDeliveryBoy,
           selectedBranch: _selectedBranch,
           selectedVendor: _selectedVendor,
           onPickCustomer: _pickCustomer,
           onPickUser: _pickUser,
+          onPickDeliveryBoy: _pickDeliveryBoy,
           onPickVendor: _pickVendor,
           onClearVendor: () => setState(() {
             _selectedVendor = null;
@@ -938,11 +1000,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       children: [
         _ScannerPanel(
           scannerEnabled: _scannerEnabled,
-          onActivateScanner: () {
-            Future.delayed(const Duration(milliseconds: 50), () {
-              _barcodeFocusNode.requestFocus();
-            });
-          },
+          onActivateScanner: _focusBarcodeScanner,
           onOpenPicker: _addItemManual,
         ),
         const SizedBox(height: 14),
@@ -978,16 +1036,47 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       ],
     );
 
-    return Scaffold(
+    return Focus(
+      autofocus: true,
+      skipTraversal: true,
+      child: CallbackShortcuts(
+        bindings: <ShortcutActivator, VoidCallback>{
+          const SingleActivator(LogicalKeyboardKey.f2): () => _addItemManual(),
+          _ctrl(LogicalKeyboardKey.keyI): () => _addItemManual(),
+          _cmd(LogicalKeyboardKey.keyI): () => _addItemManual(),
+          const SingleActivator(LogicalKeyboardKey.f3): () => _pickCustomer(),
+          _ctrlShift(LogicalKeyboardKey.keyC): () => _pickCustomer(),
+          _cmdShift(LogicalKeyboardKey.keyC): () => _pickCustomer(),
+          const SingleActivator(LogicalKeyboardKey.f4): () => _pickDeliveryBoy(),
+          _ctrlShift(LogicalKeyboardKey.keyD): () => _pickDeliveryBoy(),
+          _cmdShift(LogicalKeyboardKey.keyD): () => _pickDeliveryBoy(),
+          const SingleActivator(LogicalKeyboardKey.f9): _focusBarcodeScanner,
+          _ctrl(LogicalKeyboardKey.enter): () => _submitSale(),
+          _cmd(LogicalKeyboardKey.enter): () => _submitSale(),
+          _ctrl(LogicalKeyboardKey.numpadEnter): () => _submitSale(),
+          _cmd(LogicalKeyboardKey.numpadEnter): () => _submitSale(),
+          _ctrl(LogicalKeyboardKey.slash): () => showAppShortcutGuide(context, includeSaleCreate: true),
+          _cmd(LogicalKeyboardKey.slash): () => showAppShortcutGuide(context, includeSaleCreate: true),
+        },
+        child: Scaffold(
       appBar: AppBar(
         title: const Text('Create Sale'),
         actions: [
+          IconButton(
+            tooltip: 'Sale shortcuts',
+            onPressed: () => showAppShortcutGuide(context, includeSaleCreate: true),
+            icon: const Icon(Icons.keyboard_rounded),
+          ),
+          const Padding(
+            padding: EdgeInsets.only(right: 8),
+            child: BranchIndicator(tappable: false),
+          ),
           Padding(
             padding: const EdgeInsets.only(right: 8),
             child: OutlinedButton.icon(
               onPressed: _addItemManual,
               icon: const Icon(Icons.inventory_2_outlined, size: 18),
-              label: const Text('Select items'),
+              label: const Text('Items (F2)'),
             ),
           ),
         ],
@@ -1057,6 +1146,8 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
           ),
           Positioned(left: 0, top: 0, child: _hiddenBarcodeField()),
         ],
+      ),
+        ),
       ),
     );
   }
@@ -1375,7 +1466,7 @@ class _CreateSaleBottomBar extends StatelessWidget {
               icon: submitting
                   ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
                   : const Icon(Icons.check_circle_rounded),
-              label: Text(submitting ? 'Saving...' : 'Save Sale'),
+              label: Text(submitting ? 'Saving...' : 'Save Sale  Ctrl+Enter'),
             ),
           );
 

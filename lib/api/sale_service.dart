@@ -16,6 +16,8 @@ class SaleService {
     int? customerId,
     int? vendorId,
     int? userId,
+    int? deliveryBoyId,
+    String? saleType,
     List<Map<String, dynamic>> items = const [],
     List<Map<String, dynamic>> payments = const [],
     double discount = 0.0,
@@ -30,6 +32,8 @@ class SaleService {
       if (customerId != null) "customer_id": customerId,
       if (vendorId != null) "vendor_id": vendorId,
       if (userId != null) "salesman_id": userId,
+      if (deliveryBoyId != null) "delivery_boy_id": deliveryBoyId,
+      if (saleType != null && saleType.isNotEmpty) "sale_type": saleType,
       if (meta != null) "meta": meta,
       "items": items
           .map(

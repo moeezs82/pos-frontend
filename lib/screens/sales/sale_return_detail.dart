@@ -281,7 +281,7 @@ class _SaleReturnDetailScreenState extends State<SaleReturnDetailScreen> {
           actions: const [
             Padding(
               padding: EdgeInsets.only(right: 8),
-              // child: BranchIndicator(tappable: false),
+              child: BranchIndicator(tappable: false),
             ),
           ],
         ),
@@ -330,7 +330,6 @@ class _SaleReturnDetailScreenState extends State<SaleReturnDetailScreen> {
                       Text(
                         "Customer: ${sale?['customer'] != null ? "${sale!['customer']['first_name']} ${sale['customer']['last_name'] ?? ''}".trim() : "Walk-In"}",
                       ),
-                      Text("Branch: ${sale?['branch']?['name'] ?? '—'}"),
                       if ((_return!['reason']?.toString().isNotEmpty ??
                           false)) ...[
                         const SizedBox(height: 8),

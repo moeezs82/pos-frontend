@@ -719,8 +719,6 @@ class _ReportCashbookScreenState extends State<ReportCashbookScreen> {
               spacing: 8,
               runSpacing: 8,
               children: [
-                if (_branchId != null)
-                  _FilterChip(label: 'Branch #$_branchId'),
                 _FilterChip(label: usingBank ? 'Cash + Bank' : 'Cash only'),
                 if (accountsBadge.isNotEmpty) _FilterChip(label: 'Accounts: ${accountsBadge.join(', ')}'),
               ],

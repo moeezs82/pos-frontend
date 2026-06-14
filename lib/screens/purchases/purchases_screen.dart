@@ -1,10 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
-import 'package:enterprise_pos/api/common_service.dart';
 import 'package:enterprise_pos/api/core/api_client.dart';
 import 'package:enterprise_pos/api/purchase_service.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
-import 'package:enterprise_pos/providers/branch_provider.dart';
 import 'package:enterprise_pos/screens/purchases/purchase_create.dart';
 import 'package:enterprise_pos/screens/purchases/purchase_detail.dart';
 import 'package:enterprise_pos/widgets/branch_indicator.dart';
@@ -25,7 +23,6 @@ class PurchasesScreen extends StatefulWidget {
 class _PurchasesScreenState extends State<PurchasesScreen> {
   // Data
   final _purchases = <dynamic>[];
-  List<Map<String, dynamic>> _branches = [];
 
   // Paging / loading
   int _currentPage = 1;
@@ -35,7 +32,6 @@ class _PurchasesScreenState extends State<PurchasesScreen> {
   bool get _hasMore => _currentPage < _lastPage;
 
   // Filters
-  String? _selectedBranchId; // used only when global=All
   int? _selectedVendorId;
   String? _selectedVendorLabel;
   String _sortBy = "date"; // 'date' | 'total'
@@ -50,14 +46,12 @@ class _PurchasesScreenState extends State<PurchasesScreen> {
   Timer? _searchDebounce;
 
   // Services
-  late CommonService _commonService;
   late PurchaseService _purchaseService;
 
   @override
   void initState() {
     super.initState();
     final token = Provider.of<AuthProvider>(context, listen: false).token!;
-    _commonService = CommonService(token: token);
     _purchaseService = PurchaseService(token: token);
     _attachScrollListener();
     _fetchInitial();
@@ -89,27 +83,16 @@ class _PurchasesScreenState extends State<PurchasesScreen> {
       _purchases.clear();
       _currentPage = 1;
     });
-    await Future.wait([_fetchBranches(), _fetchPurchases(page: 1, replace: true)]);
+    await _fetchPurchases(page: 1, replace: true);
     if (mounted) setState(() => _initialLoading = false);
   }
 
-  Future<void> _fetchBranches() async {
-    final result = await _commonService.getBranches();
-    if (!mounted) return;
-    setState(() => _branches = result);
-  }
 
   Future<void> _fetchPurchases({required int page, bool replace = false}) async {
-    final branchProv = context.read<BranchProvider>();
-    final isAll = branchProv.isAll;
-    final globalBranchId = branchProv.selectedBranchId;
-
     // Build params to match your Laravel index()
     final params = <String, String>{
       "page": page.toString(),
       "sort_by": _sortBy == 'total' ? 'total' : 'date',
-      if (!isAll && globalBranchId != null) "branch_id": globalBranchId.toString(),
-      if (isAll && _selectedBranchId != null) "branch_id": _selectedBranchId!,
       if (_selectedVendorId != null) "vendor_id": _selectedVendorId!.toString(),
       if (_searchQuery.isNotEmpty) "search": _searchQuery,
       if (_fromDate != null) "date_from": _fmtDate(_fromDate!),
@@ -253,8 +236,6 @@ class _PurchasesScreenState extends State<PurchasesScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final isAll = context.watch<BranchProvider>().isAll;
-
     return Scaffold(
       appBar: AppBar(
         title: const Text("Purchases"),
@@ -287,36 +268,6 @@ class _PurchasesScreenState extends State<PurchasesScreen> {
             padding: const EdgeInsets.fromLTRB(8, 6, 8, 4),
             child: Row(
               children: [
-                if (isAll) ...[
-                  Expanded(
-                    flex: 14,
-                    child: DropdownButtonFormField<String>(
-                      value: _selectedBranchId,
-                      decoration: const InputDecoration(
-                        labelText: "Branch",
-                        border: OutlineInputBorder(),
-                        isDense: true,
-                      ),
-                      items: [
-                        const DropdownMenuItem<String>(
-                          value: null,
-                          child: Text("All"),
-                        ),
-                        ..._branches.map(
-                          (b) => DropdownMenuItem<String>(
-                            value: b['id'].toString(),
-                            child: Text(b['name'].toString()),
-                          ),
-                        ),
-                      ],
-                      onChanged: (v) async {
-                        setState(() => _selectedBranchId = v);
-                        await _fetchInitial();
-                      },
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                ],
 
                 // Vendor selector
                 Expanded(
@@ -482,7 +433,6 @@ class _PurchasesScreenState extends State<PurchasesScreen> {
                               final vFirst = (p['vendor']?['first_name'] ?? '').toString();
                               final vLast  = (p['vendor']?['last_name'] ?? '').toString();
                               final vendor = [vFirst, vLast].where((s) => s.trim().isNotEmpty).join(' ');
-                              final branch = (p['branch']?['name'] ?? 'N/A').toString();
                               final total  = _toDouble(p['total']);
                               final paid   = _toDouble(p['paid_amount']);
                               final balance = (total - paid).clamp(0, double.infinity);
@@ -568,7 +518,7 @@ class _PurchasesScreenState extends State<PurchasesScreen> {
                                         children: [
                                           Expanded(
                                             child: Text(
-                                              "Vendor: ${vendor.isEmpty ? 'N/A' : vendor} • $branch",
+                                              "Vendor: ${vendor.isEmpty ? 'N/A' : vendor}",
                                               overflow: TextOverflow.ellipsis,
                                             ),
                                           ),

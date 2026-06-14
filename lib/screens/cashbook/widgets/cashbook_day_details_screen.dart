@@ -493,7 +493,6 @@ class _TxnRow extends StatelessWidget {
     final amountStr = _s(row['amount_signed']);
     final amount = double.tryParse(amountStr.replaceAll(',', '')) ?? 0.0;
 
-    final branchName = _s(row['branch']?['name']);
     final accountName = _s(row['account']?['name']);
     final ref = _s(row['reference']);
     final cpKind = _s(row['counterparty']?['kind']);
@@ -529,8 +528,7 @@ class _TxnRow extends StatelessWidget {
         minLeadingWidth: 0,
         contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
         title: Text(
-          "${type.toUpperCase()} • ${dir.toUpperCase()}"
-          "${branchName.isNotEmpty ? ' • $branchName' : ''}",
+          "${type.toUpperCase()} • ${dir.toUpperCase()}",
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: t.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),

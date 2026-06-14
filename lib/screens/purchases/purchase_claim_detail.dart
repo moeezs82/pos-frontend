@@ -413,7 +413,6 @@ class _PurchaseClaimDetailScreenState extends State<PurchaseClaimDetailScreen> {
                       Text(
                         "Vendor: ${purchase?['vendor']?['name'] ?? purchase?['vendor']?['first_name'] ?? 'N/A'}",
                       ),
-                      Text("Branch: ${_claim?['branch']?['name'] ?? 'N/A'}"),
                       Text("Type: ${_claim!['type'] ?? 'N/A'}"),
                       if ((_claim!['reason'] ?? '').toString().isNotEmpty) ...[
                         const SizedBox(height: 8),

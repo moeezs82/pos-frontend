@@ -745,9 +745,8 @@ class _PurchaseDetailScreenState extends State<PurchaseDetailScreen> {
                             Text(
                               "Vendor: ${[_purchase!['vendor']?['first_name'] ?? '', _purchase!['vendor']?['last_name'] ?? ''].where((s) => s.toString().trim().isNotEmpty).join(' ').trim()}",
                             ),
-                            Text(
-                              "Branch: ${_purchase!['branch']?['name'] ?? 'N/A'}",
-                            ),
+                            // Text(
+                            // ),
                           ],
                         ),
                       ),

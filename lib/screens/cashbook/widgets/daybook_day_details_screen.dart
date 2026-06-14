@@ -243,14 +243,6 @@ class _DayBookDayDetailsScreenState extends State<DayBookDayDetailsScreen> {
 
                 const Spacer(),
 
-                if (isAllBranch)
-                  const Padding(
-                    padding: EdgeInsets.only(right: 8.0),
-                    child: Text(
-                      "All branches",
-                      style: TextStyle(fontStyle: FontStyle.italic),
-                    ),
-                  ),
               ],
             ),
           ),

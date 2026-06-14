@@ -11,6 +11,7 @@ import 'package:enterprise_pos/services/report_file_saver.dart';
 import 'package:flutter/material.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/app_feedback.dart';
+import 'package:enterprise_pos/widgets/branch_indicator.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
@@ -36,7 +37,6 @@ class _PartyBalancesScreenState extends State<PartyBalancesScreen> {
 
   DateTime? _from;
   DateTime? _to;
-  int? _branchId;
   int _page = 1;
   int _perPage = 50;
 
@@ -71,8 +71,7 @@ class _PartyBalancesScreenState extends State<PartyBalancesScreen> {
       _reports = ReportsService(token: token);
       _customers = CustomerService(token: token);
       _vendors = VendorService(token: token);
-      // Do not inherit stale/global branch here. Null means all data.
-      _branchId = null;
+      // Branch scoping is resolved by backend from the logged-in user's active branch.
       _ready = true;
       _fetchBalances();
     });
@@ -89,7 +88,6 @@ class _PartyBalancesScreenState extends State<PartyBalancesScreen> {
   Map<String, dynamic> _baseFilters({bool export = false}) => {
         if (_from != null) 'from': _dateTimeFmt.format(_from!),
         if (_to != null) 'to': _dateTimeFmt.format(_to!),
-        if (_branchId != null) 'branch_id': _branchId,
         if (_searchCtrl.text.trim().isNotEmpty) 'search': _searchCtrl.text.trim(),
         'page': export ? 1 : _page,
         'per_page': export ? 1000 : (_searchCtrl.text.trim().isNotEmpty ? 250 : _perPage),
@@ -157,8 +155,7 @@ class _PartyBalancesScreenState extends State<PartyBalancesScreen> {
         filters: {
           if (_from != null) 'from': _dateTimeFmt.format(_from!),
           if (_to != null) 'to': _dateTimeFmt.format(_to!),
-          if (_branchId != null) 'branch_id': _branchId,
-          'party_type': _partyType,
+            'party_type': _partyType,
           'party_id': id,
           'page': 1,
           'per_page': 100,
@@ -267,9 +264,9 @@ class _PartyBalancesScreenState extends State<PartyBalancesScreen> {
 
     try {
       if (_isCustomer) {
-        await _customers.createReceipt(customerId: id, amount: amount, method: method, reference: refCtrl.text.trim(), branchId: _branchId);
+        await _customers.createReceipt(customerId: id, amount: amount, method: method, reference: refCtrl.text.trim(), branchId: null);
       } else {
-        await _vendors.createPayment(vendorId: id, amount: amount, method: method, reference: refCtrl.text.trim(), branchId: _branchId);
+        await _vendors.createPayment(vendorId: id, amount: amount, method: method, reference: refCtrl.text.trim(), branchId: null);
       }
       if (!mounted) return;
       AppFeedback.success(context, 'Payment saved successfully');
@@ -315,6 +312,7 @@ class _PartyBalancesScreenState extends State<PartyBalancesScreen> {
         title: Text(_title),
         centerTitle: false,
         actions: [
+          const Padding(padding: EdgeInsets.only(right: 8), child: BranchIndicator(tappable: false)),
           IconButton(tooltip: 'Refresh', onPressed: (!_ready || _loadingBalances) ? null : _fetchBalances, icon: const Icon(Icons.refresh_rounded)),
           OutlinedButton.icon(onPressed: (!_ready || _exporting) ? null : () => _export('xlsx'), icon: const Icon(Icons.table_chart_rounded), label: const Text('Excel')),
           const SizedBox(width: 8),
@@ -419,7 +417,6 @@ class _PartyBalancesScreenState extends State<PartyBalancesScreen> {
                     ),
                   ),
                 ),
-                _FilterChipButton(icon: Icons.store_rounded, label: _branchId == null ? 'All branches' : 'Branch #$_branchId', onTap: () { setState(() { _branchId = null; _page = 1; }); _fetchBalances(); }),
                 DropdownButtonHideUnderline(
                   child: DropdownButton<int>(
                     value: _perPage,

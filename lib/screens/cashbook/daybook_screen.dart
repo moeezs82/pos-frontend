@@ -236,7 +236,7 @@ class _DayBookScreenState extends State<DayBookScreen> {
           // Filters kept for UI; only branch/date affect daybook.
           CBFilters(
             accounts: _accounts,
-            showBranchNote: noBranch,
+            showBranchNote: false,
             accountValue: _accountId,
             methodValue: _method,
             typeValue: _type,

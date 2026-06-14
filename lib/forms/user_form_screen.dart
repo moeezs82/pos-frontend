@@ -1,7 +1,8 @@
 import 'package:enterprise_pos/api/user_service.dart';
 import 'package:enterprise_pos/api/role_service.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
-import 'package:enterprise_pos/providers/branch_provider.dart';
+import 'package:enterprise_pos/theme/app_theme.dart';
+import 'package:enterprise_pos/widgets/branch_indicator.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -20,8 +21,6 @@ class _UserFormScreenState extends State<UserFormScreen> {
   final _phone = TextEditingController();
   final _password = TextEditingController();
   bool _isActive = true;
-  int? _branchId;
-
   // Roles/permissions
   final Set<String> _pickedRoles = {};
   List<Map<String, dynamic>> _allRoles = [];
@@ -41,20 +40,18 @@ class _UserFormScreenState extends State<UserFormScreen> {
     _usersApi = UsersService(token: token);
     _rolesApi = RolesService(token: token);
 
-    _branchId = context.read<BranchProvider?>()?.selectedBranchId as int?;
-
     if (widget.user != null) {
       final u = widget.user!;
       _name.text = u['name'] ?? '';
       _email.text = u['email'] ?? '';
       _phone.text = u['phone'] ?? '';
       _isActive = (u['is_active'] == true) || (u['is_active'] == 1);
-      _branchId = u['branch_id'] ?? _branchId;
 
       final roles = (u['roles'] as List?) ?? [];
       _pickedRoles.addAll(
         roles
-            .map((e) => (e is String) ? e : (e['name'] ?? ''))
+            .map((e) => (e is String) ? e : (e['display_name'] ?? e['label'] ?? e['name'] ?? ''))
+            .map((s) => _stripBranchSuffix(s.toString()))
             .where((s) => s.toString().isNotEmpty)
             .cast<String>(),
       );
@@ -63,12 +60,34 @@ class _UserFormScreenState extends State<UserFormScreen> {
     _loadRoles();
   }
 
+
+  @override
+  void dispose() {
+    _name.dispose();
+    _email.dispose();
+    _phone.dispose();
+    _password.dispose();
+    _roleSearch.dispose();
+    super.dispose();
+  }
+
   Future<void> _loadRoles() async {
     try {
       final res = await _rolesApi.getRoles(page: 1, perPage: 200);
       // ApiResponse::success => {'success':true,'data': {pagination}}
-      final data = res['data'] as Map<String, dynamic>;
-      final items = (data['data'] as List).cast<Map<String, dynamic>>();
+      final data = res['data'];
+      final rawItems = data is List
+          ? data
+          : (data is Map && data['data'] is List ? data['data'] as List : const []);
+      final items = rawItems
+          .whereType<Map>()
+          .map((item) => item.cast<String, dynamic>())
+          .map((role) => {
+                ...role,
+                'name': _stripBranchSuffix((role['display_name'] ?? role['label'] ?? role['name'] ?? '').toString()),
+              })
+          .where((role) => !_isMasterRoleName((role['name'] ?? '').toString()))
+          .toList();
       setState(() => _allRoles = items);
     } catch (e) {
       if (mounted) {
@@ -85,6 +104,12 @@ class _UserFormScreenState extends State<UserFormScreen> {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _saving = true);
     try {
+      final selectedRoleIds = _allRoles
+          .where((role) => _pickedRoles.contains((role['name'] ?? '').toString()))
+          .map((role) => _readInt(role['id']))
+          .whereType<int>()
+          .toList();
+
       final payload = {
         "name": _name.text.trim(),
         "email": _email.text.trim(),
@@ -93,8 +118,10 @@ class _UserFormScreenState extends State<UserFormScreen> {
             ? _password.text
             : (_password.text.isEmpty ? null : _password.text),
         "is_active": _isActive,
-        "branch_id": _branchId, // if accepted by backend
-        "roles": _pickedRoles.toList(),
+        // Backend injects the active branch from the logged-in user's branch context.
+        // Do not send branch_id from the frontend so branch users never see branch logic.
+        if (selectedRoleIds.isNotEmpty) "role_ids": selectedRoleIds,
+        if (selectedRoleIds.isEmpty) "roles": _pickedRoles.toList(),
       };
 
       if (widget.user == null) {
@@ -339,7 +366,7 @@ class _UserFormScreenState extends State<UserFormScreen> {
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(
                           content: Text('Failed to create role: $e'),
-                          backgroundColor: theme.colorScheme.error,
+                          backgroundColor: AppTheme.danger,
                         ),
                       );
                     }
@@ -355,13 +382,18 @@ class _UserFormScreenState extends State<UserFormScreen> {
 
     // 3) After dialog: update roles list + auto-select
     if (createdRole != null && mounted) {
-      setState(() {
-        _allRoles.insert(0, createdRole);
-        final newName = (createdRole['name'] ?? '').toString();
-        if (newName.isNotEmpty) {
+      final rolePayload = (createdRole['role'] is Map)
+          ? (createdRole['role'] as Map).cast<String, dynamic>()
+          : createdRole;
+      final newName = _stripBranchSuffix((rolePayload['display_name'] ?? rolePayload['label'] ?? rolePayload['name'] ?? '').toString());
+      rolePayload['name'] = newName;
+
+      if (newName.isNotEmpty && !_isMasterRoleName(newName)) {
+        setState(() {
+          _allRoles.insert(0, rolePayload);
           _pickedRoles.add(newName); // auto-assign new role to this user
-        }
-      });
+        });
+      }
 
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Role created successfully')),
@@ -527,7 +559,7 @@ class _UserFormScreenState extends State<UserFormScreen> {
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(
                           content: Text('Failed to update role: $e'),
-                          backgroundColor: theme.colorScheme.error,
+                          backgroundColor: AppTheme.danger,
                         ),
                       );
                     }
@@ -542,7 +574,7 @@ class _UserFormScreenState extends State<UserFormScreen> {
     );
 
     if (updated == true && mounted) {
-      final newName = nameCtrl.text.trim();
+      final newName = _stripBranchSuffix(nameCtrl.text.trim());
 
       setState(() {
         final idx = _allRoles.indexWhere((r) => r['id'] == roleId);
@@ -567,7 +599,6 @@ class _UserFormScreenState extends State<UserFormScreen> {
   }
 
   Future<void> _confirmDeleteRole(Map<String, dynamic> role) async {
-    final theme = Theme.of(context);
     final roleId = role['id'] as int;
     final roleName = (role['name'] ?? '').toString();
 
@@ -585,7 +616,7 @@ class _UserFormScreenState extends State<UserFormScreen> {
           ),
           FilledButton(
             style: FilledButton.styleFrom(
-              backgroundColor: theme.colorScheme.error,
+              backgroundColor: AppTheme.danger,
             ),
             onPressed: () => Navigator.of(ctx).pop(true),
             child: const Text('Delete'),
@@ -626,6 +657,10 @@ class _UserFormScreenState extends State<UserFormScreen> {
         title: Text(isEdit ? "Edit User" : "New User"),
         centerTitle: true,
         actions: [
+          const Padding(
+            padding: EdgeInsets.only(right: 8),
+            child: BranchIndicator(tappable: false),
+          ),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 8),
             child: FilledButton.icon(
@@ -648,9 +683,9 @@ class _UserFormScreenState extends State<UserFormScreen> {
                     Card(
                       elevation: 0,
                       shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
+                        borderRadius: BorderRadius.circular(16),
                         side: BorderSide(
-                          color: theme.colorScheme.outlineVariant,
+                          color: AppTheme.border,
                         ),
                       ),
                       child: Padding(
@@ -661,7 +696,7 @@ class _UserFormScreenState extends State<UserFormScreen> {
                               children: [
                                 Icon(
                                   Icons.person,
-                                  color: theme.colorScheme.primary,
+                                  color: AppTheme.primary,
                                 ),
                                 const SizedBox(width: 8),
                                 Text(
@@ -723,9 +758,9 @@ class _UserFormScreenState extends State<UserFormScreen> {
                     Card(
                       elevation: 0,
                       shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
+                        borderRadius: BorderRadius.circular(16),
                         side: BorderSide(
-                          color: theme.colorScheme.outlineVariant,
+                          color: AppTheme.border,
                         ),
                       ),
                       child: Padding(
@@ -737,7 +772,7 @@ class _UserFormScreenState extends State<UserFormScreen> {
                               children: [
                                 Icon(
                                   Icons.security,
-                                  color: theme.colorScheme.primary,
+                                  color: AppTheme.primary,
                                 ),
                                 const SizedBox(width: 8),
                                 Text(
@@ -887,6 +922,29 @@ class _UserFormScreenState extends State<UserFormScreen> {
   }
 }
 
+
+int? _readInt(dynamic value) {
+  if (value == null) return null;
+  if (value is int) return value;
+  if (value is num) return value.toInt();
+  final parsed = int.tryParse(value.toString());
+  return parsed != null && parsed > 0 ? parsed : null;
+}
+
+bool _isMasterRoleName(String value) {
+  final normalized = _stripBranchSuffix(value)
+      .toLowerCase()
+      .replaceAll('_', ' ')
+      .replaceAll('-', ' ')
+      .replaceAll(RegExp(r'\s+'), ' ')
+      .trim();
+  return normalized == 'master admin' || normalized == 'super admin';
+}
+
+String _stripBranchSuffix(String value) {
+  return value.replaceFirst(RegExp(r'\s-\s.*\s\[branch:\d+\]$', caseSensitive: false), '').trim();
+}
+
 class _RoleCard extends StatefulWidget {
   final String name;
   final List<String> permissions;
@@ -925,13 +983,13 @@ class _RoleCardState extends State<_RoleCard> {
 
     return InkWell(
       onTap: () => widget.onChanged(!widget.selected),
-      borderRadius: BorderRadius.circular(12),
+      borderRadius: BorderRadius.circular(16),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 180),
         curve: Curves.easeInOut,
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(16),
           border: Border.all(
             color: widget.selected
                 ? theme.colorScheme.primary

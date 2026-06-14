@@ -5,7 +5,6 @@ import 'package:enterprise_pos/widgets/vendor_picker_sheet.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/auth_provider.dart';
-import '../providers/branch_provider.dart';
 
 class ProductFormScreen extends StatefulWidget {
   final Map<String, dynamic>? product;
@@ -45,19 +44,12 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
 
   List<Map<String, dynamic>> _categories = [];
   List<Map<String, dynamic>> _brands = [];
-  List<Map<String, dynamic>> _branches = [];
-  List<Map<String, dynamic>> _visibleBranches = [];
-
-  final Map<int, TextEditingController> _branchStockControllers = {};
 
   late ProductService _productService;
   late CommonService _commonService;
 
   bool get _isEdit => widget.product != null;
 
-  // ---- Branch helpers (use BranchProvider API you already have) ----
-  bool _isAllBranchesSelected(BranchProvider bp) => bp.isAll;
-  int? _activeBranchId(BranchProvider bp) => bp.selectedBranchId;
 
   @override
   void initState() {
@@ -110,38 +102,10 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
     try {
       final cats = await _commonService.getCategories();
       final brands = await _commonService.getBrands();
-      final branches = await _commonService.getBranches();
-
-      final bp = Provider.of<BranchProvider>(context, listen: false);
-      final showAll = _isAllBranchesSelected(bp);
-      final activeId = _activeBranchId(bp);
-
-      final visible = showAll
-          ? branches
-          : branches.where((b) => b['id'] == activeId).toList();
 
       setState(() {
         _categories = cats;
         _brands = brands;
-        _branches = branches;
-        _visibleBranches = visible;
-
-        // controllers for visible branches only
-        if (widget.product != null && widget.product!['stocks'] != null) {
-          for (final b in _visibleBranches) {
-            final stock = (widget.product!['stocks'] as List).firstWhere(
-              (s) => s['branch_id'] == b['id'],
-              orElse: () => {"quantity": 0},
-            );
-            _branchStockControllers[b['id']] = TextEditingController(
-              text: (stock['quantity'] ?? 0).toString(),
-            );
-          }
-        } else {
-          for (final b in _visibleBranches) {
-            _branchStockControllers[b['id']] = TextEditingController(text: "0");
-          }
-        }
       });
     } catch (e) {
       debugPrint("Error loading initial data: $e");
@@ -189,72 +153,6 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
     );
   }
 
-  Future<void> _addBranch() async {
-    // Only meaningful when "All Branches" is selected (button is hidden otherwise)
-    final nameController = TextEditingController();
-    final locController = TextEditingController();
-    final phoneController = TextEditingController();
-    bool isActive = true;
-
-    final result = await showDialog<Map<String, dynamic>>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text("Add Branch"),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: nameController,
-              decoration: const InputDecoration(labelText: "Name"),
-            ),
-            TextField(
-              controller: locController,
-              decoration: const InputDecoration(labelText: "Location"),
-            ),
-            TextField(
-              controller: phoneController,
-              decoration: const InputDecoration(labelText: "Phone"),
-            ),
-            SwitchListTile(
-              title: const Text("Active"),
-              value: isActive,
-              onChanged: (v) => isActive = v,
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text("Cancel"),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(ctx, {
-              "name": nameController.text,
-              "location": locController.text,
-              "phone": phoneController.text,
-              "is_active": isActive,
-            }),
-            child: const Text("Save"),
-          ),
-        ],
-      ),
-    );
-
-    if (result != null) {
-      final newBranch = await _commonService.createBranch(result);
-      setState(() {
-        _branches.add(newBranch);
-        final bp = Provider.of<BranchProvider>(context, listen: false);
-        if (_isAllBranchesSelected(bp)) {
-          _visibleBranches.add(newBranch);
-          _branchStockControllers[newBranch['id']] = TextEditingController(
-            text: "0",
-          );
-        }
-      });
-    }
-  }
-
   Future<void> _pickVendor() async {
     final token = Provider.of<AuthProvider>(context, listen: false).token!;
     final picked = await showModalBottomSheet<Map<String, dynamic>>(
@@ -277,11 +175,7 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _loading = true);
 
-    final branchStocks = _visibleBranches.map((b) {
-      final qty =
-          double.tryParse(_branchStockControllers[b['id']]?.text ?? "0") ?? 0.0;
-      return {"branch_id": b['id'], "quantity": qty};
-    }).toList();
+    final branchStocks = <Map<String, dynamic>>[];
 
     final payload = {
       "sku": _skuController.text,
@@ -327,10 +221,6 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final bp = Provider.of<BranchProvider>(context); // listen for UI toggles
-    final showAll = _isAllBranchesSelected(bp);
-    final activeId = _activeBranchId(bp);
-
     final fixedVendorId = widget.vendorId; // lock if provided to screen
     final productVendorId =
         widget.product?['vendor_id']; // vendor from existing product
@@ -595,72 +485,6 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
                 ),
               ),
               const SizedBox(height: 12),
-
-              // Branch Stocks
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Text(
-                    "Branch Stocks",
-                    style: TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                  if (!_isEdit && showAll)
-                    IconButton(
-                      icon: const Icon(Icons.add_business, color: Colors.green),
-                      onPressed: _addBranch,
-                    ),
-                ],
-              ),
-
-              if (_isEdit)
-                Column(
-                  children: (() {
-                    final stocks =
-                        (widget.product?['stocks'] as List<dynamic>? ?? []);
-                    final filtered = showAll
-                        ? stocks
-                        : stocks
-                              .where((s) => s['branch_id'] == activeId)
-                              .toList();
-                    return filtered.map((stock) {
-                      final branchName =
-                          stock['branch']?['name'] ??
-                          "Branch ${stock['branch_id']}";
-                      final qty = stock['quantity'] ?? 0;
-                      return Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 6),
-                        child: ListTile(
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8),
-                            side: BorderSide(color: Colors.grey.shade300),
-                          ),
-                          title: Text(branchName),
-                          trailing: Text(
-                            "Qty: $qty",
-                            style: const TextStyle(fontWeight: FontWeight.bold),
-                          ),
-                        ),
-                      );
-                    }).toList();
-                  })(),
-                )
-              else
-                Column(
-                  children: _visibleBranches.map((b) {
-                    return Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 6),
-                      child: TextFormField(
-                        controller: _branchStockControllers[b['id']],
-                        keyboardType: TextInputType.number,
-                        decoration: InputDecoration(
-                          labelText: "${b['name']} Stock",
-                          border: const OutlineInputBorder(),
-                        ),
-                      ),
-                    );
-                  }).toList(),
-                ),
-
               const SizedBox(height: 24),
 
               SwitchListTile(

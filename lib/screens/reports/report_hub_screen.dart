@@ -8,6 +8,7 @@ import 'package:enterprise_pos/screens/reports/report_pnl_screen.dart';
 import 'package:enterprise_pos/screens/reports/report_stock_movement_screen.dart';
 import 'package:enterprise_pos/screens/reports/report_top_bottom_products_screen.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
+import 'package:enterprise_pos/widgets/branch_indicator.dart';
 import 'package:flutter/material.dart';
 
 class ReportsHubScreen extends StatelessWidget {
@@ -19,7 +20,7 @@ class ReportsHubScreen extends StatelessWidget {
     final cols = width >= 1200 ? 4 : width >= 900 ? 3 : width >= 620 ? 2 : 1;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Reports Command Center'), centerTitle: false),
+      appBar: AppBar(title: const Text('Reports Command Center'), centerTitle: false, actions: const [Padding(padding: EdgeInsets.only(right: 8), child: BranchIndicator(tappable: false))]),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
         children: [

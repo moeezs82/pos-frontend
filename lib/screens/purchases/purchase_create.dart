@@ -7,7 +7,6 @@ import 'package:enterprise_pos/screens/sales/parts/sale_totals_card.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/app_feedback.dart';
 import 'package:enterprise_pos/widgets/branch_indicator.dart';
-import 'package:enterprise_pos/widgets/branch_picker_sheet.dart';
 import 'package:enterprise_pos/widgets/enterprise/enterprise_panel.dart';
 import 'package:enterprise_pos/widgets/product_picker_grid_sheet.dart';
 import 'package:enterprise_pos/widgets/vendor_picker_sheet.dart';
@@ -87,6 +86,9 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
     _didAutoOpenPicker = true;
     await Future.delayed(const Duration(milliseconds: 280));
     if (!mounted || _items.isNotEmpty) return;
+    final auth = context.read<AuthProvider>();
+    final branch = context.read<BranchProvider>();
+    if (auth.isMasterAdmin && !branch.hasActiveBranch) return;
     await _addItemManual();
   }
 
@@ -99,17 +101,11 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
     super.dispose();
   }
 
-  Future<void> _pickBranch() async {
-    final branch = await showModalBottomSheet<Map<String, dynamic>>(
-      context: context,
-      isScrollControlled: true,
-      builder: (_) => BranchPickerSheet(token: _token),
+  void _showBranchControlNotice() {
+    AppFeedback.warning(
+      context,
+      'Branch can only be switched from the dedicated Branch Control screen.',
     );
-    if (!mounted || branch == null) return;
-    setState(() {
-      _selectedBranch = branch;
-      _selectedBranchId = branch['id'].toString();
-    });
   }
 
   Future<void> _pickVendor() async {
@@ -183,6 +179,12 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
   }
 
   Future<void> _addItemManual() async {
+    final auth = context.read<AuthProvider>();
+    final branch = context.read<BranchProvider>();
+    if (auth.isMasterAdmin && !branch.hasActiveBranch) {
+      AppFeedback.warning(context, 'Please select a working branch from Branch Control before selecting items.');
+      return;
+    }
     final alreadySelectedIds = _items
         .map((e) => int.tryParse(e['product_id'].toString()) ?? 0)
         .where((id) => id > 0)
@@ -383,8 +385,13 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
       return;
     }
 
+    final auth = context.read<AuthProvider>();
     final globalBranchId = context.read<BranchProvider>().selectedBranchId;
-    final effectiveBranchId = globalBranchId?.toString() ?? _selectedBranchId;
+
+    if (auth.isMasterAdmin && globalBranchId == null) {
+      AppFeedback.warning(context, 'Please select a working branch from Branch Control before creating purchase.');
+      return;
+    }
 
     setState(() => _submitting = true);
 
@@ -425,7 +432,6 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
       }
 
       final payload = <String, dynamic>{
-        if (effectiveBranchId != null && effectiveBranchId.isNotEmpty) 'branch_id': effectiveBranchId,
         if (_selectedVendorId != null) 'vendor_id': _selectedVendorId,
         'discount': _discount,
         'tax': _tax,
@@ -504,7 +510,9 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final isAll = context.watch<BranchProvider>().isAll;
+    final auth = context.watch<AuthProvider>();
+    final branchProvider = context.watch<BranchProvider>();
+    final isBranchMissing = auth.isMasterAdmin && !branchProvider.hasActiveBranch;
     final width = MediaQuery.of(context).size.width;
     final wide = width >= 1080;
 
@@ -521,13 +529,13 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
     final purchaseSetupPanel = Column(
       children: [
         _PurchasePartyPanel(
-          isAll: isAll,
+          isAll: isBranchMissing,
           vendorLabel: vendorLabel,
-          branchLabel: _selectedBranch?['name']?.toString() ?? 'Select branch',
+          branchLabel: branchProvider.label,
           hasVendor: _selectedVendor != null,
           onPickVendor: _pickVendor,
           onClearVendor: _clearVendorSelection,
-          onPickBranch: _pickBranch,
+          onPickBranch: _showBranchControlNotice,
         ),
         const SizedBox(height: 14),
         _PurchaseOptionsPanel(
@@ -794,12 +802,7 @@ class _PurchasePartyPanel extends StatelessWidget {
         onClear: onClearVendor,
       ),
       if (isAll)
-        _SelectField(
-          label: 'Branch',
-          valueText: branchLabel,
-          icon: Icons.apartment_rounded,
-          onTap: onPickBranch,
-        ),
+        const _BranchRequiredNotice(),
     ];
 
     return EnterprisePanel(
@@ -809,7 +812,7 @@ class _PurchasePartyPanel extends StatelessWidget {
         children: [
           const EnterpriseSectionHeader(
             title: 'Purchase setup',
-            subtitle: 'Select vendor and branch before adding supplier items.',
+            subtitle: 'Select vendor before adding supplier items.',
             icon: Icons.receipt_long_outlined,
             color: AppTheme.primary,
           ),
@@ -825,6 +828,35 @@ class _PurchasePartyPanel extends StatelessWidget {
               }
               return Row(children: [Expanded(child: fields[0]), const SizedBox(width: 10), Expanded(child: fields[1])]);
             },
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+
+class _BranchRequiredNotice extends StatelessWidget {
+  const _BranchRequiredNotice();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppTheme.warning.withOpacity(.10),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppTheme.warning.withOpacity(.28)),
+      ),
+      child: const Row(
+        children: [
+          Icon(Icons.info_outline_rounded, color: AppTheme.warning),
+          SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Select a working branch from Branch Control before creating a purchase.',
+              style: TextStyle(fontWeight: FontWeight.w700, color: AppTheme.navy),
+            ),
           ),
         ],
       ),

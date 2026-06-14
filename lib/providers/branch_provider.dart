@@ -1,57 +1,102 @@
 import 'package:flutter/foundation.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
 class BranchProvider extends ChangeNotifier {
-  static const _kIdKey = 'branch_id';
-  static const _kNameKey = 'branch_name';
-
-  int? _selectedBranchId; // null = All branches
+  int? _selectedBranchId;
   String? _selectedBranchName;
-
-  bool _restored = false; // becomes true after first load
-
-  BranchProvider() {
-    _restore(); // fire-and-forget; notifies when done
-  }
+  bool _isMasterAdmin = false;
+  bool _restored = true;
 
   int? get selectedBranchId => _selectedBranchId;
-  String get label => _selectedBranchName ?? "All Branches";
+  String get label => _selectedBranchName ?? (_isMasterAdmin ? 'No Branch Selected' : 'No Branch Assigned');
   bool get isAll => _selectedBranchId == null;
+  bool get hasActiveBranch => _selectedBranchId != null;
   bool get restored => _restored;
+  bool get isMasterAdmin => _isMasterAdmin;
 
-  Future<void> _restore() async {
-    // Enterprise-safe default: do not auto-select a previously cached branch.
-    // If the backend has no branches or the old branch was deleted, stale storage
-    // can silently filter sales/reports. Always start in All Branches mode; users
-    // can still select a branch manually for the current session.
-    final sp = await SharedPreferences.getInstance();
-    await sp.remove(_kIdKey);
-    await sp.setString(_kNameKey, "All Branches");
+  /// Sync active branch from backend user payload.
+  ///
+  /// New backend rule:
+  /// - Normal users use their own users.branch_id.
+  /// - Master admin switches active branch by updating users.branch_id via API.
+  /// - branch_id null for master admin means no working branch has been selected yet.
+  void syncFromAuthUser(
+    Map<String, dynamic>? user, {
+    Map<String, dynamic>? activeBranch,
+  }) {
+    final nextIsMaster = _readBool(user?['is_master_admin']);
+    final branch = activeBranch ?? _asMap(user?['active_branch']) ?? _asMap(user?['branch']);
+    final nextId = _readInt(branch?['id']) ?? _readInt(user?['branch_id']);
+    final nextName = nextId == null
+        ? (nextIsMaster ? 'No Branch Selected' : 'No Branch Assigned')
+        : _cleanName(branch?['name']) ?? _cleanName(user?['branch_name']) ?? 'Branch #$nextId';
 
-    _selectedBranchId = null;
-    _selectedBranchName = "All Branches";
+    if (_selectedBranchId == nextId &&
+        _selectedBranchName == nextName &&
+        _isMasterAdmin == nextIsMaster &&
+        _restored) {
+      return;
+    }
+
+    _selectedBranchId = nextId;
+    _selectedBranchName = nextName;
+    _isMasterAdmin = nextIsMaster;
     _restored = true;
     notifyListeners();
   }
 
-  Future<void> _persist() async {
-    final sp = await SharedPreferences.getInstance();
-
-    if (_selectedBranchId == null) {
-      await sp.remove(_kIdKey);
-      await sp.setString(_kNameKey, "All Branches");
-    } else {
-      await sp.setInt(_kIdKey, _selectedBranchId!);
-      await sp.setString(_kNameKey, _selectedBranchName ?? "All Branches");
-    }
-  }
-
+  /// Local mirror update after a successful backend branch switch.
   void setBranch({int? id, String? name}) {
+    final nextName = id == null
+        ? (_isMasterAdmin ? 'No Branch Selected' : 'No Branch Assigned')
+        : (_cleanName(name) ?? 'Branch #$id');
+    if (_selectedBranchId == id && _selectedBranchName == nextName) return;
     _selectedBranchId = id;
-    _selectedBranchName = name ?? (id == null ? "All Branches" : "Branch #$id");
-    _persist(); // no need to await
+    _selectedBranchName = nextName;
+    _restored = true;
     notifyListeners();
   }
 
-  void clear() => setBranch(id: null, name: "All Branches");
+  void clear() => setBranch(id: null);
+
+  void reset() {
+    if (_selectedBranchId == null &&
+        _selectedBranchName == 'No Branch Assigned' &&
+        !_isMasterAdmin &&
+        _restored) {
+      return;
+    }
+    _selectedBranchId = null;
+    _selectedBranchName = 'No Branch Assigned';
+    _isMasterAdmin = false;
+    _restored = true;
+    notifyListeners();
+  }
+
+  static Map<String, dynamic>? _asMap(dynamic value) {
+    if (value is Map<String, dynamic>) return value;
+    if (value is Map) return value.cast<String, dynamic>();
+    return null;
+  }
+
+  static int? _readInt(dynamic value) {
+    if (value == null) return null;
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    final parsed = int.tryParse(value.toString());
+    return parsed != null && parsed > 0 ? parsed : null;
+  }
+
+  static bool _readBool(dynamic value) {
+    if (value is bool) return value;
+    if (value is num) return value != 0;
+    final text = value?.toString().trim().toLowerCase();
+    return text == '1' || text == 'true' || text == 'yes';
+  }
+
+  static String? _cleanName(dynamic value) {
+    final text = value?.toString().trim();
+    return text == null || text.isEmpty ? null : text;
+  }
+
+
 }

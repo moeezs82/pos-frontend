@@ -10,12 +10,20 @@ class UsersService {
     int perPage = 20,
     String? search,
     String? branchId,
+    String? role,
+    bool includeBalance = false,
+    bool includeDeliveryBalance = false,
+    bool excludeMasterAdmin = true,
   }) async {
     final query = {
       "page": page.toString(),
       "per_page": perPage.toString(),
       if (search != null && search.isNotEmpty) "search": search,
-      // if (branchId != null) "branch_id": branchId.toString(),
+      if (role != null && role.isNotEmpty) "role": role,
+      if (includeBalance) "include_balance": "1",
+      if (includeDeliveryBalance) "include_delivery_balance": "1",
+      if (excludeMasterAdmin) "exclude_master_admin": "1",
+      // Branch scoping is enforced by backend active branch. Do not pass branch_id from UI.
     };
 
     final res = await _client.get("/users", query: query);

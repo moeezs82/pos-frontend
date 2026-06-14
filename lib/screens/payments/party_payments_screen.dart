@@ -1,9 +1,11 @@
 import 'package:enterprise_pos/api/customer_service.dart';
+import 'package:enterprise_pos/api/delivery_boy_service.dart';
 import 'package:enterprise_pos/api/vendor_service.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/providers/branch_provider.dart';
 import 'package:enterprise_pos/screens/customers/customers_edit_screen.dart';
 import 'package:enterprise_pos/screens/vendors/vendor_edit_screen.dart';
+import 'package:enterprise_pos/forms/user_form_screen.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/app_feedback.dart';
 import 'package:enterprise_pos/widgets/branch_indicator.dart';
@@ -13,7 +15,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
-enum PartyPaymentKind { customer, vendor }
+enum PartyPaymentKind { customer, vendor, deliveryBoy }
 
 class PartyPaymentsScreen extends StatefulWidget {
   const PartyPaymentsScreen({super.key});
@@ -25,6 +27,7 @@ class PartyPaymentsScreen extends StatefulWidget {
 class _PartyPaymentsScreenState extends State<PartyPaymentsScreen> {
   late CustomerService _customerService;
   late VendorService _vendorService;
+  late DeliveryBoyService _deliveryBoyService;
   VoidCallback? _branchListener;
 
   PartyPaymentKind _kind = PartyPaymentKind.customer;
@@ -54,6 +57,7 @@ class _PartyPaymentsScreenState extends State<PartyPaymentsScreen> {
     final token = context.read<AuthProvider>().token!;
     _customerService = CustomerService(token: token);
     _vendorService = VendorService(token: token);
+    _deliveryBoyService = DeliveryBoyService(token: token);
 
     final branchProvider = context.read<BranchProvider>();
     _branchListener = () => _reloadAll(keepSelection: true);
@@ -103,19 +107,25 @@ class _PartyPaymentsScreenState extends State<PartyPaymentsScreen> {
 
     try {
       final branchId = context.read<BranchProvider>().selectedBranchId;
-      final res = _kind == PartyPaymentKind.customer
-          ? await _customerService.getCustomers(
-              page: 1,
-              search: _search,
-              includeBalance: true,
-              branchId: branchId,
-            )
-          : await _vendorService.getVendors(
-              page: 1,
-              search: _search,
-              includeBalance: true,
-              branchId: branchId,
-            );
+      final res = switch (_kind) {
+        PartyPaymentKind.customer => await _customerService.getCustomers(
+            page: 1,
+            search: _search,
+            includeBalance: true,
+            branchId: branchId,
+          ),
+        PartyPaymentKind.vendor => await _vendorService.getVendors(
+            page: 1,
+            search: _search,
+            includeBalance: true,
+            branchId: branchId,
+          ),
+        PartyPaymentKind.deliveryBoy => await _deliveryBoyService.getDeliveryBoys(
+            page: 1,
+            search: _search,
+            branchId: branchId,
+          ),
+      };
 
       final loaded = _extractParties(res);
       if (!mounted) return;
@@ -142,7 +152,11 @@ class _PartyPaymentsScreenState extends State<PartyPaymentsScreen> {
     }
     if (data is Map) {
       final map = Map<String, dynamic>.from(data);
-      final list = map[_kind == PartyPaymentKind.customer ? 'customers' : 'vendors'] ??
+      final list = map[_kind == PartyPaymentKind.customer
+              ? 'customers'
+              : _kind == PartyPaymentKind.vendor
+                  ? 'vendors'
+                  : 'delivery_boys'] ??
           map['items'] ??
           map['data'] ??
           const [];
@@ -171,6 +185,30 @@ class _PartyPaymentsScreenState extends State<PartyPaymentsScreen> {
 
     try {
       final branchId = context.read<BranchProvider>().selectedBranchId;
+
+      if (_kind == PartyPaymentKind.deliveryBoy) {
+        // Delivery boys do not use the customer/vendor ledger endpoints.
+        // Their workspace must be built from the dedicated delivery routes:
+        // GET /delivery-boys/{id}/orders and GET /delivery-boys/{id}/received.
+        // The list response already carries delivery_cash_summary/balance, so we
+        // reuse it here and avoid an extra summary call before loading records.
+        final ordersRes = await _deliveryBoyService.getOrders(id: id, page: 1, perPage: 8, branchId: branchId);
+        final receivedRes = await _deliveryBoyService.getReceived(id: id, page: 1, perPage: 8);
+
+        if (!mounted) return;
+        setState(() {
+          final orders = _extractItems(ordersRes);
+          final received = _extractItems(receivedRes);
+          _detail = _deliveryDetailFromParty(party, orders: orders, received: received);
+          _ledger
+            ..clear()
+            ..addAll(_deliveryActivityRows(orders: orders, received: received));
+          _opening = 0;
+          _ledgerTotal = _extractTotal(ordersRes, fallback: orders.length) + _extractTotal(receivedRes, fallback: received.length);
+        });
+        return;
+      }
+
       final detailRes = _kind == PartyPaymentKind.customer
           ? await _customerService.getCustomerDetail(id: id, branchId: branchId)
           : await _vendorService.getVendorDetail(id: id, branchId: branchId);
@@ -191,7 +229,7 @@ class _PartyPaymentsScreenState extends State<PartyPaymentsScreen> {
       });
     } catch (e) {
       if (!mounted) return;
-      setState(() => _detailError = 'Failed to load ${_kindLabel.toLowerCase()} balance/ledger: $e');
+      setState(() => _detailError = 'Failed to load ${_kindLabel.toLowerCase()} records: $e');
     } finally {
       if (mounted) setState(() => _loadingDetail = false);
     }
@@ -201,7 +239,11 @@ class _PartyPaymentsScreenState extends State<PartyPaymentsScreen> {
     final data = res['data'];
     if (data is Map) {
       final map = Map<String, dynamic>.from(data);
-      final nestedKey = _kind == PartyPaymentKind.customer ? 'customer' : 'vendor';
+      final nestedKey = _kind == PartyPaymentKind.customer
+          ? 'customer'
+          : _kind == PartyPaymentKind.vendor
+              ? 'vendor'
+              : 'delivery_boy';
       if (map[nestedKey] is Map) {
         return {
           ...map,
@@ -211,6 +253,42 @@ class _PartyPaymentsScreenState extends State<PartyPaymentsScreen> {
       return map;
     }
     return const <String, dynamic>{};
+  }
+
+  Map<String, dynamic> _deliveryDetailFromParty(
+    Map<String, dynamic> party, {
+    required List<Map<String, dynamic>> orders,
+    required List<Map<String, dynamic>> received,
+  }) {
+    final summaryRaw = party['delivery_cash_summary'] ?? party['cash_summary'];
+    final summary = summaryRaw is Map ? Map<String, dynamic>.from(summaryRaw) : <String, dynamic>{};
+
+    final fallbackOrdersTotal = _sumBy(orders, 'total');
+    final fallbackReceivedTotal = _sumBy(received, 'amount');
+    final ordersTotal = _toDouble(summary['orders_total'] ?? party['orders_total'] ?? fallbackOrdersTotal);
+    final receivedTotal = _toDouble(summary['received_total'] ?? party['received_total'] ?? fallbackReceivedTotal);
+
+    return <String, dynamic>{
+      ...party,
+      ...summary,
+      'orders_count': _toInt(summary['orders_count'] ?? party['orders_count']) ?? orders.length,
+      'orders_total': ordersTotal,
+      'received_count': _toInt(summary['received_count'] ?? party['received_count']) ?? received.length,
+      'received_total': receivedTotal,
+      'balance': _toDouble(summary['balance'] ?? party['balance'] ?? (ordersTotal - receivedTotal)),
+    };
+  }
+
+  double _sumBy(List<Map<String, dynamic>> rows, String key) {
+    return rows.fold<double>(0, (sum, row) => sum + _toDouble(row[key]));
+  }
+
+  int _extractTotal(Map<String, dynamic> res, {required int fallback}) {
+    final data = res['data'];
+    if (data is Map) {
+      return _toInt(data['total']) ?? fallback;
+    }
+    return fallback;
   }
 
   void _switchKind(PartyPaymentKind kind) {
@@ -253,26 +331,39 @@ class _PartyPaymentsScreenState extends State<PartyPaymentsScreen> {
       final amount = _toDouble(_amountController.text);
       final reference = _referenceController.text.trim();
 
-      if (_kind == PartyPaymentKind.customer) {
-        await _customerService.createReceipt(
-          customerId: id,
-          amount: amount,
-          branchId: branchId,
-          method: _method,
-          reference: reference,
-        );
-      } else {
-        await _vendorService.createPayment(
-          vendorId: id,
-          amount: amount,
-          branchId: branchId,
-          method: _method,
-          reference: reference,
-        );
+      switch (_kind) {
+        case PartyPaymentKind.customer:
+          await _customerService.createReceipt(
+            customerId: id,
+            amount: amount,
+            branchId: branchId,
+            method: _method,
+            reference: reference,
+          );
+          break;
+        case PartyPaymentKind.vendor:
+          await _vendorService.createPayment(
+            vendorId: id,
+            amount: amount,
+            branchId: branchId,
+            method: _method,
+            reference: reference,
+          );
+          break;
+        case PartyPaymentKind.deliveryBoy:
+          await _deliveryBoyService.createReceived(
+            deliveryBoyId: id,
+            amount: amount,
+          );
+          break;
       }
 
       if (!mounted) return;
-      AppFeedback.success(context, _kind == PartyPaymentKind.customer ? 'Customer receipt recorded' : 'Vendor payment recorded');
+      AppFeedback.success(context, switch (_kind) {
+        PartyPaymentKind.customer => 'Customer receipt recorded',
+        PartyPaymentKind.vendor => 'Vendor payment recorded',
+        PartyPaymentKind.deliveryBoy => 'Delivery boy cash received',
+      });
       _amountController.clear();
       _referenceController.clear();
       await _reloadAll(keepSelection: true);
@@ -289,9 +380,11 @@ class _PartyPaymentsScreenState extends State<PartyPaymentsScreen> {
     await Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => _kind == PartyPaymentKind.customer
-            ? CustomerEditScreen(customerId: id)
-            : VendorEditScreen(vendorId: id),
+        builder: (_) => switch (_kind) {
+          PartyPaymentKind.customer => CustomerEditScreen(customerId: id),
+          PartyPaymentKind.vendor => VendorEditScreen(vendorId: id),
+          PartyPaymentKind.deliveryBoy => UserFormScreen(user: _activeParty),
+        },
       ),
     );
     if (mounted) await _reloadAll(keepSelection: true);
@@ -304,10 +397,28 @@ class _PartyPaymentsScreenState extends State<PartyPaymentsScreen> {
     };
   }
 
-  String get _kindLabel => _kind == PartyPaymentKind.customer ? 'Customer' : 'Vendor';
-  String get _kindLabelPlural => _kind == PartyPaymentKind.customer ? 'Customers' : 'Vendors';
-  String get _paymentActionLabel => _kind == PartyPaymentKind.customer ? 'Receive Payment' : 'Make Payment';
-  String get _amountLabel => _kind == PartyPaymentKind.customer ? 'Received Amount' : 'Paid Amount';
+  String get _kindLabel => switch (_kind) {
+        PartyPaymentKind.customer => 'Customer',
+        PartyPaymentKind.vendor => 'Vendor',
+        PartyPaymentKind.deliveryBoy => 'Delivery Boy',
+      };
+
+  String get _kindLabelPlural => switch (_kind) {
+        PartyPaymentKind.customer => 'Customers',
+        PartyPaymentKind.vendor => 'Vendors',
+        PartyPaymentKind.deliveryBoy => 'Delivery Boys',
+      };
+
+  String get _paymentActionLabel => switch (_kind) {
+        PartyPaymentKind.customer => 'Receive Payment',
+        PartyPaymentKind.vendor => 'Make Payment',
+        PartyPaymentKind.deliveryBoy => 'Receive from Delivery Boy',
+      };
+
+  String get _amountLabel => switch (_kind) {
+        PartyPaymentKind.vendor => 'Paid Amount',
+        _ => 'Received Amount',
+      };
 
   int? _idOf(Map<String, dynamic> map) => _toInt(map['id']);
 
@@ -333,6 +444,9 @@ class _PartyPaymentsScreenState extends State<PartyPaymentsScreen> {
       final name = [first, last].where((e) => e.isNotEmpty).join(' ');
       return name.isEmpty ? (p['name'] ?? 'Walk-in Customer').toString() : name;
     }
+    if (_kind == PartyPaymentKind.deliveryBoy) {
+      return (p['name'] ?? 'Delivery Boy').toString();
+    }
     return (p['name'] ?? p['company_name'] ?? 'Vendor').toString();
   }
 
@@ -344,11 +458,68 @@ class _PartyPaymentsScreenState extends State<PartyPaymentsScreen> {
     return '${parts.first[0]}${parts.last[0]}'.toUpperCase();
   }
 
+  IconData get _kindIcon => switch (_kind) {
+        PartyPaymentKind.customer => Icons.people_alt_rounded,
+        PartyPaymentKind.vendor => Icons.groups_2_rounded,
+        PartyPaymentKind.deliveryBoy => Icons.delivery_dining_rounded,
+      };
+
+  Color get _kindColor => switch (_kind) {
+        PartyPaymentKind.customer => AppTheme.primary,
+        PartyPaymentKind.vendor => AppTheme.purple,
+        PartyPaymentKind.deliveryBoy => AppTheme.info,
+      };
+
+  List<Map<String, dynamic>> _extractItems(Map<String, dynamic> res) {
+    final data = res['data'];
+    if (data is Map && data['items'] is List) {
+      return (data['items'] as List).map((e) => Map<String, dynamic>.from(e as Map)).toList();
+    }
+    if (data is Map && data['data'] is List) {
+      return (data['data'] as List).map((e) => Map<String, dynamic>.from(e as Map)).toList();
+    }
+    if (data is List) {
+      return data.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+    }
+    return const [];
+  }
+
+  List<Map<String, dynamic>> _deliveryActivityRows({
+    required List<Map<String, dynamic>> orders,
+    required List<Map<String, dynamic>> received,
+  }) {
+    final rows = <Map<String, dynamic>>[
+      for (final order in orders)
+        {
+          'description': 'Order ${order['invoice_no'] ?? order['id'] ?? ''}'.trim(),
+          'source': [
+            order['customer_name'],
+          ].where((v) => (v ?? '').toString().trim().isNotEmpty).join(' • '),
+          'date': order['created_at'],
+          'debit': order['total'],
+          'credit': order['paid_amount'],
+          'balance': order['open_amount'],
+        },
+      for (final row in received)
+        {
+          'description': 'Cash Received',
+          'source': 'Delivery boy collection',
+          'date': row['created_at'],
+          'debit': 0,
+          'credit': row['amount'],
+          'balance': 0,
+        },
+    ];
+
+    rows.sort((a, b) => (b['date'] ?? '').toString().compareTo((a['date'] ?? '').toString()));
+    return rows;
+  }
+
   @override
   Widget build(BuildContext context) {
     return EnterprisePage(
       title: 'Party Payments',
-      subtitle: 'Receive customer dues and record vendor payments from one dedicated workspace.',
+      subtitle: 'Receive customer dues, record vendor payments, and collect delivery-boy cash from one workspace.',
       icon: Icons.account_balance_wallet_rounded,
       appBarActions: const [
         Padding(
@@ -378,6 +549,11 @@ class _PartyPaymentsScreenState extends State<PartyPaymentsScreen> {
                     value: PartyPaymentKind.vendor,
                     icon: Icon(Icons.groups_2_rounded),
                     label: Text('Vendors'),
+                  ),
+                  ButtonSegment(
+                    value: PartyPaymentKind.deliveryBoy,
+                    icon: Icon(Icons.delivery_dining_rounded),
+                    label: Text('Delivery Boys'),
                   ),
                 ],
                 selected: {_kind},
@@ -437,8 +613,8 @@ class _PartyPaymentsScreenState extends State<PartyPaymentsScreen> {
             child: EnterpriseSectionHeader(
               title: _kindLabelPlural,
               subtitle: _loadingParties ? 'Loading...' : '${_parties.length} loaded for quick payment',
-              icon: _kind == PartyPaymentKind.customer ? Icons.people_alt_rounded : Icons.groups_2_rounded,
-              color: _kind == PartyPaymentKind.customer ? AppTheme.primary : AppTheme.purple,
+              icon: _kindIcon,
+              color: _kindColor,
             ),
           ),
           const Divider(height: 1),
@@ -521,19 +697,37 @@ class _PartyPaymentsScreenState extends State<PartyPaymentsScreen> {
             subtitle: _partySubtitle(party),
             balance: _money(party['balance']),
             balanceColor: _balanceColor(_toDouble(party['balance'])),
-            primaryMetricLabel: _kind == PartyPaymentKind.customer ? 'Sales' : 'Purchases',
-            primaryMetricValue: _money(_kind == PartyPaymentKind.customer ? party['total_sales'] : party['total_purchases']),
-            secondaryMetricLabel: _kind == PartyPaymentKind.customer ? 'Receipts' : 'Payments',
-            secondaryMetricValue: _money(_kind == PartyPaymentKind.customer ? party['total_receipts'] : party['total_payments']),
+            primaryMetricLabel: switch (_kind) {
+              PartyPaymentKind.customer => 'Sales',
+              PartyPaymentKind.vendor => 'Purchases',
+              PartyPaymentKind.deliveryBoy => 'Orders',
+            },
+            primaryMetricValue: _money(switch (_kind) {
+              PartyPaymentKind.customer => party['total_sales'],
+              PartyPaymentKind.vendor => party['total_purchases'],
+              PartyPaymentKind.deliveryBoy => party['orders_total'],
+            }),
+            secondaryMetricLabel: switch (_kind) {
+              PartyPaymentKind.customer => 'Receipts',
+              PartyPaymentKind.vendor => 'Payments',
+              PartyPaymentKind.deliveryBoy => 'Received',
+            },
+            secondaryMetricValue: _money(switch (_kind) {
+              PartyPaymentKind.customer => party['total_receipts'],
+              PartyPaymentKind.vendor => party['total_payments'],
+              PartyPaymentKind.deliveryBoy => party['received_total'],
+            }),
             onDetails: _openDetails,
           ),
           const SizedBox(height: 12),
           _PaymentPanel(
             formKey: _formKey,
             title: _paymentActionLabel,
-            subtitle: _kind == PartyPaymentKind.customer
-                ? 'Record customer receipt against receivable balance.'
-                : 'Record supplier/vendor payment against payable balance.',
+            subtitle: switch (_kind) {
+              PartyPaymentKind.customer => 'Record customer receipt against receivable balance.',
+              PartyPaymentKind.vendor => 'Record supplier/vendor payment against payable balance.',
+              PartyPaymentKind.deliveryBoy => 'Record cash received from delivery boy against assigned delivery orders.',
+            },
             amountController: _amountController,
             referenceController: _referenceController,
             amountLabel: _amountLabel,
@@ -544,7 +738,8 @@ class _PartyPaymentsScreenState extends State<PartyPaymentsScreen> {
           ),
           const SizedBox(height: 12),
           _LedgerPanel(
-            title: 'Recent Ledger',
+            title: _kind == PartyPaymentKind.deliveryBoy ? 'Recent Delivery Cash Activity' : 'Recent Ledger',
+            detailsLabel: _kind == PartyPaymentKind.deliveryBoy ? 'User Details' : 'Full Ledger',
             opening: _opening,
             total: _ledgerTotal,
             rows: _ledger,
@@ -565,7 +760,9 @@ class _PartyPaymentsScreenState extends State<PartyPaymentsScreen> {
   }
 
   Color _balanceColor(double balance) {
-    if (balance > 0) return _kind == PartyPaymentKind.customer ? AppTheme.warning : AppTheme.danger;
+    if (balance > 0) {
+      return _kind == PartyPaymentKind.vendor ? AppTheme.danger : AppTheme.warning;
+    }
     if (balance < 0) return AppTheme.success;
     return AppTheme.textMuted;
   }
@@ -667,7 +864,11 @@ class _SummaryPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final accent = kind == PartyPaymentKind.customer ? AppTheme.primary : AppTheme.purple;
+    final accent = switch (kind) {
+      PartyPaymentKind.customer => AppTheme.primary,
+      PartyPaymentKind.vendor => AppTheme.purple,
+      PartyPaymentKind.deliveryBoy => AppTheme.info,
+    };
     return EnterprisePanel(
       elevated: true,
       child: Column(
@@ -850,6 +1051,7 @@ class _PaymentPanel extends StatelessWidget {
 class _LedgerPanel extends StatelessWidget {
   const _LedgerPanel({
     required this.title,
+    required this.detailsLabel,
     required this.opening,
     required this.total,
     required this.rows,
@@ -858,6 +1060,7 @@ class _LedgerPanel extends StatelessWidget {
   });
 
   final String title;
+  final String detailsLabel;
   final double opening;
   final int total;
   final List<Map<String, dynamic>> rows;
@@ -890,7 +1093,7 @@ class _LedgerPanel extends StatelessWidget {
               trailing: TextButton.icon(
                 onPressed: onDetails,
                 icon: const Icon(Icons.list_alt_rounded, size: 18),
-                label: const Text('Full Ledger'),
+                label: Text(detailsLabel),
               ),
             ),
           ),

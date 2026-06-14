@@ -265,7 +265,7 @@ class _SaleReturnsScreenState extends State<SaleReturnsScreen> {
       appBar: AppBar(
         title: const Text("Sale Returns"),
         actions: [
-          // const BranchIndicator(tappable: false),
+          const BranchIndicator(tappable: false),
           IconButton(
             onPressed: _fetchInitial,
             icon: const Icon(Icons.refresh),

@@ -273,7 +273,7 @@ class _CashBookScreenState extends State<CashBookScreen> {
         children: [
           CBFilters(
             accounts: _accounts,
-            showBranchNote: noBranch,
+            showBranchNote: false,
             accountValue: _accountId,
             methodValue: _method,
             typeValue: _type,

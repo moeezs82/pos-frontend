@@ -1,9 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
-import 'package:enterprise_pos/api/common_service.dart';
 import 'package:enterprise_pos/api/core/api_client.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
-import 'package:enterprise_pos/providers/branch_provider.dart';
 import 'package:enterprise_pos/screens/purchases/purchase_claim_create.dart';
 import 'package:enterprise_pos/screens/purchases/purchase_claim_detail.dart';
 import 'package:enterprise_pos/widgets/branch_indicator.dart';
@@ -24,7 +22,6 @@ class PurchaseClaimsScreen extends StatefulWidget {
 class _PurchaseClaimsScreenState extends State<PurchaseClaimsScreen> {
   // Data
   final _claims = <dynamic>[];
-  List<Map<String, dynamic>> _branches = [];
 
   // Paging / loading
   int _currentPage = 1;
@@ -34,7 +31,6 @@ class _PurchaseClaimsScreenState extends State<PurchaseClaimsScreen> {
   bool get _hasMore => _currentPage < _lastPage;
 
   // Filters
-  String? _selectedBranchId; // used only when global=All
   int? _selectedVendorId;
   String? _selectedVendorLabel;
   String? _status; // pending|approved|rejected|closed
@@ -49,13 +45,11 @@ class _PurchaseClaimsScreenState extends State<PurchaseClaimsScreen> {
   Timer? _searchDebounce;
 
   // Services
-  late CommonService _commonService;
 
   @override
   void initState() {
     super.initState();
     final token = Provider.of<AuthProvider>(context, listen: false).token!;
-    _commonService = CommonService(token: token);
     _attachScrollListener();
     _fetchInitial();
   }
@@ -84,25 +78,14 @@ class _PurchaseClaimsScreenState extends State<PurchaseClaimsScreen> {
       _claims.clear();
       _currentPage = 1;
     });
-    await Future.wait([_fetchBranches(), _fetchClaims(page: 1, replace: true)]);
+    await _fetchClaims(page: 1, replace: true);
     if (mounted) setState(() => _initialLoading = false);
   }
 
-  Future<void> _fetchBranches() async {
-    final result = await _commonService.getBranches();
-    if (!mounted) return;
-    setState(() => _branches = result);
-  }
 
   Future<void> _fetchClaims({required int page, bool replace = false}) async {
-    final branchProv = context.read<BranchProvider>();
-    final isAll = branchProv.isAll;
-    final globalBranchId = branchProv.selectedBranchId;
-
     final params = <String, String>{
       "page": page.toString(),
-      if (!isAll && globalBranchId != null) "branch_id": globalBranchId.toString(),
-      if (isAll && _selectedBranchId != null) "branch_id": _selectedBranchId!,
       if (_selectedVendorId != null) "vendor_id": _selectedVendorId!.toString(),
       if (_status != null && _status!.isNotEmpty) "status": _status!,
       if (_searchQuery.isNotEmpty) "search": _searchQuery,
@@ -254,8 +237,6 @@ class _PurchaseClaimsScreenState extends State<PurchaseClaimsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final isAll = context.watch<BranchProvider>().isAll;
-
     return Scaffold(
       appBar: AppBar(
         title: const Text("Purchase Claims"),
@@ -287,36 +268,6 @@ class _PurchaseClaimsScreenState extends State<PurchaseClaimsScreen> {
             padding: const EdgeInsets.fromLTRB(8, 6, 8, 4),
             child: Row(
               children: [
-                if (isAll) ...[
-                  Expanded(
-                    flex: 12,
-                    child: DropdownButtonFormField<String>(
-                      value: _selectedBranchId,
-                      decoration: const InputDecoration(
-                        labelText: "Branch",
-                        border: OutlineInputBorder(),
-                        isDense: true,
-                      ),
-                      items: [
-                        const DropdownMenuItem<String>(
-                          value: null,
-                          child: Text("All"),
-                        ),
-                        ..._branches.map(
-                          (b) => DropdownMenuItem<String>(
-                            value: b['id'].toString(),
-                            child: Text(b['name'].toString()),
-                          ),
-                        ),
-                      ],
-                      onChanged: (v) async {
-                        setState(() => _selectedBranchId = v);
-                        await _fetchInitial();
-                      },
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                ],
 
                 // Vendor selector
                 Expanded(
@@ -491,7 +442,6 @@ class _PurchaseClaimsScreenState extends State<PurchaseClaimsScreen> {
                               final invoice = (p?['invoice_no'] ?? 'N/A').toString();
                               final vendor =
                                   (p?['vendor']?['first_name'] ?? 'N/A').toString();
-                              final branch = (c['branch']?['name'] ?? 'N/A').toString();
 
                               final total = _toDouble(c['total']);
                               final received = _toDouble(c['received_total']);
@@ -591,7 +541,7 @@ class _PurchaseClaimsScreenState extends State<PurchaseClaimsScreen> {
                                         children: [
                                           Expanded(
                                             child: Text(
-                                              "Invoice: $invoice • Vendor: $vendor • $branch",
+                                              "Invoice: $invoice • Vendor: $vendor",
                                               overflow: TextOverflow.ellipsis,
                                             ),
                                           ),

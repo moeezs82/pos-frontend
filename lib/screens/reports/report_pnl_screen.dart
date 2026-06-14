@@ -130,8 +130,6 @@ class _ReportPnLScreenState extends State<ReportPnLScreen> {
                                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                                     ),
                                   ),
-                                  if (_branchId != null)
-                                    _FilterChip(label: 'Branch #$_branchId'),
                                 ],
                               ),
                             ),

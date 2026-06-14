@@ -264,7 +264,7 @@ class _SalesScreenState extends State<SalesScreen> {
       appBar: AppBar(
         title: const Text("Sales"),
         actions: [
-          // const BranchIndicator(tappable: false),
+          const BranchIndicator(tappable: false),
           IconButton(
             onPressed: () => _fetchInitial(),
             icon: const Icon(Icons.refresh),
@@ -494,8 +494,6 @@ class _SalesScreenState extends State<SalesScreen> {
                               final customer =
                                   (s['customer']?['first_name'] ?? 'Walk-in')
                                       .toString();
-                              final branch = (s['branch']?['name'] ?? 'N/A')
-                                  .toString();
                               final total = _toDouble(s['total']);
                               final paid = _toDouble(s['paid_amount']);
                               final balance = (total - paid).clamp(
@@ -646,7 +644,7 @@ class _SalesScreenState extends State<SalesScreen> {
                                         children: [
                                           Expanded(
                                             child: Text(
-                                              "Cust: $customer • $branch",
+                                              "Cust: $customer",
                                               overflow: TextOverflow.ellipsis,
                                             ),
                                           ),

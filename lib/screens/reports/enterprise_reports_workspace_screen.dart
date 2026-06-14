@@ -5,6 +5,7 @@ import 'package:enterprise_pos/services/report_file_saver.dart';
 import 'package:flutter/material.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/app_feedback.dart';
+import 'package:enterprise_pos/widgets/branch_indicator.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
@@ -28,7 +29,6 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
 
   DateTime? _from;
   DateTime? _to;
-  int? _branchId;
   String? _status;
   String? _method;
   int _page = 1;
@@ -58,9 +58,7 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final token = context.read<AuthProvider>().token!;
       _service = ReportsService(token: token);
-      // Reports should not inherit a stale/global branch automatically.
-      // When branch is null the API returns all data, which is correct for non-branch setups.
-      _branchId = null;
+      // Branch scoping is resolved by backend from the logged-in user's active branch.
       _ready = true;
       _fetch();
     });
@@ -78,7 +76,6 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
     return {
       if (_from != null) 'from': _dateTimeFmt.format(_from!),
       if (_to != null) 'to': _dateTimeFmt.format(_to!),
-      if (_branchId != null) 'branch_id': _branchId,
       if ((_searchCtrl.text).trim().isNotEmpty) 'search': _searchCtrl.text.trim(),
       if (_status != null && _status!.isNotEmpty) 'status': _status,
       if (_method != null && _method!.isNotEmpty) 'method': _method,
@@ -191,6 +188,7 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
         title: const Text('Enterprise Reports'),
         centerTitle: false,
         actions: [
+          const Padding(padding: EdgeInsets.only(right: 8), child: BranchIndicator(tappable: false)),
           IconButton(
             tooltip: 'Refresh',
             onPressed: (!_ready || _loading) ? null : _fetch,
@@ -345,17 +343,6 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
                   ),
           ),
         ),
-      ),
-      _FilterChipButton(
-        icon: Icons.store_mall_directory_rounded,
-        label: _branchId == null ? 'All branches' : 'Branch #$_branchId',
-        onTap: () {
-          setState(() {
-            _branchId = null;
-            _page = 1;
-          });
-          _fetch();
-        },
       ),
       DropdownButtonHideUnderline(
         child: DropdownButton<int>(
@@ -719,13 +706,12 @@ int _toInt(dynamic value, {required int fallback}) {
 
 const _enterpriseReports = <_EnterpriseReportMeta>[
   _EnterpriseReportMeta(key: 'sales-summary', title: 'Sales Summary', group: 'Sales', description: 'Daily invoices, net sales, returns, COGS and gross profit.', icon: Icons.summarize_rounded),
-  _EnterpriseReportMeta(key: 'sales-detail', title: 'Sales Detail', group: 'Sales', description: 'Invoice-level sales detail with payment and balance.', icon: Icons.receipt_long_rounded),
+  _EnterpriseReportMeta(key: 'sales-detail', title: 'Sales Detail', group: 'Sales', description: 'Invoice-level sales detail for audit and export.', icon: Icons.receipt_long_rounded),
   _EnterpriseReportMeta(key: 'sales-by-product', title: 'Sales by Product', group: 'Sales', description: 'Revenue, quantity, COGS and profit by SKU.', icon: Icons.inventory_2_rounded),
   _EnterpriseReportMeta(key: 'sales-by-category', title: 'Sales by Category', group: 'Sales', description: 'Category contribution and sales mix.', icon: Icons.category_rounded),
   _EnterpriseReportMeta(key: 'sales-by-brand', title: 'Sales by Brand', group: 'Sales', description: 'Brand performance by revenue and quantity.', icon: Icons.local_offer_rounded),
   _EnterpriseReportMeta(key: 'sales-by-customer', title: 'Sales by Customer', group: 'Sales', description: 'Customer-wise revenue and invoice count.', icon: Icons.people_alt_rounded),
   _EnterpriseReportMeta(key: 'sales-by-salesman', title: 'Sales by Cashier', group: 'Sales', description: 'Cashier or salesman performance.', icon: Icons.badge_rounded),
-  _EnterpriseReportMeta(key: 'sales-by-branch', title: 'Sales by Branch', group: 'Sales', description: 'Branch-wise turnover and profit.', icon: Icons.store_rounded),
   _EnterpriseReportMeta(key: 'sales-by-hour', title: 'Hourly Sales', group: 'Sales', description: 'Sales heatmap base by hour.', icon: Icons.schedule_rounded),
   _EnterpriseReportMeta(key: 'sales-by-payment-method', title: 'Payment Collection', group: 'Sales', description: 'Cash, card, bank and wallet collections.', icon: Icons.payments_rounded),
   _EnterpriseReportMeta(key: 'delivery-boy-cash', title: 'Delivery Boy Cash', group: 'Sales', description: 'Delivery boy cash received and pending.', icon: Icons.delivery_dining_rounded),
@@ -737,11 +723,10 @@ const _enterpriseReports = <_EnterpriseReportMeta>[
   _EnterpriseReportMeta(key: 'purchase-detail', title: 'Purchase Detail', group: 'Purchases', description: 'Bill-level supplier purchase detail.', icon: Icons.article_rounded),
   _EnterpriseReportMeta(key: 'purchase-by-product', title: 'Purchase by Product', group: 'Purchases', description: 'Purchased quantity and cost by SKU.', icon: Icons.add_business_rounded),
   _EnterpriseReportMeta(key: 'purchase-by-vendor', title: 'Purchase by Vendor', group: 'Purchases', description: 'Vendor-wise purchase volume.', icon: Icons.groups_2_rounded),
-  _EnterpriseReportMeta(key: 'purchase-by-branch', title: 'Purchase by Branch', group: 'Purchases', description: 'Branch-wise procurement.', icon: Icons.store_mall_directory_rounded),
   _EnterpriseReportMeta(key: 'vendor-payment-summary', title: 'Vendor Payments', group: 'Purchases', description: 'Payments made to vendors.', icon: Icons.outbox_rounded),
   _EnterpriseReportMeta(key: 'purchase-claim-summary', title: 'Purchase Claim Summary', group: 'Purchases', description: 'Damage/shortage claim summary.', icon: Icons.report_problem_rounded),
   _EnterpriseReportMeta(key: 'purchase-claim-detail', title: 'Purchase Claim Detail', group: 'Purchases', description: 'Detailed purchase claim rows.', icon: Icons.assignment_late_rounded),
-  _EnterpriseReportMeta(key: 'current-stock', title: 'Current Stock', group: 'Inventory', description: 'On-hand stock by product and branch.', icon: Icons.warehouse_rounded),
+  _EnterpriseReportMeta(key: 'current-stock', title: 'Current Stock', group: 'Inventory', description: 'On-hand stock by product.', icon: Icons.warehouse_rounded),
   _EnterpriseReportMeta(key: 'low-stock', title: 'Low Stock / Reorder', group: 'Inventory', description: 'Products below reorder level.', icon: Icons.warning_amber_rounded),
   _EnterpriseReportMeta(key: 'stock-valuation', title: 'Stock Valuation', group: 'Inventory', description: 'Inventory quantity and value.', icon: Icons.price_check_rounded),
   _EnterpriseReportMeta(key: 'stock-movement', title: 'Stock Movement Ledger', group: 'Inventory', description: 'In/out movement ledger.', icon: Icons.swap_vert_circle_rounded),

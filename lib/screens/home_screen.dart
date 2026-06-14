@@ -1,4 +1,6 @@
 import 'package:enterprise_pos/screens/account_screen.dart';
+import 'package:enterprise_pos/providers/branch_provider.dart';
+import 'package:enterprise_pos/screens/branches/branch_control_screen.dart';
 import 'package:enterprise_pos/screens/cashbook/cashbook_screen.dart';
 import 'package:enterprise_pos/screens/cashbook/expense_create_screen.dart';
 import 'package:enterprise_pos/screens/customers/customers_screen.dart';
@@ -12,8 +14,11 @@ import 'package:enterprise_pos/screens/sales/sale_create.dart';
 import 'package:enterprise_pos/screens/sales/sale_returns_screen.dart';
 import 'package:enterprise_pos/screens/sales/sale_screen.dart';
 import 'package:enterprise_pos/screens/stock_screen.dart';
+import 'package:enterprise_pos/screens/users_screen.dart';
 import 'package:enterprise_pos/screens/vendors/vendors_screen.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
+import 'package:enterprise_pos/widgets/branch_indicator.dart';
+import 'package:enterprise_pos/widgets/app_keyboard_shortcuts.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/auth_provider.dart';
@@ -25,6 +30,8 @@ class HomeScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthProvider>();
+    final branch = context.watch<BranchProvider>();
+    final masterNeedsBranch = auth.isMasterAdmin && !branch.hasActiveBranch;
     final width = MediaQuery.of(context).size.width;
     final cols = width >= 1280
         ? 4
@@ -35,15 +42,24 @@ class HomeScreen extends StatelessWidget {
                 : 1;
 
     final userName = (auth.user?['name'] ?? 'User').toString();
-    final rawRole = auth.user?['role'];
-    final role = rawRole is List && rawRole.isNotEmpty
-        ? (rawRole.first ?? 'Unknown').toString()
-        : (rawRole ?? 'Unknown').toString();
+    final role = auth.roleLabel;
+
+    _Tile branchControlTile() => _Tile(
+          icon: Icons.account_tree_rounded,
+          title: 'Branch Control',
+          shortcut: 'Ctrl+Shift+B',
+          subtitle: branch.hasActiveBranch ? 'Switch active branch' : 'Select working branch',
+          color: AppTheme.navy,
+          emphasized: true,
+          onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const BranchControlScreen())),
+        );
 
     final quickActions = <_Tile>[
+      if (auth.isMasterAdmin) branchControlTile(),
       _Tile(
         icon: Icons.point_of_sale_rounded,
         title: 'Create Sale',
+        shortcut: 'Ctrl+N / F2',
         subtitle: 'Fast checkout',
         color: AppTheme.primary,
         emphasized: true,
@@ -52,6 +68,7 @@ class HomeScreen extends StatelessWidget {
       _Tile(
         icon: Icons.receipt_long_rounded,
         title: 'Add Expense',
+        shortcut: 'Ctrl+E',
         subtitle: 'Cash/account expense',
         color: AppTheme.danger,
         emphasized: true,
@@ -60,6 +77,7 @@ class HomeScreen extends StatelessWidget {
       _Tile(
         icon: Icons.account_balance_wallet_rounded,
         title: 'Party Payments',
+        shortcut: 'Ctrl+M',
         subtitle: 'Customer/vendor payments',
         color: AppTheme.success,
         emphasized: true,
@@ -68,6 +86,7 @@ class HomeScreen extends StatelessWidget {
       _Tile(
         icon: Icons.shopping_cart_checkout_rounded,
         title: 'New Purchase',
+        shortcut: 'Ctrl+O',
         subtitle: 'Supplier invoice',
         color: AppTheme.warning,
         emphasized: true,
@@ -76,6 +95,7 @@ class HomeScreen extends StatelessWidget {
       _Tile(
         icon: Icons.analytics_rounded,
         title: 'Reports',
+        shortcut: 'Ctrl+R',
         subtitle: 'Balances & exports',
         color: AppTheme.purple,
         emphasized: true,
@@ -84,15 +104,16 @@ class HomeScreen extends StatelessWidget {
     ];
 
     final management = <_Tile>[
-      _Tile(icon: Icons.shopping_bag_rounded, title: 'Sales', subtitle: 'Invoices and payments', color: AppTheme.info, onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const SalesScreen()))),
-      _Tile(icon: Icons.account_balance_wallet_rounded, title: 'Cash Book', subtitle: 'Cash flow and daybook', color: AppTheme.primary, onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const CashBookScreen()))),
-      _Tile(icon: Icons.inventory_2_rounded, title: 'Products', subtitle: 'Catalog and prices', color: AppTheme.success, onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ProductsScreen()))),
-      _Tile(icon: Icons.warehouse_rounded, title: 'Stock', subtitle: 'Inventory on hand', color: AppTheme.danger, onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const StockScreen()))),
-      _Tile(icon: Icons.people_alt_rounded, title: 'Customers', subtitle: 'Receivables and profiles', color: AppTheme.warning, onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const CustomersScreen()))),
-      _Tile(icon: Icons.groups_2_rounded, title: 'Vendors', subtitle: 'Suppliers and payables', color: AppTheme.purple, onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const VendorsScreen()))),
-      _Tile(icon: Icons.assignment_return_rounded, title: 'Sale Returns', subtitle: 'Refund workflow', color: AppTheme.info, onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const SaleReturnsScreen()))),
-      _Tile(icon: Icons.shopping_cart_rounded, title: 'Purchases', subtitle: 'Bills and payments', color: AppTheme.primaryDark, onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PurchasesScreen()))),
+      _Tile(icon: Icons.shopping_bag_rounded, title: 'Sales', shortcut: 'Ctrl+L', subtitle: 'Invoices and payments', color: AppTheme.info, onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const SalesScreen()))),
+      _Tile(icon: Icons.account_balance_wallet_rounded, title: 'Cash Book', shortcut: 'Ctrl+B', subtitle: 'Cash flow and daybook', color: AppTheme.primary, onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const CashBookScreen()))),
+      _Tile(icon: Icons.inventory_2_rounded, title: 'Products', shortcut: 'Ctrl+P', subtitle: 'Catalog and prices', color: AppTheme.success, onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ProductsScreen()))),
+      _Tile(icon: Icons.warehouse_rounded, title: 'Stock', shortcut: 'Ctrl+I', subtitle: 'Inventory on hand', color: AppTheme.danger, onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const StockScreen()))),
+      _Tile(icon: Icons.people_alt_rounded, title: 'Customers', shortcut: 'Ctrl+Shift+C', subtitle: 'Receivables and profiles', color: AppTheme.warning, onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const CustomersScreen()))),
+      _Tile(icon: Icons.groups_2_rounded, title: 'Vendors', shortcut: 'Ctrl+Shift+V', subtitle: 'Suppliers and payables', color: AppTheme.purple, onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const VendorsScreen()))),
+      _Tile(icon: Icons.assignment_return_rounded, title: 'Sale Returns', shortcut: 'Ctrl+T', subtitle: 'Refund workflow', color: AppTheme.info, onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const SaleReturnsScreen()))),
+      _Tile(icon: Icons.shopping_cart_rounded, title: 'Purchases', shortcut: 'Ctrl+Shift+O', subtitle: 'Bills and payments', color: AppTheme.primaryDark, onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PurchasesScreen()))),
       _Tile(icon: Icons.assignment_return_outlined, title: 'Purchase Claim', subtitle: 'Damage/shortage claims', color: AppTheme.warning, onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PurchaseClaimsScreen()))),
+      _Tile(icon: Icons.manage_accounts_rounded, title: 'Users', shortcut: 'Ctrl+U', subtitle: 'Staff and role access', color: AppTheme.info, onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const UsersScreen()))),
       _Tile(icon: Icons.account_tree_rounded, title: 'Accounts', subtitle: 'Chart of accounts', color: AppTheme.navy, onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AccountsScreen()))),
     ];
 
@@ -100,6 +121,15 @@ class HomeScreen extends StatelessWidget {
       appBar: AppBar(
         title: const Text('CounterIQ POS'),
         actions: [
+          IconButton(
+            tooltip: 'Keyboard shortcuts (Ctrl + /)',
+            onPressed: () => showAppShortcutGuide(context),
+            icon: const Icon(Icons.keyboard_rounded),
+          ),
+          const Padding(
+            padding: EdgeInsets.only(right: 8),
+            child: BranchIndicator(tappable: false),
+          ),
           Padding(
             padding: const EdgeInsets.only(right: 8),
             child: TextButton.icon(
@@ -119,13 +149,21 @@ class HomeScreen extends StatelessWidget {
         children: [
           _WelcomeHeader(userName: userName, role: role),
           const SizedBox(height: 18),
-          const _SectionTitle(title: 'Quick actions', subtitle: 'Most-used tasks are one tap away'),
-          const SizedBox(height: 10),
-          _TileGrid(tiles: quickActions, columns: cols),
-          const SizedBox(height: 20),
-          const _SectionTitle(title: 'Manage business', subtitle: 'Sales, stock, parties, accounts and claims'),
-          const SizedBox(height: 10),
-          _TileGrid(tiles: management, columns: cols),
+          if (masterNeedsBranch) ...[
+            _MasterBranchRequiredCard(
+              onOpenBranchControl: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const BranchControlScreen())),
+            ),
+          ] else ...[
+            const _ShortcutHintBar(),
+            const SizedBox(height: 16),
+            const _SectionTitle(title: 'Quick actions', subtitle: 'Most-used tasks are one tap away'),
+            const SizedBox(height: 10),
+            _TileGrid(tiles: quickActions, columns: cols),
+            const SizedBox(height: 20),
+            const _SectionTitle(title: 'Manage business', subtitle: 'Sales, stock, parties, accounts and claims'),
+            const SizedBox(height: 10),
+            _TileGrid(tiles: management, columns: cols),
+          ],
         ],
       ),
     );
@@ -140,6 +178,20 @@ class _WelcomeHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final auth = context.watch<AuthProvider>();
+    final branch = context.watch<BranchProvider>();
+    final canCreateSale = !auth.isMasterAdmin || branch.hasActiveBranch;
+
+    void openSaleOrWarn() {
+      if (!canCreateSale) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Please select a working branch from Branch Control first.')),
+        );
+        return;
+      }
+      Navigator.push(context, MaterialPageRoute(builder: (_) => const CreateSaleScreen()));
+    }
+
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
@@ -168,11 +220,139 @@ class _WelcomeHeader extends StatelessWidget {
             ),
           ),
           FilledButton.icon(
-            onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const CreateSaleScreen())),
+            onPressed: openSaleOrWarn,
             icon: const Icon(Icons.add_rounded),
             label: const Text('New Sale'),
           ),
         ],
+      ),
+    );
+  }
+}
+
+
+class _MasterBranchRequiredCard extends StatelessWidget {
+  final VoidCallback onOpenBranchControl;
+
+  const _MasterBranchRequiredCard({required this.onOpenBranchControl});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: AppTheme.warning.withOpacity(.35)),
+        boxShadow: AppTheme.softShadow,
+      ),
+      child: Row(
+        children: [
+          Container(
+            height: 52,
+            width: 52,
+            decoration: BoxDecoration(
+              color: AppTheme.warning.withOpacity(.12),
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: const Icon(Icons.warning_amber_rounded, color: AppTheme.warning),
+          ),
+          const SizedBox(width: 14),
+          const Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Select a working branch first', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w900, color: AppTheme.navy)),
+                SizedBox(height: 4),
+                Text(
+                  'Master admin data is loaded branch-wise. Choose a branch from Branch Control before opening sales, purchases, stock, payments or reports.',
+                  style: TextStyle(color: AppTheme.textMuted, fontWeight: FontWeight.w600),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          FilledButton.icon(
+            onPressed: onOpenBranchControl,
+            icon: const Icon(Icons.account_tree_rounded),
+            label: const Text('Open Branch Control'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+
+class _ShortcutHintBar extends StatelessWidget {
+  const _ShortcutHintBar();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppTheme.navy,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: AppTheme.softShadow,
+      ),
+      child: Row(
+        children: [
+          Container(
+            height: 40,
+            width: 40,
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(.10),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: const Icon(Icons.keyboard_rounded, color: Colors.white),
+          ),
+          const SizedBox(width: 12),
+          const Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Keyboard-first POS', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 15)),
+                SizedBox(height: 2),
+                Text('Press Ctrl + / anytime to view shortcuts. Use Ctrl + N or F2 for a new sale.', style: TextStyle(color: Color(0xFFCBD5E1), fontWeight: FontWeight.w700, fontSize: 12.5)),
+              ],
+            ),
+          ),
+          const SizedBox(width: 10),
+          OutlinedButton.icon(
+            style: OutlinedButton.styleFrom(
+              foregroundColor: Colors.white,
+              side: BorderSide(color: Colors.white.withOpacity(.35)),
+            ),
+            onPressed: () => showAppShortcutGuide(context),
+            icon: const Icon(Icons.open_in_new_rounded, size: 18),
+            label: const Text('View'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ShortcutBadge extends StatelessWidget {
+  final String text;
+
+  const _ShortcutBadge({required this.text});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+      decoration: BoxDecoration(
+        color: AppTheme.surfaceSoft,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppTheme.border),
+      ),
+      child: Text(
+        text,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(color: AppTheme.textMuted, fontSize: 10.5, fontWeight: FontWeight.w900),
       ),
     );
   }
@@ -230,11 +410,12 @@ class _Tile {
   final IconData icon;
   final String title;
   final String subtitle;
+  final String? shortcut;
   final Color color;
   final VoidCallback onTap;
   final bool emphasized;
 
-  _Tile({required this.icon, required this.title, required this.subtitle, required this.color, required this.onTap, this.emphasized = false});
+  _Tile({required this.icon, required this.title, required this.subtitle, this.shortcut, required this.color, required this.onTap, this.emphasized = false});
 }
 
 class _DashboardCard extends StatelessWidget {
@@ -270,7 +451,17 @@ class _DashboardCard extends StatelessWidget {
                   mainAxisAlignment: MainAxisAlignment.center,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(tile.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: AppTheme.navy, fontWeight: FontWeight.w900, fontSize: 15)),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(tile.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: AppTheme.navy, fontWeight: FontWeight.w900, fontSize: 15)),
+                        ),
+                        if (tile.shortcut != null) ...[
+                          const SizedBox(width: 8),
+                          _ShortcutBadge(text: tile.shortcut!),
+                        ],
+                      ],
+                    ),
                     const SizedBox(height: 4),
                     Text(tile.subtitle, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: AppTheme.textMuted, fontWeight: FontWeight.w600, fontSize: 12)),
                   ],

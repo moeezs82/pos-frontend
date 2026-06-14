@@ -1,8 +1,9 @@
 import 'package:enterprise_pos/api/user_service.dart';
 import 'package:enterprise_pos/forms/user_form_screen.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
-import 'package:enterprise_pos/providers/branch_provider.dart';
+import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/branch_indicator.dart';
+import 'package:enterprise_pos/widgets/enterprise/enterprise_ui.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -16,12 +17,13 @@ class UsersScreen extends StatefulWidget {
 class _UsersScreenState extends State<UsersScreen> {
   int _page = 1;
   int _lastPage = 1;
+  int _total = 0;
   bool _loading = false;
-  String _search = "";
-  final List<dynamic> _users = [];
+  String _search = '';
+  final List<Map<String, dynamic>> _users = [];
   final _searchController = TextEditingController();
 
-  late UsersService _usersService;
+  late final UsersService _usersService;
 
   @override
   void initState() {
@@ -31,7 +33,14 @@ class _UsersScreenState extends State<UsersScreen> {
     _fetchUsers(reset: true);
   }
 
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
   Future<void> _fetchUsers({bool reset = false}) async {
+    if (!mounted) return;
     setState(() => _loading = true);
 
     if (reset) {
@@ -40,28 +49,42 @@ class _UsersScreenState extends State<UsersScreen> {
     }
 
     try {
-      final branchId = context.read<BranchProvider?>()?.selectedBranchId?.toString();
-      final data = await _usersService.getUsers(
+      final response = await _usersService.getUsers(
         page: _page,
+        perPage: 20,
         search: _search,
-        branchId: branchId,
+        excludeMasterAdmin: true,
       );
 
-      // 👇 adjust according to your backend pagination structure
-      final pageData = data['data']; // ApiResponse::success returns {'data': pagination}
-      _users
-        ..clear()
-        ..addAll((pageData['data'] as List).cast<Map<String, dynamic>>());
+      final responseData = response['data'];
+      final pageData = _asMap(responseData) ?? const <String, dynamic>{};
+      final rawItems = responseData is List
+          ? responseData
+          : (pageData['data'] is List ? pageData['data'] as List : const []);
+      final items = rawItems
+          .whereType<Map>()
+          .map((item) => item.cast<String, dynamic>())
+          .where((user) => !_isMasterAdminUser(user))
+          .toList();
 
+      if (!mounted) return;
       setState(() {
-        _page = pageData['current_page'];
-        _lastPage = pageData['last_page'];
+        _users
+          ..clear()
+          ..addAll(items);
+        _page = _readInt(pageData['current_page']) ?? _page;
+        _lastPage = _readInt(pageData['last_page']) ?? 1;
+        _total = _readInt(pageData['total']) ?? items.length;
       });
     } catch (e) {
-      debugPrint("Error loading users: $e");
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to load users: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _loading = false);
     }
-
-    setState(() => _loading = false);
   }
 
   void _onSearch() {
@@ -69,203 +92,446 @@ class _UsersScreenState extends State<UsersScreen> {
     _fetchUsers(reset: true);
   }
 
-  Future<void> _onRefresh() async {
-    await _fetchUsers(reset: true);
-  }
+  Future<void> _deleteUser(Map<String, dynamic> user) async {
+    final id = _readInt(user['id']);
+    if (id == null) return;
 
-  Future<void> _deleteUser(int id) async {
     try {
       await _usersService.deleteUser(id);
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("User deleted successfully")),
+        const SnackBar(content: Text('User deleted successfully')),
       );
+      await _fetchUsers(reset: true);
     } catch (e) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Failed to delete user: $e")),
+        SnackBar(content: Text('Failed to delete user: $e')),
       );
+    }
+  }
+
+  Future<void> _openForm([Map<String, dynamic>? user]) async {
+    final result = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(builder: (_) => UserFormScreen(user: user)),
+    );
+    if (result == true) {
+      await _fetchUsers(reset: true);
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
+    final currentUserId = _readInt(context.watch<AuthProvider>().user?['id']);
+    final activeCount = _users.where((u) => _readBool(u['is_active'])).length;
+    final inactiveCount = _users.length - activeCount;
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text("Users"),
-        // actions: const [Padding(padding: EdgeInsets.only(right: 8.0), child: BranchIndicator(tappable: false))],
-      ),
-
+    return EnterprisePage(
+      title: 'Users',
+      subtitle: 'Manage staff accounts and role access. Master admin accounts stay hidden from staff lists.',
+      icon: Icons.manage_accounts_rounded,
+      appBarActions: const [
+        Padding(
+          padding: EdgeInsets.only(right: 8),
+          child: BranchIndicator(tappable: false),
+        ),
+      ],
+      actions: [
+        FilledButton.icon(
+          onPressed: _loading ? null : () => _openForm(),
+          icon: const Icon(Icons.person_add_alt_1_rounded),
+          label: const Text('Add User'),
+        ),
+      ],
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: () async {
-          final result = await Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => const UserFormScreen()),
-          );
-          if (result == true) {
-            _fetchUsers(reset: true);
-          }
-        },
-        icon: const Icon(Icons.add),
-        label: const Text("Add User"),
+        onPressed: _loading ? null : () => _openForm(),
+        icon: const Icon(Icons.person_add_alt_1_rounded),
+        label: const Text('Add User'),
       ),
+      bottomNavigationBar: EnterprisePaginationBar(
+        page: _page,
+        lastPage: _lastPage,
+        total: _total,
+        loading: _loading,
+        onPrevious: _page > 1
+            ? () {
+                setState(() => _page--);
+                _fetchUsers();
+              }
+            : null,
+        onNext: _page < _lastPage
+            ? () {
+                setState(() => _page++);
+                _fetchUsers();
+              }
+            : null,
+      ),
+      child: Column(
+        children: [
+          EnterpriseToolbar(
+            children: [
+              SizedBox(
+                width: 360,
+                child: EnterpriseSearchField(
+                  controller: _searchController,
+                  hintText: 'Search name, email, phone, or role...',
+                  onSubmitted: (_) => _onSearch(),
+                  onSearch: _onSearch,
+                  onClear: () {
+                    _searchController.clear();
+                    _onSearch();
+                  },
+                ),
+              ),
+              EnterpriseMetricChip(
+                label: 'Visible users',
+                value: '${_users.length}',
+                color: AppTheme.primary,
+                icon: Icons.people_alt_rounded,
+              ),
+              EnterpriseMetricChip(
+                label: 'Active',
+                value: '$activeCount',
+                color: AppTheme.success,
+                icon: Icons.check_circle_rounded,
+              ),
+              EnterpriseMetricChip(
+                label: 'Inactive',
+                value: '$inactiveCount',
+                color: inactiveCount > 0 ? AppTheme.warning : AppTheme.textMuted,
+                icon: Icons.pause_circle_rounded,
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Expanded(
+            child: RefreshIndicator(
+              onRefresh: () => _fetchUsers(reset: true),
+              child: _loading && _users.isEmpty
+                  ? const Center(child: CircularProgressIndicator())
+                  : _users.isEmpty
+                      ? ListView(
+                          children: [
+                            const SizedBox(height: 70),
+                            EnterpriseEmptyState(
+                              icon: Icons.person_outline_rounded,
+                              title: _search.isEmpty ? 'No users yet' : 'No users matched your search',
+                              subtitle: _search.isEmpty
+                                  ? 'Create the first staff account for this workspace. Roles are loaded automatically from backend access rules.'
+                                  : 'Try another name, email, phone number, or role keyword.',
+                              action: FilledButton.icon(
+                                onPressed: () => _openForm(),
+                                icon: const Icon(Icons.person_add_alt_1_rounded),
+                                label: const Text('Add User'),
+                              ),
+                            ),
+                          ],
+                        )
+                      : ListView.separated(
+                          itemCount: _users.length,
+                          separatorBuilder: (_, __) => const SizedBox(height: 10),
+                          itemBuilder: (context, index) {
+                            final user = _users[index];
+                            final userId = _readInt(user['id']);
+                            return _UserCard(
+                              user: user,
+                              isCurrentUser: userId != null && userId == currentUserId,
+                              onEdit: () => _openForm(user),
+                              onDelete: userId != null && userId != currentUserId
+                                  ? () async {
+                                      final ok = await _confirmDelete(context, user);
+                                      if (ok == true) await _deleteUser(user);
+                                    }
+                                  : null,
+                            );
+                          },
+                        ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
-      bottomNavigationBar: _users.isNotEmpty
-          ? Padding(
-              padding: const EdgeInsets.all(12),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+  Future<bool?> _confirmDelete(BuildContext context, Map<String, dynamic> user) {
+    final name = _clean(user['name']) ?? 'this user';
+    return showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete user?'),
+        content: Text('Are you sure you want to delete "$name"? This action cannot be undone.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          FilledButton.icon(
+            style: FilledButton.styleFrom(backgroundColor: AppTheme.danger),
+            onPressed: () => Navigator.pop(ctx, true),
+            icon: const Icon(Icons.delete_outline_rounded),
+            label: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _UserCard extends StatelessWidget {
+  final Map<String, dynamic> user;
+  final bool isCurrentUser;
+  final VoidCallback onEdit;
+  final VoidCallback? onDelete;
+
+  const _UserCard({
+    required this.user,
+    required this.isCurrentUser,
+    required this.onEdit,
+    required this.onDelete,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final name = _clean(user['name']) ?? 'Unnamed user';
+    final email = _clean(user['email']) ?? 'No email';
+    final phone = _clean(user['phone']) ?? 'No phone';
+    final roleText = _roleLabel(user);
+    final isActive = _readBool(user['is_active']);
+    final accent = isActive ? AppTheme.success : AppTheme.warning;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: AppTheme.border),
+        boxShadow: AppTheme.softShadow,
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            CircleAvatar(
+              radius: 24,
+              backgroundColor: AppTheme.primarySoft,
+              foregroundColor: AppTheme.primary,
+              child: Text(
+                _initials(name),
+                style: const TextStyle(fontWeight: FontWeight.w900),
+              ),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  ElevatedButton.icon(
-                    onPressed: _page > 1
-                        ? () {
-                            setState(() => _page--);
-                            _fetchUsers();
-                          }
-                        : null,
-                    icon: const Icon(Icons.chevron_left),
-                    label: const Text("Previous"),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: AppTheme.navy,
+                            fontSize: 15.5,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                      ),
+                      if (isCurrentUser) ...[
+                        const SizedBox(width: 8),
+                        const EnterpriseStatusBadge(
+                          label: 'YOU',
+                          color: AppTheme.info,
+                          icon: Icons.person_pin_circle_rounded,
+                        ),
+                      ],
+                    ],
                   ),
-                  Text("Page $_page / $_lastPage"),
-                  ElevatedButton.icon(
-                    onPressed: _page < _lastPage
-                        ? () {
-                            setState(() => _page++);
-                            _fetchUsers();
-                          }
-                        : null,
-                    icon: const Icon(Icons.chevron_right),
-                    label: const Text("Next"),
+                  const SizedBox(height: 7),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 7,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      _InfoChip(icon: Icons.email_outlined, text: email),
+                      _InfoChip(icon: Icons.phone_outlined, text: phone),
+                      _InfoChip(icon: Icons.verified_user_outlined, text: roleText),
+                      EnterpriseStatusBadge(
+                        label: isActive ? 'ACTIVE' : 'INACTIVE',
+                        color: accent,
+                        icon: isActive ? Icons.check_circle_rounded : Icons.pause_circle_rounded,
+                      ),
+                    ],
                   ),
                 ],
               ),
-            )
-          : null,
-
-      body: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _searchController,
-                    decoration: InputDecoration(
-                      hintText: "Search users...",
-                      prefixIcon: const Icon(Icons.search),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
-                    onSubmitted: (_) => _onSearch(),
+            ),
+            const SizedBox(width: 12),
+            PopupMenuButton<String>(
+              tooltip: 'User actions',
+              onSelected: (value) {
+                if (value == 'edit') onEdit();
+                if (value == 'delete') onDelete?.call();
+              },
+              itemBuilder: (ctx) => [
+                const PopupMenuItem(
+                  value: 'edit',
+                  child: Row(
+                    children: [
+                      Icon(Icons.edit_rounded, size: 18),
+                      SizedBox(width: 8),
+                      Text('Edit'),
+                    ],
                   ),
                 ),
-                const SizedBox(width: 8),
-                ElevatedButton.icon(
-                  onPressed: _onSearch,
-                  icon: const Icon(Icons.search),
-                  label: const Text("Search"),
-                ),
+                if (onDelete != null)
+                  const PopupMenuItem(
+                    value: 'delete',
+                    child: Row(
+                      children: [
+                        Icon(Icons.delete_outline_rounded, size: 18, color: AppTheme.danger),
+                        SizedBox(width: 8),
+                        Text('Delete', style: TextStyle(color: AppTheme.danger)),
+                      ],
+                    ),
+                  ),
               ],
-            ),
-            const SizedBox(height: 12),
-            Expanded(
-              child: RefreshIndicator(
-                onRefresh: _onRefresh,
-                child: _loading
-                    ? const Center(child: CircularProgressIndicator())
-                    : _users.isEmpty
-                        ? ListView(
-                            children: const [
-                              SizedBox(height: 120),
-                              Icon(Icons.person_outline, size: 64, color: Colors.grey),
-                              SizedBox(height: 12),
-                              Center(child: Text("No users found", style: TextStyle(color: Colors.grey))),
-                            ],
-                          )
-                        : ListView.builder(
-                            itemCount: _users.length,
-                            itemBuilder: (context, index) {
-                              final u = _users[index];
-                              final name = u['name'] ?? '—';
-                              final email = u['email'] ?? '—';
-                              final phone = u['phone'] ?? '—';
-                              final isActive = (u['is_active'] == true) || (u['is_active'] == 1);
-                              final roles = ((u['roles'] as List?) ?? [])
-                                  .map((e) => (e is String) ? e : (e['name'] ?? ''))
-                                  .where((s) => s.toString().isNotEmpty)
-                                  .join(', ');
-
-                              return Card(
-                                margin: const EdgeInsets.symmetric(vertical: 6),
-                                elevation: 2,
-                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                                child: ListTile(
-                                  leading: CircleAvatar(
-                                    backgroundColor: theme.colorScheme.primaryContainer,
-                                    child: Text(
-                                      name.isNotEmpty ? name[0].toUpperCase() : "?",
-                                      style: TextStyle(color: theme.colorScheme.onPrimaryContainer),
-                                    ),
-                                  ),
-                                  title: Text(name, style: const TextStyle(fontWeight: FontWeight.bold)),
-                                  subtitle: Text(
-                                    "Phone: $phone | Email: $email\nRoles: $roles | Status: ${isActive ? 'active' : 'inactive'}",
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                  trailing: SizedBox(
-                                    width: 70,
-                                    child: Row(
-                                      mainAxisAlignment: MainAxisAlignment.end,
-                                      children: [
-                                        GestureDetector(
-                                          child: Icon(Icons.edit, size: 20, color: theme.colorScheme.primary),
-                                          onTap: () async {
-                                            final result = await Navigator.push(
-                                              context,
-                                              MaterialPageRoute(builder: (_) => UserFormScreen(user: u)),
-                                            );
-                                            if (result == true) _fetchUsers(reset: true);
-                                          },
-                                        ),
-                                        const SizedBox(width: 12),
-                                        GestureDetector(
-                                          child: const Icon(Icons.delete, size: 20, color: Colors.red),
-                                          onTap: () async {
-                                            final confirm = await showDialog<bool>(
-                                              context: context,
-                                              builder: (ctx) => AlertDialog(
-                                                title: const Text("Delete User"),
-                                                content: Text("Are you sure you want to delete '$name'?"),
-                                                actions: [
-                                                  TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Cancel")),
-                                                  TextButton(
-                                                    onPressed: () => Navigator.pop(ctx, true),
-                                                    child: const Text("Delete", style: TextStyle(color: Colors.red)),
-                                                  ),
-                                                ],
-                                              ),
-                                            );
-                                            if (confirm == true) {
-                                              await _deleteUser(u['id'] as int);
-                                              _fetchUsers(reset: true);
-                                            }
-                                          },
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                              );
-                            },
-                          ),
-              ),
             ),
           ],
         ),
       ),
     );
   }
+}
+
+class _InfoChip extends StatelessWidget {
+  final IconData icon;
+  final String text;
+
+  const _InfoChip({required this.icon, required this.text});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
+      decoration: BoxDecoration(
+        color: AppTheme.surfaceSoft,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: AppTheme.border),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 14, color: AppTheme.textMuted),
+          const SizedBox(width: 5),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 220),
+            child: Text(
+              text,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: AppTheme.textMuted,
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+Map<String, dynamic>? _asMap(dynamic value) {
+  if (value is Map<String, dynamic>) return value;
+  if (value is Map) return value.cast<String, dynamic>();
+  return null;
+}
+
+int? _readInt(dynamic value) {
+  if (value == null) return null;
+  if (value is int) return value;
+  if (value is num) return value.toInt();
+  final parsed = int.tryParse(value.toString());
+  return parsed != null && parsed > 0 ? parsed : null;
+}
+
+bool _readBool(dynamic value) {
+  if (value is bool) return value;
+  if (value is num) return value != 0;
+  final text = value?.toString().trim().toLowerCase();
+  return text == '1' || text == 'true' || text == 'yes' || text == 'active';
+}
+
+String? _clean(dynamic value) {
+  final text = value?.toString().trim();
+  return text == null || text.isEmpty ? null : text;
+}
+
+String _initials(String name) {
+  final parts = name.trim().split(RegExp(r'\s+')).where((p) => p.isNotEmpty).take(2).toList();
+  if (parts.isEmpty) return '?';
+  return parts.map((p) => p[0].toUpperCase()).join();
+}
+
+String _roleLabel(Map<String, dynamic> user) {
+  final roles = _roleTexts(user);
+  if (roles.isNotEmpty) return roles.join(', ');
+  return _clean(user['role_name']) ?? _clean(user['role']) ?? 'No role';
+}
+
+List<String> _roleTexts(Map<String, dynamic> user) {
+  final values = <String>[];
+  void add(dynamic raw) {
+    if (raw == null) return;
+    if (raw is Iterable) {
+      for (final item in raw) {
+        add(item);
+      }
+      return;
+    }
+    if (raw is Map) {
+      add(raw['display_name'] ?? raw['label'] ?? raw['name'] ?? raw['title']);
+      return;
+    }
+    final text = raw.toString().trim();
+    if (text.isEmpty) return;
+    values.add(_titleCase(_stripBranchSuffix(text)));
+  }
+
+  add(user['roles']);
+  add(user['role_names']);
+  add(user['role_name']);
+  add(user['role']);
+
+  return values.toSet().toList();
+}
+
+bool _isMasterAdminUser(Map<String, dynamic> user) {
+  if (_readBool(user['is_master_admin'])) return true;
+  return _roleTexts(user).any(_isMasterRoleName);
+}
+
+bool _isMasterRoleName(String value) {
+  final normalized = value
+      .toLowerCase()
+      .replaceAll('_', ' ')
+      .replaceAll('-', ' ')
+      .replaceAll(RegExp(r'\s+'), ' ')
+      .trim();
+  return normalized == 'master admin' || normalized == 'super admin';
+}
+
+String _stripBranchSuffix(String value) {
+  return value.replaceFirst(RegExp(r'\s-\s.*\s\[branch:\d+\]$', caseSensitive: false), '').trim();
+}
+
+String _titleCase(String value) {
+  return value
+      .replaceAll('_', ' ')
+      .split(RegExp(r'\s+'))
+      .where((word) => word.isNotEmpty)
+      .map((word) => '${word[0].toUpperCase()}${word.substring(1)}')
+      .join(' ');
 }

@@ -965,7 +965,7 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
       child: Scaffold(
         appBar: AppBar(
           title: const Text("Sale Detail"),
-          // actions: const [BranchIndicator(tappable: false)],
+          actions: const [BranchIndicator(tappable: false)],
         ),
         body: _loading
             ? const Center(child: CircularProgressIndicator())

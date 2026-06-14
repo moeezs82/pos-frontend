@@ -6,7 +6,20 @@ import 'package:flutter/material.dart';
 class UserPickerSheet extends StatefulWidget {
   final String token;
   final String? branchId;
-  const UserPickerSheet({super.key, required this.token, this.branchId});
+  final String? role;
+  final String title;
+  final String searchHint;
+  final bool allowQuickAdd;
+
+  const UserPickerSheet({
+    super.key,
+    required this.token,
+    this.branchId,
+    this.role,
+    this.title = 'Select User',
+    this.searchHint = 'Search user by name, email, phone…',
+    this.allowQuickAdd = true,
+  });
 
   @override
   State<UserPickerSheet> createState() => _UserPickerSheetState();
@@ -41,12 +54,22 @@ class _UserPickerSheetState extends State<UserPickerSheet> {
   Future<void> _fetchUsers({int page = 1}) async {
     setState(() => _loading = true);
     try {
-      final res = await _userService.getUsers(page: page, search: _search, branchId: widget.branchId);
+      final res = await _userService.getUsers(
+        page: page,
+        search: _search,
+        branchId: widget.branchId,
+        role: widget.role,
+        includeDeliveryBalance: widget.role == 'delivery',
+        excludeMasterAdmin: true,
+      );
 
       // ApiResponse::success => { success, data: { current_page, last_page, data: [...] } }
       final pageData = res['data'] as Map<String, dynamic>;
-      final newUsers =
-          (pageData['data'] as List).cast<Map<String, dynamic>>();
+      final newUsers = (pageData['data'] as List)
+          .whereType<Map>()
+          .map((item) => item.cast<String, dynamic>())
+          .where((user) => !_isMasterAdminUser(user))
+          .toList();
 
       setState(() {
         _users = newUsers;
@@ -95,6 +118,12 @@ class _UserPickerSheetState extends State<UserPickerSheet> {
     });
   }
 
+  double _toDouble(dynamic v) {
+    if (v == null) return 0;
+    if (v is num) return v.toDouble();
+    return double.tryParse(v.toString().replaceAll(',', '').trim()) ?? 0;
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -115,12 +144,29 @@ class _UserPickerSheetState extends State<UserPickerSheet> {
               ),
             ),
 
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    widget.title,
+                    style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Close',
+                  onPressed: () => Navigator.pop(context),
+                  icon: const Icon(Icons.close_rounded),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+
             // Search
             TextField(
               controller: _searchCtrl,
               decoration: InputDecoration(
                 prefixIcon: const Icon(Icons.search),
-                hintText: "Search user by name, email, phone…",
+                hintText: widget.searchHint,
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
                 ),
@@ -138,29 +184,31 @@ class _UserPickerSheetState extends State<UserPickerSheet> {
                     color: Colors.grey.shade100,
                     child: ListTile(
                       leading: const Icon(Icons.clear, color: Colors.red),
-                      title: const Text(
-                        "No User (Walk-in)",
-                        style: TextStyle(fontWeight: FontWeight.bold),
+                      title: Text(
+                        widget.role == 'delivery' ? "No Delivery Boy" : "No User (Walk-in)",
+                        style: const TextStyle(fontWeight: FontWeight.bold),
                       ),
                       onTap: () => Navigator.pop(context, null),
                     ),
                   ),
                 ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Card(
-                    color: Colors.green.shade50,
-                    child: ListTile(
-                      leading:
-                          const Icon(Icons.add_circle, color: Colors.green),
-                      title: const Text(
-                        "Quick Add",
-                        style: TextStyle(fontWeight: FontWeight.bold),
+                if (widget.allowQuickAdd) ...[
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Card(
+                      color: Colors.green.shade50,
+                      child: ListTile(
+                        leading:
+                            const Icon(Icons.add_circle, color: Colors.green),
+                        title: const Text(
+                          "Quick Add",
+                          style: TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                        onTap: _quickAddUser,
                       ),
-                      onTap: _quickAddUser,
                     ),
                   ),
-                ),
+                ],
               ],
             ),
             const SizedBox(height: 8),
@@ -195,15 +243,21 @@ class _UserPickerSheetState extends State<UserPickerSheet> {
                               final name = (u['name'] ?? '').toString();
                               final email = (u['email'] ?? '').toString();
                               final phone = (u['phone'] ?? '').toString();
+                              final balance = _toDouble(u['balance']);
                               final isActive = (u['is_active'] == true) ||
                                   (u['is_active'] == 1);
 
                               // roles could be ["admin", ...] or [{"name": "admin"}, ...]
                               final roles = ((u['roles'] as List?) ?? [])
-                                  .map((e) => e is String
-                                      ? e
-                                      : ((e as Map)['name'] ?? '').toString())
-                                  .where((s) => s.isNotEmpty)
+                                  .map((e) {
+                                    if (e is String) return e;
+                                    if (e is Map) {
+                                      return (e['display_name'] ?? e['label'] ?? e['name'] ?? '').toString();
+                                    }
+                                    return '';
+                                  })
+                                  .map(_stripBranchSuffix)
+                                  .where((s) => s.isNotEmpty && !_isMasterRoleName(s))
                                   .toList();
 
                               return Card(
@@ -282,6 +336,17 @@ class _UserPickerSheetState extends State<UserPickerSheet> {
                                                       const EdgeInsets.only(
                                                           top: 8),
                                                   child: _RoleChips(roles),
+                                                ),
+                                              if (widget.role == 'delivery')
+                                                Padding(
+                                                  padding: const EdgeInsets.only(top: 8),
+                                                  child: Text(
+                                                    'Balance: ${balance.toStringAsFixed(2)}',
+                                                    style: TextStyle(
+                                                      color: balance > 0 ? Colors.orange.shade800 : Colors.green.shade800,
+                                                      fontWeight: FontWeight.w800,
+                                                    ),
+                                                  ),
                                                 ),
                                             ],
                                           ),
@@ -465,4 +530,39 @@ class _RoleChips extends StatelessWidget {
       ),
     );
   }
+}
+
+
+bool _isMasterAdminUser(Map<String, dynamic> user) {
+  if (_readBool(user['is_master_admin'])) return true;
+  final roles = ((user['roles'] as List?) ?? [])
+      .map((e) {
+        if (e is String) return e;
+        if (e is Map) return (e['display_name'] ?? e['label'] ?? e['name'] ?? '').toString();
+        return '';
+      })
+      .map(_stripBranchSuffix)
+      .toList();
+  return roles.any(_isMasterRoleName);
+}
+
+bool _readBool(dynamic value) {
+  if (value is bool) return value;
+  if (value is num) return value != 0;
+  final text = value?.toString().trim().toLowerCase();
+  return text == '1' || text == 'true' || text == 'yes';
+}
+
+bool _isMasterRoleName(String value) {
+  final normalized = value
+      .toLowerCase()
+      .replaceAll('_', ' ')
+      .replaceAll('-', ' ')
+      .replaceAll(RegExp(r'\s+'), ' ')
+      .trim();
+  return normalized == 'master admin' || normalized == 'super admin';
+}
+
+String _stripBranchSuffix(String value) {
+  return value.replaceFirst(RegExp(r'\s-\s.*\s\[branch:\d+\]$', caseSensitive: false), '').trim();
 }
