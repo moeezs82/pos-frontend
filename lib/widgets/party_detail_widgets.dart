@@ -1,845 +1,8 @@
-import 'package:enterprise_pos/api/customer_service.dart';
-import 'package:enterprise_pos/forms/customer_form_screen.dart';
-import 'package:enterprise_pos/providers/auth_provider.dart';
-import 'package:enterprise_pos/providers/branch_provider.dart';
-import 'package:enterprise_pos/screens/sales/sale_detail.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
-import 'package:enterprise_pos/widgets/app_feedback.dart';
-import 'package:enterprise_pos/widgets/branch_indicator.dart';
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
 
-class CustomerEditScreen extends StatefulWidget {
-  final int customerId;
-  const CustomerEditScreen({super.key, required this.customerId});
-
-  @override
-  State<CustomerEditScreen> createState() => _CustomerEditScreenState();
-}
-
-class _CustomerEditScreenState extends State<CustomerEditScreen>
-    with SingleTickerProviderStateMixin {
-  late CustomerService _service;
-  late TabController _tab;
-
-  bool _postingReceipt = false;
-  final _amountController = TextEditingController();
-  final _referenceController = TextEditingController();
-  String methodPay = 'cash';
-
-  bool _loadingHeader = true;
-  String? _errorHeader;
-  Map<String, dynamic>? customer;
-
-  final int _pageSize = 10;
-  bool _loadingSales = false;
-  bool _loadedSalesOnce = false;
-  String? _errorSales;
-  int _salesPage = 1, _salesLastPage = 1, _salesTotal = 0;
-  final List<Map<String, dynamic>> _sales = [];
-
-  bool _loadingLedger = false;
-  bool _loadedLedgerOnce = false;
-  String? _errorLedger;
-  int _ldgPage = 1, _ldgLastPage = 1, _ldgTotal = 0;
-  double _opening = 0.0, _openingForPage = 0.0;
-  final List<Map<String, dynamic>> _ledger = [];
-
-  @override
-  void initState() {
-    super.initState();
-    final token = context.read<AuthProvider>().token!;
-    _service = CustomerService(token: token);
-    _tab = TabController(length: 2, vsync: this);
-    _tab.addListener(_onTabChanged);
-
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _loadHeader();
-      _loadSales(page: 1);
-    });
-  }
-
-  @override
-  void dispose() {
-    _tab.removeListener(_onTabChanged);
-    _tab.dispose();
-    _amountController.dispose();
-    _referenceController.dispose();
-    super.dispose();
-  }
-
-  void _onTabChanged() {
-    if (!_tab.indexIsChanging) {
-      if (_tab.index == 0 && !_loadedSalesOnce) _loadSales(page: 1);
-      if (_tab.index == 1 && !_loadedLedgerOnce) _loadLedger(page: 1);
-    }
-  }
-
-  Future<void> _loadHeader() async {
-    if (!mounted) return;
-    setState(() {
-      _loadingHeader = true;
-      _errorHeader = null;
-    });
-    try {
-      final branchId = context.read<BranchProvider>().selectedBranchId;
-      final res = await _service.getCustomerDetail(
-        id: widget.customerId,
-        branchId: branchId,
-      );
-      if (!mounted) return;
-      setState(() {
-        customer = (res['data'] as Map).cast<String, dynamic>();
-      });
-    } catch (e) {
-      if (mounted) setState(() => _errorHeader = 'Failed to load customer: $e');
-    } finally {
-      if (mounted) setState(() => _loadingHeader = false);
-    }
-  }
-
-  Future<void> _loadSales({required int page}) async {
-    if (_loadingSales) return;
-    setState(() {
-      _loadingSales = true;
-      _errorSales = null;
-    });
-    try {
-      final branchId = context.read<BranchProvider>().selectedBranchId;
-      final res = await _service.getCustomerSales(
-        id: widget.customerId,
-        page: page,
-        perPage: _pageSize,
-        branchId: branchId,
-      );
-      final wrap = (res['data'] as Map).cast<String, dynamic>();
-      final items = ((wrap['items'] as List?) ?? const [])
-          .map((e) => (e as Map).cast<String, dynamic>())
-          .toList();
-      if (!mounted) return;
-      setState(() {
-        _sales
-          ..clear()
-          ..addAll(items);
-        _salesPage = (wrap['current_page'] as num?)?.toInt() ?? page;
-        _salesLastPage = (wrap['last_page'] as num?)?.toInt() ?? _salesLastPage;
-        _salesTotal = (wrap['total'] as num?)?.toInt() ?? _salesTotal;
-        _loadedSalesOnce = true;
-      });
-    } catch (e) {
-      if (mounted) setState(() => _errorSales = 'Failed to load sales: $e');
-    } finally {
-      if (mounted) setState(() => _loadingSales = false);
-    }
-  }
-
-  Future<void> _loadLedger({required int page}) async {
-    if (_loadingLedger) return;
-    setState(() {
-      _loadingLedger = true;
-      _errorLedger = null;
-    });
-    try {
-      final branchId = context.read<BranchProvider>().selectedBranchId;
-      final res = await _service.getCustomerLedger(
-        id: widget.customerId,
-        page: page,
-        perPage: _pageSize,
-        branchId: branchId,
-      );
-      final wrap = (res['data'] as Map).cast<String, dynamic>();
-      final items = ((wrap['items'] as List?) ?? const [])
-          .map((e) => (e as Map).cast<String, dynamic>())
-          .toList();
-
-      if (!mounted) return;
-      setState(() {
-        _ledger
-          ..clear()
-          ..addAll(items);
-        _opening = _toDouble(wrap['opening']);
-        _openingForPage = _toDouble(wrap['opening_for_page']);
-        _ldgPage = (wrap['current_page'] as num?)?.toInt() ?? page;
-        _ldgLastPage = (wrap['last_page'] as num?)?.toInt() ?? _ldgLastPage;
-        _ldgTotal = (wrap['total'] as num?)?.toInt() ?? _ldgTotal;
-        _loadedLedgerOnce = true;
-      });
-    } catch (e) {
-      if (mounted) setState(() => _errorLedger = 'Failed to load ledger: $e');
-    } finally {
-      if (mounted) setState(() => _loadingLedger = false);
-    }
-  }
-
-  Future<void> _refreshAll() async {
-    if (_loadingHeader || _loadingSales || _loadingLedger) return;
-    await _loadHeader();
-    if (_tab.index == 0) {
-      await _loadSales(page: _salesPage);
-    } else {
-      await _loadLedger(page: _ldgPage);
-    }
-    if (mounted) AppFeedback.info(context, 'Customer details refreshed');
-  }
-
-  Future<void> _openEdit() async {
-    if (customer == null) return;
-    final result = await Navigator.push(
-      context,
-      MaterialPageRoute(builder: (_) => CustomerFormScreen(customer: customer)),
-    );
-    if (result == true) {
-      await _loadHeader();
-      if (_tab.index == 0 && _loadedSalesOnce) _loadSales(page: _salesPage);
-      if (_tab.index == 1 && _loadedLedgerOnce) _loadLedger(page: _ldgPage);
-      if (mounted) AppFeedback.success(context, 'Customer updated');
-    }
-  }
-
-  Future<void> _openReceiveModal() async {
-    if (customer == null || _postingReceipt) return;
-    _amountController.clear();
-    _referenceController.clear();
-    methodPay = 'cash';
-    final formKey = GlobalKey<FormState>();
-    var saving = false;
-
-    await showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (dlgCtx) {
-        return StatefulBuilder(
-          builder: (ctx, setLocal) {
-            final name = _customerName(customer!);
-            return AlertDialog(
-              titlePadding: EdgeInsets.zero,
-              contentPadding: const EdgeInsets.fromLTRB(22, 16, 22, 8),
-              actionsPadding: const EdgeInsets.fromLTRB(22, 0, 22, 18),
-              title: _PaymentDialogHeader(
-                icon: Icons.payments_rounded,
-                title: 'Record Receipt',
-                subtitle: name.isEmpty ? 'Customer payment collection' : name,
-                onClose: saving ? null : () => Navigator.pop(dlgCtx),
-              ),
-              content: Form(
-                key: formKey,
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(minWidth: 320, maxWidth: 460),
-                  child: SingleChildScrollView(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        _DialogBalanceStrip(
-                          label: 'Current customer balance',
-                          value: _money(customer!['balance']),
-                          color: _customerBalanceColor(_toDouble(customer!['balance'])),
-                        ),
-                        const SizedBox(height: 14),
-                        TextFormField(
-                          controller: _amountController,
-                          autofocus: true,
-                          keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                          decoration: const InputDecoration(
-                            labelText: 'Amount Received',
-                            hintText: '0.00',
-                            prefixIcon: Icon(Icons.currency_exchange_rounded),
-                          ),
-                          validator: (v) {
-                            final t = (v ?? '').trim();
-                            if (t.isEmpty) return 'Amount is required';
-                            final parsed = double.tryParse(t);
-                            if (parsed == null) return 'Enter a valid amount';
-                            if (parsed <= 0) return 'Amount must be greater than zero';
-                            return null;
-                          },
-                          onFieldSubmitted: (_) async {
-                            if (saving) return;
-                            if (!(formKey.currentState?.validate() ?? false)) return;
-                            setLocal(() => saving = true);
-                            await _submitReceipt(dlgCtx);
-                            if (dlgCtx.mounted) setLocal(() => saving = false);
-                          },
-                        ),
-                        const SizedBox(height: 12),
-                        TextFormField(
-                          controller: _referenceController,
-                          keyboardType: TextInputType.text,
-                          decoration: const InputDecoration(
-                            labelText: 'Reference / Note',
-                            hintText: 'Cash receipt, bank ref, remarks...',
-                            prefixIcon: Icon(Icons.notes_rounded),
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        DropdownButtonFormField<String>(
-                          value: methodPay,
-                          decoration: const InputDecoration(
-                            labelText: 'Payment Method',
-                            prefixIcon: Icon(Icons.account_balance_wallet_rounded),
-                          ),
-                          items: const [
-                            DropdownMenuItem(value: 'cash', child: Text('Cash')),
-                            DropdownMenuItem(value: 'bank', child: Text('Bank')),
-                          ],
-                          onChanged: saving ? null : (val) => methodPay = val ?? 'cash',
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-              actions: [
-                OutlinedButton(
-                  onPressed: saving ? null : () => Navigator.pop(dlgCtx),
-                  child: const Text('Cancel'),
-                ),
-                FilledButton.icon(
-                  onPressed: saving
-                      ? null
-                      : () async {
-                          if (!(formKey.currentState?.validate() ?? false)) return;
-                          setLocal(() => saving = true);
-                          await _submitReceipt(dlgCtx);
-                          if (dlgCtx.mounted) setLocal(() => saving = false);
-                        },
-                  icon: saving
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.check_rounded),
-                  label: Text(saving ? 'Saving...' : 'Save Receipt'),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
-  }
-
-  Future<void> _submitReceipt(BuildContext sheetCtx) async {
-    setState(() => _postingReceipt = true);
-    try {
-      final branchId = context.read<BranchProvider>().selectedBranchId;
-      final amount = double.parse(_amountController.text.trim());
-      final reference = _referenceController.text.trim();
-      final method = methodPay;
-
-      await _service.createReceipt(
-        customerId: widget.customerId,
-        amount: amount,
-        branchId: branchId,
-        method: method,
-        reference: reference,
-      );
-
-      if (!mounted) return;
-      if (sheetCtx.mounted) Navigator.pop(sheetCtx);
-      await _loadHeader();
-      if (_tab.index == 0 && _loadedSalesOnce) {
-        await _loadSales(page: _salesPage);
-      } else if (_tab.index == 1 && _loadedLedgerOnce) {
-        await _loadLedger(page: _ldgPage);
-      }
-      if (mounted) AppFeedback.success(context, 'Receipt recorded successfully');
-    } catch (e) {
-      if (mounted) AppFeedback.error(context, 'Failed to save receipt: $e');
-    } finally {
-      if (mounted) setState(() => _postingReceipt = false);
-    }
-  }
-
-  double _toDouble(dynamic v) {
-    if (v == null) return 0.0;
-    if (v is num) return v.toDouble();
-    return double.tryParse(v.toString().replaceAll(',', '').trim()) ?? 0.0;
-  }
-
-  int _toInt(dynamic v) {
-    if (v is int) return v;
-    if (v is num) return v.toInt();
-    return int.tryParse(v.toString()) ?? 0;
-  }
-
-  String _money(dynamic v) => _toDouble(v).toStringAsFixed(2);
-
-  String _customerName(Map<String, dynamic> c) {
-    final first = (c['first_name'] ?? '').toString().trim();
-    final last = (c['last_name'] ?? '').toString().trim();
-    return [first, last].where((s) => s.isNotEmpty).join(' ');
-  }
-
-  String _initials(Map<String, dynamic> c) {
-    final name = _customerName(c);
-    if (name.isEmpty) return '?';
-    final parts = name.split(' ').where((e) => e.isNotEmpty).toList();
-    if (parts.length == 1) return parts.first[0].toUpperCase();
-    return '${parts.first[0]}${parts.last[0]}'.toUpperCase();
-  }
-
-  Color _customerBalanceColor(double balance) {
-    if (balance > 0) return AppTheme.warning;
-    if (balance < 0) return AppTheme.success;
-    return AppTheme.textMuted;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final busy = _loadingHeader || _loadingSales || _loadingLedger || _postingReceipt;
-
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Customer Detail'),
-        actions: [
-          const Padding(
-            padding: EdgeInsets.only(right: 4),
-            child: BranchIndicator(tappable: false),
-          ),
-          IconButton(
-            tooltip: 'Refresh',
-            icon: const Icon(Icons.refresh_rounded),
-            onPressed: busy ? null : _refreshAll,
-          ),
-        ],
-      ),
-      body: _loadingHeader
-          ? const Center(child: CircularProgressIndicator())
-          : _errorHeader != null
-              ? _PartyErrorView(message: _errorHeader!, onRetry: _loadHeader)
-              : SafeArea(
-                  top: false,
-                  child: Column(
-                    children: [
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            _buildHero(busy),
-                            const SizedBox(height: 12),
-                            _buildMetrics(),
-                            const SizedBox(height: 12),
-                            _PartySegmentedTabBar(
-                              controller: _tab,
-                              tabs: const [
-                                Tab(text: 'Sales History'),
-                                Tab(text: 'Ledger'),
-                              ],
-                            ),
-                          ],
-                        ),
-                      ),
-                      Expanded(
-                        child: TabBarView(
-                          controller: _tab,
-                          children: [
-                            _SalesTab(
-                              items: _sales,
-                              isLoading: _loadingSales,
-                              error: _errorSales,
-                              page: _salesPage,
-                              lastPage: _salesLastPage,
-                              total: _salesTotal,
-                              onRetry: () => _loadSales(page: _salesPage),
-                              onPrev: () => _loadSales(page: _salesPage - 1),
-                              onNext: () => _loadSales(page: _salesPage + 1),
-                              onRefresh: () async => _loadSales(page: 1),
-                              money: _money,
-                              toInt: _toInt,
-                            ),
-                            _LedgerTab(
-                              items: _ledger,
-                              opening: _opening,
-                              openingForPage: _openingForPage,
-                              isLoading: _loadingLedger,
-                              error: _errorLedger,
-                              page: _ldgPage,
-                              lastPage: _ldgLastPage,
-                              total: _ldgTotal,
-                              onRetry: () => _loadLedger(page: _ldgPage),
-                              onPrev: () => _loadLedger(page: _ldgPage - 1),
-                              onNext: () => _loadLedger(page: _ldgPage + 1),
-                              onRefresh: () async => _loadLedger(page: 1),
-                              money: _money,
-                              toDouble: _toDouble,
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-    );
-  }
-
-  Widget _buildHero(bool busy) {
-    final c = customer!;
-    final name = _customerName(c);
-    final phone = (c['phone'] ?? '').toString();
-    final email = (c['email'] ?? '').toString();
-    final address = (c['address'] ?? '').toString();
-    final balance = _toDouble(c['balance']);
-
-    return _PartyHeroCard(
-      title: name.isEmpty ? 'Walk-in Customer' : name,
-      subtitle: address.isEmpty ? 'Customer account and receivable activity' : address,
-      initials: _initials(c),
-      typeLabel: 'CUSTOMER',
-      typeIcon: Icons.person_rounded,
-      status: (c['status'] ?? 'active').toString(),
-      balanceLabel: balance > 0
-          ? 'Receivable Balance'
-          : balance < 0
-              ? 'Advance Balance'
-              : 'Clear Balance',
-      balanceValue: _money(balance),
-      balanceTone: _customerBalanceColor(balance),
-      primaryActionLabel: 'Receive Payment',
-      primaryActionIcon: Icons.payments_rounded,
-      onPrimaryAction: busy ? null : _openReceiveModal,
-      onEdit: busy ? null : _openEdit,
-      infoPills: [
-        _PartyInfoPill(icon: Icons.phone_rounded, label: 'Phone', value: phone),
-        _PartyInfoPill(icon: Icons.mail_rounded, label: 'Email', value: email),
-      ],
-    );
-  }
-
-  Widget _buildMetrics() {
-    final c = customer!;
-    final balance = _toDouble(c['balance']);
-    return _PartyMetricGrid(
-      metrics: [
-        _PartyMetric(
-          label: 'Balance',
-          value: _money(balance),
-          icon: Icons.account_balance_wallet_rounded,
-          color: _customerBalanceColor(balance),
-          helper: balance > 0
-              ? 'Customer owes you'
-              : balance < 0
-                  ? 'Customer advance/credit'
-                  : 'No outstanding balance',
-        ),
-        _PartyMetric(
-          label: 'Debit / Sales',
-          value: _money(c['total_sales']),
-          icon: Icons.receipt_long_rounded,
-          color: AppTheme.info,
-          helper: 'Total sales posted',
-        ),
-        _PartyMetric(
-          label: 'Credit / Receipts',
-          value: _money(c['total_receipts']),
-          icon: Icons.payments_rounded,
-          color: AppTheme.success,
-          helper: 'Total payments received',
-        ),
-      ],
-    );
-  }
-}
-
-class _SalesTab extends StatelessWidget {
-  const _SalesTab({
-    required this.items,
-    required this.isLoading,
-    required this.error,
-    required this.page,
-    required this.lastPage,
-    required this.total,
-    required this.onRetry,
-    required this.onPrev,
-    required this.onNext,
-    required this.onRefresh,
-    required this.money,
-    required this.toInt,
-  });
-
-  final List<Map<String, dynamic>> items;
-  final bool isLoading;
-  final String? error;
-  final int page, lastPage, total;
-  final VoidCallback onRetry, onPrev, onNext;
-  final Future<void> Function() onRefresh;
-  final String Function(dynamic value) money;
-  final int Function(dynamic value) toInt;
-
-  @override
-  Widget build(BuildContext context) {
-    if (isLoading && items.isEmpty) {
-      return const Center(child: CircularProgressIndicator());
-    }
-    if (error != null && items.isEmpty) {
-      return _PartyErrorView(message: error!, onRetry: onRetry);
-    }
-
-    return RefreshIndicator(
-      onRefresh: onRefresh,
-      child: ListView(
-        physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.fromLTRB(16, 4, 16, 22),
-        children: [
-          if (isLoading) ...[
-            const LinearProgressIndicator(minHeight: 2),
-            const SizedBox(height: 10),
-          ],
-          if (items.isEmpty)
-            const _PartyEmptyState(
-              icon: Icons.receipt_long_rounded,
-              title: 'No sales yet',
-              subtitle: 'Sales generated for this customer will appear here.',
-            )
-          else ...[
-            for (final s in items) ...[
-              _PartyDocumentRow(
-                icon: Icons.receipt_long_rounded,
-                accentColor: AppTheme.info,
-                title: (s['invoice_no'] ?? 'Invoice').toString(),
-                amount: money(s['total']),
-                primaryMeta: "Date ${s['invoice_date'] ?? '—'}",
-                secondaryMeta: "Due ${s['due_date'] ?? '—'}",
-                openAmount: money(s['open_amount']),
-                onTap: () {
-                  final id = toInt(s['id']);
-                  if (id <= 0) return;
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => SaleDetailScreen(saleId: id)),
-                  );
-                },
-              ),
-              if (s != items.last) const SizedBox(height: 10),
-            ],
-          ],
-          const SizedBox(height: 12),
-          _PartyPager(
-            page: page,
-            lastPage: lastPage,
-            total: total,
-            onPrev: onPrev,
-            onNext: onNext,
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _LedgerTab extends StatelessWidget {
-  const _LedgerTab({
-    required this.items,
-    required this.opening,
-    required this.openingForPage,
-    required this.isLoading,
-    required this.error,
-    required this.page,
-    required this.lastPage,
-    required this.total,
-    required this.onRetry,
-    required this.onPrev,
-    required this.onNext,
-    required this.onRefresh,
-    required this.money,
-    required this.toDouble,
-  });
-
-  final List<Map<String, dynamic>> items;
-  final double opening;
-  final double openingForPage;
-  final bool isLoading;
-  final String? error;
-  final int page, lastPage, total;
-  final VoidCallback onRetry, onPrev, onNext;
-  final Future<void> Function() onRefresh;
-  final String Function(dynamic value) money;
-  final double Function(dynamic value) toDouble;
-
-  @override
-  Widget build(BuildContext context) {
-    if (isLoading && items.isEmpty) {
-      return const Center(child: CircularProgressIndicator());
-    }
-    if (error != null && items.isEmpty) {
-      return _PartyErrorView(message: error!, onRetry: onRetry);
-    }
-
-    return RefreshIndicator(
-      onRefresh: onRefresh,
-      child: ListView(
-        physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.fromLTRB(16, 4, 16, 22),
-        children: [
-          if (isLoading) ...[
-            const LinearProgressIndicator(minHeight: 2),
-            const SizedBox(height: 10),
-          ],
-          _PartyLedgerSummary(opening: money(opening), pageStart: money(openingForPage)),
-          const SizedBox(height: 12),
-          if (items.isEmpty)
-            const _PartyEmptyState(
-              icon: Icons.account_balance_rounded,
-              title: 'No ledger movement',
-              subtitle: 'Receipts and sales ledger entries will appear here.',
-            )
-          else ...[
-            for (final r in items) ...[
-              _CustomerLedgerCard(item: r, money: money, toDouble: toDouble),
-              if (r != items.last) const SizedBox(height: 10),
-            ],
-          ],
-          const SizedBox(height: 12),
-          _PartyPager(
-            page: page,
-            lastPage: lastPage,
-            total: total,
-            onPrev: onPrev,
-            onNext: onNext,
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _CustomerLedgerCard extends StatelessWidget {
-  const _CustomerLedgerCard({
-    required this.item,
-    required this.money,
-    required this.toDouble,
-  });
-
-  final Map<String, dynamic> item;
-  final String Function(dynamic value) money;
-  final double Function(dynamic value) toDouble;
-
-  @override
-  Widget build(BuildContext context) {
-    final debit = toDouble(item['debit']);
-    final credit = toDouble(item['credit']);
-    return _PartyLedgerRow(
-      date: (item['date'] ?? '').toString(),
-      memo: (item['memo'] ?? '').toString(),
-      account: (item['account_name'] ?? '').toString(),
-      debit: money(debit),
-      credit: money(credit),
-      balance: money(item['balance']),
-      icon: debit > 0 ? Icons.south_west_rounded : Icons.north_east_rounded,
-      accentColor: debit > 0 ? AppTheme.warning : AppTheme.success,
-    );
-  }
-}
-
-class _PaymentDialogHeader extends StatelessWidget {
-  const _PaymentDialogHeader({
-    required this.icon,
-    required this.title,
-    required this.subtitle,
-    required this.onClose,
-  });
-
-  final IconData icon;
-  final String title;
-  final String subtitle;
-  final VoidCallback? onClose;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(22, 18, 12, 18),
-      decoration: const BoxDecoration(
-        color: AppTheme.primarySoft,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      child: Row(
-        children: [
-          Container(
-            height: 42,
-            width: 42,
-            decoration: BoxDecoration(
-              color: AppTheme.primary.withOpacity(.12),
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: Icon(icon, color: AppTheme.primary, size: 22),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(title, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w900)),
-                const SizedBox(height: 2),
-                Text(
-                  subtitle,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: AppTheme.textMuted,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          IconButton(
-            tooltip: 'Close',
-            onPressed: onClose,
-            icon: const Icon(Icons.close_rounded),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _DialogBalanceStrip extends StatelessWidget {
-  const _DialogBalanceStrip({
-    required this.label,
-    required this.value,
-    required this.color,
-  });
-
-  final String label;
-  final String value;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: color.withOpacity(.08),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: color.withOpacity(.18)),
-      ),
-      child: Row(
-        children: [
-          Icon(Icons.account_balance_wallet_rounded, color: color, size: 21),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              label,
-              style: const TextStyle(color: AppTheme.textMuted, fontWeight: FontWeight.w800),
-            ),
-          ),
-          Text(
-            value,
-            style: TextStyle(color: color, fontWeight: FontWeight.w900, fontSize: 15),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/* ============================ Local party detail UI widgets ============================ */
-
-class _PartyInfoPill extends StatelessWidget {
-  const _PartyInfoPill({
+class PartyInfoPill extends StatelessWidget {
+  const PartyInfoPill({
     super.key,
     required this.icon,
     required this.label,
@@ -892,8 +55,8 @@ class _PartyInfoPill extends StatelessWidget {
   }
 }
 
-class _PartyHeroCard extends StatelessWidget {
-  const _PartyHeroCard({
+class PartyHeroCard extends StatelessWidget {
+  const PartyHeroCard({
     super.key,
     required this.title,
     required this.subtitle,
@@ -924,7 +87,7 @@ class _PartyHeroCard extends StatelessWidget {
   final IconData primaryActionIcon;
   final VoidCallback? onPrimaryAction;
   final VoidCallback? onEdit;
-  final List<_PartyInfoPill> infoPills;
+  final List<PartyInfoPill> infoPills;
 
   @override
   Widget build(BuildContext context) {
@@ -1245,8 +408,8 @@ class _HeroStatusBadge extends StatelessWidget {
   }
 }
 
-class _PartyMetric {
-  const _PartyMetric({
+class PartyMetric {
+  const PartyMetric({
     required this.label,
     required this.value,
     required this.icon,
@@ -1261,9 +424,9 @@ class _PartyMetric {
   final String? helper;
 }
 
-class _PartyMetricGrid extends StatelessWidget {
-  const _PartyMetricGrid({super.key, required this.metrics});
-  final List<_PartyMetric> metrics;
+class PartyMetricGrid extends StatelessWidget {
+  const PartyMetricGrid({super.key, required this.metrics});
+  final List<PartyMetric> metrics;
 
   @override
   Widget build(BuildContext context) {
@@ -1281,7 +444,7 @@ class _PartyMetricGrid extends StatelessWidget {
           children: metrics
               .map((metric) => SizedBox(
                     width: itemWidth,
-                    child: _PartyMetricCard(metric: metric),
+                    child: PartyMetricCard(metric: metric),
                   ))
               .toList(),
         );
@@ -1290,9 +453,9 @@ class _PartyMetricGrid extends StatelessWidget {
   }
 }
 
-class _PartyMetricCard extends StatelessWidget {
-  const _PartyMetricCard({super.key, required this.metric});
-  final _PartyMetric metric;
+class PartyMetricCard extends StatelessWidget {
+  const PartyMetricCard({super.key, required this.metric});
+  final PartyMetric metric;
 
   @override
   Widget build(BuildContext context) {
@@ -1364,8 +527,8 @@ class _PartyMetricCard extends StatelessWidget {
   }
 }
 
-class _PartySegmentedTabBar extends StatelessWidget {
-  const _PartySegmentedTabBar({
+class PartySegmentedTabBar extends StatelessWidget {
+  const PartySegmentedTabBar({
     super.key,
     required this.controller,
     required this.tabs,
@@ -1406,8 +569,8 @@ class _PartySegmentedTabBar extends StatelessWidget {
   }
 }
 
-class _PartySectionCard extends StatelessWidget {
-  const _PartySectionCard({
+class PartySectionCard extends StatelessWidget {
+  const PartySectionCard({
     super.key,
     required this.child,
     this.padding = const EdgeInsets.all(14),
@@ -1431,8 +594,8 @@ class _PartySectionCard extends StatelessWidget {
   }
 }
 
-class _PartyDocumentRow extends StatelessWidget {
-  const _PartyDocumentRow({
+class PartyDocumentRow extends StatelessWidget {
+  const PartyDocumentRow({
     super.key,
     required this.icon,
     required this.accentColor,
@@ -1606,8 +769,8 @@ class _MetaChip extends StatelessWidget {
   }
 }
 
-class _PartyLedgerSummary extends StatelessWidget {
-  const _PartyLedgerSummary({
+class PartyLedgerSummary extends StatelessWidget {
+  const PartyLedgerSummary({
     super.key,
     required this.opening,
     required this.pageStart,
@@ -1618,16 +781,16 @@ class _PartyLedgerSummary extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return _PartyMetricGrid(
+    return PartyMetricGrid(
       metrics: [
-        _PartyMetric(
+        PartyMetric(
           label: 'Opening Balance',
           value: opening,
           icon: Icons.account_balance_rounded,
           color: AppTheme.info,
           helper: 'Before selected range',
         ),
-        _PartyMetric(
+        PartyMetric(
           label: 'Page Start Balance',
           value: pageStart,
           icon: Icons.timeline_rounded,
@@ -1639,8 +802,8 @@ class _PartyLedgerSummary extends StatelessWidget {
   }
 }
 
-class _PartyLedgerRow extends StatelessWidget {
-  const _PartyLedgerRow({
+class PartyLedgerRow extends StatelessWidget {
+  const PartyLedgerRow({
     super.key,
     required this.date,
     required this.memo,
@@ -1796,8 +959,8 @@ class _AmountBadge extends StatelessWidget {
   }
 }
 
-class _PartyPager extends StatelessWidget {
-  const _PartyPager({
+class PartyPager extends StatelessWidget {
+  const PartyPager({
     super.key,
     required this.page,
     required this.lastPage,
@@ -1856,8 +1019,8 @@ class _PartyPager extends StatelessWidget {
   }
 }
 
-class _PartyEmptyState extends StatelessWidget {
-  const _PartyEmptyState({
+class PartyEmptyState extends StatelessWidget {
+  const PartyEmptyState({
     super.key,
     required this.icon,
     required this.title,
@@ -1870,7 +1033,7 @@ class _PartyEmptyState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return _PartySectionCard(
+    return PartySectionCard(
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 22),
         child: Column(
@@ -1912,8 +1075,8 @@ class _PartyEmptyState extends StatelessWidget {
   }
 }
 
-class _PartyErrorView extends StatelessWidget {
-  const _PartyErrorView({
+class PartyErrorView extends StatelessWidget {
+  const PartyErrorView({
     super.key,
     required this.message,
     required this.onRetry,
@@ -1927,7 +1090,7 @@ class _PartyErrorView extends StatelessWidget {
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(24),
-        child: _PartySectionCard(
+        child: PartySectionCard(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
