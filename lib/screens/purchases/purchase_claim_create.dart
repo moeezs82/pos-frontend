@@ -1,8 +1,10 @@
 import 'dart:convert';
 import 'package:enterprise_pos/api/core/api_client.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
+import 'package:enterprise_pos/widgets/app_keyboard_shortcuts.dart';
 import 'package:enterprise_pos/widgets/branch_indicator.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
@@ -304,10 +306,31 @@ class _CreatePurchaseClaimScreenState extends State<CreatePurchaseClaimScreen> {
     final invoiceNo = _selectedPurchase?['invoice_no'] ?? 'N/A';
     final total = _computeClaimTotal();
 
-    return Scaffold(
+    return Focus(
+      autofocus: true,
+      skipTraversal: true,
+      child: CallbackShortcuts(
+        bindings: <ShortcutActivator, VoidCallback>{
+          ...posSaveShortcuts(() {
+            if (!_submitting) _submitClaim(context);
+          }),
+          const SingleActivator(LogicalKeyboardKey.f3): () => _searchPurchase(context),
+          posCtrlShift(LogicalKeyboardKey.keyV): () => _searchPurchase(context),
+          posCmdShift(LogicalKeyboardKey.keyV): () => _searchPurchase(context),
+          posCtrl(LogicalKeyboardKey.slash): () => showAppShortcutGuide(context, extra: PosShortcutCatalog.purchaseClaimCreate),
+          posCmd(LogicalKeyboardKey.slash): () => showAppShortcutGuide(context, extra: PosShortcutCatalog.purchaseClaimCreate),
+        },
+        child: Scaffold(
       appBar: AppBar(
         title: const Text("Create Purchase Claim"),
-        actions: const [BranchIndicator(tappable: false)],
+        actions: [
+          IconButton(
+            tooltip: 'Keyboard shortcuts',
+            onPressed: () => showAppShortcutGuide(context, extra: PosShortcutCatalog.purchaseClaimCreate),
+            icon: const Icon(Icons.keyboard_rounded),
+          ),
+          const BranchIndicator(tappable: false),
+        ],
       ),
       body: Padding(
         padding: const EdgeInsets.all(12),
@@ -588,11 +611,13 @@ class _CreatePurchaseClaimScreenState extends State<CreatePurchaseClaimScreen> {
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : const Icon(Icons.save),
-                  label: Text(_submitting ? "Submitting..." : "Submit Claim"),
+                  label: Text(_submitting ? "Submitting..." : "Submit Claim  Ctrl+Enter"),
                 ),
               ),
             ],
           ),
+        ),
+      ),
         ),
       ),
     );

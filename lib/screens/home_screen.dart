@@ -1,8 +1,8 @@
 import 'package:enterprise_pos/screens/account_screen.dart';
 import 'package:enterprise_pos/providers/branch_provider.dart';
 import 'package:enterprise_pos/screens/branches/branch_control_screen.dart';
-import 'package:enterprise_pos/screens/cashbook/cashbook_screen.dart';
 import 'package:enterprise_pos/screens/cashbook/expense_create_screen.dart';
+import 'package:enterprise_pos/screens/cash_ledger/cash_ledger_screen.dart';
 import 'package:enterprise_pos/screens/customers/customers_screen.dart';
 import 'package:enterprise_pos/screens/product_screen.dart';
 import 'package:enterprise_pos/screens/purchases/purchase_claim_screen.dart';
@@ -13,6 +13,7 @@ import 'package:enterprise_pos/screens/reports/report_hub_screen.dart';
 import 'package:enterprise_pos/screens/sales/sale_create.dart';
 import 'package:enterprise_pos/screens/sales/sale_returns_screen.dart';
 import 'package:enterprise_pos/screens/sales/sale_screen.dart';
+import 'package:enterprise_pos/screens/settings/printer_settings_screen.dart';
 import 'package:enterprise_pos/screens/stock_screen.dart';
 import 'package:enterprise_pos/screens/users_screen.dart';
 import 'package:enterprise_pos/screens/vendors/vendors_screen.dart';
@@ -56,6 +57,14 @@ class HomeScreen extends StatelessWidget {
 
     final quickActions = <_Tile>[
       if (auth.isMasterAdmin) branchControlTile(),
+      if (auth.isMasterAdmin)
+        _Tile(
+          icon: Icons.print_rounded,
+          title: 'Printer Settings',
+          subtitle: 'Configure and test the receipt printer',
+          color: AppTheme.navy,
+          onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PrinterSettingsScreen())),
+        ),
       _Tile(
         icon: Icons.point_of_sale_rounded,
         title: 'Create Sale',
@@ -105,7 +114,7 @@ class HomeScreen extends StatelessWidget {
 
     final management = <_Tile>[
       _Tile(icon: Icons.shopping_bag_rounded, title: 'Sales', shortcut: 'Ctrl+L', subtitle: 'Invoices and payments', color: AppTheme.info, onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const SalesScreen()))),
-      _Tile(icon: Icons.account_balance_wallet_rounded, title: 'Cash Book', shortcut: 'Ctrl+B', subtitle: 'Cash flow and daybook', color: AppTheme.primary, onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const CashBookScreen()))),
+      _Tile(icon: Icons.account_balance_wallet_rounded, title: 'Cash Ledger', shortcut: 'Ctrl+B', subtitle: 'All cash in/out, plus daily Day Book', color: AppTheme.primary, onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const CashLedgerScreen()))),
       _Tile(icon: Icons.inventory_2_rounded, title: 'Products', shortcut: 'Ctrl+P', subtitle: 'Catalog and prices', color: AppTheme.success, onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ProductsScreen()))),
       _Tile(icon: Icons.warehouse_rounded, title: 'Stock', shortcut: 'Ctrl+I', subtitle: 'Inventory on hand', color: AppTheme.danger, onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const StockScreen()))),
       _Tile(icon: Icons.people_alt_rounded, title: 'Customers', shortcut: 'Ctrl+Shift+C', subtitle: 'Receivables and profiles', color: AppTheme.warning, onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const CustomersScreen()))),

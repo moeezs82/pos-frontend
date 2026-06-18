@@ -18,8 +18,6 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:enterprise_pos/services/thermal_printer_service.dart';
 import 'package:enterprise_pos/services/receipt_preview_service.dart';
-import 'package:flutter/foundation.dart' 
-  show TargetPlatform, defaultTargetPlatform, kIsWeb;
 
 // local widgets split into small files
 import 'package:enterprise_pos/screens/sales/parts/sale_party_section.dart';
@@ -719,74 +717,51 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       }).toList();
       final printerConfig = context.read<PrinterConfigProvider>();
 
-      if ((printerConfig.mainPrinterName ?? '').isEmpty) {
+      if (!printerConfig.isConfigured) {
         try {
-          await printerConfig.refresh();
+          final token = context.read<AuthProvider>().token;
+          if (token != null) await printerConfig.refresh(token);
         } catch (e, s) {
           debugPrint('Printer config refresh failed: $e');
           debugPrintStack(stackTrace: s);
         }
       }
 
-      final mainPrinter = printerConfig.mainPrinterName;
-      final kitchenPrinter = printerConfig.kitchenPrinterName;
-      final hasPrinter = !kIsWeb && (mainPrinter ?? '').trim().isNotEmpty;
-      final isKitchenPrintEnabled = hasPrinter && (kitchenPrinter ?? '').trim().isNotEmpty;
+      final effectiveShopName = printerConfig.shopName.isNotEmpty ? printerConfig.shopName : 'My Shop';
+      final effectiveShopAddress = printerConfig.shopAddress.isNotEmpty ? printerConfig.shopAddress : null;
+      final effectiveShopPhone = printerConfig.shopPhone.isNotEmpty ? printerConfig.shopPhone : null;
 
-      debugPrint('Using main printer: $mainPrinter');
-      debugPrint('Using kitchen printer: $kitchenPrinter');
-      if (!kIsWeb && hasPrinter) {
+      debugPrint('Active printer connection: ${printerConfig.activeConnection}');
+
+      var printedToHardware = false;
+      if (printerConfig.isNetworkPrinter && (printerConfig.networkIp ?? '').trim().isNotEmpty) {
         try {
-          if (defaultTargetPlatform == TargetPlatform.windows) {
-            await ThermalPrinterService.instance.printSaleReceiptWindows(
-              printerName: mainPrinter ?? 'main-shop',
-              shopName: printerConfig.shopName.isNotEmpty
-                  ? printerConfig.shopName
-                  : "Pizza 360",
-              shopAddress: printerConfig.shopAddress.isNotEmpty
-                  ? printerConfig.shopAddress
-                  : "Pizza 360 Miani Road Sukkur",
-              shopPhone: printerConfig.shopPhone.isNotEmpty
-                  ? printerConfig.shopPhone
-                  : "+923702183106",
-              receiptNo: receiptNo,
-              dateTime: DateTime.now(),
-              items: receiptItems,
-              subtotal: subtotal,
-              discount: discount,
-              tax: tax,
-              grandTotal: total,
-              cashReceived: cashReceived,
-              changeAmount: changeAmount,
-              meta: meta,
-            );
-            if (isKitchenPrintEnabled) {
-              await ThermalPrinterService.instance.printSaleReceiptWindows(
-                printerName: kitchenPrinter ?? 'kitchen',
-                shopName:
-                    "${printerConfig.shopName.isNotEmpty ? printerConfig.shopName : "Pizza 360"} - KITCHEN COPY",
-                shopAddress: "KITCHEN COPY",
-                shopPhone: printerConfig.shopPhone.isNotEmpty
-                    ? printerConfig.shopPhone
-                    : "+923702183106",
-                receiptNo: receiptNo,
-                dateTime: DateTime.now(),
-                items: receiptItems,
-                subtotal: subtotal,
-                discount: discount,
-                tax: tax,
-                grandTotal: total,
-                cashReceived: cashReceived,
-                changeAmount: changeAmount,
-                meta: meta,
-              );
-            }
-          } else {
+          await ThermalPrinterService.instance.printSaleReceiptNetwork(
+            printerIp: printerConfig.networkIp!.trim(),
+            port: printerConfig.networkPort,
+            shopName: effectiveShopName,
+            shopAddress: effectiveShopAddress,
+            shopPhone: effectiveShopPhone,
+            receiptNo: receiptNo,
+            dateTime: DateTime.now(),
+            items: receiptItems,
+            subtotal: subtotal,
+            discount: discount,
+            tax: tax,
+            grandTotal: total,
+            cashReceived: cashReceived,
+            changeAmount: changeAmount,
+            meta: meta,
+          );
+          printedToHardware = true;
+
+          if (printerConfig.kitchenPrintEnabled && (printerConfig.kitchenNetworkIp ?? '').trim().isNotEmpty) {
             await ThermalPrinterService.instance.printSaleReceiptNetwork(
-              printerIp: "192.168.1.50",
-              shopName: "Pizza 360",
-              shopAddress: "Pizza 360 Miani Road Sukkur",
-              shopPhone: "+923702183106",
+              printerIp: printerConfig.kitchenNetworkIp!.trim(),
+              port: printerConfig.kitchenNetworkPort,
+              shopName: '$effectiveShopName - KITCHEN COPY',
+              shopAddress: 'KITCHEN COPY',
+              shopPhone: effectiveShopPhone,
               receiptNo: receiptNo,
               dateTime: DateTime.now(),
               items: receiptItems,
@@ -800,7 +775,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
             );
           }
         } catch (e, s) {
-          debugPrint('PRINT ERROR: $e');
+          debugPrint('PRINT ERROR (network): $e');
           debugPrintStack(stackTrace: s);
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
@@ -808,11 +783,41 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
             );
           }
         }
-      } else {
+      } else if (printerConfig.isLocalPrinter && (printerConfig.localPrinterName ?? '').trim().isNotEmpty) {
+        try {
+          await ThermalPrinterService.instance.printSaleReceiptWindows(
+            printerName: printerConfig.localPrinterName!.trim(),
+            shopName: effectiveShopName,
+            shopAddress: effectiveShopAddress,
+            shopPhone: effectiveShopPhone,
+            receiptNo: receiptNo,
+            dateTime: DateTime.now(),
+            items: receiptItems,
+            subtotal: subtotal,
+            discount: discount,
+            tax: tax,
+            grandTotal: total,
+            cashReceived: cashReceived,
+            changeAmount: changeAmount,
+            meta: meta,
+          );
+          printedToHardware = true;
+        } catch (e, s) {
+          debugPrint('PRINT ERROR (local): $e');
+          debugPrintStack(stackTrace: s);
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text("Sale created but printing failed: $e")),
+            );
+          }
+        }
+      }
+
+      if (!printedToHardware) {
         await ReceiptPreviewService.instance.previewReceipt(
-          shopName: "HT COMPUTERS",
-          shopAddress: "HT Computers Clock Tower Sukkur",
-          shopPhone: "+92 333 7155125",
+          shopName: effectiveShopName,
+          shopAddress: effectiveShopAddress,
+          shopPhone: effectiveShopPhone,
           receiptNo: receiptNo,
           dateTime: DateTime.now(),
           items: receiptItems,

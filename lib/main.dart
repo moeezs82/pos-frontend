@@ -23,7 +23,7 @@ class MyApp extends StatelessWidget {
       providers: [
         ChangeNotifierProvider(create: (_) => AuthProvider()..tryAutoLogin()),
         ChangeNotifierProvider(create: (_) => BranchProvider()),
-        ChangeNotifierProvider(create: (_) => PrinterConfigProvider()..init()),
+        ChangeNotifierProvider(create: (_) => PrinterConfigProvider()..loadFromCache()),
       ],
       child: MaterialApp(
         debugShowCheckedModeBanner: false,
@@ -39,8 +39,13 @@ class MyApp extends StatelessWidget {
               if (!ctx.mounted) return;
               if (auth.isAuthenticated) {
                 branchProvider.syncFromAuthUser(auth.user);
+                // No-op once already loaded for this exact token; does a
+                // real, authenticated fetch the first time (or after a
+                // different user logs in).
+                ctx.read<PrinterConfigProvider>().ensureLoadedFor(auth.token);
               } else {
                 branchProvider.reset();
+                ctx.read<PrinterConfigProvider>().stopAutoRefresh();
               }
             });
 

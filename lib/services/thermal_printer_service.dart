@@ -1,9 +1,18 @@
 import 'dart:typed_data';
 
+import 'package:esc_pos_printer_plus/esc_pos_printer_plus.dart';
+import 'package:esc_pos_utils_plus/esc_pos_utils_plus.dart';
+
 class ThermalPrinterService {
   ThermalPrinterService._();
   static final instance = ThermalPrinterService._();
 
+  /// Printing to a printer installed on this computer's OS print spooler
+  /// (e.g. a USB thermal printer shared as a Windows printer). This needs a
+  /// native Win32 print-spooler binding that isn't wired up yet — there is
+  /// currently no working code path for this, by design, rather than a
+  /// silent no-op: callers should catch this and fall back to the PDF
+  /// preview, same as a real connection failure.
   Future<void> printSaleReceiptWindows({
     required String printerName,
     required String shopName,
@@ -22,9 +31,15 @@ class ThermalPrinterService {
     required double changeAmount,
     Map<String, dynamic>? meta,
   }) async {
-    throw UnsupportedError('Raw thermal printing is not supported on web.');
+    throw UnsupportedError(
+      'Local/USB printer support is not wired up yet for "$printerName". '
+      'Use a network printer in Printer Settings, or print to PDF for now.',
+    );
   }
 
+  /// Printing to an ESC/POS thermal printer over the network (WiFi/Ethernet,
+  /// listening on a TCP port — almost always 9100). Works on every Flutter
+  /// platform this app builds for, since it's a plain TCP socket underneath.
   Future<void> printSaleReceiptNetwork({
     required String printerIp,
     int port = 9100,
@@ -44,8 +59,192 @@ class ThermalPrinterService {
     required double changeAmount,
     Map<String, dynamic>? meta,
   }) async {
-    throw UnsupportedError('Network thermal printing is not supported on web.');
+    final profile = await CapabilityProfile.load();
+    final printer = NetworkPrinter(PaperSize.mm80, profile);
+
+    final result = await printer.connect(
+      printerIp,
+      port: port,
+      timeout: const Duration(seconds: 7),
+    );
+
+    if (result != PosPrintResult.success) {
+      throw Exception('Could not reach printer at $printerIp:$port (${result.msg})');
+    }
+
+    try {
+      _writeReceipt(
+        printer,
+        shopName: shopName,
+        shopAddress: shopAddress,
+        shopPhone: shopPhone,
+        receiptNo: receiptNo,
+        dateTime: dateTime,
+        items: items,
+        subtotal: subtotal,
+        discount: discount,
+        tax: tax,
+        grandTotal: grandTotal,
+        cashReceived: cashReceived,
+        changeAmount: changeAmount,
+        meta: meta,
+      );
+    } finally {
+      printer.disconnect();
+    }
   }
+
+  /// Sends a short test ticket so a person at the settings screen can
+  /// confirm the printer actually prints before trusting it for real sales.
+  Future<void> testPrintNetwork({
+    required String printerIp,
+    int port = 9100,
+    String shopName = 'Test Print',
+  }) async {
+    final profile = await CapabilityProfile.load();
+    final printer = NetworkPrinter(PaperSize.mm80, profile);
+
+    final result = await printer.connect(
+      printerIp,
+      port: port,
+      timeout: const Duration(seconds: 7),
+    );
+
+    if (result != PosPrintResult.success) {
+      throw Exception('Could not reach printer at $printerIp:$port (${result.msg})');
+    }
+
+    try {
+      printer.text(
+        shopName,
+        styles: const PosStyles(align: PosAlign.center, bold: true, height: PosTextSize.size2, width: PosTextSize.size2),
+      );
+      printer.text('Test print', styles: const PosStyles(align: PosAlign.center));
+      printer.text(
+        DateTime.now().toString(),
+        styles: const PosStyles(align: PosAlign.center),
+      );
+      printer.hr();
+      printer.text('If you can read this, the printer\nis connected and working.');
+      printer.feed(2);
+      printer.cut();
+    } finally {
+      printer.disconnect();
+    }
+  }
+
+  void _writeReceipt(
+    NetworkPrinter printer, {
+    required String shopName,
+    String? shopAddress,
+    String? shopPhone,
+    required String receiptNo,
+    required DateTime dateTime,
+    required List<SaleReceiptItem> items,
+    required double subtotal,
+    required double discount,
+    required double tax,
+    required double grandTotal,
+    required double cashReceived,
+    required double changeAmount,
+    Map<String, dynamic>? meta,
+  }) {
+    final snapRaw = meta?['customer_snapshot'];
+    final snap = (snapRaw is Map) ? snapRaw.cast<String, dynamic>() : <String, dynamic>{};
+    final cName = (snap['name'] ?? '').toString().trim();
+    final cPhone = (snap['phone'] ?? '').toString().trim();
+
+    final delivery = (meta?['delivery'] is num)
+        ? (meta!['delivery'] as num).toDouble()
+        : double.tryParse((meta?['delivery'] ?? '').toString()) ?? 0.0;
+
+    printer.text(shopName, styles: const PosStyles(align: PosAlign.center, bold: true, height: PosTextSize.size2, width: PosTextSize.size2));
+    if (shopAddress != null && shopAddress.trim().isNotEmpty) {
+      printer.text(shopAddress, styles: const PosStyles(align: PosAlign.center));
+    }
+    if (shopPhone != null && shopPhone.trim().isNotEmpty) {
+      printer.text(shopPhone, styles: const PosStyles(align: PosAlign.center));
+    }
+    printer.hr();
+
+    printer.text('Receipt# $receiptNo', styles: const PosStyles(align: PosAlign.center, bold: true));
+    printer.text(_fmtDate(dateTime), styles: const PosStyles(align: PosAlign.center));
+    printer.hr();
+
+    if (cName.isNotEmpty || cPhone.isNotEmpty) {
+      if (cName.isNotEmpty) printer.text('Customer: $cName');
+      if (cPhone.isNotEmpty) printer.text('Phone: $cPhone');
+      printer.hr();
+    }
+
+    printer.row([
+      PosColumn(text: 'Item', width: 6, styles: const PosStyles(bold: true)),
+      PosColumn(text: 'Qty', width: 2, styles: const PosStyles(bold: true, align: PosAlign.right)),
+      PosColumn(text: 'Total', width: 4, styles: const PosStyles(bold: true, align: PosAlign.right)),
+    ]);
+
+    for (final it in items) {
+      printer.row([
+        PosColumn(text: it.name, width: 6),
+        PosColumn(text: _q(it.qty), width: 2, styles: const PosStyles(align: PosAlign.right)),
+        PosColumn(text: _m(it.total), width: 4, styles: const PosStyles(align: PosAlign.right)),
+      ]);
+    }
+    printer.hr();
+
+    printer.row([
+      PosColumn(text: 'Subtotal', width: 8, styles: const PosStyles(bold: true)),
+      PosColumn(text: _m(subtotal), width: 4, styles: const PosStyles(bold: true, align: PosAlign.right)),
+    ]);
+    if (discount > 0) {
+      printer.row([
+        PosColumn(text: 'Discount', width: 8, styles: const PosStyles(bold: true)),
+        PosColumn(text: '-${_m(discount)}', width: 4, styles: const PosStyles(bold: true, align: PosAlign.right)),
+      ]);
+    }
+    if (tax > 0) {
+      printer.row([
+        PosColumn(text: 'Tax', width: 8, styles: const PosStyles(bold: true)),
+        PosColumn(text: _m(tax), width: 4, styles: const PosStyles(bold: true, align: PosAlign.right)),
+      ]);
+    }
+    if (delivery > 0) {
+      printer.row([
+        PosColumn(text: 'Delivery', width: 8, styles: const PosStyles(bold: true)),
+        PosColumn(text: _m(delivery), width: 4, styles: const PosStyles(bold: true, align: PosAlign.right)),
+      ]);
+    }
+    printer.hr();
+
+    printer.row([
+      PosColumn(text: 'Grand Total', width: 8, styles: const PosStyles(bold: true, height: PosTextSize.size2)),
+      PosColumn(text: _m(grandTotal), width: 4, styles: const PosStyles(bold: true, height: PosTextSize.size2, align: PosAlign.right)),
+    ]);
+    if (cashReceived > 0) {
+      printer.row([
+        PosColumn(text: 'Cash Received', width: 8, styles: const PosStyles(bold: true)),
+        PosColumn(text: _m(cashReceived), width: 4, styles: const PosStyles(bold: true, align: PosAlign.right)),
+      ]);
+    }
+    if (changeAmount > 0) {
+      printer.row([
+        PosColumn(text: 'Change', width: 8, styles: const PosStyles(bold: true)),
+        PosColumn(text: _m(changeAmount), width: 4, styles: const PosStyles(bold: true, align: PosAlign.right)),
+      ]);
+    }
+    printer.hr();
+
+    printer.text('Thank You, Order Again.', styles: const PosStyles(align: PosAlign.center, bold: true));
+    printer.feed(2);
+    printer.cut();
+  }
+
+  static String _fmtDate(DateTime d) =>
+      "${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year} "
+      "${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}";
+
+  static String _m(num v) => v.toStringAsFixed(2);
+  static String _q(num v) => (v % 1 == 0) ? v.toInt().toString() : v.toString();
 }
 
 class SaleReceiptItem {

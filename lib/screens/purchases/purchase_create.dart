@@ -6,11 +6,13 @@ import 'package:enterprise_pos/screens/sales/parts/create_sale_items_section.dar
 import 'package:enterprise_pos/screens/sales/parts/sale_totals_card.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/app_feedback.dart';
+import 'package:enterprise_pos/widgets/app_keyboard_shortcuts.dart';
 import 'package:enterprise_pos/widgets/branch_indicator.dart';
 import 'package:enterprise_pos/widgets/enterprise/enterprise_panel.dart';
 import 'package:enterprise_pos/widgets/product_picker_grid_sheet.dart';
 import 'package:enterprise_pos/widgets/vendor_picker_sheet.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 class CreatePurchaseScreen extends StatefulWidget {
@@ -604,7 +606,27 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
       ],
     );
 
-    return Scaffold(
+    return Focus(
+      autofocus: true,
+      skipTraversal: true,
+      child: CallbackShortcuts(
+        bindings: <ShortcutActivator, VoidCallback>{
+          ...posSaveShortcuts(() {
+            if (!_submitting) _submitPurchase();
+          }),
+          const SingleActivator(LogicalKeyboardKey.f2): () => _addItemManual(),
+          posCtrl(LogicalKeyboardKey.keyI): () => _addItemManual(),
+          posCmd(LogicalKeyboardKey.keyI): () => _addItemManual(),
+          const SingleActivator(LogicalKeyboardKey.f3): () => _pickVendor(),
+          posCtrlShift(LogicalKeyboardKey.keyV): () => _pickVendor(),
+          posCmdShift(LogicalKeyboardKey.keyV): () => _pickVendor(),
+          const SingleActivator(LogicalKeyboardKey.f9): () {
+            if (mounted) _barcodeFocusNode.requestFocus();
+          },
+          posCtrl(LogicalKeyboardKey.slash): () => showAppShortcutGuide(context, extra: PosShortcutCatalog.purchaseCreate),
+          posCmd(LogicalKeyboardKey.slash): () => showAppShortcutGuide(context, extra: PosShortcutCatalog.purchaseCreate),
+        },
+        child: Scaffold(
       appBar: AppBar(
         title: const Text('Create Purchase'),
         actions: [
@@ -615,6 +637,11 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
               icon: const Icon(Icons.inventory_2_outlined, size: 18),
               label: const Text('Select items'),
             ),
+          ),
+          IconButton(
+            tooltip: 'Keyboard shortcuts',
+            onPressed: () => showAppShortcutGuide(context, extra: PosShortcutCatalog.purchaseCreate),
+            icon: const Icon(Icons.keyboard_rounded),
           ),
           const BranchIndicator(tappable: false),
         ],
@@ -681,6 +708,8 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
           ),
           Positioned(left: 0, top: 0, child: _hiddenBarcodeInput()),
         ],
+      ),
+        ),
       ),
     );
   }
@@ -1080,7 +1109,7 @@ class _CreatePurchaseBottomBar extends StatelessWidget {
               icon: submitting
                   ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
                   : const Icon(Icons.check_circle_rounded),
-              label: Text(submitting ? 'Saving...' : 'Save Purchase'),
+              label: Text(submitting ? 'Saving...' : 'Save Purchase  Ctrl+Enter'),
             ),
           );
 

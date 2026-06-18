@@ -1,7 +1,8 @@
 import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/providers/branch_provider.dart';
 import 'package:enterprise_pos/screens/branches/branch_control_screen.dart';
-import 'package:enterprise_pos/screens/cashbook/cashbook_screen.dart';
+import 'package:enterprise_pos/screens/cash_ledger/cash_ledger_create_screen.dart';
+import 'package:enterprise_pos/screens/cash_ledger/cash_ledger_screen.dart';
 import 'package:enterprise_pos/screens/cashbook/expense_create_screen.dart';
 import 'package:enterprise_pos/screens/customers/customers_screen.dart';
 import 'package:enterprise_pos/screens/home_screen.dart';
@@ -53,7 +54,8 @@ class PosShortcutCatalog {
     PosShortcutInfo(keys: 'Ctrl + Shift + C', title: 'Customers', section: 'Parties', icon: Icons.people_alt_rounded),
     PosShortcutInfo(keys: 'Ctrl + Shift + V', title: 'Vendors', section: 'Parties', icon: Icons.groups_2_rounded),
     PosShortcutInfo(keys: 'Ctrl + M', title: 'Party Payments', section: 'Parties', icon: Icons.account_balance_wallet_rounded),
-    PosShortcutInfo(keys: 'Ctrl + B', title: 'Cash Book', section: 'Accounts', icon: Icons.payments_rounded),
+    PosShortcutInfo(keys: 'Ctrl + B', title: 'Cash Ledger', section: 'Accounts', icon: Icons.payments_rounded),
+    PosShortcutInfo(keys: 'Ctrl + Shift + N', title: 'New Cash Ledger Entry', section: 'Accounts', icon: Icons.add_circle_rounded),
     PosShortcutInfo(keys: 'Ctrl + E', title: 'Add Expense', section: 'Accounts', icon: Icons.money_off_rounded),
     PosShortcutInfo(keys: 'Ctrl + R', title: 'Reports', section: 'Reports', icon: Icons.analytics_rounded),
     PosShortcutInfo(keys: 'Ctrl + U', title: 'Users', section: 'Administration', icon: Icons.manage_accounts_rounded),
@@ -67,6 +69,35 @@ class PosShortcutCatalog {
     PosShortcutInfo(keys: 'F4 / Ctrl + Shift + D', title: 'Pick delivery boy', section: 'Create Sale', icon: Icons.delivery_dining_rounded),
     PosShortcutInfo(keys: 'F9', title: 'Focus barcode scanner', section: 'Create Sale', icon: Icons.qr_code_scanner_rounded),
     PosShortcutInfo(keys: 'Ctrl + Enter', title: 'Save sale', section: 'Create Sale', icon: Icons.check_circle_rounded),
+  ];
+
+  static const cashLedgerCreate = <PosShortcutInfo>[
+    PosShortcutInfo(keys: 'Ctrl + 1 .. 5', title: 'Pick entry type', section: 'Cash Ledger Entry', icon: Icons.swap_vert_rounded),
+    PosShortcutInfo(keys: 'F3 / Ctrl + Shift + P', title: 'Pick party', section: 'Cash Ledger Entry', icon: Icons.person_search_rounded),
+    PosShortcutInfo(keys: 'Ctrl + D', title: 'Change date', section: 'Cash Ledger Entry', icon: Icons.calendar_today_rounded),
+    PosShortcutInfo(keys: 'Ctrl + Enter', title: 'Save entry', section: 'Cash Ledger Entry', icon: Icons.check_circle_rounded),
+  ];
+
+  static const purchaseCreate = <PosShortcutInfo>[
+    PosShortcutInfo(keys: 'F2 / Ctrl + I', title: 'Select items', section: 'Create Purchase', icon: Icons.add_shopping_cart_rounded),
+    PosShortcutInfo(keys: 'F3 / Ctrl + Shift + V', title: 'Pick vendor', section: 'Create Purchase', icon: Icons.storefront_rounded),
+    PosShortcutInfo(keys: 'F9', title: 'Focus barcode scanner', section: 'Create Purchase', icon: Icons.qr_code_scanner_rounded),
+    PosShortcutInfo(keys: 'Ctrl + Enter', title: 'Save purchase', section: 'Create Purchase', icon: Icons.check_circle_rounded),
+  ];
+
+  static const purchaseClaimCreate = <PosShortcutInfo>[
+    PosShortcutInfo(keys: 'F3 / Ctrl + Shift + V', title: 'Pick vendor', section: 'Create Purchase Claim', icon: Icons.storefront_rounded),
+    PosShortcutInfo(keys: 'Ctrl + Enter', title: 'Save claim', section: 'Create Purchase Claim', icon: Icons.check_circle_rounded),
+  ];
+
+  static const saleReturnCreate = <PosShortcutInfo>[
+    PosShortcutInfo(keys: 'F3 / Ctrl + Shift + C', title: 'Pick customer / sale', section: 'Create Sale Return', icon: Icons.person_search_rounded),
+    PosShortcutInfo(keys: 'Ctrl + Enter', title: 'Save return', section: 'Create Sale Return', icon: Icons.check_circle_rounded),
+  ];
+
+  static const quickSave = <PosShortcutInfo>[
+    PosShortcutInfo(keys: 'Ctrl + Enter', title: 'Save', section: 'Forms', icon: Icons.check_circle_rounded),
+    PosShortcutInfo(keys: 'Esc', title: 'Cancel / close', section: 'Forms', icon: Icons.close_rounded),
   ];
 }
 
@@ -127,8 +158,11 @@ class AppKeyboardShortcuts extends StatelessWidget {
       _ctrl(LogicalKeyboardKey.keyM): () => _openBusiness(auth, branch, const PartyPaymentsScreen()),
       _cmd(LogicalKeyboardKey.keyM): () => _openBusiness(auth, branch, const PartyPaymentsScreen()),
 
-      _ctrl(LogicalKeyboardKey.keyB): () => _openBusiness(auth, branch, const CashBookScreen()),
-      _cmd(LogicalKeyboardKey.keyB): () => _openBusiness(auth, branch, const CashBookScreen()),
+      _ctrl(LogicalKeyboardKey.keyB): () => _openBusiness(auth, branch, const CashLedgerScreen()),
+      _cmd(LogicalKeyboardKey.keyB): () => _openBusiness(auth, branch, const CashLedgerScreen()),
+
+      _ctrlShift(LogicalKeyboardKey.keyN): () => _openBusiness(auth, branch, const CashLedgerCreateScreen()),
+      _cmdShift(LogicalKeyboardKey.keyN): () => _openBusiness(auth, branch, const CashLedgerCreateScreen()),
 
       _ctrl(LogicalKeyboardKey.keyE): () => _openBusiness(auth, branch, const ExpenseCreateScreen()),
       _cmd(LogicalKeyboardKey.keyE): () => _openBusiness(auth, branch, const ExpenseCreateScreen()),
@@ -163,8 +197,8 @@ class AppKeyboardShortcuts extends StatelessWidget {
       _ctrl(LogicalKeyboardKey.numpad8): () => _openBusiness(auth, branch, const PartyPaymentsScreen()),
       _ctrl(LogicalKeyboardKey.digit9): () => _openBusiness(auth, branch, const ReportsHubScreen()),
       _ctrl(LogicalKeyboardKey.numpad9): () => _openBusiness(auth, branch, const ReportsHubScreen()),
-      _ctrl(LogicalKeyboardKey.digit0): () => _openBusiness(auth, branch, const CashBookScreen()),
-      _ctrl(LogicalKeyboardKey.numpad0): () => _openBusiness(auth, branch, const CashBookScreen()),
+      _ctrl(LogicalKeyboardKey.digit0): () => _openBusiness(auth, branch, const CashLedgerScreen()),
+      _ctrl(LogicalKeyboardKey.numpad0): () => _openBusiness(auth, branch, const CashLedgerScreen()),
     };
   }
 
@@ -214,15 +248,25 @@ class AppKeyboardShortcuts extends StatelessWidget {
   }
 }
 
-void showAppShortcutGuide(BuildContext context, {bool includeSaleCreate = false}) {
+void showAppShortcutGuide(
+  BuildContext context, {
+  bool includeSaleCreate = false,
+  List<PosShortcutInfo> extra = const [],
+}) {
   final auth = context.read<AuthProvider>();
-  _showShortcutGuide(context, auth, includeSaleCreate: includeSaleCreate);
+  _showShortcutGuide(context, auth, includeSaleCreate: includeSaleCreate, extra: extra);
 }
 
-void _showShortcutGuide(BuildContext context, AuthProvider auth, {bool includeSaleCreate = false}) {
+void _showShortcutGuide(
+  BuildContext context,
+  AuthProvider auth, {
+  bool includeSaleCreate = false,
+  List<PosShortcutInfo> extra = const [],
+}) {
   final rows = <PosShortcutInfo>[
     ...PosShortcutCatalog.global.where((item) => !item.masterOnly || auth.isMasterAdmin),
     if (includeSaleCreate) ...PosShortcutCatalog.saleCreate,
+    ...extra,
   ];
 
   showDialog(
@@ -352,3 +396,20 @@ class _KeyBadge extends StatelessWidget {
     );
   }
 }
+
+/// Shared key-modifier builders for per-screen [CallbackShortcuts], so every
+/// create/detail screen wires Ctrl+Enter (and friends) the same way instead
+/// of each file rolling its own SingleActivator helpers.
+SingleActivator posCtrl(LogicalKeyboardKey key) => SingleActivator(key, control: true);
+SingleActivator posCmd(LogicalKeyboardKey key) => SingleActivator(key, meta: true);
+SingleActivator posCtrlShift(LogicalKeyboardKey key) => SingleActivator(key, control: true, shift: true);
+SingleActivator posCmdShift(LogicalKeyboardKey key) => SingleActivator(key, meta: true, shift: true);
+
+/// The standard "save" binding set: Ctrl/Cmd + Enter, including the numpad
+/// Enter key. Spread this into a screen's CallbackShortcuts bindings map.
+Map<ShortcutActivator, VoidCallback> posSaveShortcuts(VoidCallback onSave) => {
+      posCtrl(LogicalKeyboardKey.enter): onSave,
+      posCmd(LogicalKeyboardKey.enter): onSave,
+      posCtrl(LogicalKeyboardKey.numpadEnter): onSave,
+      posCmd(LogicalKeyboardKey.numpadEnter): onSave,
+    };

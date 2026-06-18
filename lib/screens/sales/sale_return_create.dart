@@ -1,7 +1,9 @@
 import 'dart:convert';
 import 'package:enterprise_pos/api/core/api_client.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
+import 'package:enterprise_pos/widgets/app_keyboard_shortcuts.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
@@ -308,9 +310,30 @@ class _CreateSaleReturnScreenState extends State<CreateSaleReturnScreen> {
   Widget build(BuildContext context) {
     final total = _computeReturnTotal();
 
-    return Scaffold(
+    return Focus(
+      autofocus: true,
+      skipTraversal: true,
+      child: CallbackShortcuts(
+        bindings: <ShortcutActivator, VoidCallback>{
+          ...posSaveShortcuts(() {
+            if (!_submitting) _submitReturn(context);
+          }),
+          const SingleActivator(LogicalKeyboardKey.f3): () => _searchSale(context),
+          posCtrlShift(LogicalKeyboardKey.keyC): () => _searchSale(context),
+          posCmdShift(LogicalKeyboardKey.keyC): () => _searchSale(context),
+          posCtrl(LogicalKeyboardKey.slash): () => showAppShortcutGuide(context, extra: PosShortcutCatalog.saleReturnCreate),
+          posCmd(LogicalKeyboardKey.slash): () => showAppShortcutGuide(context, extra: PosShortcutCatalog.saleReturnCreate),
+        },
+        child: Scaffold(
       appBar: AppBar(
         title: const Text("Create Sale Return"),
+        actions: [
+          IconButton(
+            tooltip: 'Keyboard shortcuts',
+            onPressed: () => showAppShortcutGuide(context, extra: PosShortcutCatalog.saleReturnCreate),
+            icon: const Icon(Icons.keyboard_rounded),
+          ),
+        ],
       ),
       body: Padding(
         padding: const EdgeInsets.all(12),
@@ -536,11 +559,13 @@ class _CreateSaleReturnScreenState extends State<CreateSaleReturnScreen> {
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : const Icon(Icons.save),
-                  label: Text(_submitting ? "Submitting..." : "Submit Return"),
+                  label: Text(_submitting ? "Submitting..." : "Submit Return  Ctrl+Enter"),
                 ),
               ),
             ],
           ),
+        ),
+      ),
         ),
       ),
     );
