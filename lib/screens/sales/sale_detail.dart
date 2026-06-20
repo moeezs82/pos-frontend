@@ -506,8 +506,6 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
                               c: qtyCtl,
                               fn: qtyFn,
                               label: "Qty",
-                              integer:
-                                  true, // set to false if you allow decimals
                               onNext: null,
                             ),
                           ),
@@ -545,7 +543,7 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
                       "/sales/${widget.saleId}/items",
                       body: {
                         "product_id": product['id'],
-                        "quantity": int.tryParse(qtyCtl.text) ?? 1,
+                        "quantity": double.tryParse(qtyCtl.text) ?? 1.0,
                         "price": _num(priceCtl.text),
                         "discount_pct": _num(discCtl.text),
                       },
@@ -591,7 +589,7 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
           children: [
             TextField(
               controller: qtyCtl,
-              keyboardType: TextInputType.number,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
               decoration: const InputDecoration(
                 labelText: "Quantity",
                 border: OutlineInputBorder(),
@@ -620,7 +618,7 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
                 await _api.put(
                   "/sales/${widget.saleId}/items/${item['id']}",
                   body: {
-                    "quantity": int.tryParse(qtyCtl.text) ?? item['quantity'],
+                    "quantity": double.tryParse(qtyCtl.text) ?? item['quantity'],
                     "price": double.tryParse(priceCtl.text) ?? item['price'],
                   },
                 );

@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:enterprise_pos/api/customer_service.dart';
 import 'package:enterprise_pos/forms/customer_form_screen.dart';
+import 'package:enterprise_pos/services/party_pick_caches.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
@@ -21,7 +22,11 @@ class _CustomerPickerSheetState extends State<CustomerPickerSheet> {
   List<Map<String, dynamic>> _customers = [];
   int _page = 1;
   int _lastPage = 1;
+  // _loading now only ever drives a thin top progress bar — it never gates
+  // showing the list, since we always have *something* (cache) to show
+  // instantly. true on the very first ever load (no cache at all yet).
   bool _loading = false;
+  bool _silentRefreshing = false;
   String _search = "";
   Timer? _debounce;
 
@@ -37,7 +42,20 @@ class _CustomerPickerSheetState extends State<CustomerPickerSheet> {
       if (mounted) _searchFocus.requestFocus();
     });
 
-    _fetchCustomers(page: 1);
+    // Cache-first: paint whatever we already have instantly (could be from
+    // a prefetch fired when the sale screen opened, or a previous picker
+    // open this session), then always kick a silent refresh per product
+    // decision — never trust the cache blindly, but never block on it
+    // either.
+    final cached = CustomerPickCache.cache.peek(CustomerPickCache.keyFor());
+    if (cached != null) {
+      _customers = cached.items;
+      _page = cached.currentPage;
+      _lastPage = cached.lastPage;
+    } else {
+      _loading = true; // nothing to show at all yet — only true blocking case
+    }
+    _fetchCustomers(page: 1, silent: cached != null);
   }
 
   @override
@@ -48,33 +66,61 @@ class _CustomerPickerSheetState extends State<CustomerPickerSheet> {
     super.dispose();
   }
 
-  Future<void> _fetchCustomers({required int page, bool replace = true}) async {
-    setState(() => _loading = true);
+  Future<void> _fetchCustomers({required int page, bool replace = true, bool silent = false}) async {
+    if (silent) {
+      setState(() => _silentRefreshing = true);
+    } else {
+      setState(() => _loading = true);
+    }
 
-    // includeBalance: true — pulls each customer's outstanding AR balance
-    // (debit - credit) from the ledger so it can be shown next to their name.
-    final data = await _customerService.getCustomers(
-      page: page,
-      search: _search,
-      includeBalance: true,
-    );
+    try {
+      if (_search.isEmpty) {
+        // Unfiltered fetch — this is the "main" bucket every other screen
+        // and autocomplete field reads via peek(). Safe to store directly.
+        final entry = await CustomerPickCache.cache.refresh(
+          CustomerPickCache.keyFor(),
+          () => CustomerPickCache.fetchPage(_customerService, page: page, search: _search),
+          requestKey: '${CustomerPickCache.keyFor()}::$_search::$page',
+        );
 
-    final wrapper = data['data'];
-    final newCustomers = (wrapper['customers'] as List)
-        .cast<Map<String, dynamic>>();
-    final lastPage = (wrapper['last_page'] ?? 1) as int;
-
-    if (!mounted) return;
-    setState(() {
-      if (replace) {
-        _customers = newCustomers;
+        if (!mounted) return;
+        setState(() {
+          if (replace) {
+            _customers = entry.items;
+          } else {
+            _customers.addAll(entry.items);
+          }
+          _page = entry.currentPage;
+          _lastPage = entry.lastPage;
+        });
       } else {
-        _customers.addAll(newCustomers);
+        // Filtered (search) fetch — results are specific to this query and
+        // must NOT overwrite the shared "all customers" bucket, or every
+        // other screen reading that bucket would start seeing only this
+        // search's results. Fetch via the service directly and apply only
+        // to this sheet's local list.
+        final entry = await CustomerPickCache.fetchPage(_customerService, page: page, search: _search);
+        if (!mounted) return;
+        setState(() {
+          if (replace) {
+            _customers = entry.items;
+          } else {
+            _customers.addAll(entry.items);
+          }
+          _page = entry.currentPage;
+          _lastPage = entry.lastPage;
+        });
       }
-      _page = page; // ← set to requested page
-      _lastPage = lastPage;
-      _loading = false;
-    });
+    } catch (_) {
+      // Silent refresh failing is fine — keep showing whatever we had.
+      // A non-silent (first ever, no-cache) failure surfaces as empty list,
+      // same as before.
+    } finally {
+      if (mounted) setState(() {
+        _loading = false;
+        _silentRefreshing = false;
+      });
+    }
   }
 
   Future<void> _quickAddCustomer() async {
@@ -88,15 +134,41 @@ class _CustomerPickerSheetState extends State<CustomerPickerSheet> {
     if (created != null && created is Map<String, dynamic>) {
       if (!mounted) return;
       setState(() => _customers.insert(0, created));
+      CustomerPickCache.cache.insertEverywhere(
+        created,
+        matchesExisting: (c) => c['id']?.toString() == created['id']?.toString(),
+      );
       Future.microtask(() => Navigator.pop(context, created));
     }
   }
 
   void _onSearchChanged(String val) {
+    final query = val.trim();
+
+    // Instant local filter against whatever is cached right now — no
+    // waiting for debounce or network for the common "type a few letters"
+    // case.
+    final cached = CustomerPickCache.cache.peek(CustomerPickCache.keyFor());
+    if (cached != null) {
+      final q = query.toLowerCase();
+      final filtered = q.isEmpty
+          ? cached.items
+          : cached.items.where((c) {
+              final name = "${c['first_name'] ?? ''} ${c['last_name'] ?? ''}".toLowerCase();
+              final phone = (c['phone'] ?? '').toString().toLowerCase();
+              final email = (c['email'] ?? '').toString().toLowerCase();
+              return name.contains(q) || phone.contains(q) || email.contains(q);
+            }).toList();
+      setState(() => _customers = filtered);
+    }
+
+    // Background network search still runs (debounced) to catch matches
+    // outside the cached page/dataset, and to keep the cache itself fresh
+    // for this query.
     _debounce?.cancel();
-    _debounce = Timer(const Duration(milliseconds: 450), () {
-      setState(() => _search = val.trim());
-      _fetchCustomers(page: 1);
+    _debounce = Timer(const Duration(milliseconds: 350), () {
+      setState(() => _search = query);
+      _fetchCustomers(page: 1, silent: cached != null);
     });
   }
 
@@ -163,6 +235,15 @@ class _CustomerPickerSheetState extends State<CustomerPickerSheet> {
                     style: TextStyle(fontWeight: FontWeight.w700),
                   ),
                 ),
+                if (_silentRefreshing)
+                  const Padding(
+                    padding: EdgeInsets.only(right: 8),
+                    child: SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  ),
                 IconButton(
                   padding: EdgeInsets.zero,
                   constraints: const BoxConstraints(),
@@ -253,7 +334,7 @@ class _CustomerPickerSheetState extends State<CustomerPickerSheet> {
 
             // List (dense tiles + simple dividers)
             Expanded(
-              child: _loading
+              child: (_loading && _customers.isEmpty)
                   ? const Center(
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )

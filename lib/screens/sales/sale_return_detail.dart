@@ -400,9 +400,9 @@ class _SaleReturnDetailScreenState extends State<SaleReturnDetailScreen> {
                   Column(
                     children: items.map((item) {
                       final qty =
-                          (item['quantity'] as num?)?.toInt() ??
-                          int.tryParse(item['quantity'].toString()) ??
-                          0;
+                          (item['quantity'] as num?)?.toDouble() ??
+                          double.tryParse(item['quantity'].toString()) ??
+                          0.0;
                       final price = _toDouble(item['price']);
                       final lineTotal = _toDouble(item['total']);
                       return _ListCard(
@@ -656,14 +656,20 @@ class _KpiTile extends StatelessWidget {
 }
 
 class _QtyBubble extends StatelessWidget {
-  final int qty;
+  final double qty;
   const _QtyBubble({required this.qty});
+
+  String get _label {
+    if (qty % 1 == 0) return qty.toInt().toString();
+    return qty.toStringAsFixed(3).replaceFirst(RegExp(r'0+$'), '').replaceFirst(RegExp(r'\.$'), '');
+  }
+
   @override
   Widget build(BuildContext context) {
     return CircleAvatar(
       backgroundColor: Colors.blue.shade50,
       child: Text(
-        qty.toString(),
+        _label,
         style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.blue),
       ),
     );

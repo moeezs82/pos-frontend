@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'package:enterprise_pos/api/vendor_service.dart';
 import 'package:enterprise_pos/forms/vendor_form_screen.dart';
+import 'package:enterprise_pos/services/pick_cache.dart';
+import 'package:enterprise_pos/services/party_pick_caches.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
@@ -19,7 +21,8 @@ class _VendorPickerSheetState extends State<VendorPickerSheet> {
   List<Map<String, dynamic>> _vendors = [];
   int _page = 1;
   int _lastPage = 1;
-  bool _loading = false;
+  bool _loading = false; // only true blocking case: zero cache on first ever open
+  bool _silentRefreshing = false;
   String _search = "";
   Timer? _debounce;
 
@@ -29,31 +32,58 @@ class _VendorPickerSheetState extends State<VendorPickerSheet> {
   void initState() {
     super.initState();
     _vendorService = VendorService(token: widget.token);
-    _fetchVendors(page: 1);
+
+    // Cache-first: instantly paint whatever we already have (from a
+    // background prefetch or a prior picker open this session).
+    final cached = VendorPickCache.cache.peek(VendorPickCache.keyFor());
+    if (cached != null) {
+      _vendors = cached.items;
+      _page = cached.currentPage;
+      _lastPage = cached.lastPage;
+    } else {
+      _loading = true;
+    }
+    _fetchVendors(page: 1, silent: cached != null);
   }
 
-  Future<void> _fetchVendors({int page = 1}) async {
-    setState(() => _loading = true);
+  Future<void> _fetchVendors({int page = 1, bool silent = false}) async {
+    if (silent) {
+      setState(() => _silentRefreshing = true);
+    } else {
+      setState(() => _loading = true);
+    }
 
-    // includeBalance: true — pulls each vendor's outstanding AP balance
-    // (credit - debit) from the ledger so it can be shown next to their name.
-    final data = await _vendorService.getVendors(
-      page: page,
-      search: _search,
-      includeBalance: true,
-    );
+    try {
+      PickCacheEntry<Map<String, dynamic>> entry;
+      if (_search.isEmpty) {
+        // Unfiltered fetch — safe to store in the shared bucket that other
+        // screens/autocomplete fields read via peek().
+        entry = await VendorPickCache.cache.refresh(
+          VendorPickCache.keyFor(),
+          () => VendorPickCache.fetchPage(_vendorService, page: page, search: _search),
+          requestKey: '${VendorPickCache.keyFor()}::$_search::$page',
+        );
+      } else {
+        // Filtered (search) fetch — must not overwrite the shared bucket,
+        // or every other vendor field would start showing only this
+        // search's results. Apply locally to this sheet only.
+        entry = await VendorPickCache.fetchPage(_vendorService, page: page, search: _search);
+      }
 
-    // your vendor API format:
-    // res = { data: [ { vendors: [...], current_page: x, last_page: y } ] }
-    final wrapper = data['data'];
-    final newVendors = (wrapper['vendors'] as List).cast<Map<String, dynamic>>();
-
-    setState(() {
-      _vendors = newVendors;
-      _page = wrapper['current_page'];
-      _lastPage = wrapper['last_page'];
-      _loading = false;
-    });
+      if (!mounted) return;
+      setState(() {
+        _vendors = entry.items;
+        _page = entry.currentPage;
+        _lastPage = entry.lastPage;
+      });
+    } catch (_) {
+      // Keep showing whatever was already on screen.
+    } finally {
+      if (mounted) setState(() {
+        _loading = false;
+        _silentRefreshing = false;
+      });
+    }
   }
 
   Future<void> _quickAddVendor() async {
@@ -69,6 +99,10 @@ class _VendorPickerSheetState extends State<VendorPickerSheet> {
       setState(() {
         _vendors.insert(0, created);
       });
+      VendorPickCache.cache.insertEverywhere(
+        created,
+        matchesExisting: (v) => v['id']?.toString() == created['id']?.toString(),
+      );
       // Return newly created vendor to caller
       Future.microtask(() => Navigator.pop(context, created));
     }
@@ -116,6 +150,30 @@ class _VendorPickerSheetState extends State<VendorPickerSheet> {
     );
   }
 
+  void _onSearchChanged(String val) {
+    final query = val.trim();
+
+    final cached = VendorPickCache.cache.peek(VendorPickCache.keyFor());
+    if (cached != null) {
+      final q = query.toLowerCase();
+      final filtered = q.isEmpty
+          ? cached.items
+          : cached.items.where((v) {
+              final name = "${v['first_name'] ?? ''} ${v['last_name'] ?? ''}".toLowerCase();
+              final phone = (v['phone'] ?? '').toString().toLowerCase();
+              final email = (v['email'] ?? '').toString().toLowerCase();
+              return name.contains(q) || phone.contains(q) || email.contains(q);
+            }).toList();
+      setState(() => _vendors = filtered);
+    }
+
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 350), () {
+      setState(() => _search = query);
+      _fetchVendors(page: 1, silent: cached != null);
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     return SafeArea(
@@ -123,20 +181,30 @@ class _VendorPickerSheetState extends State<VendorPickerSheet> {
         padding: const EdgeInsets.all(12),
         child: Column(
           children: [
-            // 🔍 Search bar
-            TextField(
-              decoration: const InputDecoration(
-                prefixIcon: Icon(Icons.search),
-                hintText: "Search vendor...",
-                border: OutlineInputBorder(),
-              ),
-              onChanged: (val) {
-                _debounce?.cancel();
-                _debounce = Timer(const Duration(milliseconds: 500), () {
-                  setState(() => _search = val);
-                  _fetchVendors(page: 1);
-                });
-              },
+            // 🔍 Search bar (instant local filter + debounced network refine)
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    decoration: const InputDecoration(
+                      prefixIcon: Icon(Icons.search),
+                      hintText: "Search vendor...",
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                    ),
+                    onChanged: _onSearchChanged,
+                  ),
+                ),
+                if (_silentRefreshing)
+                  const Padding(
+                    padding: EdgeInsets.only(left: 10),
+                    child: SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  ),
+              ],
             ),
             const SizedBox(height: 12),
 
@@ -174,7 +242,7 @@ class _VendorPickerSheetState extends State<VendorPickerSheet> {
 
             // 📋 Vendors list (only fetched records)
             Expanded(
-              child: _loading
+              child: (_loading && _vendors.isEmpty)
                   ? const Center(child: CircularProgressIndicator())
                   : _vendors.isEmpty
                       ? const Center(child: Text("No vendors found"))

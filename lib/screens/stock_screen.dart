@@ -156,9 +156,9 @@ class _StockScreenState extends State<StockScreen> {
               // const SizedBox(height: 12),
               TextField(
                 controller: qtyController,
-                keyboardType: TextInputType.number,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
                 decoration: const InputDecoration(
-                  labelText: "Quantity (+10 or -5)",
+                  labelText: "Quantity (+10 or -5, decimals allowed)",
                   border: OutlineInputBorder(),
                 ),
               ),
@@ -171,7 +171,7 @@ class _StockScreenState extends State<StockScreen> {
             ),
             ElevatedButton(
               onPressed: () async {
-                final qty = int.tryParse(qtyController.text) ?? 0;
+                final qty = double.tryParse(qtyController.text) ?? 0.0;
                 if (qty != 0 &&
                     selectedProduct != null &&
                     selectedBranchId != null) {
@@ -267,7 +267,7 @@ class _StockScreenState extends State<StockScreen> {
               const SizedBox(height: 12),
               TextField(
                 controller: qtyController,
-                keyboardType: TextInputType.number,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
                 decoration: const InputDecoration(
                   labelText: "Quantity",
                   border: OutlineInputBorder(),
@@ -282,7 +282,7 @@ class _StockScreenState extends State<StockScreen> {
             ),
             ElevatedButton(
               onPressed: () async {
-                final qty = int.tryParse(qtyController.text) ?? 0;
+                final qty = double.tryParse(qtyController.text) ?? 0.0;
                 if (qty > 0 &&
                     selectedProduct != null &&
                     fromBranchId != null &&

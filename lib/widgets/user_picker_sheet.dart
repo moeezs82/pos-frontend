@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:enterprise_pos/api/user_service.dart';
 import 'package:enterprise_pos/forms/user_form_screen.dart';
+import 'package:enterprise_pos/services/party_pick_caches.dart';
 import 'package:flutter/material.dart';
 
 class UserPickerSheet extends StatefulWidget {
@@ -34,14 +35,29 @@ class _UserPickerSheetState extends State<UserPickerSheet> {
   List<Map<String, dynamic>> _users = [];
   int _page = 1;
   int _lastPage = 1;
-  bool _loading = false;
+  bool _loading = false; // only true blocking case: zero cache on first ever open
+  bool _silentRefreshing = false;
   String _search = "";
+
+  String get _cacheKey => UserPickCache.keyFor(branchId: widget.branchId, role: widget.role);
 
   @override
   void initState() {
     super.initState();
     _userService = UsersService(token: widget.token);
-    _fetchUsers(page: 1);
+
+    // Cache-first: instantly show whatever's cached for this branch+role
+    // bucket (could be warmed by a prefetch on sale-screen open), then
+    // always silently re-check per product decision.
+    final cached = UserPickCache.cache.peek(_cacheKey);
+    if (cached != null) {
+      _users = cached.items;
+      _page = cached.currentPage;
+      _lastPage = cached.lastPage;
+    } else {
+      _loading = true;
+    }
+    _fetchUsers(page: 1, silent: cached != null);
   }
 
   @override
@@ -51,39 +67,57 @@ class _UserPickerSheetState extends State<UserPickerSheet> {
     super.dispose();
   }
 
-  Future<void> _fetchUsers({int page = 1}) async {
-    setState(() => _loading = true);
+  Future<void> _fetchUsers({int page = 1, bool silent = false}) async {
+    if (silent) {
+      setState(() => _silentRefreshing = true);
+    } else {
+      setState(() => _loading = true);
+    }
     try {
-      final res = await _userService.getUsers(
-        page: page,
-        search: _search,
-        branchId: widget.branchId,
-        role: widget.role,
-        includeDeliveryBalance: widget.role == 'delivery',
-        excludeMasterAdmin: true,
-      );
+      final entry = _search.isEmpty
+          // Unfiltered fetch — safe to store in the shared bucket that
+          // other screens/autocomplete fields read via peek().
+          ? await UserPickCache.cache.refresh(
+              _cacheKey,
+              () => UserPickCache.fetchPage(
+                _userService,
+                page: page,
+                search: _search,
+                branchId: widget.branchId,
+                role: widget.role,
+              ),
+              requestKey: '$_cacheKey::$_search::$page',
+            )
+          // Filtered (search) fetch — must not overwrite the shared
+          // bucket, or every other salesman/delivery field would start
+          // showing only this search's results. Apply locally only.
+          : await UserPickCache.fetchPage(
+              _userService,
+              page: page,
+              search: _search,
+              branchId: widget.branchId,
+              role: widget.role,
+            );
 
-      // ApiResponse::success => { success, data: { current_page, last_page, data: [...] } }
-      final pageData = res['data'] as Map<String, dynamic>;
-      final newUsers = (pageData['data'] as List)
-          .whereType<Map>()
-          .map((item) => item.cast<String, dynamic>())
-          .where((user) => !_isMasterAdminUser(user))
-          .toList();
-
+      if (!mounted) return;
       setState(() {
-        _users = newUsers;
-        _page = pageData['current_page'] as int? ?? page;
-        _lastPage = pageData['last_page'] as int? ?? page;
+        _users = entry.items;
+        _page = entry.currentPage;
+        _lastPage = entry.lastPage;
       });
     } catch (e) {
-      if (mounted) {
+      // Only surface an error if we have nothing at all to show — a failed
+      // silent refresh with existing cached data just stays quiet.
+      if (mounted && _users.isEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Failed to load users: $e')),
         );
       }
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) setState(() {
+        _loading = false;
+        _silentRefreshing = false;
+      });
     }
   }
 
@@ -106,15 +140,36 @@ class _UserPickerSheetState extends State<UserPickerSheet> {
         _users.insert(0, created);
         _page = 1;
       });
+      UserPickCache.cache.insertInto(
+        _cacheKey,
+        created,
+        matchesExisting: (u) => u['id']?.toString() == created['id']?.toString(),
+      );
       Future.microtask(() => Navigator.pop(context, created));
     }
   }
 
   void _onSearchChanged(String val) {
+    final query = val.trim();
+
+    final cached = UserPickCache.cache.peek(_cacheKey);
+    if (cached != null) {
+      final q = query.toLowerCase();
+      final filtered = q.isEmpty
+          ? cached.items
+          : cached.items.where((u) {
+              final name = (u['name'] ?? '').toString().toLowerCase();
+              final phone = (u['phone'] ?? '').toString().toLowerCase();
+              final email = (u['email'] ?? '').toString().toLowerCase();
+              return name.contains(q) || phone.contains(q) || email.contains(q);
+            }).toList();
+      setState(() => _users = filtered);
+    }
+
     _debounce?.cancel();
-    _debounce = Timer(const Duration(milliseconds: 400), () {
-      setState(() => _search = val.trim());
-      _fetchUsers(page: 1);
+    _debounce = Timer(const Duration(milliseconds: 350), () {
+      setState(() => _search = query);
+      _fetchUsers(page: 1, silent: cached != null);
     });
   }
 
@@ -162,17 +217,32 @@ class _UserPickerSheetState extends State<UserPickerSheet> {
             const SizedBox(height: 10),
 
             // Search
-            TextField(
-              controller: _searchCtrl,
-              decoration: InputDecoration(
-                prefixIcon: const Icon(Icons.search),
-                hintText: widget.searchHint,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _searchCtrl,
+                    decoration: InputDecoration(
+                      prefixIcon: const Icon(Icons.search),
+                      hintText: widget.searchHint,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      isDense: true,
+                    ),
+                    onChanged: _onSearchChanged,
+                  ),
                 ),
-                isDense: true,
-              ),
-              onChanged: _onSearchChanged,
+                if (_silentRefreshing)
+                  const Padding(
+                    padding: EdgeInsets.only(left: 10),
+                    child: SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  ),
+              ],
             ),
             const SizedBox(height: 12),
 
@@ -215,7 +285,7 @@ class _UserPickerSheetState extends State<UserPickerSheet> {
 
             // List
             Expanded(
-              child: _loading
+              child: (_loading && _users.isEmpty)
                   ? const Center(child: CircularProgressIndicator())
                   : _users.isEmpty
                       ? ListView(

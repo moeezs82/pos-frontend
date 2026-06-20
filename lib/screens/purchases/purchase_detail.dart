@@ -40,6 +40,14 @@ class _PurchaseDetailScreenState extends State<PurchaseDetailScreen> {
   int _intVal(dynamic v) => _numVal(v).toInt();
   String _money(dynamic v) => _doubleVal(v).toStringAsFixed(2);
 
+  /// Formats a quantity without a trailing ".0" for whole numbers, but
+  /// keeps decimals (e.g. 1.5kg) when present.
+  String _qty(dynamic v) {
+    final n = _doubleVal(v);
+    if (n % 1 == 0) return n.toInt().toString();
+    return n.toStringAsFixed(3).replaceFirst(RegExp(r'0+$'), '').replaceFirst(RegExp(r'\.$'), '');
+  }
+
   @override
   void initState() {
     super.initState();
@@ -497,7 +505,6 @@ class _PurchaseDetailScreenState extends State<PurchaseDetailScreen> {
                               c: qtyCtl,
                               fn: qtyFn,
                               label: "Qty",
-                              integer: true,
                               onNext: null,
                             ),
                           ),
@@ -535,7 +542,7 @@ class _PurchaseDetailScreenState extends State<PurchaseDetailScreen> {
                       "/purchases/${widget.purchaseId}/items",
                       body: {
                         "product_id": product['id'],
-                        "quantity": int.tryParse(qtyCtl.text) ?? 1,
+                        "quantity": double.tryParse(qtyCtl.text) ?? 1.0,
                         "price": _num(priceCtl.text),
                         "discount": _num(
                           discCtl.text,
@@ -563,14 +570,14 @@ class _PurchaseDetailScreenState extends State<PurchaseDetailScreen> {
   }
   Future<void> _editItem(Map<String, dynamic> item) async {
     final qtyCtl = TextEditingController(
-      text: _intVal(item['quantity']).toString(),
+      text: _qty(item['quantity']),
     );
     final priceCtl = TextEditingController(text: _money(item['price']));
     final rcvCtl = TextEditingController(
-      text: _intVal(item['received_qty']).toString(),
+      text: _qty(item['received_qty']),
     );
 
-    final ordered = _intVal(item['quantity']);
+    final ordered = _doubleVal(item['quantity']);
 
     await showDialog(
       context: context,
@@ -581,16 +588,16 @@ class _PurchaseDetailScreenState extends State<PurchaseDetailScreen> {
           children: [
             TextField(
               controller: qtyCtl,
-              keyboardType: TextInputType.number,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
               decoration: const InputDecoration(
                 labelText: "Quantity (ordered)",
                 border: OutlineInputBorder(),
               ),
               onChanged: (v) {
                 // keep received within range in UI
-                final newQty = int.tryParse(v) ?? ordered;
-                final r = int.tryParse(rcvCtl.text) ?? 0;
-                if (r > newQty) rcvCtl.text = newQty.toString();
+                final newQty = double.tryParse(v) ?? ordered;
+                final r = double.tryParse(rcvCtl.text) ?? 0.0;
+                if (r > newQty) rcvCtl.text = _qty(newQty);
               },
             ),
             const SizedBox(height: 12),
@@ -605,15 +612,15 @@ class _PurchaseDetailScreenState extends State<PurchaseDetailScreen> {
             const SizedBox(height: 12),
             TextField(
               controller: rcvCtl,
-              keyboardType: TextInputType.number,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
               decoration: const InputDecoration(
                 labelText: "Received Qty",
                 border: OutlineInputBorder(),
               ),
               onChanged: (v) {
-                final q = int.tryParse(qtyCtl.text) ?? ordered;
-                final r = int.tryParse(v) ?? 0;
-                if (r > q) rcvCtl.text = q.toString();
+                final q = double.tryParse(qtyCtl.text) ?? ordered;
+                final r = double.tryParse(v) ?? 0.0;
+                if (r > q) rcvCtl.text = _qty(q);
                 if (r < 0) rcvCtl.text = '0';
               },
             ),
@@ -628,12 +635,12 @@ class _PurchaseDetailScreenState extends State<PurchaseDetailScreen> {
             onPressed: () async {
               final body = <String, dynamic>{};
               if (qtyCtl.text.trim().isNotEmpty)
-                body['quantity'] = int.tryParse(qtyCtl.text.trim());
+                body['quantity'] = double.tryParse(qtyCtl.text.trim());
               if (priceCtl.text.trim().isNotEmpty)
                 body['price'] = double.tryParse(priceCtl.text.trim());
               if (rcvCtl.text.trim().isNotEmpty) {
-                final q = body['quantity'] ?? ordered;
-                final r = (int.tryParse(rcvCtl.text.trim()) ?? 0).clamp(0, q);
+                final q = (body['quantity'] as num?)?.toDouble() ?? ordered;
+                final r = (double.tryParse(rcvCtl.text.trim()) ?? 0.0).clamp(0.0, q);
                 body['received_qty'] = r;
               }
               try {

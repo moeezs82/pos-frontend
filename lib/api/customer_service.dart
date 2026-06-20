@@ -8,12 +8,14 @@ class CustomerService {
   /// Get all customers with pagination & optional search
   Future<Map<String, dynamic>> getCustomers({
     int page = 1,
+    int? perPage,
     String? search,
     int? branchId,
     bool? includeBalance,
   }) async {
     final queryParams = {
       "page": page.toString(),
+      if (perPage != null) "per_page": perPage.toString(),
       if (search != null && search.isNotEmpty) "search": search,
       // if (branchId != null) 'branch_id': branchId.toString(),
       if (includeBalance == true) 'include_balance': '1',

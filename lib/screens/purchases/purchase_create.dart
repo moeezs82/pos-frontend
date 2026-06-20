@@ -1,5 +1,6 @@
 import 'package:enterprise_pos/api/product_service.dart';
 import 'package:enterprise_pos/api/purchase_service.dart';
+import 'package:enterprise_pos/api/vendor_service.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/providers/branch_provider.dart';
 import 'package:enterprise_pos/screens/sales/parts/create_sale_items_section.dart';
@@ -11,6 +12,9 @@ import 'package:enterprise_pos/widgets/branch_indicator.dart';
 import 'package:enterprise_pos/widgets/enterprise/enterprise_panel.dart';
 import 'package:enterprise_pos/widgets/product_picker_grid_sheet.dart';
 import 'package:enterprise_pos/widgets/vendor_picker_sheet.dart';
+import 'package:enterprise_pos/services/party_prefetch.dart';
+import 'package:enterprise_pos/services/party_pick_caches.dart';
+import 'package:enterprise_pos/widgets/party_autocomplete_field.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -26,6 +30,7 @@ class CreatePurchaseScreen extends StatefulWidget {
 
 class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
   final _formKey = GlobalKey<FormState>();
+  final _pageFocusNode = FocusNode();
 
   Map<String, dynamic>? _selectedBranch;
   Map<String, dynamic>? _selectedVendor;
@@ -58,6 +63,12 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
     _token = Provider.of<AuthProvider>(context, listen: false).token!;
     _productService = ProductService(token: _token);
     _purchaseService = PurchaseService(token: _token);
+
+    // Warm vendor/product caches in the background immediately, before the
+    // user taps "Select Vendor" — by the time they do, the sheet opens with
+    // data already sitting there.
+    final branchId = context.read<BranchProvider>().selectedBranchId?.toString();
+    PartyPrefetch.warmForPurchase(_token, branchId: branchId);
 
     _barcodeFocusNode.addListener(() {
       if (mounted) setState(() => _scannerEnabled = _barcodeFocusNode.hasFocus);
@@ -104,6 +115,7 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
   void dispose() {
     _barcodeController.dispose();
     _barcodeFocusNode.dispose();
+    _pageFocusNode.dispose();
     discountController.dispose();
     taxController.dispose();
     super.dispose();
@@ -116,8 +128,8 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
     );
   }
 
-  Future<void> _pickVendor() async {
-    final vendor = await showModalBottomSheet<Map<String, dynamic>?>(
+  Future<Map<String, dynamic>?> _openVendorSheet() async {
+    return showModalBottomSheet<Map<String, dynamic>?>(
       context: context,
       isScrollControlled: true,
       builder: (_) => SizedBox(
@@ -125,7 +137,9 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
         child: VendorPickerSheet(token: _token),
       ),
     );
+  }
 
+  void _applyVendorSelection(Map<String, dynamic>? vendor) {
     if (!mounted) return;
     setState(() {
       _selectedVendor = vendor;
@@ -134,6 +148,11 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
           : int.tryParse(vendor?['id']?.toString() ?? '');
       _items = [];
     });
+  }
+
+  Future<void> _pickVendor() async {
+    final vendor = await _openVendorSheet();
+    _applyVendorSelection(vendor);
   }
 
   void _clearVendorSelection() {
@@ -544,6 +563,10 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
           onPickVendor: _pickVendor,
           onClearVendor: _clearVendorSelection,
           onPickBranch: _showBranchControlNotice,
+          token: _token,
+          selectedVendor: _selectedVendor,
+          onBrowseVendorSheet: _openVendorSheet,
+          onApplyVendor: _applyVendorSelection,
         ),
         const SizedBox(height: 14),
         _PurchaseOptionsPanel(
@@ -612,27 +635,38 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
       ],
     );
 
-    return Focus(
-      autofocus: true,
-      skipTraversal: true,
-      child: CallbackShortcuts(
-        bindings: <ShortcutActivator, VoidCallback>{
-          ...posSaveShortcuts(() {
-            if (!_submitting) _submitPurchase();
-          }),
-          const SingleActivator(LogicalKeyboardKey.f2): () => _addItemManual(),
-          posCtrl(LogicalKeyboardKey.keyI): () => _addItemManual(),
-          posCmd(LogicalKeyboardKey.keyI): () => _addItemManual(),
-          const SingleActivator(LogicalKeyboardKey.f3): () => _pickVendor(),
-          posCtrlShift(LogicalKeyboardKey.keyV): () => _pickVendor(),
-          posCmdShift(LogicalKeyboardKey.keyV): () => _pickVendor(),
-          const SingleActivator(LogicalKeyboardKey.f9): () {
-            if (mounted) _barcodeFocusNode.requestFocus();
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onTap: () {
+        final current = FocusManager.instance.primaryFocus;
+        if (current == null || current == _pageFocusNode) {
+          _pageFocusNode.requestFocus();
+        } else if (!current.hasFocus) {
+          _pageFocusNode.requestFocus();
+        }
+      },
+      child: Focus(
+        focusNode: _pageFocusNode,
+        autofocus: true,
+        skipTraversal: true,
+        child: CallbackShortcuts(
+          bindings: <ShortcutActivator, VoidCallback>{
+            ...posSaveShortcuts(() {
+              if (!_submitting) _submitPurchase();
+            }),
+            const SingleActivator(LogicalKeyboardKey.f2): () => _addItemManual(),
+            posCtrl(LogicalKeyboardKey.keyI): () => _addItemManual(),
+            posCmd(LogicalKeyboardKey.keyI): () => _addItemManual(),
+            const SingleActivator(LogicalKeyboardKey.f3): () => _pickVendor(),
+            posCtrlShift(LogicalKeyboardKey.keyV): () => _pickVendor(),
+            posCmdShift(LogicalKeyboardKey.keyV): () => _pickVendor(),
+            const SingleActivator(LogicalKeyboardKey.f9): () {
+              if (mounted) _barcodeFocusNode.requestFocus();
+            },
+            posCtrl(LogicalKeyboardKey.slash): () => showAppShortcutGuide(context, extra: PosShortcutCatalog.purchaseCreate),
+            posCmd(LogicalKeyboardKey.slash): () => showAppShortcutGuide(context, extra: PosShortcutCatalog.purchaseCreate),
           },
-          posCtrl(LogicalKeyboardKey.slash): () => showAppShortcutGuide(context, extra: PosShortcutCatalog.purchaseCreate),
-          posCmd(LogicalKeyboardKey.slash): () => showAppShortcutGuide(context, extra: PosShortcutCatalog.purchaseCreate),
-        },
-        child: Scaffold(
+          child: Scaffold(
       appBar: AppBar(
         title: const Text('Create Purchase'),
         actions: [
@@ -717,7 +751,8 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
       ),
         ),
       ),
-    );
+    ),
+  );
   }
 }
 
@@ -815,6 +850,17 @@ class _PurchasePartyPanel extends StatelessWidget {
   final VoidCallback onClearVendor;
   final VoidCallback onPickBranch;
 
+  /// Needed to call the live, full-database vendor search as the user
+  /// types past whatever's in the local warm cache.
+  final String? token;
+
+  /// Optional fast-path: when provided, the vendor field becomes an instant
+  /// type-to-search autocomplete over the shared vendor cache, with
+  /// "Browse all" still available via the classic full sheet.
+  final Map<String, dynamic>? selectedVendor;
+  final Future<Map<String, dynamic>?> Function()? onBrowseVendorSheet;
+  final void Function(Map<String, dynamic>?)? onApplyVendor;
+
   const _PurchasePartyPanel({
     required this.isAll,
     required this.vendorLabel,
@@ -823,19 +869,47 @@ class _PurchasePartyPanel extends StatelessWidget {
     required this.onPickVendor,
     required this.onClearVendor,
     required this.onPickBranch,
+    this.token,
+    this.selectedVendor,
+    this.onBrowseVendorSheet,
+    this.onApplyVendor,
   });
+
+  String _vendorLabelOf(Map<String, dynamic> v) {
+    final first = (v['first_name'] ?? v['company_name'] ?? v['name'] ?? '').toString();
+    final last = (v['last_name'] ?? '').toString();
+    return "$first ${last.isNotEmpty ? last : ''}".trim();
+  }
 
   @override
   Widget build(BuildContext context) {
+    final vendorField = (onBrowseVendorSheet != null && token != null)
+        ? PartyAutocompleteField<Map<String, dynamic>>(
+            label: 'Vendor',
+            hintText: 'Type vendor name…',
+            getCachedItems: () =>
+                VendorPickCache.cache.peek(VendorPickCache.keyFor())?.items ?? const [],
+            onSearchRemote: (query) =>
+                VendorPickCache.searchRemote(VendorService(token: token!), query),
+            labelOf: _vendorLabelOf,
+            idOf: (v) => (v['id'] ?? '').toString(),
+            selectedLabel: selectedVendor != null ? _vendorLabelOf(selectedVendor!) : null,
+            selectedSubtitle: selectedVendor != null ? (selectedVendor!['phone'] ?? '').toString() : null,
+            onSelected: (v) => onApplyVendor?.call(v),
+            onCleared: onClearVendor,
+            onBrowseAll: onBrowseVendorSheet!,
+          )
+        : _SelectField(
+            label: 'Vendor',
+            valueText: vendorLabel,
+            icon: Icons.storefront_outlined,
+            onTap: onPickVendor,
+            showClear: hasVendor,
+            onClear: onClearVendor,
+          );
+
     final fields = <Widget>[
-      _SelectField(
-        label: 'Vendor',
-        valueText: vendorLabel,
-        icon: Icons.storefront_outlined,
-        onTap: onPickVendor,
-        showClear: hasVendor,
-        onClear: onClearVendor,
-      ),
+      vendorField,
       if (isAll)
         const _BranchRequiredNotice(),
     ];
@@ -861,7 +935,14 @@ class _PurchasePartyPanel extends StatelessWidget {
                       .toList(),
                 );
               }
-              return Row(children: [Expanded(child: fields[0]), const SizedBox(width: 10), Expanded(child: fields[1])]);
+              return Row(
+                children: [
+                  for (int i = 0; i < fields.length; i++) ...[
+                    if (i != 0) const SizedBox(width: 10),
+                    Expanded(child: fields[i]),
+                  ],
+                ],
+              );
             },
           ),
         ],

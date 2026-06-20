@@ -55,11 +55,18 @@ class _CreatePurchaseClaimScreenState extends State<CreatePurchaseClaimScreen> {
     double sum = 0.0;
     for (final it in _purchaseItems) {
       final pid = it['id'] as int; // purchase_item_id
-      final qty = int.tryParse(_qtyCtrls[pid]?.text ?? '0') ?? 0;
+      final qty = double.tryParse(_qtyCtrls[pid]?.text ?? '0') ?? 0.0;
       final price = _toDouble(it['price']); // purchase price from API
       if (qty > 0) sum += qty * price;
     }
     return sum;
+  }
+
+  /// Formats a quantity without a trailing ".0" for whole numbers, but
+  /// keeps decimals (e.g. 1.5kg) when present.
+  String _formatQty(num v) {
+    if (v % 1 == 0) return v.toInt().toString();
+    return v.toStringAsFixed(3).replaceFirst(RegExp(r'0+$'), '').replaceFirst(RegExp(r'\.$'), '');
   }
 
   void _syncDefaultReceipt() {
@@ -192,14 +199,14 @@ class _CreatePurchaseClaimScreenState extends State<CreatePurchaseClaimScreen> {
     final itemsPayload = _purchaseItems
         .where((i) {
           final txt = _qtyCtrls[i['id']]?.text ?? "0";
-          final q = int.tryParse(txt) ?? 0;
+          final q = double.tryParse(txt) ?? 0.0;
           return q > 0;
         })
         .map<Map<String, dynamic>>((i) {
           final pid = i['id'] as int;
           return {
             "purchase_item_id": pid,
-            "quantity": int.parse(_qtyCtrls[pid]!.text),
+            "quantity": double.parse(_qtyCtrls[pid]!.text),
             "affects_stock": _affectsStock[pid] ?? (_type != 'shortage'),
             if (_remarksCtrls[pid]!.text.isNotEmpty)
               "remarks": _remarksCtrls[pid]!.text,
@@ -423,14 +430,13 @@ class _CreatePurchaseClaimScreenState extends State<CreatePurchaseClaimScreen> {
                                 item['product']?['name']?.toString() ?? '—';
                             final sku = item['product']?['sku']?.toString();
                             final receivedQty =
-                                (item['quantity'] ?? 0)
-                                    as int; // received/accepted qty
+                                _toDouble(item['quantity'] ?? 0); // received/accepted qty
                             final price = _toDouble(
                               item['price'],
                             ); // P.P (unit price)
 
                             final claimQty =
-                                int.tryParse(_qtyCtrls[pid]?.text ?? '0') ?? 0;
+                                double.tryParse(_qtyCtrls[pid]?.text ?? '0') ?? 0.0;
                             final amount = (claimQty * price);
 
                             return SizedBox(
@@ -487,7 +493,7 @@ class _CreatePurchaseClaimScreenState extends State<CreatePurchaseClaimScreen> {
                                     flex: 2,
                                     child: Align(
                                       alignment: Alignment.centerRight,
-                                      child: Text("$receivedQty"),
+                                      child: Text(_formatQty(receivedQty)),
                                     ),
                                   ),
                                   // Claim (editable)
@@ -496,7 +502,7 @@ class _CreatePurchaseClaimScreenState extends State<CreatePurchaseClaimScreen> {
                                     child: TextFormField(
                                       controller: _qtyCtrls[pid],
                                       textAlign: TextAlign.right,
-                                      keyboardType: TextInputType.number,
+                                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
                                       decoration: const InputDecoration(
                                         isDense: true,
                                         contentPadding: EdgeInsets.symmetric(
@@ -507,16 +513,15 @@ class _CreatePurchaseClaimScreenState extends State<CreatePurchaseClaimScreen> {
                                       ),
                                       onChanged: (v) {
                                         final parsed =
-                                            int.tryParse(v.trim()) ?? 0;
+                                            double.tryParse(v.trim()) ?? 0.0;
                                         // clamp 0..receivedQty
                                         if (parsed < 0 ||
                                             parsed > receivedQty) {
                                           final clamped = parsed.clamp(
-                                            0,
+                                            0.0,
                                             receivedQty,
                                           );
-                                          _qtyCtrls[pid]!.text = clamped
-                                              .toString();
+                                          _qtyCtrls[pid]!.text = _formatQty(clamped);
                                           _qtyCtrls[pid]!.selection =
                                               TextSelection.fromPosition(
                                                 TextPosition(
@@ -541,10 +546,10 @@ class _CreatePurchaseClaimScreenState extends State<CreatePurchaseClaimScreen> {
                                       alignment: Alignment.centerRight,
                                       child: Text(
                                         _currency.format(
-                                          (int.tryParse(
+                                          (double.tryParse(
                                                     _qtyCtrls[pid]?.text ?? '0',
                                                   ) ??
-                                                  0) *
+                                                  0.0) *
                                               price,
                                         ),
                                         style: const TextStyle(

@@ -54,7 +54,7 @@ class _CreateSaleReturnScreenState extends State<CreateSaleReturnScreen> {
   /// qty * price * (1 - discount/100)
   double _lineAmount({
     required int itemId,
-    required int qty,
+    required double qty,
   }) {
     final price = _unitPrice[itemId] ?? 0.0;
     final disc = (_discountPct[itemId] ?? 0.0).clamp(0.0, 100.0);
@@ -62,11 +62,18 @@ class _CreateSaleReturnScreenState extends State<CreateSaleReturnScreen> {
     return qty * (net < 0 ? 0 : net);
   }
 
+  /// Formats a quantity without a trailing ".0" for whole numbers, but
+  /// keeps decimals (e.g. 1.5kg) when present.
+  String _formatQty(num v) {
+    if (v % 1 == 0) return v.toInt().toString();
+    return v.toStringAsFixed(3).replaceFirst(RegExp(r'0+$'), '').replaceFirst(RegExp(r'\.$'), '');
+  }
+
   double _computeReturnTotal() {
     double total = 0.0;
     for (final it in _saleItems) {
       final id = _toInt(it['id']);
-      final qty = int.tryParse(_qtyControllers[id]?.text ?? '0') ?? 0;
+      final qty = double.tryParse(_qtyControllers[id]?.text ?? '0') ?? 0.0;
       if (qty > 0) {
         total += _lineAmount(itemId: id, qty: qty);
       }
@@ -170,14 +177,14 @@ class _CreateSaleReturnScreenState extends State<CreateSaleReturnScreen> {
     final items = _saleItems
         .where((i) {
           final id = _toInt(i['id']);
-          final q = int.tryParse(_qtyControllers[id]?.text ?? "0") ?? 0;
+          final q = double.tryParse(_qtyControllers[id]?.text ?? "0") ?? 0.0;
           return q > 0;
         })
         .map((i) {
           final id = _toInt(i['id']);
           return {
             "sale_item_id": id,
-            "quantity": int.parse(_qtyControllers[id]!.text),
+            "quantity": double.parse(_qtyControllers[id]!.text),
           };
         })
         .toList();
@@ -379,15 +386,15 @@ class _CreateSaleReturnScreenState extends State<CreateSaleReturnScreen> {
                             final item = _saleItems[i];
                             final id = _toInt(item['id']);
                             final name = item['product']?['name'] ?? '—';
-                            final soldQty = item['quantity'] ?? 0;
+                            final soldQty = _toDouble(item['quantity'] ?? 0);
                             final price = _unitPrice[id] ?? 0.0;       // TP
                             final disc = (_discountPct[id] ?? 0.0)
                                 .clamp(0.0, 100.0);                    // %
 
                             // return qty in controller
                             final retQty =
-                                int.tryParse(_qtyControllers[id]?.text ?? '0') ??
-                                    0;
+                                double.tryParse(_qtyControllers[id]?.text ?? '0') ??
+                                    0.0;
                             final amount = _lineAmount(
                                 itemId: id, qty: retQty); // with discount
 
@@ -431,7 +438,7 @@ class _CreateSaleReturnScreenState extends State<CreateSaleReturnScreen> {
                                     flex: 2,
                                     child: Align(
                                       alignment: Alignment.centerRight,
-                                      child: Text("$soldQty"),
+                                      child: Text(_formatQty(soldQty)),
                                     ),
                                   ),
                                   // Return (editable)
@@ -440,7 +447,7 @@ class _CreateSaleReturnScreenState extends State<CreateSaleReturnScreen> {
                                     child: TextFormField(
                                       controller: _qtyControllers[id],
                                       textAlign: TextAlign.right,
-                                      keyboardType: TextInputType.number,
+                                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
                                       decoration: const InputDecoration(
                                         isDense: true,
                                         contentPadding: EdgeInsets.symmetric(
@@ -449,14 +456,14 @@ class _CreateSaleReturnScreenState extends State<CreateSaleReturnScreen> {
                                       ),
                                       onChanged: (v) {
                                         final parsed =
-                                            int.tryParse(v.trim()) ?? 0;
+                                            double.tryParse(v.trim()) ?? 0.0;
                                         // clamp 0..soldQty
                                         if (parsed < 0 ||
-                                            parsed > _toInt(soldQty)) {
+                                            parsed > soldQty) {
                                           final clamped = parsed
-                                              .clamp(0, _toInt(soldQty));
+                                              .clamp(0.0, soldQty);
                                           _qtyControllers[id]!.text =
-                                              clamped.toString();
+                                              _formatQty(clamped);
                                           _qtyControllers[id]!.selection =
                                               TextSelection.fromPosition(
                                             TextPosition(

@@ -8,12 +8,14 @@ class VendorService {
   /// Get all vendors with pagination & optional search
   Future<Map<String, dynamic>> getVendors({
     int page = 1,
+    int? perPage,
     String? search,
     bool includeBalance = false,
     int? branchId,
   }) async {
     final queryParams = {
       "page": page.toString(),
+      if (perPage != null) "per_page": perPage.toString(),
       if (search != null && search.isNotEmpty) 'search': search,
       if (includeBalance) 'include_balance': '1',
       // if (branchId != null) 'branch_id': '$branchId',

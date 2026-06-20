@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:enterprise_pos/api/product_service.dart';
 import 'package:enterprise_pos/forms/product_form_screen.dart';
+import 'package:enterprise_pos/services/party_pick_caches.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/enterprise/enterprise_panel.dart';
 import 'package:flutter/material.dart';
@@ -89,7 +90,8 @@ class _ProductPickerGridSheetState extends State<ProductPickerGridSheet> {
   final List<Map<String, dynamic>> _products = [];
   int _page = 1;
   int _lastPage = 1;
-  bool _loading = false;
+  bool _loading = false; // only true blocking case: zero cache on first ever open
+  bool _silentRefreshing = false;
 
   String _search = "";
   Timer? _debounce;
@@ -105,6 +107,8 @@ class _ProductPickerGridSheetState extends State<ProductPickerGridSheet> {
 
   /// qty per selected product
   final Map<int, double> _qtyById = {};
+
+  String get _cacheKey => ProductPickCache.keyFor(vendorId: widget.vendorId);
 
   @override
   void initState() {
@@ -141,7 +145,23 @@ class _ProductPickerGridSheetState extends State<ProductPickerGridSheet> {
       if (mounted) _searchFocus.requestFocus();
     });
 
-    _fetchProducts(page: 1, replace: true);
+    // Cache-first: paint whatever's cached for this vendor scope instantly
+    // (likely warmed by a prefetch when the sale/purchase screen opened),
+    // then always silently re-check in the background.
+    final cached = ProductPickCache.cache.peek(_cacheKey);
+    if (cached != null) {
+      _products.addAll(cached.items);
+      _page = cached.currentPage;
+      _lastPage = cached.lastPage;
+      for (final p in cached.items) {
+        final id = _asInt(p['id']);
+        if (id != null && _selectedIds.contains(id)) {
+          _selectedMapById[id] = p;
+          _qtyById[id] = _qtyById[id] ?? 1.0;
+        }
+      }
+    }
+    _fetchProducts(page: 1, replace: true, silent: cached != null);
 
     // Enter (confirm) / Escape (close) need to work no matter what currently
     // has focus — the search box, a focused grid card, or nothing at all.
@@ -239,35 +259,41 @@ class _ProductPickerGridSheetState extends State<ProductPickerGridSheet> {
   }
 
   // ---------- data ----------
-  Future<void> _fetchProducts({required int page, bool replace = true}) async {
-    if (_loading) return;
-    setState(() => _loading = true);
+  Future<void> _fetchProducts({required int page, bool replace = true, bool silent = false}) async {
+    if (silent) {
+      setState(() => _silentRefreshing = true);
+    } else {
+      if (_loading) return;
+      setState(() => _loading = true);
+    }
 
     try {
-      final data = await _productService.getProducts(
-        page: page,
-        search: _search,
-        vendorId: widget.vendorId,
-        per_page: 100,
-      );
+      final entry = _search.isEmpty
+          // Unfiltered fetch — safe to store in the shared bucket that
+          // other screens read via peek() (e.g. before a vendor is even
+          // picked in a sale, the unfiltered product list is prefetched).
+          ? await ProductPickCache.cache.refresh(
+              _cacheKey,
+              () => ProductPickCache.fetchPage(
+                _productService,
+                page: page,
+                search: _search,
+                vendorId: widget.vendorId,
+                perPage: 100,
+              ),
+              requestKey: '$_cacheKey::$_search::$page',
+            )
+          // Filtered (search) fetch — must not overwrite the shared
+          // bucket. Apply locally to this sheet only.
+          : await ProductPickCache.fetchPage(
+              _productService,
+              page: page,
+              search: _search,
+              vendorId: widget.vendorId,
+              perPage: 100,
+            );
 
-      List<Map<String, dynamic>> newProducts = [];
-      int lastPage = 1;
-
-      dynamic root = data['data'] ?? data;
-      if (root is List && root.isNotEmpty) root = root.first;
-
-      dynamic productsNode =
-          (root is Map) ? (root['products'] ?? root['data'] ?? root) : root;
-
-      if (productsNode is Map) {
-        final listNode = productsNode['data'];
-        if (listNode is List) newProducts = listNode.cast<Map<String, dynamic>>();
-        lastPage = _asInt(productsNode['last_page'] ?? root['last_page']) ?? 1;
-      } else if (productsNode is List) {
-        newProducts = productsNode.cast<Map<String, dynamic>>();
-        lastPage = _asInt(root is Map ? root['last_page'] : 1) ?? 1;
-      }
+      final newProducts = entry.items;
 
       // update cache if selected appears
       for (final p in newProducts) {
@@ -287,19 +313,46 @@ class _ProductPickerGridSheetState extends State<ProductPickerGridSheet> {
         } else {
           _products.addAll(newProducts);
         }
-        _page = page;
-        _lastPage = lastPage;
+        _page = entry.currentPage;
+        _lastPage = entry.lastPage;
       });
+    } catch (_) {
+      // Silent refresh failures stay quiet; keep whatever was on screen.
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) setState(() {
+        _loading = false;
+        _silentRefreshing = false;
+      });
     }
   }
 
   void _onSearchChanged(String val) {
+    final query = val.trim();
+
+    // Instant local filter against the cached page for this vendor scope —
+    // covers the common "type a few letters of the item name" case with
+    // zero network wait.
+    final cached = ProductPickCache.cache.peek(_cacheKey);
+    if (cached != null) {
+      final q = query.toLowerCase();
+      final filtered = q.isEmpty
+          ? cached.items
+          : cached.items.where((p) {
+              final name = (p['name'] ?? '').toString().toLowerCase();
+              final sku = (p['sku'] ?? p['barcode'] ?? '').toString().toLowerCase();
+              return name.contains(q) || sku.contains(q);
+            }).toList();
+      setState(() {
+        _products
+          ..clear()
+          ..addAll(filtered);
+      });
+    }
+
     _debounce?.cancel();
-    _debounce = Timer(const Duration(milliseconds: 350), () {
+    _debounce = Timer(const Duration(milliseconds: 300), () {
       setState(() => _search = val.trim());
-      _fetchProducts(page: 1, replace: true);
+      _fetchProducts(page: 1, replace: true, silent: cached != null);
     });
   }
 
@@ -388,6 +441,22 @@ class _ProductPickerGridSheetState extends State<ProductPickerGridSheet> {
           _qtyById[id] = _qtyById[id] ?? 1.0;
         }
       });
+      // Insert into this picker's own scope (vendor-specific or "all"),
+      // and also into the unfiltered "all products" bucket if this picker
+      // was vendor-scoped, since an all-products picker elsewhere should
+      // still see the new product.
+      ProductPickCache.cache.insertInto(
+        _cacheKey,
+        created,
+        matchesExisting: (p) => p['id']?.toString() == created['id']?.toString(),
+      );
+      if (widget.vendorId != null) {
+        ProductPickCache.cache.insertInto(
+          ProductPickCache.keyFor(),
+          created,
+          matchesExisting: (p) => p['id']?.toString() == created['id']?.toString(),
+        );
+      }
 
       if (!widget.multi) {
         Future.microtask(() => Navigator.pop(context, created));
@@ -512,6 +581,14 @@ Padding(
                         hintText: 'Search by name, SKU or barcode…',
                       ),
                     ),
+                    if (_silentRefreshing)
+                      const Padding(
+                        padding: EdgeInsets.only(top: 6),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.all(Radius.circular(2)),
+                          child: LinearProgressIndicator(minHeight: 2),
+                        ),
+                      ),
                     const SizedBox(height: 12),
                     Row(
                       children: [

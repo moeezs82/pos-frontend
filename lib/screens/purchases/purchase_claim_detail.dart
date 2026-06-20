@@ -819,14 +819,20 @@ class _KpiTile extends StatelessWidget {
 }
 
 class _QtyBubble extends StatelessWidget {
-  final int qty;
+  final double qty;
   final Color color;
   const _QtyBubble({required this.qty, this.color = Colors.blue});
+
+  String get _label {
+    if (qty % 1 == 0) return qty.toInt().toString();
+    return qty.toStringAsFixed(3).replaceFirst(RegExp(r'0+$'), '').replaceFirst(RegExp(r'\.$'), '');
+  }
+
   @override
   Widget build(BuildContext context) => CircleAvatar(
     backgroundColor: color.withOpacity(0.1),
     child: Text(
-      qty.toString(),
+      _label,
       style: TextStyle(fontWeight: FontWeight.bold, color: color),
     ),
   );

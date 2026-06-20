@@ -103,6 +103,13 @@ class _ProductsScreenState extends State<ProductsScreen> {
     if (v is String) return int.tryParse(v) ?? 0;
     return 0;
   }
+  double _doubleVal(dynamic v) {
+    if (v is double) return v;
+    if (v is int) return v.toDouble();
+    if (v is num) return v.toDouble();
+    if (v is String) return double.tryParse(v) ?? 0.0;
+    return 0.0;
+  }
 
   Future<void> _openForm([dynamic product]) async {
     final result = await Navigator.push(
@@ -225,15 +232,19 @@ class _ProductsScreenState extends State<ProductsScreen> {
                           itemCount: _products.length,
                           separatorBuilder: (_, __) => const SizedBox(height: 10),
                           itemBuilder: (context, index) {
+                            // Here's the corrected code to preserve decimals:
                             final p = _products[index];
                             final name = (p['name'] ?? 'Product').toString();
                             final selectedBranchId = context.watch<BranchProvider>().selectedBranchId;
                             final stocks = (p['stocks'] as List?)?.cast<Map<String, dynamic>>() ?? const [];
+
+                            // FIX: Use fold<double> instead of fold<int>, and _doubleVal instead of _intVal
                             final stockQty = selectedBranchId == null
-                                ? stocks.fold<int>(0, (sum, s) => sum + _intVal(s['quantity']))
+                                ? stocks.fold<double>(0.0, (sum, s) => sum + _doubleVal(s['quantity']))
                                 : stocks
                                     .where((s) => _intVal(s['branch_id']) == selectedBranchId)
-                                    .fold<int>(0, (sum, s) => sum + _intVal(s['quantity']));
+                                    .fold<double>(0.0, (sum, s) => sum + _doubleVal(s['quantity']));
+
                             final brand = (p['brand']?['name'] ?? '—').toString();
                             final category = (p['category']?['name'] ?? '—').toString();
                             final price = (p['price'] ?? '0').toString();

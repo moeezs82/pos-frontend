@@ -8,6 +8,7 @@ import 'package:enterprise_pos/widgets/product_picker_grid_sheet.dart';
 import 'package:enterprise_pos/widgets/customer_picker_sheet.dart';
 import 'package:enterprise_pos/widgets/user_picker_sheet.dart';
 import 'package:enterprise_pos/widgets/vendor_picker_sheet.dart';
+import 'package:enterprise_pos/services/party_prefetch.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/enterprise/enterprise_panel.dart';
 import 'package:enterprise_pos/widgets/app_feedback.dart';
@@ -35,6 +36,7 @@ class CreateSaleScreen extends StatefulWidget {
 
 class _CreateSaleScreenState extends State<CreateSaleScreen> {
   final _formKey = GlobalKey<FormState>();
+  final _pageFocusNode = FocusNode();
 
   // selections
   String? _selectedBranchId;
@@ -81,6 +83,13 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     _productService = ProductService(token: token);
     _saleService = SaleService(token: token);
 
+    // Warm customer/salesman/delivery-boy/product caches immediately, in
+    // the background, before the user taps any "Select…" button. By the
+    // time they actually open a picker a second or two later, it shows
+    // cached data instantly instead of a blank spinner.
+    final branchId = context.read<BranchProvider>().selectedBranchId?.toString();
+    PartyPrefetch.warmForSale(token, branchId: branchId);
+
     _barcodeFocusNode.addListener(() {
       setState(() => _scannerEnabled = _barcodeFocusNode.hasFocus);
     });
@@ -124,6 +133,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     cashReceivedController.dispose();
     _barcodeController.dispose();
     _barcodeFocusNode.dispose();
+    _pageFocusNode.dispose();
     addressController.dispose();
     customerNameController.dispose();
     customerPhoneController.dispose();
@@ -146,13 +156,19 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
   //   }
   // }
 
-  Future<void> _pickCustomer() async {
+  /// Opens the full customer browse sheet and returns whatever was picked
+  /// (null means "cleared / walk-in"). Used both as the manual "Select
+  /// Customer" action and as the autocomplete field's "Browse all" fallback.
+  Future<Map<String, dynamic>?> _openCustomerSheet() async {
     final token = Provider.of<AuthProvider>(context, listen: false).token!;
-    final customer = await showModalBottomSheet<Map<String, dynamic>?>(
+    return showModalBottomSheet<Map<String, dynamic>?>(
       context: context,
       isScrollControlled: true,
       builder: (_) => CustomerPickerSheet(token: token),
     );
+  }
+
+  void _applyCustomerSelection(Map<String, dynamic>? customer) {
     if (!mounted) return;
     if (customer == null) {
       setState(() {
@@ -181,6 +197,11 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     }
   }
 
+  Future<void> _pickCustomer() async {
+    final customer = await _openCustomerSheet();
+    _applyCustomerSelection(customer);
+  }
+
   void _clearCustomerSelection() {
     setState(() {
       _selectedCustomer = null;
@@ -192,13 +213,16 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     });
   }
 
-  Future<void> _pickVendor() async {
+  Future<Map<String, dynamic>?> _openVendorSheet() async {
     final token = Provider.of<AuthProvider>(context, listen: false).token!;
-    final vendor = await showModalBottomSheet<Map<String, dynamic>?>(
+    return showModalBottomSheet<Map<String, dynamic>?>(
       context: context,
       isScrollControlled: true,
       builder: (_) => VendorPickerSheet(token: token),
     );
+  }
+
+  void _applyVendorSelection(Map<String, dynamic>? vendor) {
     if (!mounted) return;
     setState(() {
       _selectedVendor = vendor;
@@ -207,19 +231,26 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     });
   }
 
-  Future<void> _pickUser() async {
-    final globalBranchId = context.read<BranchProvider>().selectedBranchId;
-    final String? effectiveBranchIdStr =
-        globalBranchId?.toString() ?? _selectedBranchId;
-    final String effectiveBranchId = effectiveBranchIdStr ?? '';
+  Future<void> _pickVendor() async {
+    final vendor = await _openVendorSheet();
+    _applyVendorSelection(vendor);
+  }
 
+  String _effectiveBranchIdStr() {
+    final globalBranchId = context.read<BranchProvider>().selectedBranchId;
+    return globalBranchId?.toString() ?? _selectedBranchId ?? '';
+  }
+
+  Future<Map<String, dynamic>?> _openUserSheet() async {
     final token = Provider.of<AuthProvider>(context, listen: false).token!;
-    final user = await showModalBottomSheet<Map<String, dynamic>?>(
+    return showModalBottomSheet<Map<String, dynamic>?>(
       context: context,
       isScrollControlled: true,
-      builder: (_) =>
-          UserPickerSheet(token: token, branchId: effectiveBranchId),
+      builder: (_) => UserPickerSheet(token: token, branchId: _effectiveBranchIdStr()),
     );
+  }
+
+  void _applyUserSelection(Map<String, dynamic>? user) {
     if (!mounted) return;
     setState(() {
       _selectedUser = user;
@@ -227,30 +258,38 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     });
   }
 
-  Future<void> _pickDeliveryBoy() async {
-    final globalBranchId = context.read<BranchProvider>().selectedBranchId;
-    final String? effectiveBranchIdStr =
-        globalBranchId?.toString() ?? _selectedBranchId;
-    final String effectiveBranchId = effectiveBranchIdStr ?? '';
+  Future<void> _pickUser() async {
+    final user = await _openUserSheet();
+    _applyUserSelection(user);
+  }
 
+  Future<Map<String, dynamic>?> _openDeliveryBoySheet() async {
     final token = Provider.of<AuthProvider>(context, listen: false).token!;
-    final user = await showModalBottomSheet<Map<String, dynamic>?>(
+    return showModalBottomSheet<Map<String, dynamic>?>(
       context: context,
       isScrollControlled: true,
       builder: (_) => UserPickerSheet(
         token: token,
-        branchId: effectiveBranchId,
+        branchId: _effectiveBranchIdStr(),
         role: 'delivery',
         title: 'Select Delivery Boy',
         searchHint: 'Search delivery boy by name, email, phone…',
         allowQuickAdd: false,
       ),
     );
+  }
+
+  void _applyDeliveryBoySelection(Map<String, dynamic>? user) {
     if (!mounted) return;
     setState(() {
       _selectedDeliveryBoy = user;
       _selectedDeliveryBoyId = _metaInt(user?['id']);
     });
+  }
+
+  Future<void> _pickDeliveryBoy() async {
+    final user = await _openDeliveryBoySheet();
+    _applyDeliveryBoySelection(user);
   }
 
   // ---------------- Items ----------------
@@ -995,6 +1034,8 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
           selectedDeliveryBoy: _selectedDeliveryBoy,
           selectedBranch: _selectedBranch,
           selectedVendor: _selectedVendor,
+          branchId: _effectiveBranchIdStr(),
+          token: Provider.of<AuthProvider>(context, listen: false).token!,
           onPickCustomer: _pickCustomer,
           onPickUser: _pickUser,
           onPickDeliveryBoy: _pickDeliveryBoy,
@@ -1004,6 +1045,14 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
             _selectedVendorId = null;
             _items = [];
           }),
+          onBrowseCustomerSheet: _openCustomerSheet,
+          onApplyCustomer: _applyCustomerSelection,
+          onBrowseUserSheet: _openUserSheet,
+          onApplyUser: _applyUserSelection,
+          onBrowseDeliveryBoySheet: _openDeliveryBoySheet,
+          onApplyDeliveryBoy: _applyDeliveryBoySelection,
+          onBrowseVendorSheet: _openVendorSheet,
+          onApplyVendor: _applyVendorSelection,
         ),
         const SizedBox(height: 14),
         _CustomerInfoPanel(
@@ -1056,29 +1105,40 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       ],
     );
 
-    return Focus(
-      autofocus: true,
-      skipTraversal: true,
-      child: CallbackShortcuts(
-        bindings: <ShortcutActivator, VoidCallback>{
-          const SingleActivator(LogicalKeyboardKey.f2): () => _addItemManual(),
-          _ctrl(LogicalKeyboardKey.keyI): () => _addItemManual(),
-          _cmd(LogicalKeyboardKey.keyI): () => _addItemManual(),
-          const SingleActivator(LogicalKeyboardKey.f3): () => _pickCustomer(),
-          _ctrlShift(LogicalKeyboardKey.keyC): () => _pickCustomer(),
-          _cmdShift(LogicalKeyboardKey.keyC): () => _pickCustomer(),
-          const SingleActivator(LogicalKeyboardKey.f4): () => _pickDeliveryBoy(),
-          _ctrlShift(LogicalKeyboardKey.keyD): () => _pickDeliveryBoy(),
-          _cmdShift(LogicalKeyboardKey.keyD): () => _pickDeliveryBoy(),
-          const SingleActivator(LogicalKeyboardKey.f9): _focusBarcodeScanner,
-          _ctrl(LogicalKeyboardKey.enter): () => _submitSale(),
-          _cmd(LogicalKeyboardKey.enter): () => _submitSale(),
-          _ctrl(LogicalKeyboardKey.numpadEnter): () => _submitSale(),
-          _cmd(LogicalKeyboardKey.numpadEnter): () => _submitSale(),
-          _ctrl(LogicalKeyboardKey.slash): () => showAppShortcutGuide(context, includeSaleCreate: true),
-          _cmd(LogicalKeyboardKey.slash): () => showAppShortcutGuide(context, includeSaleCreate: true),
-        },
-        child: Scaffold(
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onTap: () {
+        final current = FocusManager.instance.primaryFocus;
+        if (current == null || current == _pageFocusNode) {
+          _pageFocusNode.requestFocus();
+        } else if (!current.hasFocus) {
+          _pageFocusNode.requestFocus();
+        }
+      },
+      child: Focus(
+        focusNode: _pageFocusNode,
+        autofocus: true,
+        skipTraversal: true,
+        child: CallbackShortcuts(
+          bindings: <ShortcutActivator, VoidCallback>{
+            const SingleActivator(LogicalKeyboardKey.f2): () => _addItemManual(),
+            _ctrl(LogicalKeyboardKey.keyI): () => _addItemManual(),
+            _cmd(LogicalKeyboardKey.keyI): () => _addItemManual(),
+            const SingleActivator(LogicalKeyboardKey.f3): () => _pickCustomer(),
+            _ctrlShift(LogicalKeyboardKey.keyC): () => _pickCustomer(),
+            _cmdShift(LogicalKeyboardKey.keyC): () => _pickCustomer(),
+            const SingleActivator(LogicalKeyboardKey.f4): () => _pickDeliveryBoy(),
+            _ctrlShift(LogicalKeyboardKey.keyD): () => _pickDeliveryBoy(),
+            _cmdShift(LogicalKeyboardKey.keyD): () => _pickDeliveryBoy(),
+            const SingleActivator(LogicalKeyboardKey.f9): _focusBarcodeScanner,
+            _ctrl(LogicalKeyboardKey.enter): () => _submitSale(),
+            _cmd(LogicalKeyboardKey.enter): () => _submitSale(),
+            _ctrl(LogicalKeyboardKey.numpadEnter): () => _submitSale(),
+            _cmd(LogicalKeyboardKey.numpadEnter): () => _submitSale(),
+            _ctrl(LogicalKeyboardKey.slash): () => showAppShortcutGuide(context, includeSaleCreate: true),
+            _cmd(LogicalKeyboardKey.slash): () => showAppShortcutGuide(context, includeSaleCreate: true),
+          },
+          child: Scaffold(
       appBar: AppBar(
         title: const Text('Create Sale'),
         actions: [
@@ -1169,7 +1229,8 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       ),
         ),
       ),
-    );
+    ),
+  );
   }
 
 }
