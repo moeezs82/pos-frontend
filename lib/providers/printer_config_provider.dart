@@ -5,6 +5,7 @@ import 'package:enterprise_pos/api/printer_config_service.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../models/invoice_template.dart';
 import '../models/printer_config.dart';
 
 /// Created once at app startup (before anyone has logged in), so it can't
@@ -16,7 +17,7 @@ class PrinterConfigProvider extends ChangeNotifier {
   static const String _cacheKey = 'printer_config_cache';
   static const String _cacheTimeKey = 'printer_config_cache_time';
 
-  static const Duration _cacheDuration = Duration(minutes: 1);
+  static const Duration _cacheDuration = Duration(minutes: 10);
 
   Timer? _cacheResetTimer;
 
@@ -44,6 +45,9 @@ class PrinterConfigProvider extends ChangeNotifier {
   String? get kitchenNetworkIp => _config.kitchenNetworkIp;
   int get kitchenNetworkPort => _config.kitchenNetworkPort;
   String? get kitchenLocalPrinterName => _config.kitchenLocalPrinterName;
+  InvoiceTemplate get mainInvoiceTemplate => _config.mainInvoiceTemplate;
+  InvoiceTemplate get kitchenInvoiceTemplate => _config.kitchenInvoiceTemplate;
+  List<String> get footerLines => _config.footerLines;
 
   /// Load whatever was cached locally — safe to call before login, since it
   /// never touches the network. Call [refresh] with a real token afterwards

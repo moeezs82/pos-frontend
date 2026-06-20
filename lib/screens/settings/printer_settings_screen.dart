@@ -1,18 +1,16 @@
 import 'package:enterprise_pos/api/common_service.dart';
 import 'package:enterprise_pos/api/printer_config_service.dart';
+import 'package:enterprise_pos/models/invoice_template.dart';
 import 'package:enterprise_pos/models/printer_config.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/providers/printer_config_provider.dart';
+import 'package:enterprise_pos/screens/settings/invoice_template_preview_screen.dart';
 import 'package:enterprise_pos/services/thermal_printer_service.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/enterprise/enterprise_panel.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-/// Master-admin only: configure where receipts actually print to (a
-/// network ESC/POS printer, or a printer installed on this computer), per
-/// branch or as a global default, and test the connection before trusting
-/// it for real sales.
 class PrinterSettingsScreen extends StatefulWidget {
   const PrinterSettingsScreen({super.key});
 
@@ -31,9 +29,9 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
   bool _testingKitchen = false;
 
   List<Map<String, dynamic>> _branches = [];
-  int? _selectedBranchId; // null = global default
+  int? _selectedBranchId;
 
-  // Form state
+  // Form controllers
   final _shopNameCtrl = TextEditingController();
   final _shopAddressCtrl = TextEditingController();
   final _shopPhoneCtrl = TextEditingController();
@@ -44,8 +42,14 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
   final _kitchenNetworkPortCtrl = TextEditingController(text: '9100');
   final _kitchenLocalPrinterCtrl = TextEditingController();
 
-  String _activeConnection = 'none'; // none | network | local
+  String _activeConnection = 'none';
   bool _kitchenEnabled = false;
+  InvoiceTemplate _mainTemplate = InvoiceTemplate.standard;
+  InvoiceTemplate _kitchenTemplate = InvoiceTemplate.kitchen;
+  List<InvoiceTemplate> _templates = InvoiceTemplate.values;
+
+  // Footer lines — each string is one printed line
+  final List<TextEditingController> _footerCtrls = [];
 
   @override
   void initState() {
@@ -54,11 +58,20 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
     final token = auth.token!;
     _service = PrinterConfigService(token: token);
     _common = CommonService(token: token);
+    _loadTemplates();
     if (auth.isMasterAdmin) {
       _loadBranches();
     } else {
       _loadingBranches = false;
     }
+  }
+
+  Future<void> _loadTemplates() async {
+    try {
+      final templates = await _service.getTemplates();
+      if (!mounted) return;
+      setState(() => _templates = templates);
+    } catch (_) {}
   }
 
   @override
@@ -72,6 +85,9 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
     _kitchenNetworkIpCtrl.dispose();
     _kitchenNetworkPortCtrl.dispose();
     _kitchenLocalPrinterCtrl.dispose();
+    for (final c in _footerCtrls) {
+      c.dispose();
+    }
     super.dispose();
   }
 
@@ -93,9 +109,6 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
   Future<void> _loadConfigFor(int? branchId) async {
     setState(() => _loadingConfig = true);
     try {
-      // The settings screen always wants the row for the branch being
-      // edited, not "my own branch" — list it out of the full set fetched
-      // for the master-admin view.
       final all = await _service.getAllPrinterSettings();
       final match = all.where((c) => c.branchId == branchId).toList();
       final config = match.isNotEmpty ? match.first : const PrinterConfig();
@@ -113,18 +126,43 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
 
   void _applyToForm(PrinterConfig config) {
     if (!mounted) return;
+    // Rebuild footer controllers
+    for (final c in _footerCtrls) {
+      c.dispose();
+    }
+    _footerCtrls.clear();
+    for (final line in config.footerLines) {
+      _footerCtrls.add(TextEditingController(text: line));
+    }
+
     setState(() {
       _shopNameCtrl.text = config.shopName ?? '';
       _shopAddressCtrl.text = config.shopAddress ?? '';
       _shopPhoneCtrl.text = config.shopPhone ?? '';
       _activeConnection = config.activeConnection;
       _networkIpCtrl.text = config.networkIp ?? '';
-      _networkPortCtrl.text = (config.networkPort).toString();
+      _networkPortCtrl.text = config.networkPort.toString();
       _localPrinterCtrl.text = config.localPrinterName ?? '';
       _kitchenEnabled = config.kitchenPrintEnabled;
       _kitchenNetworkIpCtrl.text = config.kitchenNetworkIp ?? '';
-      _kitchenNetworkPortCtrl.text = (config.kitchenNetworkPort).toString();
+      _kitchenNetworkPortCtrl.text = config.kitchenNetworkPort.toString();
       _kitchenLocalPrinterCtrl.text = config.kitchenLocalPrinterName ?? '';
+      _mainTemplate = config.mainInvoiceTemplate;
+      _kitchenTemplate = config.kitchenInvoiceTemplate;
+    });
+  }
+
+  List<String> get _currentFooterLines =>
+      _footerCtrls.map((c) => c.text.trim()).where((s) => s.isNotEmpty).toList();
+
+  void _addFooterLine() {
+    setState(() => _footerCtrls.add(TextEditingController()));
+  }
+
+  void _removeFooterLine(int index) {
+    setState(() {
+      _footerCtrls[index].dispose();
+      _footerCtrls.removeAt(index);
     });
   }
 
@@ -145,26 +183,24 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
         shopName: _shopNameCtrl.text.trim(),
         shopAddress: _shopAddressCtrl.text.trim(),
         shopPhone: _shopPhoneCtrl.text.trim(),
+        footerLines: _currentFooterLines,
         activeConnection: _activeConnection,
         networkIp: _networkIpCtrl.text.trim().isEmpty ? null : _networkIpCtrl.text.trim(),
         networkPort: int.tryParse(_networkPortCtrl.text.trim()) ?? 9100,
         localPrinterName: _localPrinterCtrl.text.trim().isEmpty ? null : _localPrinterCtrl.text.trim(),
+        mainInvoiceTemplate: _mainTemplate,
         kitchenPrintEnabled: _kitchenEnabled,
         kitchenNetworkIp: _kitchenNetworkIpCtrl.text.trim().isEmpty ? null : _kitchenNetworkIpCtrl.text.trim(),
         kitchenNetworkPort: int.tryParse(_kitchenNetworkPortCtrl.text.trim()) ?? 9100,
         kitchenLocalPrinterName: _kitchenLocalPrinterCtrl.text.trim().isEmpty ? null : _kitchenLocalPrinterCtrl.text.trim(),
+        kitchenInvoiceTemplate: _kitchenTemplate,
       );
 
       if (!mounted) return;
       _showMessage('Printer settings saved.');
 
-      // If we just saved settings for the current device's own branch,
-      // refresh the live config so the next sale uses them immediately.
-      if (mounted) {
-        // ignore: use_build_context_synchronously
-        final token = context.read<AuthProvider>().token;
-        if (token != null) context.read<PrinterConfigProvider>().refresh(token);
-      }
+      final token = context.read<AuthProvider>().token;
+      if (token != null) context.read<PrinterConfigProvider>().refresh(token);
     } catch (e) {
       _showMessage(e.toString().replaceFirst('Exception: ', ''));
     } finally {
@@ -174,7 +210,7 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
 
   Future<void> _testPrint() async {
     if (_activeConnection != 'network') {
-      _showMessage('Test print currently supports network printers. Save local printer settings and try a real sale to test that path.');
+      _showMessage('Test print currently supports network printers.');
       return;
     }
     final ip = _networkIpCtrl.text.trim();
@@ -237,6 +273,22 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
   }
 
+  void _openPreview(InvoiceTemplate template) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => InvoiceTemplatePreviewScreen(
+          templates: _templates,
+          initialTemplate: template,
+          shopName: _shopNameCtrl.text.trim().isNotEmpty ? _shopNameCtrl.text.trim() : 'My Shop',
+          shopAddress: _shopAddressCtrl.text.trim().isEmpty ? null : _shopAddressCtrl.text.trim(),
+          shopPhone: _shopPhoneCtrl.text.trim().isEmpty ? null : _shopPhoneCtrl.text.trim(),
+          footerLines: _currentFooterLines,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthProvider>();
@@ -275,6 +327,10 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
                   _buildShopInfoPanel(),
                   const SizedBox(height: 14),
                   _buildConnectionPanel(),
+                  const SizedBox(height: 14),
+                  _buildTemplatePanel(),
+                  const SizedBox(height: 14),
+                  _buildFooterLinesPanel(),
                   const SizedBox(height: 14),
                   _buildKitchenPanel(),
                   const SizedBox(height: 20),
@@ -416,7 +472,7 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
             ),
             const SizedBox(height: 6),
             const Text(
-              'Most thermal WiFi/LAN printers listen on port 9100. Find the IP from the printer\'s self-test page or network settings.',
+              'Most thermal WiFi/LAN printers listen on port 9100.',
               style: TextStyle(color: AppTheme.textMuted, fontSize: 12, fontWeight: FontWeight.w600),
             ),
             const SizedBox(height: 14),
@@ -455,9 +511,8 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
                   SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      'Printing to a printer installed on this computer isn\'t wired up yet — '
-                      'sales will fall back to the PDF preview until that\'s finished. '
-                      'A network printer (above) works today.',
+                      'Local printer support is not wired up yet — sales fall back to PDF preview. '
+                      'A network printer works today.',
                       style: TextStyle(color: AppTheme.textMuted, fontWeight: FontWeight.w600, fontSize: 12.5),
                     ),
                   ),
@@ -465,6 +520,102 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
               ),
             ),
           ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTemplatePanel() {
+    return EnterprisePanel(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const EnterpriseSectionHeader(
+            title: 'Invoice template',
+            subtitle: 'Which layout the main receipt prints with.',
+            icon: Icons.receipt_long_rounded,
+            color: AppTheme.teal,
+          ),
+          const SizedBox(height: 14),
+          ..._templates.map((t) => _TemplateOptionTile(
+                template: t,
+                selected: _mainTemplate == t,
+                onSelected: () => setState(() => _mainTemplate = t),
+                onPreview: () => _openPreview(t),
+              )),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFooterLinesPanel() {
+    return EnterprisePanel(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          EnterpriseSectionHeader(
+            title: 'Receipt footer',
+            subtitle: 'Each line prints centred at the bottom of every receipt.',
+            icon: Icons.format_align_center_rounded,
+            color: AppTheme.navy,
+            trailing: TextButton.icon(
+              onPressed: _addFooterLine,
+              icon: const Icon(Icons.add_rounded, size: 18),
+              label: const Text('Add line'),
+            ),
+          ),
+          const SizedBox(height: 10),
+          if (_footerCtrls.isEmpty)
+            Container(
+              padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 12),
+              decoration: BoxDecoration(
+                color: AppTheme.surface,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: AppTheme.border),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.info_outline_rounded, size: 16, color: AppTheme.textMuted),
+                  SizedBox(width: 8),
+                  Text('No footer lines — tap "Add line" to add one.',
+                      style: TextStyle(color: AppTheme.textMuted, fontSize: 13, fontWeight: FontWeight.w600)),
+                ],
+              ),
+            )
+          else
+            ...List.generate(_footerCtrls.length, (i) {
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Row(
+                  children: [
+                    const Icon(Icons.drag_handle_rounded, color: AppTheme.textMuted, size: 20),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: TextFormField(
+                        controller: _footerCtrls[i],
+                        decoration: InputDecoration(
+                          labelText: 'Line ${i + 1}',
+                          hintText: 'e.g. Thank you, visit again!',
+                          prefixIcon: const Icon(Icons.short_text_rounded),
+                          isDense: true,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    IconButton(
+                      onPressed: () => _removeFooterLine(i),
+                      icon: const Icon(Icons.remove_circle_outline_rounded, color: AppTheme.danger),
+                      tooltip: 'Remove this line',
+                    ),
+                  ],
+                ),
+              );
+            }),
+          const SizedBox(height: 4),
+          const Text(
+            'Tip: you can add your WiFi password, social media handles, or any message for your customers.',
+            style: TextStyle(color: AppTheme.textMuted, fontSize: 11.5, fontWeight: FontWeight.w500),
+          ),
         ],
       ),
     );
@@ -483,6 +634,16 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
             subtitle: const Text('Send the same receipt to a back/kitchen printer too.'),
           ),
           if (_kitchenEnabled) ...[
+            const SizedBox(height: 8),
+            const Text('Kitchen ticket template', style: TextStyle(fontWeight: FontWeight.w800)),
+            const SizedBox(height: 8),
+            ..._templates.map((t) => _TemplateOptionTile(
+                  template: t,
+                  selected: _kitchenTemplate == t,
+                  onSelected: () => setState(() => _kitchenTemplate = t),
+                  onPreview: () => _openPreview(t),
+                  dense: true,
+                )),
             const SizedBox(height: 8),
             if (_activeConnection == 'network') ...[
               Row(
@@ -529,6 +690,70 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
               ),
           ],
         ],
+      ),
+    );
+  }
+}
+
+class _TemplateOptionTile extends StatelessWidget {
+  final InvoiceTemplate template;
+  final bool selected;
+  final VoidCallback onSelected;
+  final VoidCallback onPreview;
+  final bool dense;
+
+  const _TemplateOptionTile({
+    required this.template,
+    required this.selected,
+    required this.onSelected,
+    required this.onPreview,
+    this.dense = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: selected ? AppTheme.primary : AppTheme.border, width: selected ? 1.6 : 1),
+        color: selected ? AppTheme.primary.withOpacity(.06) : null,
+      ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: onSelected,
+        child: Padding(
+          padding: EdgeInsets.symmetric(horizontal: 14, vertical: dense ? 10 : 14),
+          child: Row(
+            children: [
+              Icon(
+                selected ? Icons.radio_button_checked_rounded : Icons.radio_button_unchecked_rounded,
+                color: selected ? AppTheme.primary : AppTheme.textMuted,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(template.label, style: const TextStyle(fontWeight: FontWeight.w800)),
+                    if (!dense) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        template.description,
+                        style: const TextStyle(color: AppTheme.textMuted, fontSize: 12.5, fontWeight: FontWeight.w600),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              TextButton.icon(
+                onPressed: onPreview,
+                icon: const Icon(Icons.visibility_outlined, size: 18),
+                label: const Text('Preview'),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

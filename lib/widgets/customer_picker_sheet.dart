@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'package:enterprise_pos/api/customer_service.dart';
 import 'package:enterprise_pos/forms/customer_form_screen.dart';
+import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 
 class CustomerPickerSheet extends StatefulWidget {
   final String token;
@@ -14,6 +16,7 @@ class CustomerPickerSheet extends StatefulWidget {
 class _CustomerPickerSheetState extends State<CustomerPickerSheet> {
   final _searchCtrl = TextEditingController();
   final _searchFocus = FocusNode();
+  final _money = NumberFormat('#,##0.00');
 
   List<Map<String, dynamic>> _customers = [];
   int _page = 1;
@@ -48,9 +51,12 @@ class _CustomerPickerSheetState extends State<CustomerPickerSheet> {
   Future<void> _fetchCustomers({required int page, bool replace = true}) async {
     setState(() => _loading = true);
 
+    // includeBalance: true — pulls each customer's outstanding AR balance
+    // (debit - credit) from the ledger so it can be shown next to their name.
     final data = await _customerService.getCustomers(
       page: page,
       search: _search,
+      includeBalance: true,
     );
 
     final wrapper = data['data'];
@@ -92,6 +98,48 @@ class _CustomerPickerSheetState extends State<CustomerPickerSheet> {
       setState(() => _search = val.trim());
       _fetchCustomers(page: 1);
     });
+  }
+
+  num _balanceOf(Map<String, dynamic> c) {
+    final raw = c['balance'];
+    if (raw is num) return raw;
+    return num.tryParse(raw?.toString() ?? '0') ?? 0;
+  }
+
+  /// Customer ledger convention: balance > 0 means the customer owes money
+  /// (accounts receivable); balance < 0 means they're in credit (overpaid).
+  Widget _balanceChip(num balance) {
+    if (balance == 0) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        decoration: BoxDecoration(
+          color: AppTheme.surfaceSoft,
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: AppTheme.border),
+        ),
+        child: const Text(
+          'Settled',
+          style: TextStyle(color: AppTheme.textMuted, fontWeight: FontWeight.w700, fontSize: 11),
+        ),
+      );
+    }
+
+    final owes = balance > 0;
+    final color = owes ? AppTheme.danger : AppTheme.success;
+    final label = owes ? 'Owes' : 'Credit';
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: color.withOpacity(.10),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: color.withOpacity(.25)),
+      ),
+      child: Text(
+        '$label ${_money.format(balance.abs())}',
+        style: TextStyle(color: color, fontWeight: FontWeight.w800, fontSize: 11),
+      ),
+    );
   }
 
   @override
@@ -226,14 +274,24 @@ class _CustomerPickerSheetState extends State<CustomerPickerSheet> {
                             .trim();
                         final email = (c['email'] ?? '').toString();
                         final phone = (c['phone'] ?? '').toString();
+                        final balance = _balanceOf(c);
 
                         return ListTile(
                           dense: true,
                           visualDensity: visualDense,
                           contentPadding: denseTile,
-                          title: Text(
-                            name,
-                            style: const TextStyle(fontWeight: FontWeight.w600),
+                          title: Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  name,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(fontWeight: FontWeight.w600),
+                                ),
+                              ),
+                              const SizedBox(width: 6),
+                              _balanceChip(balance),
+                            ],
                           ),
                           subtitle: Row(
                             children: [

@@ -843,8 +843,11 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
     final effectiveShopName = printerConfig.shopName.isNotEmpty ? printerConfig.shopName : 'My Shop';
     final effectiveShopAddress = printerConfig.shopAddress.isNotEmpty ? printerConfig.shopAddress : null;
     final effectiveShopPhone = printerConfig.shopPhone.isNotEmpty ? printerConfig.shopPhone : null;
+    final mainTemplate = printerConfig.mainInvoiceTemplate;
+    final kitchenTemplate = printerConfig.kitchenInvoiceTemplate;
+    final footerLines = printerConfig.footerLines;
 
-    debugPrint('Active printer connection: ${printerConfig.activeConnection}');
+    debugPrint('Active printer connection: ${printerConfig.activeConnection}, template: ${mainTemplate.value}');
 
     var printedToHardware = false;
     if (printerConfig.isNetworkPrinter && (printerConfig.networkIp ?? '').trim().isNotEmpty) {
@@ -865,6 +868,9 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
           cashReceived: cashReceived,
           changeAmount: changeAmount,
           meta: printMeta,
+          sections: mainTemplate.sections,
+          paperWidth: mainTemplate.paperWidthCode,
+          footerLines: footerLines,
         );
         printedToHardware = true;
 
@@ -885,6 +891,9 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
             cashReceived: cashReceived,
             changeAmount: changeAmount,
             meta: printMeta,
+            sections: kitchenTemplate.sections,
+            paperWidth: kitchenTemplate.paperWidthCode,
+            footerLines: footerLines,
           );
         }
       } catch (e, s) {
@@ -913,6 +922,9 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
           cashReceived: cashReceived,
           changeAmount: changeAmount,
           meta: printMeta,
+          sections: mainTemplate.sections,
+          paperWidth: mainTemplate.paperWidthCode,
+          footerLines: footerLines,
         );
         printedToHardware = true;
       } catch (e, s) {
@@ -939,6 +951,9 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
         tax: tax,
         grandTotal: total,
         meta: printMeta,
+        sections: mainTemplate.sections,
+        paperWidth: mainTemplate.paperWidthCode,
+        footerLines: footerLines,
       );
     }
   }

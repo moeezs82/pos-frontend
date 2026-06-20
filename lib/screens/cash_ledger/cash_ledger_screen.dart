@@ -101,6 +101,7 @@ class _LedgerViewState extends State<_LedgerView> {
   int _lastPage = 1;
 
   Map<String, dynamic> _summary = {};
+  num _opening = 0;
 
   // Filters
   DateTime _dateFrom = DateTime.now().subtract(const Duration(days: 29));
@@ -131,10 +132,14 @@ class _LedgerViewState extends State<_LedgerView> {
         to: _fmtDate(_dateTo),
       );
       if (!mounted) return;
-      setState(() => _summary = Map<String, dynamic>.from(data['summary'] ?? {}));
+      final s = Map<String, dynamic>.from(data['summary'] ?? {});
+      setState(() {
+        _summary = s;
+        _opening = _toNum(s['opening']);
+      });
     } catch (_) {
       if (!mounted) return;
-      setState(() => _summary = {});
+      setState(() { _summary = {}; _opening = 0; });
     } finally {
       if (mounted) setState(() => _loadingFlow = false);
     }
@@ -328,7 +333,6 @@ class _LedgerViewState extends State<_LedgerView> {
     final outgoing = Map<String, dynamic>.from(_summary['outgoing'] ?? {});
     final inTotal = _toNum(incoming['total']);
     final outTotal = _toNum(outgoing['total']);
-    final net = _toNum(_summary['net_movement']);
     final closing = _toNum(_summary['closing']);
 
     return EnterprisePanel(
@@ -360,19 +364,19 @@ class _LedgerViewState extends State<_LedgerView> {
                   children: [
                     Expanded(
                       child: _StatBox(
-                        label: 'Received',
-                        value: _money.format(inTotal),
-                        color: AppTheme.success,
-                        icon: Icons.south_west_rounded,
+                        label: 'Opening',
+                        value: _money.format(_opening),
+                        color: AppTheme.navy,
+                        icon: Icons.account_balance_wallet_outlined,
                       ),
                     ),
                     const SizedBox(width: 10),
                     Expanded(
                       child: _StatBox(
-                        label: 'Paid',
-                        value: _money.format(outTotal),
-                        color: AppTheme.danger,
-                        icon: Icons.north_east_rounded,
+                        label: 'Received',
+                        value: _money.format(inTotal),
+                        color: AppTheme.success,
+                        icon: Icons.south_west_rounded,
                       ),
                     ),
                   ],
@@ -382,10 +386,10 @@ class _LedgerViewState extends State<_LedgerView> {
                   children: [
                     Expanded(
                       child: _StatBox(
-                        label: 'Net',
-                        value: _money.format(net),
-                        color: net >= 0 ? AppTheme.success : AppTheme.danger,
-                        icon: Icons.sync_alt_rounded,
+                        label: 'Paid',
+                        value: _money.format(outTotal),
+                        color: AppTheme.danger,
+                        icon: Icons.north_east_rounded,
                       ),
                     ),
                     const SizedBox(width: 10),
@@ -505,12 +509,35 @@ class _LedgerViewState extends State<_LedgerView> {
     if (_items.isEmpty) {
       return EnterprisePanel(
         child: Column(
-          children: const [
-            SizedBox(height: 16),
-            Icon(Icons.receipt_long_outlined, size: 56, color: AppTheme.textMuted),
-            SizedBox(height: 10),
-            Text('No entries matching filters', style: TextStyle(color: AppTheme.textMuted, fontWeight: FontWeight.w800)),
-            SizedBox(height: 16),
+          children: [
+            if (_opening != 0) ...[
+              Container(
+                margin: const EdgeInsets.fromLTRB(0, 12, 0, 4),
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: AppTheme.navy.withOpacity(0.08),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: AppTheme.navy.withOpacity(0.2)),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.info_outline_rounded, size: 18, color: AppTheme.navy),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        'No transactions in this period. Carried-forward opening balance: ${_money.format(_opening)}',
+                        style: const TextStyle(fontSize: 13, color: AppTheme.navy, fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+            const SizedBox(height: 16),
+            const Icon(Icons.receipt_long_outlined, size: 56, color: AppTheme.textMuted),
+            const SizedBox(height: 10),
+            const Text('No entries matching filters', style: TextStyle(color: AppTheme.textMuted, fontWeight: FontWeight.w800)),
+            const SizedBox(height: 16),
           ],
         ),
       );

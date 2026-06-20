@@ -730,8 +730,11 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       final effectiveShopName = printerConfig.shopName.isNotEmpty ? printerConfig.shopName : 'My Shop';
       final effectiveShopAddress = printerConfig.shopAddress.isNotEmpty ? printerConfig.shopAddress : null;
       final effectiveShopPhone = printerConfig.shopPhone.isNotEmpty ? printerConfig.shopPhone : null;
+      final mainTemplate = printerConfig.mainInvoiceTemplate;
+      final kitchenTemplate = printerConfig.kitchenInvoiceTemplate;
+      final footerLines = printerConfig.footerLines;
 
-      debugPrint('Active printer connection: ${printerConfig.activeConnection}');
+      debugPrint('Active printer connection: ${printerConfig.activeConnection}, template: ${mainTemplate.value}');
 
       var printedToHardware = false;
       if (printerConfig.isNetworkPrinter && (printerConfig.networkIp ?? '').trim().isNotEmpty) {
@@ -752,6 +755,9 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
             cashReceived: cashReceived,
             changeAmount: changeAmount,
             meta: meta,
+            sections: mainTemplate.sections,
+            paperWidth: mainTemplate.paperWidthCode,
+            footerLines: footerLines,
           );
           printedToHardware = true;
 
@@ -772,6 +778,9 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
               cashReceived: cashReceived,
               changeAmount: changeAmount,
               meta: meta,
+              sections: kitchenTemplate.sections,
+              paperWidth: kitchenTemplate.paperWidthCode,
+              footerLines: footerLines,
             );
           }
         } catch (e, s) {
@@ -800,6 +809,9 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
             cashReceived: cashReceived,
             changeAmount: changeAmount,
             meta: meta,
+            sections: mainTemplate.sections,
+            paperWidth: mainTemplate.paperWidthCode,
+            footerLines: footerLines,
           );
           printedToHardware = true;
         } catch (e, s) {
@@ -826,6 +838,9 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
           tax: tax,
           grandTotal: total,
           meta: meta,
+          sections: mainTemplate.sections,
+          paperWidth: mainTemplate.paperWidthCode,
+          footerLines: footerLines,
         );
       }
 

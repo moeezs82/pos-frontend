@@ -1,6 +1,6 @@
 import 'dart:typed_data';
+import 'package:enterprise_pos/models/invoice_template.dart';
 import 'package:enterprise_pos/services/thermal_printer_service.dart';
-import 'package:flutter/services.dart' show rootBundle;
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
@@ -11,15 +11,13 @@ class ReceiptPreviewService {
   ReceiptPreviewService._();
   static final instance = ReceiptPreviewService._();
 
-  // ✅ Default logo (make sure this asset exists in pubspec.yaml)
-  static const String defaultLogoAsset = "assets/images/receipt_logo.png";
-
+  /// Renders exactly what [sections] says to show — same section toggles
+  /// the real ESC/POS print uses, so a PDF preview never shows something
+  /// that wouldn't actually print.
   Future<void> previewReceipt({
     required String shopName,
     String? shopAddress,
     String? shopPhone,
-    String? logoAsset, // ✅ add this (asset path)
-    Uint8List? logoBytes, // ✅ or pass bytes directly
     required String receiptNo,
     required DateTime dateTime,
     required List<ReceiptItem> items,
@@ -28,12 +26,60 @@ class ReceiptPreviewService {
     required double tax,
     required double grandTotal,
     Map<String, dynamic>? meta,
+    InvoiceSections sections = const InvoiceSections(
+      header: true,
+      customer: true,
+      totalsBreakdown: true,
+      footer: true,
+    ),
+    String paperWidth = 'mm80',
+    List<String> footerLines = const [],
+    bool layoutForPrinting = true,
+  }) async {
+    final bytes = await buildReceiptPdf(
+      shopName: shopName,
+      shopAddress: shopAddress,
+      shopPhone: shopPhone,
+      receiptNo: receiptNo,
+      dateTime: dateTime,
+      items: items,
+      subtotal: subtotal,
+      discount: discount,
+      tax: tax,
+      grandTotal: grandTotal,
+      meta: meta,
+      sections: sections,
+      paperWidth: paperWidth,
+      footerLines: footerLines,
+    );
+
+    if (layoutForPrinting) {
+      await Printing.layoutPdf(onLayout: (_) async => bytes);
+    }
+  }
+
+  /// Same renderer as [previewReceipt] but just returns the bytes, for the
+  /// template preview screen to display inline instead of opening the
+  /// system print dialog every time someone switches templates.
+  Future<Uint8List> buildReceiptPdf({
+    required String shopName,
+    String? shopAddress,
+    String? shopPhone,
+    required String receiptNo,
+    required DateTime dateTime,
+    required List<ReceiptItem> items,
+    required double subtotal,
+    required double discount,
+    required double tax,
+    required double grandTotal,
+    Map<String, dynamic>? meta,
+    required InvoiceSections sections,
+    String paperWidth = 'mm80',
+    List<String> footerLines = const [],
   }) async {
     // --- extract meta safely ---
     final snapRaw = meta?["customer_snapshot"];
-    final snap = (snapRaw is Map)
-        ? snapRaw.cast<String, dynamic>()
-        : <String, dynamic>{};
+    final snap = (snapRaw is Map) ? snapRaw.cast<String, dynamic>() : <String, dynamic>{};
 
     final cName = (snap["name"] ?? "").toString().trim();
     final cPhone = (snap["phone"] ?? "").toString().trim();
@@ -50,45 +96,46 @@ class ReceiptPreviewService {
         ? (meta!["change_amount"] as num).toDouble()
         : double.tryParse((meta?["change_amount"] ?? "").toString()) ?? 0.0;
 
-    // ✅ Resolve logo asset: use provided OR default
-    final String effectiveLogoAsset =
-        (logoAsset != null && logoAsset.trim().isNotEmpty)
-        ? logoAsset
-        : defaultLogoAsset;
-
-    // --- load logo bytes (if asset provided) ---
-    Uint8List? resolvedLogoBytes = logoBytes;
-    if (resolvedLogoBytes == null) {
-      try {
-        final bd = await rootBundle.load(effectiveLogoAsset);
-        resolvedLogoBytes = bd.buffer.asUint8List();
-      } catch (_) {
-        resolvedLogoBytes = null; // ignore if missing
-      }
-    }
-
     final doc = pw.Document();
+    final pageFormat = paperWidth == 'mm58' ? PdfPageFormat.roll57 : PdfPageFormat.roll80;
 
     doc.addPage(
       pw.Page(
-        pageFormat: PdfPageFormat.roll80,
+        pageFormat: pageFormat,
         margin: const pw.EdgeInsets.symmetric(horizontal: 10, vertical: 12),
         build: (_) {
-          pw.Widget line() => pw.Container(
-            margin: const pw.EdgeInsets.symmetric(vertical: 6),
-            height: 1,
-            color: PdfColors.grey300,
+          pw.Widget divider() => pw.Container(
+            margin: const pw.EdgeInsets.symmetric(vertical: 5),
+            height: 0.8,
+            color: PdfColors.grey400,
           );
 
-          final pw.TextStyle h1 = pw.TextStyle(
-            fontSize: 18,
+          pw.Widget dashedDivider() => pw.Container(
+            margin: const pw.EdgeInsets.symmetric(vertical: 5),
+            child: pw.Row(
+              children: List.generate(
+                32,
+                (_) => pw.Expanded(
+                  child: pw.Container(
+                    height: 0.8,
+                    margin: const pw.EdgeInsets.symmetric(horizontal: 1),
+                    color: PdfColors.grey500,
+                  ),
+                ),
+              ),
+            ),
+          );
+
+          final pw.TextStyle shopStyle = pw.TextStyle(
+            fontSize: 14,
             fontWeight: pw.FontWeight.bold,
           );
-          final pw.TextStyle b = pw.TextStyle(
-            fontSize: 10,
+          final pw.TextStyle bold = pw.TextStyle(
+            fontSize: 9,
             fontWeight: pw.FontWeight.bold,
           );
-          const pw.TextStyle n = pw.TextStyle(fontSize: 10);
+          const pw.TextStyle normal = pw.TextStyle(fontSize: 9);
+          const pw.TextStyle small = pw.TextStyle(fontSize: 8);
 
           final String dt =
               "${dateTime.day.toString().padLeft(2, '0')}/"
@@ -96,143 +143,149 @@ class ReceiptPreviewService {
               "${dateTime.hour.toString().padLeft(2, '0')}:"
               "${dateTime.minute.toString().padLeft(2, '0')}";
 
-          pw.Widget kv(String k, String v, {bool bold = false}) => pw.Row(
+          pw.Widget kv(String k, String v, {bool bold2 = false}) => pw.Row(
             mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
             children: [
-              pw.Text(k, style: bold ? b : n),
-              pw.Text(v, style: bold ? b : n),
+              pw.Text(k, style: bold2 ? bold : normal),
+              pw.Text(v, style: bold2 ? bold : normal),
             ],
           );
 
           final bool hasCustomerInfo =
-              cName.isNotEmpty || cPhone.isNotEmpty || cAddr.isNotEmpty;
+              sections.customer && (cName.isNotEmpty || cPhone.isNotEmpty || cAddr.isNotEmpty);
+
+          final activeFooterLines = sections.footer
+              ? footerLines.where((l) => l.trim().isNotEmpty).toList()
+              : <String>[];
 
           return pw.Column(
             crossAxisAlignment: pw.CrossAxisAlignment.stretch,
             children: [
-              // ✅ LOGO TOP
-              if (resolvedLogoBytes != null) ...[
-                pw.Center(
-                  child: pw.Image(
-                    pw.MemoryImage(resolvedLogoBytes),
-                    width: 110, // adjust size as you like
-                    height: 110,
-                    fit: pw.BoxFit.contain,
-                  ),
-                ),
-                pw.SizedBox(height: 6),
-              ],
+              // ── HEADER ────────────────────────────────────────────────────
+              if (sections.header) ...[
+                pw.Center(child: pw.Text(shopName, style: shopStyle)),
+                if (shopAddress != null && shopAddress.trim().isNotEmpty)
+                  pw.Center(child: pw.Text(shopAddress, style: small)),
+                if (shopPhone != null && shopPhone.trim().isNotEmpty)
+                  pw.Center(child: pw.Text(shopPhone, style: small)),
+                divider(),
+              ] else
+                pw.Center(child: pw.Text(shopName, style: bold)),
 
-              pw.Center(child: pw.Text(shopName, style: h1)),
-              if (shopAddress != null && shopAddress.trim().isNotEmpty)
-                pw.Center(child: pw.Text(shopAddress, style: n)),
-              if (shopPhone != null && shopPhone.trim().isNotEmpty)
-                pw.Center(child: pw.Text(shopPhone, style: n)),
+              // ── RECEIPT META ───────────────────────────────────────────────
+              pw.Center(child: pw.Text("Receipt# $receiptNo", style: bold)),
+              pw.Center(child: pw.Text(dt, style: small)),
+              divider(),
 
-              line(),
-
-              pw.Center(child: pw.Text("Receipt# $receiptNo", style: b)),
-              pw.Center(child: pw.Text("Date : $dt", style: n)),
-
-              line(),
-
+              // ── CUSTOMER ───────────────────────────────────────────────────
               if (hasCustomerInfo) ...[
-                pw.Text("Customer", style: b),
-                if (cName.isNotEmpty) pw.Text("Name: $cName", style: n),
-                if (cPhone.isNotEmpty) pw.Text("Phone: $cPhone", style: n),
-                if (cAddr.isNotEmpty) pw.Text("Address: $cAddr", style: n),
-                line(),
+                if (cName.isNotEmpty) pw.Text("Customer: $cName", style: normal),
+                if (cPhone.isNotEmpty) pw.Text("Phone: $cPhone", style: small),
+                if (cAddr.isNotEmpty) pw.Text("Address: $cAddr", style: small),
+                divider(),
               ],
 
+              // ── ITEMS HEADER ───────────────────────────────────────────────
               pw.Row(
                 children: [
-                  pw.Expanded(flex: 5, child: pw.Text("Name", style: b)),
-                  pw.Expanded(
-                    flex: 2,
-                    child: pw.Align(
-                      alignment: pw.Alignment.centerRight,
-                      child: pw.Text("Price", style: b),
+                  pw.Expanded(flex: 5, child: pw.Text("Item", style: bold)),
+                  if (sections.totalsBreakdown)
+                    pw.Expanded(
+                      flex: 2,
+                      child: pw.Align(
+                        alignment: pw.Alignment.centerRight,
+                        child: pw.Text("Price", style: bold),
+                      ),
                     ),
-                  ),
                   pw.Expanded(
                     flex: 1,
                     child: pw.Align(
                       alignment: pw.Alignment.centerRight,
-                      child: pw.Text("Qty", style: b),
+                      child: pw.Text("Qty", style: bold),
                     ),
                   ),
-                  pw.Expanded(
-                    flex: 2,
-                    child: pw.Align(
-                      alignment: pw.Alignment.centerRight,
-                      child: pw.Text("Total", style: b),
+                  if (sections.totalsBreakdown)
+                    pw.Expanded(
+                      flex: 2,
+                      child: pw.Align(
+                        alignment: pw.Alignment.centerRight,
+                        child: pw.Text("Total", style: bold),
+                      ),
                     ),
-                  ),
                 ],
               ),
-              pw.SizedBox(height: 6),
+              pw.SizedBox(height: 3),
 
-              ...items.map((it) {
-                return pw.Column(
+              // ── ITEMS ──────────────────────────────────────────────────────
+              ...items.map((it) => pw.Padding(
+                padding: const pw.EdgeInsets.only(bottom: 3),
+                child: pw.Row(
                   children: [
-                    pw.Row(
-                      children: [
-                        pw.Expanded(flex: 5, child: pw.Text(it.name, style: n)),
-                        pw.Expanded(
-                          flex: 2,
-                          child: pw.Align(
-                            alignment: pw.Alignment.centerRight,
-                            child: pw.Text(_m(it.price), style: n),
-                          ),
+                    pw.Expanded(flex: 5, child: pw.Text(it.name, style: normal)),
+                    if (sections.totalsBreakdown)
+                      pw.Expanded(
+                        flex: 2,
+                        child: pw.Align(
+                          alignment: pw.Alignment.centerRight,
+                          child: pw.Text(_m(it.price), style: normal),
                         ),
-                        pw.Expanded(
-                          flex: 1,
-                          child: pw.Align(
-                            alignment: pw.Alignment.centerRight,
-                            child: pw.Text(_q(it.qty), style: n),
-                          ),
-                        ),
-                        pw.Expanded(
-                          flex: 2,
-                          child: pw.Align(
-                            alignment: pw.Alignment.centerRight,
-                            child: pw.Text(_m(it.total), style: n),
-                          ),
-                        ),
-                      ],
+                      ),
+                    pw.Expanded(
+                      flex: 1,
+                      child: pw.Align(
+                        alignment: pw.Alignment.centerRight,
+                        child: pw.Text(_q(it.qty), style: normal),
+                      ),
                     ),
-                    pw.SizedBox(height: 4),
+                    if (sections.totalsBreakdown)
+                      pw.Expanded(
+                        flex: 2,
+                        child: pw.Align(
+                          alignment: pw.Alignment.centerRight,
+                          child: pw.Text(_m(it.total), style: normal),
+                        ),
+                      ),
                   ],
-                );
-              }).toList(),
+                ),
+              )),
 
-              line(),
+              dashedDivider(),
 
-              kv("Subtotal", _m(subtotal), bold: true),
-              if (discount > 0) kv("Discount", "-${_m(discount)}", bold: true),
-              if (tax > 0) kv("Tax", _m(tax), bold: true),
-              if (delivery > 0) kv("Delivery", _m(delivery), bold: true),
+              // ── TOTALS ─────────────────────────────────────────────────────
+              if (sections.totalsBreakdown) ...[
+                kv("Subtotal", _m(subtotal), bold2: false),
+                if (discount > 0) kv("Discount", "-${_m(discount)}"),
+                if (tax > 0) kv("Tax", _m(tax)),
+                if (delivery > 0) kv("Delivery", _m(delivery)),
+                divider(),
+              ],
 
-              line(),
+              // Grand total always shows.
+              kv("Grand Total", _m(grandTotal), bold2: true),
+              if (cashReceived > 0) kv("Cash", _m(cashReceived), bold2: true),
+              if (changeAmount > 0) kv("Change", _m(changeAmount), bold2: true),
 
-              kv("Grand Total", _m(grandTotal), bold: true),
-              if (cashReceived > 0) kv("Cash Received", _m(cashReceived), bold: true),
-              if (changeAmount > 0) kv("Change Amount", _m(changeAmount), bold: true),
+              // ── FOOTER ─────────────────────────────────────────────────────
+              if (activeFooterLines.isNotEmpty) ...[
+                divider(),
+                ...activeFooterLines.map(
+                  (line) => pw.Center(
+                    child: pw.Padding(
+                      padding: const pw.EdgeInsets.only(top: 2),
+                      child: pw.Text(line, style: bold, textAlign: pw.TextAlign.center),
+                    ),
+                  ),
+                ),
+              ],
 
-              line(),
-
-              pw.Center(child: pw.Text("Thank You, Order Again.", style: b)),
-              pw.SizedBox(height: 4),
-              pw.Center(child: pw.Text("Powered By FriendDevelopers", style: n)),
-              pw.Center(child: pw.Text("03033807582", style: n)),
+              pw.SizedBox(height: 8),
             ],
           );
         },
       ),
     );
 
-    final Uint8List bytes = await doc.save();
-    await Printing.layoutPdf(onLayout: (_) async => bytes);
+    return doc.save();
   }
 
   static String _m(num v) => v.toStringAsFixed(2);

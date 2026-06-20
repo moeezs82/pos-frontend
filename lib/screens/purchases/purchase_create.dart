@@ -91,7 +91,13 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
     final auth = context.read<AuthProvider>();
     final branch = context.read<BranchProvider>();
     if (auth.isMasterAdmin && !branch.hasActiveBranch) return;
-    await _addItemManual();
+    // Vendor picker opens first on purchase create — vendor is required before
+    // items make sense. Skip straight to product picker if vendor already set.
+    if (_selectedVendorId == null) {
+      await _pickVendor();
+    } else {
+      await _addItemManual();
+    }
   }
 
   @override

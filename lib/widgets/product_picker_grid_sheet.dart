@@ -4,6 +4,7 @@ import 'package:enterprise_pos/forms/product_form_screen.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/enterprise/enterprise_panel.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 /// ✅ Full-screen restaurant-style product picker (Grid + multi select + preselected + SET qty modal)
 /// Multi returns:
@@ -141,10 +142,52 @@ class _ProductPickerGridSheetState extends State<ProductPickerGridSheet> {
     });
 
     _fetchProducts(page: 1, replace: true);
+
+    // Enter (confirm) / Escape (close) need to work no matter what currently
+    // has focus — the search box, a focused grid card, or nothing at all.
+    // CallbackShortcuts/Shortcuts only fires when no *closer* widget already
+    // claims the key (the search TextField eats Enter for its own
+    // onSubmitted, for example), so we listen at the hardware level instead,
+    // which always sees the key regardless of focus.
+    HardwareKeyboard.instance.addHandler(_handleHardwareKey);
+  }
+
+  /// Returns true to mark the key event as handled (swallowed), false to let
+  /// it pass through to whatever would normally receive it (typing in the
+  /// search box, etc).
+  bool _handleHardwareKey(KeyEvent event) {
+    if (!mounted) return false;
+    if (event is! KeyDownEvent) return false;
+
+    // Don't act if a dialog (e.g. the qty-set prompt) is showing above this
+    // screen — let that dialog's own Enter/Escape handling take over.
+    final route = ModalRoute.of(context);
+    if (route != null && !route.isCurrent) return false;
+
+    final key = event.logicalKey;
+
+    if (key == LogicalKeyboardKey.escape) {
+      Navigator.of(context).maybePop();
+      return true;
+    }
+
+    if (key == LogicalKeyboardKey.enter || key == LogicalKeyboardKey.numpadEnter) {
+      if (_selectedIds.isNotEmpty) {
+        Navigator.of(context).pop(_pickedWithQty());
+      } else {
+        // Nothing selected yet — treat Enter as "run the search" instead,
+        // same as pressing Enter in the search box used to do.
+        _fetchProducts(page: 1, replace: true);
+      }
+      return true;
+    }
+
+    return false;
   }
 
   @override
   void dispose() {
+    HardwareKeyboard.instance.removeHandler(_handleHardwareKey);
     _debounce?.cancel();
     _searchCtrl.dispose();
     _searchFocus.dispose();
@@ -375,6 +418,12 @@ class _ProductPickerGridSheetState extends State<ProductPickerGridSheet> {
   Widget build(BuildContext context) {
     final selectedCount = _selectedIds.length;
 
+    void confirmSelection() {
+      if (selectedCount > 0) Navigator.pop(context, _pickedWithQty());
+    }
+
+    void closeSheet() => Navigator.pop(context);
+
     return Scaffold(
       backgroundColor: AppTheme.bg,
       body: SafeArea(
@@ -412,7 +461,9 @@ class _ProductPickerGridSheetState extends State<ProductPickerGridSheet> {
                           ),
                           const SizedBox(height: 2),
                           Text(
-                            widget.multi ? 'Search, tap products, then press Done.' : 'Search and choose one product.',
+                            widget.multi
+                                ? 'Tap products · Enter to confirm · Esc to close'
+                                : 'Search and choose one product · Esc to close',
                             style: const TextStyle(color: AppTheme.textMuted, fontWeight: FontWeight.w500),
                           ),
                         ],
@@ -420,15 +471,15 @@ class _ProductPickerGridSheetState extends State<ProductPickerGridSheet> {
                     ),
                     if (widget.multi)
                       FilledButton.icon(
-                        onPressed: selectedCount == 0 ? null : () => Navigator.pop(context, _pickedWithQty()),
+                        onPressed: selectedCount == 0 ? null : confirmSelection,
                         icon: const Icon(Icons.check_rounded, size: 18),
                         label: Text('Done ($selectedCount)'),
                       ),
                     const SizedBox(width: 8),
                     IconButton(
-                      tooltip: 'Close',
+                      tooltip: 'Close  (Esc)',
                       icon: const Icon(Icons.close_rounded),
-                      onPressed: () => Navigator.pop(context),
+                      onPressed: closeSheet,
                     ),
                   ],
                 ),
