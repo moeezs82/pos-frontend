@@ -9,6 +9,8 @@ import 'package:enterprise_pos/widgets/customer_picker_sheet.dart';
 import 'package:enterprise_pos/widgets/user_picker_sheet.dart';
 import 'package:enterprise_pos/widgets/vendor_picker_sheet.dart';
 import 'package:enterprise_pos/services/party_prefetch.dart';
+import 'package:enterprise_pos/services/party_pick_caches.dart';
+import 'package:enterprise_pos/widgets/party_autocomplete_field.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/enterprise/enterprise_panel.dart';
 import 'package:enterprise_pos/widgets/app_feedback.dart';
@@ -293,6 +295,40 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
   }
 
   // ---------------- Items ----------------
+
+  /// Adds or updates a single product in [_items].
+  /// Call inside setState — does NOT call setState itself.
+  void _applyPickedProduct(Map<String, dynamic> product, {double qty = 1.0}) {
+    final productId = int.tryParse(product['id']?.toString() ?? '') ?? 0;
+    if (productId == 0) return;
+
+    final price = double.tryParse(product['price']?.toString() ?? '') ?? 0.0;
+
+    final idx = _items.indexWhere(
+      (it) => (int.tryParse(it["product_id"].toString()) ?? 0) == productId,
+    );
+
+    if (idx != -1) {
+      _items[idx]["quantity"] = qty;
+      final discPct =
+          double.tryParse(_items[idx]["discount_pct"]?.toString() ?? '') ?? 0.0;
+      final rowPrice =
+          double.tryParse(_items[idx]["price"]?.toString() ?? '') ?? price;
+      _items[idx]["total"] = _lineTotal(price: rowPrice, qty: qty, discPct: discPct);
+    } else {
+      _items.add({
+        "product_id": productId,
+        "name": product['name'],
+        "cost_price": product['cost_price'],
+        "wholesale_price": product['wholesale_price'],
+        "quantity": qty,
+        "price": price,
+        "discount_pct": 0.0,
+        "total": _lineTotal(price: price, qty: qty, discPct: 0.0),
+      });
+    }
+  }
+
   Future<void> _addItemManual() async {
     final auth = context.read<AuthProvider>();
     final branch = context.read<BranchProvider>();
@@ -338,48 +374,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         final product = (x["product"] as Map?)?.cast<String, dynamic>();
         final qty = (x["qty"] as num?)?.toDouble() ?? 1.0;
         if (product == null) continue;
-
-        final productId = int.tryParse(product['id']?.toString() ?? '') ?? 0;
-        if (productId == 0) continue;
-
-        final price =
-            double.tryParse(product['price']?.toString() ?? '') ?? 0.0;
-
-        // ✅ if already in items -> UPDATE qty to picked qty (or merge as you want)
-        final idx = _items.indexWhere(
-          (it) => (int.tryParse(it["product_id"].toString()) ?? 0) == productId,
-        );
-
-        if (idx != -1) {
-          // If your picker returns FINAL qty (set qty), then use this:
-          final newQty = qty;
-
-          _items[idx]["quantity"] = newQty;
-
-          final discPct =
-              double.tryParse(_items[idx]["discount_pct"]?.toString() ?? '') ??
-              0.0;
-
-          final rowPrice =
-              double.tryParse(_items[idx]["price"]?.toString() ?? '') ?? price;
-
-          _items[idx]["total"] = _lineTotal(
-            price: rowPrice,
-            qty: newQty,
-            discPct: discPct,
-          );
-        } else {
-          _items.add({
-            "product_id": productId,
-            "name": product['name'],
-            "cost_price": product['cost_price'],
-            "wholesale_price": product['wholesale_price'],
-            "quantity": qty,
-            "price": price,
-            "discount_pct": 0.0,
-            "total": _lineTotal(price: price, qty: qty, discPct: 0.0),
-          });
-        }
+        _applyPickedProduct(product, qty: qty);
       }
     });
   }
@@ -999,6 +994,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     final isAll = context.watch<BranchProvider>().isAll;
     final width = MediaQuery.of(context).size.width;
     final wide = width >= 1080;
+    final token = Provider.of<AuthProvider>(context, listen: false).token!;
 
     double rowNum(v) => double.tryParse(v?.toString() ?? '') ?? 0.0;
     final subtotal = _items.fold<double>(0.0, (sum, i) {
@@ -1072,6 +1068,65 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
           onActivateScanner: _focusBarcodeScanner,
           onOpenPicker: _addItemManual,
         ),
+        const SizedBox(height: 10),
+        PartyAutocompleteField<Map<String, dynamic>>(
+          label: 'Add product',
+          hintText: 'Type product name, SKU or barcode…',
+          getCachedItems: () =>
+              ProductPickCache.cache
+                  .peek(ProductPickCache.keyFor(vendorId: _selectedVendorId))
+                  ?.items ??
+              const [],
+          onSearchRemote: (query) => ProductPickCache.searchRemote(
+            _productService,
+            query,
+            vendorId: _selectedVendorId,
+          ),
+          labelOf: (p) => (p['name'] ?? '').toString(),
+          subtitleOf: (p) =>
+              (p['sku'] ?? p['barcode'] ?? '').toString(),
+          idOf: (p) => (p['id'] ?? '').toString(),
+          onSelected: (p) => setState(() => _applyPickedProduct(p)),
+          onBrowseAll: () async {
+            final alreadySelectedIds = _items
+                .map((e) => int.tryParse(e["product_id"].toString()) ?? 0)
+                .where((id) => id > 0)
+                .toList();
+            final alreadySelectedQty = <int, double>{
+              for (final it in _items)
+                (int.tryParse(it["product_id"].toString()) ?? 0):
+                    (double.tryParse(it["quantity"].toString()) ?? 1.0),
+            }..removeWhere((k, _) => k == 0);
+            final picked = await ProductPickerGridSheet.openMulti(
+              context,
+              token: token,
+              vendorId: _selectedVendorId,
+              alreadySelectedIds: alreadySelectedIds,
+              alreadySelectedQty: alreadySelectedQty,
+              alreadySelectedProducts: _items.map((item) {
+                return {
+                  'id': item['product_id'],
+                  'name': item['name'],
+                  'price': item['price'],
+                  'cost_price': item['cost_price'],
+                  'wholesale_price': item['wholesale_price'],
+                };
+              }).toList(),
+            );
+            if (picked != null) {
+              setState(() {
+                for (final x in picked) {
+                  final product =
+                      (x['product'] as Map?)?.cast<String, dynamic>();
+                  final qty = (x['qty'] as num?)?.toDouble() ?? 1.0;
+                  if (product != null) _applyPickedProduct(product, qty: qty);
+                }
+              });
+            }
+            return null; // adding already happened above
+          },
+          // selectedLabel intentionally omitted — keeps field open after each add
+        ),
         const SizedBox(height: 14),
         ItemsTable(
           items: _items,
@@ -1107,11 +1162,9 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
 
     return GestureDetector(
       behavior: HitTestBehavior.translucent,
-      onTap: () {
+      onTapDown: (_) {
         final current = FocusManager.instance.primaryFocus;
         if (current == null || current == _pageFocusNode) {
-          _pageFocusNode.requestFocus();
-        } else if (!current.hasFocus) {
           _pageFocusNode.requestFocus();
         }
       },

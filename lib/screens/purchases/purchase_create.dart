@@ -273,6 +273,38 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
     });
   }
 
+  /// Adds or updates a single product in [_items] for the purchase flow.
+  /// Call inside setState — does NOT call setState itself.
+  void _applyPickedProduct(Map<String, dynamic> product, {double qty = 1.0}) {
+    final productId = int.tryParse(product['id']?.toString() ?? '') ?? 0;
+    if (productId <= 0) return;
+
+    final idx = _items.indexWhere(
+      (item) => item['product_id']?.toString() == productId.toString(),
+    );
+
+    if (idx != -1) {
+      final price = _toNum(_items[idx]['price']);
+      final discPct = _toNum(_items[idx]['discount_pct'] ?? 0);
+      _items[idx]['quantity'] = qty;
+      _items[idx]['received_qty'] = _receiveNow ? qty : 0.0;
+      _items[idx]['total'] = _lineTotal(price: price, qty: qty, discPct: discPct);
+    } else {
+      final unitCost = _purchaseUnitCost(product);
+      _items.add({
+        'product_id': productId,
+        'name': product['name'] ?? product['title'] ?? 'Unnamed product',
+        'cost_price': product['cost_price'],
+        'wholesale_price': product['wholesale_price'],
+        'quantity': qty,
+        'price': unitCost,
+        'discount_pct': 0.0,
+        'received_qty': _receiveNow ? qty : 0.0,
+        'total': _lineTotal(price: unitCost, qty: qty, discPct: 0.0),
+      });
+    }
+  }
+
   double _purchaseUnitCost(Map<String, dynamic> product) {
     for (final key in ['purchase_price', 'cost_price', 'tp', 'unit_price', 'price']) {
       final value = product[key];
@@ -595,6 +627,64 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
           },
           onOpenPicker: _addItemManual,
         ),
+        const SizedBox(height: 10),
+        PartyAutocompleteField<Map<String, dynamic>>(
+          label: 'Add product',
+          hintText: 'Type product name, SKU or barcode…',
+          getCachedItems: () =>
+              ProductPickCache.cache
+                  .peek(ProductPickCache.keyFor(vendorId: _selectedVendorId))
+                  ?.items ??
+              const [],
+          onSearchRemote: (query) => ProductPickCache.searchRemote(
+            _productService,
+            query,
+            vendorId: _selectedVendorId,
+          ),
+          labelOf: (p) => (p['name'] ?? '').toString(),
+          subtitleOf: (p) => (p['sku'] ?? p['barcode'] ?? '').toString(),
+          idOf: (p) => (p['id'] ?? '').toString(),
+          onSelected: (p) => setState(() => _applyPickedProduct(p)),
+          onBrowseAll: () async {
+            final alreadySelectedIds = _items
+                .map((e) => int.tryParse(e['product_id'].toString()) ?? 0)
+                .where((id) => id > 0)
+                .toList();
+            final alreadySelectedQty = <int, double>{
+              for (final it in _items)
+                (int.tryParse(it['product_id'].toString()) ?? 0):
+                    (double.tryParse(it['quantity'].toString()) ?? 1.0),
+            }..removeWhere((k, _) => k == 0);
+            final picked = await ProductPickerGridSheet.openMulti(
+              context,
+              token: _token,
+              vendorId: _selectedVendorId,
+              alreadySelectedIds: alreadySelectedIds,
+              alreadySelectedQty: alreadySelectedQty,
+              alreadySelectedProducts: _items.map((item) {
+                return {
+                  'id': item['product_id'],
+                  'name': item['name'],
+                  'price': item['price'],
+                  'cost_price': item['cost_price'],
+                  'wholesale_price': item['wholesale_price'],
+                };
+              }).toList(),
+            );
+            if (picked != null) {
+              setState(() {
+                for (final x in picked) {
+                  final product =
+                      (x['product'] as Map?)?.cast<String, dynamic>();
+                  final qty = (x['qty'] as num?)?.toDouble() ?? 1.0;
+                  if (product != null) _applyPickedProduct(product, qty: qty);
+                }
+              });
+            }
+            return null; // adding already happened above
+          },
+          // selectedLabel intentionally omitted — keeps field open after each add
+        ),
         const SizedBox(height: 14),
         ItemsTable(
           items: _items,
@@ -637,11 +727,9 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
 
     return GestureDetector(
       behavior: HitTestBehavior.translucent,
-      onTap: () {
+      onTapDown: (_) {
         final current = FocusManager.instance.primaryFocus;
         if (current == null || current == _pageFocusNode) {
-          _pageFocusNode.requestFocus();
-        } else if (!current.hasFocus) {
           _pageFocusNode.requestFocus();
         }
       },
