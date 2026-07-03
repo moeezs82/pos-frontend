@@ -64,6 +64,25 @@ class PartyAutocompleteField<T> extends StatefulWidget {
   final bool enabled;
   final bool allowClear;
 
+  /// Optional external [FocusNode]. If provided, the widget does NOT own it
+  /// (will not dispose it). If omitted, an internal node is created and
+  /// disposed automatically. Callers that need to programmatically focus the
+  /// text field (e.g. keyboard shortcut handlers) should pass their own node.
+  final FocusNode? focusNode;
+
+  /// Optional external [TextEditingController]. If provided, the widget does
+  /// NOT own it (will not dispose it). Callers can call `.clear()` before
+  /// requesting focus so the field starts with a fresh, empty search query.
+  final TextEditingController? controller;
+
+  /// When true, picking an item from the dropdown clears the text but keeps
+  /// the field focused — so the user can immediately type the next query
+  /// without clicking back into the field. Intended for "add multiple items"
+  /// fields (e.g. the product search bar on Create Sale / Create Purchase).
+  /// Defaults to false, which preserves the original behaviour (unfocus after
+  /// pick) used by Customer / Vendor / Salesman / Delivery Boy fields.
+  final bool keepFocusAfterSelect;
+
   const PartyAutocompleteField({
     super.key,
     required this.getCachedItems,
@@ -82,6 +101,9 @@ class PartyAutocompleteField<T> extends StatefulWidget {
     this.onSelectedTap,
     this.enabled = true,
     this.allowClear = true,
+    this.focusNode,
+    this.controller,
+    this.keepFocusAfterSelect = false,
   });
 
   @override
@@ -90,8 +112,10 @@ class PartyAutocompleteField<T> extends StatefulWidget {
 }
 
 class _PartyAutocompleteFieldState<T> extends State<PartyAutocompleteField<T>> {
-  final _controller = TextEditingController();
-  final _focusNode = FocusNode();
+  late final TextEditingController _controller;
+  bool _ownsController = false;
+  late final FocusNode _focusNode;
+  bool _ownsFocusNode = false;
   final _layerLink = LayerLink();
   OverlayEntry? _overlayEntry;
   Timer? _debounce;
@@ -103,6 +127,18 @@ class _PartyAutocompleteFieldState<T> extends State<PartyAutocompleteField<T>> {
   @override
   void initState() {
     super.initState();
+    if (widget.controller != null) {
+      _controller = widget.controller!;
+    } else {
+      _controller = TextEditingController();
+      _ownsController = true;
+    }
+    if (widget.focusNode != null) {
+      _focusNode = widget.focusNode!;
+    } else {
+      _focusNode = FocusNode();
+      _ownsFocusNode = true;
+    }
     _focusNode.addListener(_onFocusChanged);
   }
 
@@ -111,8 +147,8 @@ class _PartyAutocompleteFieldState<T> extends State<PartyAutocompleteField<T>> {
     _debounce?.cancel();
     _removeOverlay();
     _focusNode.removeListener(_onFocusChanged);
-    _focusNode.dispose();
-    _controller.dispose();
+    if (_ownsFocusNode) _focusNode.dispose();
+    if (_ownsController) _controller.dispose();
     super.dispose();
   }
 

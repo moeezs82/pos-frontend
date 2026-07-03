@@ -50,6 +50,21 @@ class PartySectionCard extends StatelessWidget {
   final Future<Map<String, dynamic>?> Function() onBrowseVendorSheet;
   final void Function(Map<String, dynamic>?) onApplyVendor;
 
+  /// Optional external [FocusNode]s for each autocomplete field so that
+  /// keyboard shortcuts on the parent screen can jump focus directly into the
+  /// field. When null, each field manages its own internal node (unchanged
+  /// behavior for any call site that doesn't supply them).
+  final FocusNode? customerFocusNode;
+  final FocusNode? salesmanFocusNode;
+  final FocusNode? deliveryBoyFocusNode;
+
+  /// Optional external [TextEditingController]s — cleared by the parent before
+  /// requesting focus, so the field opens with a blank query rather than
+  /// leftover text from a previous search.
+  final TextEditingController? customerController;
+  final TextEditingController? salesmanController;
+  final TextEditingController? deliveryBoyController;
+
   const PartySectionCard({
     super.key,
     required this.isAll,
@@ -73,6 +88,12 @@ class PartySectionCard extends StatelessWidget {
     required this.onBrowseVendorSheet,
     required this.onApplyVendor,
     this.branchId,
+    this.customerFocusNode,
+    this.salesmanFocusNode,
+    this.deliveryBoyFocusNode,
+    this.customerController,
+    this.salesmanController,
+    this.deliveryBoyController,
   });
 
   String _customerLabel(PartyMap c) {
@@ -112,6 +133,8 @@ class PartySectionCard extends StatelessWidget {
                 PartyAutocompleteField<PartyMap>(
                   label: 'Customer',
                   hintText: 'Type customer name or phone…',
+                  focusNode: customerFocusNode,
+                  controller: customerController,
                   getCachedItems: () =>
                       CustomerPickCache.cache.peek(CustomerPickCache.keyFor())?.items ?? const [],
                   onSearchRemote: (query) => CustomerPickCache.searchRemote(customerService, query),
@@ -128,6 +151,8 @@ class PartySectionCard extends StatelessWidget {
                 PartyAutocompleteField<PartyMap>(
                   label: 'Salesman',
                   hintText: 'Type salesman name…',
+                  focusNode: salesmanFocusNode,
+                  controller: salesmanController,
                   getCachedItems: () => UserPickCache.cache
                           .peek(UserPickCache.keyFor(branchId: branchId, role: null))
                           ?.items ??
@@ -147,6 +172,8 @@ class PartySectionCard extends StatelessWidget {
                 PartyAutocompleteField<PartyMap>(
                   label: 'Delivery Boy',
                   hintText: 'Type delivery boy name… (optional)',
+                  focusNode: deliveryBoyFocusNode,
+                  controller: deliveryBoyController,
                   getCachedItems: () => UserPickCache.cache
                           .peek(UserPickCache.keyFor(branchId: branchId, role: 'delivery'))
                           ?.items ??

@@ -71,6 +71,18 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
   final _barcodeFocusNode = FocusNode();
   bool _scannerEnabled = false;
 
+  // Named focus nodes for keyboard-shortcut field-jumping (Part C).
+  // Each controller is cleared before focus is requested so the field opens
+  // with a blank search query rather than leftover text.
+  final _customerFocusNode = FocusNode();
+  final _salesmanFocusNode = FocusNode();
+  final _deliveryBoyFocusNode = FocusNode();
+  final _productSearchFocusNode = FocusNode();
+  final _customerController = TextEditingController();
+  final _salesmanController = TextEditingController();
+  final _deliveryBoyController = TextEditingController();
+  final _productSearchController = TextEditingController();
+
   bool _submitting = false;
   bool _autoCashIfEmpty = true;
   bool _didAutoOpenPicker = false;
@@ -139,6 +151,14 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     addressController.dispose();
     customerNameController.dispose();
     customerPhoneController.dispose();
+    _customerFocusNode.dispose();
+    _salesmanFocusNode.dispose();
+    _deliveryBoyFocusNode.dispose();
+    _productSearchFocusNode.dispose();
+    _customerController.dispose();
+    _salesmanController.dispose();
+    _deliveryBoyController.dispose();
+    _productSearchController.dispose();
     super.dispose();
   }
 
@@ -1049,6 +1069,12 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
           onApplyDeliveryBoy: _applyDeliveryBoySelection,
           onBrowseVendorSheet: _openVendorSheet,
           onApplyVendor: _applyVendorSelection,
+          customerFocusNode: _customerFocusNode,
+          salesmanFocusNode: _salesmanFocusNode,
+          deliveryBoyFocusNode: _deliveryBoyFocusNode,
+          customerController: _customerController,
+          salesmanController: _salesmanController,
+          deliveryBoyController: _deliveryBoyController,
         ),
         const SizedBox(height: 14),
         _CustomerInfoPanel(
@@ -1072,6 +1098,8 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         PartyAutocompleteField<Map<String, dynamic>>(
           label: 'Add product',
           hintText: 'Type product name, SKU or barcode…',
+          focusNode: _productSearchFocusNode,
+          controller: _productSearchController,
           getCachedItems: () =>
               ProductPickCache.cache
                   .peek(ProductPickCache.keyFor(vendorId: _selectedVendorId))
@@ -1190,6 +1218,27 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
             _cmd(LogicalKeyboardKey.numpadEnter): () => _submitSale(),
             _ctrl(LogicalKeyboardKey.slash): () => showAppShortcutGuide(context, includeSaleCreate: true),
             _cmd(LogicalKeyboardKey.slash): () => showAppShortcutGuide(context, includeSaleCreate: true),
+            // Field-focus shortcuts — jump cursor directly into the field so
+            // the user can start typing a search immediately. These are ADDITIVE;
+            // the existing F3/F4/Ctrl+Shift+C/D modal-picker shortcuts above are
+            // unchanged. Ctrl+Shift+U (cUstomer), S (Salesman), B (delivery
+            // Boy), P (Product) were chosen because C/D are already taken.
+            _ctrlShift(LogicalKeyboardKey.keyU): () {
+              _customerController.clear();
+              _customerFocusNode.requestFocus();
+            },
+            _ctrlShift(LogicalKeyboardKey.keyS): () {
+              _salesmanController.clear();
+              _salesmanFocusNode.requestFocus();
+            },
+            _ctrlShift(LogicalKeyboardKey.keyB): () {
+              _deliveryBoyController.clear();
+              _deliveryBoyFocusNode.requestFocus();
+            },
+            _ctrlShift(LogicalKeyboardKey.keyP): () {
+              _productSearchController.clear();
+              _productSearchFocusNode.requestFocus();
+            },
           },
           child: Scaffold(
       appBar: AppBar(

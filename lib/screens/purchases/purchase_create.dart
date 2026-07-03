@@ -48,6 +48,12 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
   final _barcodeFocusNode = FocusNode();
   bool _scannerEnabled = false;
 
+  // Named focus nodes for keyboard-shortcut field-jumping (Part C).
+  final _vendorFocusNode = FocusNode();
+  final _productSearchFocusNode = FocusNode();
+  final _vendorController = TextEditingController();
+  final _productSearchController = TextEditingController();
+
   bool _receiveNow = false;
   bool _autoCashIfEmpty = true;
   bool _submitting = false;
@@ -118,6 +124,10 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
     _pageFocusNode.dispose();
     discountController.dispose();
     taxController.dispose();
+    _vendorFocusNode.dispose();
+    _productSearchFocusNode.dispose();
+    _vendorController.dispose();
+    _productSearchController.dispose();
     super.dispose();
   }
 
@@ -599,6 +609,8 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
           selectedVendor: _selectedVendor,
           onBrowseVendorSheet: _openVendorSheet,
           onApplyVendor: _applyVendorSelection,
+          vendorFocusNode: _vendorFocusNode,
+          vendorController: _vendorController,
         ),
         const SizedBox(height: 14),
         _PurchaseOptionsPanel(
@@ -631,6 +643,8 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
         PartyAutocompleteField<Map<String, dynamic>>(
           label: 'Add product',
           hintText: 'Type product name, SKU or barcode…',
+          focusNode: _productSearchFocusNode,
+          controller: _productSearchController,
           getCachedItems: () =>
               ProductPickCache.cache
                   .peek(ProductPickCache.keyFor(vendorId: _selectedVendorId))
@@ -753,6 +767,19 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
             },
             posCtrl(LogicalKeyboardKey.slash): () => showAppShortcutGuide(context, extra: PosShortcutCatalog.purchaseCreate),
             posCmd(LogicalKeyboardKey.slash): () => showAppShortcutGuide(context, extra: PosShortcutCatalog.purchaseCreate),
+            // Field-focus shortcuts — jump directly into autocomplete fields.
+            // Ctrl+Shift+V already opens the vendor picker sheet, so vendor
+            // field-focus uses Ctrl+Shift+F (Find vendor). Ctrl+Shift+P for
+            // product search. Both are ADDITIVE and do not replace any
+            // existing binding.
+            posCtrlShift(LogicalKeyboardKey.keyF): () {
+              _vendorController.clear();
+              _vendorFocusNode.requestFocus();
+            },
+            posCtrlShift(LogicalKeyboardKey.keyP): () {
+              _productSearchController.clear();
+              _productSearchFocusNode.requestFocus();
+            },
           },
           child: Scaffold(
       appBar: AppBar(
@@ -949,6 +976,11 @@ class _PurchasePartyPanel extends StatelessWidget {
   final Future<Map<String, dynamic>?> Function()? onBrowseVendorSheet;
   final void Function(Map<String, dynamic>?)? onApplyVendor;
 
+  /// Optional external focus node / controller for the vendor autocomplete
+  /// field so that keyboard shortcuts can jump focus directly into it.
+  final FocusNode? vendorFocusNode;
+  final TextEditingController? vendorController;
+
   const _PurchasePartyPanel({
     required this.isAll,
     required this.vendorLabel,
@@ -961,6 +993,8 @@ class _PurchasePartyPanel extends StatelessWidget {
     this.selectedVendor,
     this.onBrowseVendorSheet,
     this.onApplyVendor,
+    this.vendorFocusNode,
+    this.vendorController,
   });
 
   String _vendorLabelOf(Map<String, dynamic> v) {
@@ -975,6 +1009,8 @@ class _PurchasePartyPanel extends StatelessWidget {
         ? PartyAutocompleteField<Map<String, dynamic>>(
             label: 'Vendor',
             hintText: 'Type vendor name…',
+            focusNode: vendorFocusNode,
+            controller: vendorController,
             getCachedItems: () =>
                 VendorPickCache.cache.peek(VendorPickCache.keyFor())?.items ?? const [],
             onSearchRemote: (query) =>
