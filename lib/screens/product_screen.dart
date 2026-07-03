@@ -1,10 +1,12 @@
 import 'package:enterprise_pos/api/product_service.dart';
 import 'package:enterprise_pos/forms/product_form_screen.dart';
 import 'package:enterprise_pos/providers/branch_provider.dart';
+import 'package:enterprise_pos/services/report_file_saver.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/app_feedback.dart';
 import 'package:enterprise_pos/widgets/branch_indicator.dart';
 import 'package:enterprise_pos/widgets/enterprise/enterprise_ui.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/auth_provider.dart';
@@ -20,6 +22,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
   int _page = 1;
   int _lastPage = 1;
   bool _loading = false;
+  bool _importExportBusy = false;
   String _search = '';
   final List<dynamic> _products = [];
   final _searchController = TextEditingController();
@@ -145,6 +148,168 @@ class _ProductsScreenState extends State<ProductsScreen> {
     if (confirm == true) await _deleteProduct(product['id']);
   }
 
+  Future<void> _exportProducts(String format) async {
+    setState(() => _importExportBusy = true);
+    try {
+      final file = await _productService.exportProducts(
+        format: format,
+        search: _search.isEmpty ? null : _search,
+      );
+      final path = await saveReportFile(
+        bytes: file.bytes,
+        filename: file.filename,
+        mimeType: file.contentType,
+      );
+      if (!mounted) return;
+      AppFeedback.success(context, 'Products exported and opened: $path');
+    } on ReportSaveCancelledException {
+      // User dismissed the save dialog — nothing to report.
+    } catch (e) {
+      if (mounted) AppFeedback.error(context, 'Export failed: $e');
+    } finally {
+      if (mounted) setState(() => _importExportBusy = false);
+    }
+  }
+
+  Future<void> _downloadImportTemplate(String format) async {
+    setState(() => _importExportBusy = true);
+    try {
+      final file = await _productService.downloadImportTemplate(format: format);
+      final path = await saveReportFile(
+        bytes: file.bytes,
+        filename: file.filename,
+        mimeType: file.contentType,
+      );
+      if (!mounted) return;
+      AppFeedback.success(context, 'Template saved and opened: $path');
+    } on ReportSaveCancelledException {
+      // User dismissed the save dialog — nothing to report.
+    } catch (e) {
+      if (mounted) AppFeedback.error(context, 'Failed to download template: $e');
+    } finally {
+      if (mounted) setState(() => _importExportBusy = false);
+    }
+  }
+
+  Future<void> _pickAndImportFile() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['csv', 'xlsx', 'txt'],
+    );
+    if (result == null || result.files.isEmpty) return;
+
+    final picked = result.files.single;
+    final path = picked.path;
+    if (path == null) {
+      if (mounted) AppFeedback.error(context, 'Could not read the selected file.');
+      return;
+    }
+
+    setState(() => _importExportBusy = true);
+    try {
+      final report = await _productService.importProducts(filePath: path, filename: picked.name);
+      if (!mounted) return;
+      _fetchProducts(reset: true);
+      await _showImportResultDialog(report);
+    } catch (e) {
+      if (mounted) AppFeedback.error(context, 'Import failed: $e');
+    } finally {
+      if (mounted) setState(() => _importExportBusy = false);
+    }
+  }
+
+  Future<void> _showImportResultDialog(ProductImportReport report) async {
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Import Result'),
+        content: SizedBox(
+          width: 420,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('Rows processed: ${report.totalRows}'),
+              const SizedBox(height: 4),
+              Text('Created: ${report.created}', style: const TextStyle(color: AppTheme.success)),
+              Text('Updated: ${report.updated}', style: const TextStyle(color: AppTheme.info)),
+              Text('Failed: ${report.failed}', style: const TextStyle(color: AppTheme.danger)),
+              if (report.errors.isNotEmpty) ...[
+                const SizedBox(height: 12),
+                const Text('Errors', style: TextStyle(fontWeight: FontWeight.bold)),
+                const SizedBox(height: 6),
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxHeight: 220),
+                  child: ListView.builder(
+                    shrinkWrap: true,
+                    itemCount: report.errors.length,
+                    itemBuilder: (context, i) {
+                      final e = report.errors[i];
+                      final skuLabel = (e.sku != null && e.sku!.isNotEmpty) ? ' (SKU ${e.sku})' : '';
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 6),
+                        child: Text('Row ${e.row}$skuLabel: ${e.message}'),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Close')),
+        ],
+      ),
+    );
+  }
+
+  void _showImportExportMenu() {
+    showModalBottomSheet<void>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Wrap(
+          children: [
+            ListTile(
+              leading: const Icon(Icons.file_download_outlined),
+              title: const Text('Export products (Excel)'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _exportProducts('xlsx');
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.table_chart_outlined),
+              title: const Text('Export products (CSV)'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _exportProducts('csv');
+              },
+            ),
+            const Divider(height: 1),
+            ListTile(
+              leading: const Icon(Icons.upload_file_outlined),
+              title: const Text('Import products…'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _pickAndImportFile();
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.description_outlined),
+              title: const Text('Download import template'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _downloadImportTemplate('xlsx');
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return EnterprisePage(
@@ -158,6 +323,18 @@ class _ProductsScreenState extends State<ProductsScreen> {
         ),
       ],
       actions: [
+        OutlinedButton.icon(
+          onPressed: _importExportBusy ? null : _showImportExportMenu,
+          icon: _importExportBusy
+              ? const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.import_export_rounded),
+          label: const Text('Import/Export'),
+        ),
+        const SizedBox(width: 8),
         FilledButton.icon(
           onPressed: () => _openForm(),
           icon: const Icon(Icons.add_rounded),

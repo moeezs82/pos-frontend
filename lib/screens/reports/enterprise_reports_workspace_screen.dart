@@ -129,10 +129,13 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
         mimeType: file.contentType,
       );
       if (!mounted) return;
-      AppFeedback.success(context, format == 'pdf' ? 'PDF exported: $path' : 'Excel exported: $path');
+      AppFeedback.success(context, format == 'pdf' ? 'PDF saved and opened: $path' : 'Excel saved and opened: $path');
+    } on ReportSaveCancelledException {
+      // User dismissed the save dialog — nothing to report.
     } catch (e) {
       if (!mounted) return;
       AppFeedback.error(context, 'Export failed: $e');
+      print('Export failed: $e');
     } finally {
       if (mounted) setState(() => _exporting = false);
     }

@@ -182,7 +182,9 @@ class _PartyBalancesScreenState extends State<PartyBalancesScreen> {
       );
       final path = await saveReportFile(bytes: file.bytes, filename: file.filename, mimeType: file.contentType);
       if (!mounted) return;
-      AppFeedback.success(context, 'Exported: $path');
+      AppFeedback.success(context, 'Saved and opened: $path');
+    } on ReportSaveCancelledException {
+      // User dismissed the save dialog — nothing to report.
     } catch (e) {
       if (!mounted) return;
       AppFeedback.error(context, 'Export failed: $e');
