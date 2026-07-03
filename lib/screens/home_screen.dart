@@ -4,6 +4,7 @@ import 'package:enterprise_pos/screens/branches/branch_control_screen.dart';
 import 'package:enterprise_pos/screens/cashbook/expense_create_screen.dart';
 import 'package:enterprise_pos/screens/cash_ledger/cash_ledger_screen.dart';
 import 'package:enterprise_pos/screens/customers/customers_screen.dart';
+import 'package:enterprise_pos/screens/dashboard/today_snapshot_section.dart';
 import 'package:enterprise_pos/screens/product_screen.dart';
 import 'package:enterprise_pos/screens/purchases/purchase_claim_screen.dart';
 import 'package:enterprise_pos/screens/purchases/purchase_create.dart';
@@ -15,8 +16,10 @@ import 'package:enterprise_pos/screens/sales/sale_returns_screen.dart';
 import 'package:enterprise_pos/screens/sales/sale_screen.dart';
 import 'package:enterprise_pos/screens/settings/printer_settings_screen.dart';
 import 'package:enterprise_pos/screens/stock_screen.dart';
+import 'package:enterprise_pos/screens/sync/offline_sync_screen.dart';
 import 'package:enterprise_pos/screens/users_screen.dart';
 import 'package:enterprise_pos/screens/vendors/vendors_screen.dart';
+import 'package:enterprise_pos/providers/offline_queue_provider.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/branch_indicator.dart';
 import 'package:enterprise_pos/widgets/app_keyboard_shortcuts.dart';
@@ -32,6 +35,7 @@ class HomeScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final auth = context.watch<AuthProvider>();
     final branch = context.watch<BranchProvider>();
+    final offlineQueue = context.watch<OfflineQueueProvider>();
     final masterNeedsBranch = auth.isMasterAdmin && !branch.hasActiveBranch;
     final width = MediaQuery.of(context).size.width;
     final cols = width >= 1280
@@ -135,6 +139,16 @@ class HomeScreen extends StatelessWidget {
             onPressed: () => showAppShortcutGuide(context),
             icon: const Icon(Icons.keyboard_rounded),
           ),
+          Padding(
+            padding: const EdgeInsets.only(right: 4),
+            child: _OfflineSyncBadge(
+              pendingCount: offlineQueue.pendingCount,
+              onTap: () async {
+                await Navigator.push(context, MaterialPageRoute(builder: (_) => const OfflineSyncScreen()));
+                if (context.mounted) context.read<OfflineQueueProvider>().refresh();
+              },
+            ),
+          ),
           const Padding(
             padding: EdgeInsets.only(right: 8),
             child: BranchIndicator(tappable: false),
@@ -165,6 +179,8 @@ class HomeScreen extends StatelessWidget {
           ] else ...[
             const _ShortcutHintBar(),
             const SizedBox(height: 16),
+            const TodaySnapshotSection(),
+            const SizedBox(height: 20),
             const _SectionTitle(title: 'Quick actions', subtitle: 'Most-used tasks are one tap away'),
             const SizedBox(height: 10),
             _TileGrid(tiles: quickActions, columns: cols),
@@ -174,6 +190,50 @@ class HomeScreen extends StatelessWidget {
             _TileGrid(tiles: management, columns: cols),
           ],
         ],
+      ),
+    );
+  }
+}
+
+/// AppBar entry point into the offline-sales sync queue (handover doc
+/// §2.4). Shows nothing extra when the queue is empty; a numbered pill once
+/// there are sales waiting to sync.
+class _OfflineSyncBadge extends StatelessWidget {
+  final int pendingCount;
+  final VoidCallback onTap;
+
+  const _OfflineSyncBadge({required this.pendingCount, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final hasPending = pendingCount > 0;
+    return InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.all(6),
+        child: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            Icon(
+              hasPending ? Icons.cloud_off_rounded : Icons.cloud_done_rounded,
+              color: hasPending ? AppTheme.warning : AppTheme.textMuted,
+            ),
+            if (hasPending)
+              Positioned(
+                right: -6,
+                top: -6,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                  decoration: BoxDecoration(color: AppTheme.danger, borderRadius: BorderRadius.circular(10)),
+                  child: Text(
+                    pendingCount > 99 ? '99+' : '$pendingCount',
+                    style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w800),
+                  ),
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }

@@ -2,7 +2,11 @@ import 'package:enterprise_pos/api/product_service.dart';
 import 'package:enterprise_pos/api/sale_service.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/providers/branch_provider.dart';
+import 'package:enterprise_pos/providers/offline_queue_provider.dart';
 import 'package:enterprise_pos/providers/printer_config_provider.dart';
+import 'package:enterprise_pos/services/offline_sales_queue_service.dart';
+import 'package:enterprise_pos/utils/network_failure.dart';
+import 'package:uuid/uuid.dart';
 import 'package:enterprise_pos/screens/sales/parts/create_sale_items_section.dart';
 import 'package:enterprise_pos/widgets/product_picker_grid_sheet.dart';
 import 'package:enterprise_pos/widgets/customer_picker_sheet.dart';
@@ -724,6 +728,19 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
 
     setState(() => _submitting = true);
 
+    // Every sale gets a client_ref, online or offline (handover doc §2.2) —
+    // this is the idempotency key the backend uses to guarantee a synced
+    // offline sale (or a retried/double-tapped submit) never creates a
+    // duplicate row. occurred_at is the on-device timestamp captured right
+    // now, at the moment "Save Sale" was pressed, so the sale still posts
+    // and reports as having happened today even if it ends up queued and
+    // synced later (§1.3).
+    final clientRef = const Uuid().v4();
+    final occurredAt = DateTime.now();
+
+    Map<String, dynamic>? res;
+    var queuedOffline = false;
+
     try {
       final meta = _buildSaleMeta(
         effectiveBranchId: effectiveBranchId,
@@ -737,7 +754,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         changeAmount: changeAmount,
         paymentsToSend: paymentsToSend,
       );
-      final res = await _saleService.createSale(
+      final payload = _saleService.buildSalePayload(
         branchId: effectiveBranchId,
         customerId: _selectedCustomerId != null
             ? int.tryParse(_selectedCustomerId!)
@@ -751,9 +768,49 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         discount: discount,
         tax: tax,
         meta: meta,
+        clientRef: clientRef,
+        occurredAt: occurredAt,
       );
-      final receiptNo =
-          (res['data']?['sale']?['invoice_no'] ?? res['data']?['id'] ?? 'N/A')
+
+      String? queueReason;
+
+      try {
+        res = await _saleService
+            .createSaleFromPayload(payload)
+            .timeout(const Duration(seconds: 15));
+      } catch (e) {
+        // Queue on ANY failed submit — not just a network-unreachable one —
+        // so the cashier can always keep working instead of getting stuck.
+        // The reason is stored alongside the queued sale purely for
+        // visibility on the sync screen; it doesn't change what happens
+        // next. The actual Sync Now attempt (OfflineSyncService) still
+        // correctly tells apart "still offline, keep retrying" from "real
+        // error, needs a human" — a genuinely broken item (e.g. a deleted
+        // product) will surface as failed on its first sync attempt rather
+        // than looping forever, so widening the net here is safe.
+        queueReason = isNetworkFailure(e)
+            ? 'Offline: could not reach the server ($e).'
+            : 'Server responded with an error, queued for review on sync: $e';
+
+        await OfflineSalesQueueService.instance.enqueue(
+          clientRef: clientRef,
+          payload: payload,
+          occurredAt: occurredAt,
+          initialError: queueReason,
+        );
+        queuedOffline = true;
+        if (mounted) {
+          // ignore: use_build_context_synchronously
+          context.read<OfflineQueueProvider>().refresh();
+        }
+      }
+
+      // Real invoice numbers are only ever generated server-side, at the
+      // moment of persistence (§3) — a queued offline sale doesn't have one
+      // yet, so use a clearly-distinct temporary display reference instead.
+      final receiptNo = queuedOffline
+          ? 'OFFLINE-${_offlineStamp(occurredAt)}-${clientRef.substring(0, 8)}'
+          : (res?['data']?['sale']?['invoice_no'] ?? res?['data']?['id'] ?? 'N/A')
               .toString();
 
       final receiptItems = _items.map((i) {
@@ -900,7 +957,14 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
 
       if (!mounted) return;
       _resetForNextSale(keepInitialCustomer: widget.initialCustomer != null);
-      AppFeedback.success(context, "Sale $receiptNo created successfully. Ready for next sale.");
+      if (queuedOffline) {
+        AppFeedback.warning(
+          context,
+          "Offline — Pending Sync. Sale saved locally as $receiptNo. ${queueReason ?? ''} It will get a real invoice number once synced.",
+        );
+      } else {
+        AppFeedback.success(context, "Sale $receiptNo created successfully. Ready for next sale.");
+      }
       Future.delayed(const Duration(milliseconds: 450), () {
         if (mounted && _items.isEmpty) _addItemManual();
       });
@@ -910,6 +974,14 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     } finally {
       if (mounted) setState(() => _submitting = false);
     }
+  }
+
+  /// yyyyMMdd-HHmmss stamp for the temporary offline display reference
+  /// (handover doc §2.3) — never a real invoice number, which is only ever
+  /// assigned server-side at sync time.
+  String _offlineStamp(DateTime dt) {
+    String two(int n) => n.toString().padLeft(2, '0');
+    return '${dt.year}${two(dt.month)}${two(dt.day)}-${two(dt.hour)}${two(dt.minute)}${two(dt.second)}';
   }
 
   void _resetForNextSale({bool keepInitialCustomer = false}) {

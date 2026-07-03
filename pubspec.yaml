@@ -48,6 +48,16 @@ dependencies:
   cupertino_icons: ^1.0.8
   esc_pos_printer_plus: 0.1.1
   msix: ^3.16.12
+  # sqflite's default plugin only talks to Android/iOS platform channels —
+  # it has no Windows/Linux implementation. This is a Windows desktop app,
+  # so we drive SQLite through sqflite_common_ffi (sqlite3 via FFI) instead,
+  # which works on every platform. sqlite3_flutter_libs bundles the native
+  # sqlite3 binary so it doesn't depend on one being preinstalled.
+  sqflite_common_ffi: ^2.3.4+4
+  sqlite3_flutter_libs: ^0.5.24
+  path: ^1.9.0
+  uuid: ^4.4.2
+  connectivity_plus: ^6.0.5
 
 dev_dependencies:
   flutter_test:
