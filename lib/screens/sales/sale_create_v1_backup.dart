@@ -1,6 +1,3 @@
-import 'dart:async' show Timer;
-import 'dart:ui' show FontFeature;
-
 import 'package:enterprise_pos/api/product_service.dart';
 import 'package:enterprise_pos/api/sale_service.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
@@ -11,7 +8,6 @@ import 'package:enterprise_pos/services/offline_sales_queue_service.dart';
 import 'package:enterprise_pos/utils/network_failure.dart';
 import 'package:uuid/uuid.dart';
 import 'package:enterprise_pos/screens/sales/parts/create_sale_items_section.dart';
-import 'package:enterprise_pos/screens/sales/parts/sale_product_panel.dart';
 import 'package:enterprise_pos/widgets/product_picker_grid_sheet.dart';
 import 'package:enterprise_pos/widgets/customer_picker_sheet.dart';
 import 'package:enterprise_pos/widgets/user_picker_sheet.dart';
@@ -19,11 +15,12 @@ import 'package:enterprise_pos/widgets/vendor_picker_sheet.dart';
 import 'package:enterprise_pos/services/party_prefetch.dart';
 import 'package:enterprise_pos/services/party_pick_caches.dart';
 import 'package:enterprise_pos/services/catalog_cache_service.dart';
+import 'package:enterprise_pos/widgets/party_autocomplete_field.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/enterprise/enterprise_panel.dart';
 import 'package:enterprise_pos/widgets/app_feedback.dart';
+import 'package:enterprise_pos/widgets/branch_indicator.dart';
 import 'package:enterprise_pos/widgets/app_keyboard_shortcuts.dart';
-import 'package:enterprise_pos/widgets/sale_status_bar.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -32,6 +29,8 @@ import 'package:enterprise_pos/services/receipt_preview_service.dart';
 
 // local widgets split into small files
 import 'package:enterprise_pos/screens/sales/parts/sale_party_section.dart';
+import 'package:enterprise_pos/screens/sales/parts/sale_items_payments.dart';
+import 'package:enterprise_pos/screens/sales/parts/sale_totals_card.dart';
 
 class CreateSaleScreen extends StatefulWidget {
   final Map<String, dynamic>? initialCustomer;
@@ -142,11 +141,8 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     taxController.addListener(_recalc);
     cashReceivedController.addListener(_recalc);
 
-    // In the 3-panel layout the product grid is always visible — no need to
-    // auto-open the picker modal. Focus the center panel search field so
-    // the cashier can start typing immediately after navigation.
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _productSearchFocusNode.requestFocus();
+      _openItemPickerOnFirstLoad();
     });
   }
 
@@ -534,23 +530,19 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     } catch (_) {
       product = null;
     }
-    product ??= await CatalogCacheService.instance.productByBarcode(
+    product = await CatalogCacheService.instance.productByBarcode(
       code,
       branchId: int.tryParse(_effectiveBranchIdStr()),
       vendorId: _selectedVendorId,
     );
     if (product != null) {
-      // Capture into a final local so Dart flow analysis narrows the type
-      // inside the setState closure (local variable reassigned via ??= above
-      // prevents automatic narrowing inside lambdas).
-      final p = product;
-      final price = double.tryParse(p['price']?.toString() ?? '') ?? 0.0;
+      final price = double.tryParse(product['price']?.toString() ?? '') ?? 0.0;
       setState(() {
         _items.add({
-          "product_id": p['id'],
-          "name": p['name'],
-          "cost_price": p['cost_price'],
-          "wholesale_price": p['wholesale_price'],
+          "product_id": product['id'],
+          "name": product['name'],
+          "cost_price": product['cost_price'],
+          "wholesale_price": product['wholesale_price'],
           "quantity": 1.0,
           "price": price,
           "discount_pct": 0.0,
@@ -1008,10 +1000,8 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       } else {
         AppFeedback.success(context, "Sale $receiptNo created successfully. Ready for next sale.");
       }
-      // Return focus to the product search panel so the cashier can start
-      // the next sale immediately without touching the mouse.
-      Future.delayed(const Duration(milliseconds: 300), () {
-        if (mounted) _productSearchFocusNode.requestFocus();
+      Future.delayed(const Duration(milliseconds: 450), () {
+        if (mounted && _items.isEmpty) _addItemManual();
       });
     } catch (e) {
       if (!mounted) return;
@@ -1089,16 +1079,6 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         return 0.0;
       }
 
-      double? _stock(Map m) {
-        final raw = m['branch_stock'] ?? m['stock'] ?? m['quantity_in_stock'];
-        if (raw == null) return null;
-        if (raw is Map) {
-          final qty = raw['quantity'] ?? raw['qty'] ?? raw['in_stock'];
-          return double.tryParse(qty?.toString() ?? '');
-        }
-        return double.tryParse(raw.toString());
-      }
-
       return list
           .map<ProductRef>((raw) {
             final m = raw as Map<String, dynamic>;
@@ -1106,14 +1086,6 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
               id: _metaInt(m['id'] ?? m['product_id']) ?? 0,
               name: (m['name'] ?? m['title'] ?? 'Unnamed').toString(),
               tp: _tp(m),
-              sku: (m['sku'] ?? '').toString().trim().isEmpty
-                  ? null
-                  : m['sku'].toString().trim(),
-              barcode: (m['barcode'] ?? '').toString().trim().isEmpty
-                  ? null
-                  : m['barcode'].toString().trim(),
-              stock: _stock(m),
-              raw: m,
             );
           })
           .toList(growable: false);
@@ -1144,17 +1116,11 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     });
   }
 
-  // ── Derived cart ID set for the product panel in-cart badges ────────────
-  Set<int> get _cartProductIds {
-    return _items
-        .map((i) => int.tryParse(i['product_id']?.toString() ?? '') ?? 0)
-        .where((id) => id > 0)
-        .toSet();
-  }
-
   @override
   Widget build(BuildContext context) {
     final isAll = context.watch<BranchProvider>().isAll;
+    final width = MediaQuery.of(context).size.width;
+    final wide = width >= 1080;
     final token = Provider.of<AuthProvider>(context, listen: false).token!;
 
     double rowNum(v) => double.tryParse(v?.toString() ?? '') ?? 0.0;
@@ -1168,6 +1134,8 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     final tax = _toDouble(taxController);
     final total = subtotal - discount + tax;
 
+    final paid = _autoCashIfEmpty && total > 0 ? total : 0.0;
+    final balance = total - paid;
     final enteredCashReceived = _toDouble(cashReceivedController);
     final effectiveCashReceived = enteredCashReceived > 0
         ? enteredCashReceived
@@ -1175,6 +1143,158 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     final changeAmount = (effectiveCashReceived - total)
         .clamp(0.0, double.infinity)
         .toDouble();
+
+    final customerLabel = customerNameController.text.trim().isEmpty
+        ? (_selectedCustomer == null ? 'Walk-in customer' : 'Selected customer')
+        : customerNameController.text.trim();
+
+    final partyPanel = Column(
+      children: [
+        PartySectionCard(
+          isAll: isAll,
+          selectedCustomer: _selectedCustomer,
+          selectedUser: _selectedUser,
+          selectedDeliveryBoy: _selectedDeliveryBoy,
+          selectedBranch: _selectedBranch,
+          selectedVendor: _selectedVendor,
+          branchId: _effectiveBranchIdStr(),
+          token: Provider.of<AuthProvider>(context, listen: false).token!,
+          onPickCustomer: _pickCustomer,
+          onPickUser: _pickUser,
+          onPickDeliveryBoy: _pickDeliveryBoy,
+          onPickVendor: _pickVendor,
+          onClearVendor: () => setState(() {
+            _selectedVendor = null;
+            _selectedVendorId = null;
+            _items = [];
+          }),
+          onBrowseCustomerSheet: _openCustomerSheet,
+          onApplyCustomer: _applyCustomerSelection,
+          onBrowseUserSheet: _openUserSheet,
+          onApplyUser: _applyUserSelection,
+          onBrowseDeliveryBoySheet: _openDeliveryBoySheet,
+          onApplyDeliveryBoy: _applyDeliveryBoySelection,
+          onBrowseVendorSheet: _openVendorSheet,
+          onApplyVendor: _applyVendorSelection,
+          customerFocusNode: _customerFocusNode,
+          salesmanFocusNode: _salesmanFocusNode,
+          deliveryBoyFocusNode: _deliveryBoyFocusNode,
+          customerController: _customerController,
+          salesmanController: _salesmanController,
+          deliveryBoyController: _deliveryBoyController,
+        ),
+        const SizedBox(height: 14),
+        _CustomerInfoPanel(
+          customerNameController: customerNameController,
+          customerPhoneController: customerPhoneController,
+          addressController: addressController,
+          selectedCustomerId: _selectedCustomerId,
+          onClearCustomer: _clearCustomerSelection,
+        ),
+      ],
+    );
+
+    final itemsPanel = Column(
+      children: [
+        _ScannerPanel(
+          scannerEnabled: _scannerEnabled,
+          onActivateScanner: _focusBarcodeScanner,
+          onOpenPicker: _addItemManual,
+        ),
+        const SizedBox(height: 10),
+        PartyAutocompleteField<Map<String, dynamic>>(
+          label: 'Add product',
+          hintText: 'Type product name, SKU or barcode…',
+          focusNode: _productSearchFocusNode,
+          controller: _productSearchController,
+          getCachedItems: () =>
+              ProductPickCache.cache
+                  .peek(ProductPickCache.keyFor(vendorId: _selectedVendorId))
+                  ?.items ??
+              const [],
+          onSearchRemote: (query) => ProductPickCache.searchRemote(
+            _productService,
+            query,
+            vendorId: _selectedVendorId,
+            branchId: int.tryParse(_effectiveBranchIdStr()),
+          ),
+          labelOf: (p) => (p['name'] ?? '').toString(),
+          subtitleOf: (p) =>
+              (p['sku'] ?? p['barcode'] ?? '').toString(),
+          idOf: (p) => (p['id'] ?? '').toString(),
+          onSelected: (p) => setState(() => _applyPickedProduct(p)),
+          onBrowseAll: () async {
+            final alreadySelectedIds = _items
+                .map((e) => int.tryParse(e["product_id"].toString()) ?? 0)
+                .where((id) => id > 0)
+                .toList();
+            final alreadySelectedQty = <int, double>{
+              for (final it in _items)
+                (int.tryParse(it["product_id"].toString()) ?? 0):
+                    (double.tryParse(it["quantity"].toString()) ?? 1.0),
+            }..removeWhere((k, _) => k == 0);
+            final picked = await ProductPickerGridSheet.openMulti(
+              context,
+              token: token,
+              vendorId: _selectedVendorId,
+              alreadySelectedIds: alreadySelectedIds,
+              alreadySelectedQty: alreadySelectedQty,
+              alreadySelectedProducts: _items.map((item) {
+                return {
+                  'id': item['product_id'],
+                  'name': item['name'],
+                  'price': item['price'],
+                  'cost_price': item['cost_price'],
+                  'wholesale_price': item['wholesale_price'],
+                };
+              }).toList(),
+            );
+            if (picked != null) {
+              setState(() {
+                for (final x in picked) {
+                  final product =
+                      (x['product'] as Map?)?.cast<String, dynamic>();
+                  final qty = (x['qty'] as num?)?.toDouble() ?? 1.0;
+                  if (product != null) _applyPickedProduct(product, qty: qty);
+                }
+              });
+            }
+            return null; // adding already happened above
+          },
+          // selectedLabel intentionally omitted — keeps field open after each add
+        ),
+        const SizedBox(height: 14),
+        ItemsTable(
+          items: _items,
+          onQueryProducts: _queryProducts,
+          onAddItem: _addItemManual,
+          onItemsChanged: (next) {
+            setState(() => _items = next);
+          },
+        ),
+      ],
+    );
+
+    final paymentAndTotalsPanel = Column(
+      children: [
+        PaymentsCard(
+          autoCashIfEmpty: _autoCashIfEmpty,
+          onToggleAutoCash: (v) => setState(() => _autoCashIfEmpty = v),
+          cashReceivedController: cashReceivedController,
+          changeAmount: _money(changeAmount),
+        ),
+        const SizedBox(height: 14),
+        TotalsCardInline(
+          subtotal: _money(subtotal),
+          discountController: discountController,
+          taxController: taxController,
+          total: _money(total),
+          paid: _money(paid),
+          balance: _money(balance),
+          balanceColor: _balanceColor(balance),
+        ),
+      ],
+    );
 
     return GestureDetector(
       behavior: HitTestBehavior.translucent,
@@ -1204,10 +1324,13 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
             _cmd(LogicalKeyboardKey.enter): () => _submitSale(),
             _ctrl(LogicalKeyboardKey.numpadEnter): () => _submitSale(),
             _cmd(LogicalKeyboardKey.numpadEnter): () => _submitSale(),
-            _ctrl(LogicalKeyboardKey.slash): () =>
-                showAppShortcutGuide(context, includeSaleCreate: true),
-            _cmd(LogicalKeyboardKey.slash): () =>
-                showAppShortcutGuide(context, includeSaleCreate: true),
+            _ctrl(LogicalKeyboardKey.slash): () => showAppShortcutGuide(context, includeSaleCreate: true),
+            _cmd(LogicalKeyboardKey.slash): () => showAppShortcutGuide(context, includeSaleCreate: true),
+            // Field-focus shortcuts — jump cursor directly into the field so
+            // the user can start typing a search immediately. These are ADDITIVE;
+            // the existing F3/F4/Ctrl+Shift+C/D modal-picker shortcuts above are
+            // unchanged. Ctrl+Shift+U (cUstomer), S (Salesman), B (delivery
+            // Boy), P (Product) were chosen because C/D are already taken.
             _ctrlShift(LogicalKeyboardKey.keyU): () {
               _customerController.clear();
               _customerFocusNode.requestFocus();
@@ -1221,639 +1344,103 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
               _deliveryBoyFocusNode.requestFocus();
             },
             _ctrlShift(LogicalKeyboardKey.keyP): () {
+              _productSearchController.clear();
               _productSearchFocusNode.requestFocus();
             },
           },
           child: Scaffold(
-            backgroundColor: AppTheme.bg,
-            body: Form(
-              key: _formKey,
-              child: Stack(
-                children: [
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      // ── Light status bar (30 px) ──────────────────────
-                      const SaleStatusBar(light: true),
-
-                      // ── 2-panel workspace ─────────────────────────────
-                      Expanded(
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            // LEFT 57% – cart workspace
-                            Expanded(
-                              flex: 57,
-                              child: _buildCartWorkspace(
-                                token: token,
-                                isAll: isAll,
-                                subtotal: subtotal,
-                              ),
-                            ),
-
-                            const VerticalDivider(
-                              width: 1,
-                              thickness: 1,
-                              color: AppTheme.border,
-                            ),
-
-                            // RIGHT 43% – product browser with own search bar
-                            Expanded(
-                              flex: 43,
-                              child: SaleProductPanel(
-                                key: ValueKey(_selectedVendorId),
-                                token: token,
-                                vendorId: _selectedVendorId,
-                                cartProductIds: _cartProductIds,
-                                onProductTapped: (p) =>
-                                    setState(() => _applyPickedProduct(p)),
-                                onOpenModal: _addItemManual,
-                                showSearchBar: true,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-
-                      // ── Fixed bottom action bar ───────────────────────
-                      _buildBottomBar(
-                        total: total,
-                        changeAmount: changeAmount,
-                      ),
-                    ],
-                  ),
-
-                  // Hidden 1×1 barcode TextField — offset matches light bar (30 px)
-                  Positioned(
-                    left: 0,
-                    top: 30,
-                    child: _hiddenBarcodeField(),
-                  ),
-                ],
-              ),
-            ),
+      appBar: AppBar(
+        title: const Text('Create Sale'),
+        actions: [
+          IconButton(
+            tooltip: 'Sale shortcuts',
+            onPressed: () => showAppShortcutGuide(context, includeSaleCreate: true),
+            icon: const Icon(Icons.keyboard_rounded),
           ),
-        ),
-      ),
-    );
-  }
-
-  // ── Cart workspace (left 57%) ────────────────────────────────────────────
-  Widget _buildCartWorkspace({
-    required String token,
-    required bool isAll,
-    required double subtotal,
-  }) {
-    return Container(
-      color: Colors.white,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          // 1. FIXED — party selectors (Customer, Salesman, Delivery Boy, Vendor)
-          PartySectionCard(
-            isAll: isAll,
-            selectedCustomer: _selectedCustomer,
-            selectedUser: _selectedUser,
-            selectedDeliveryBoy: _selectedDeliveryBoy,
-            selectedBranch: _selectedBranch,
-            selectedVendor: _selectedVendor,
-            branchId: _effectiveBranchIdStr(),
-            token: token,
-            onPickCustomer: _pickCustomer,
-            onPickUser: _pickUser,
-            onPickDeliveryBoy: _pickDeliveryBoy,
-            onPickVendor: _pickVendor,
-            onClearVendor: () => setState(() {
-              _selectedVendor = null;
-              _selectedVendorId = null;
-              _items = [];
-            }),
-            onBrowseCustomerSheet: _openCustomerSheet,
-            onApplyCustomer: _applyCustomerSelection,
-            onBrowseUserSheet: _openUserSheet,
-            onApplyUser: _applyUserSelection,
-            onBrowseDeliveryBoySheet: _openDeliveryBoySheet,
-            onApplyDeliveryBoy: _applyDeliveryBoySelection,
-            onBrowseVendorSheet: _openVendorSheet,
-            onApplyVendor: _applyVendorSelection,
-            customerFocusNode: _customerFocusNode,
-            salesmanFocusNode: _salesmanFocusNode,
-            deliveryBoyFocusNode: _deliveryBoyFocusNode,
-            customerController: _customerController,
-            salesmanController: _salesmanController,
-            deliveryBoyController: _deliveryBoyController,
+          const Padding(
+            padding: EdgeInsets.only(right: 8),
+            child: BranchIndicator(tappable: false),
           ),
-
-          // 2. FIXED — walk-in customer details (compact single-row layout)
-          _buildWalkInCompact(),
-
-          const Divider(height: 1, thickness: 1, color: AppTheme.border),
-
-          // 3. FIXED — product autocomplete + scanner + F2
-          _buildInputRow(),
-
-          // 4. FIXED — cart table column headers
-          _buildCartTableHeader(),
-
-          // 5. INDEPENDENTLY SCROLLABLE — cart item rows
-          Expanded(
-            child: ItemsTable(
-              compact: true,
-              items: _items,
-              onQueryProducts: _queryProducts,
-              onAddItem: _addItemManual,
-              onItemsChanged: (next) => setState(() => _items = next),
-            ),
-          ),
-
-          // 6. FIXED — subtotal + editable discount/tax
-          const Divider(height: 1, thickness: 1, color: AppTheme.border),
-          _buildSummaryRow(subtotal: subtotal),
-        ],
-      ),
-    );
-  }
-
-  // ── Fixed cart table column header row ─────────────────────────────────
-  Widget _buildCartTableHeader() {
-    const style = TextStyle(
-      fontSize: 11,
-      fontWeight: FontWeight.w700,
-      color: AppTheme.textMuted,
-    );
-    return Container(
-      height: 28,
-      padding: const EdgeInsets.symmetric(horizontal: 6),
-      decoration: const BoxDecoration(
-        color: AppTheme.surfaceSoft,
-        border: Border(bottom: BorderSide(color: AppTheme.border)),
-      ),
-      child: const Row(
-        children: [
-          Expanded(flex: 5, child: Text('Product', style: style)),
-          Expanded(
-            flex: 2,
-            child: Text('T.P', style: style, textAlign: TextAlign.right),
-          ),
-          SizedBox(width: 4),
-          Expanded(
-            flex: 2,
-            child: Text('Disc (%)', style: style, textAlign: TextAlign.right),
-          ),
-          SizedBox(width: 4),
-          Expanded(
-            flex: 3,
-            child: Text('Qty', style: style, textAlign: TextAlign.center),
-          ),
-          SizedBox(width: 4),
-          Expanded(
-            flex: 2,
-            child: Text('Total', style: style, textAlign: TextAlign.right),
-          ),
-          SizedBox(width: 28),
-        ],
-      ),
-    );
-  }
-
-  // ── Compact walk-in section (two rows: name+phone | address) ────────────
-  Widget _buildWalkInCompact() {
-    final inputDecoration = InputDecoration(
-      isDense: true,
-      contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
-      border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(6),
-        borderSide: const BorderSide(color: AppTheme.border),
-      ),
-      enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(6),
-        borderSide: const BorderSide(color: AppTheme.border),
-      ),
-    );
-    return Container(
-      padding: const EdgeInsets.fromLTRB(10, 6, 10, 8),
-      decoration: const BoxDecoration(
-        border: Border(top: BorderSide(color: AppTheme.border)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Row 1: label + name + phone + clear
-          Row(
-            children: [
-              const Text(
-                'Walk-in',
-                style: TextStyle(
-                  fontSize: 10,
-                  fontWeight: FontWeight.w700,
-                  color: AppTheme.textMuted,
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: SizedBox(
-                  height: 40,
-                  child: TextFormField(
-                    controller: customerNameController,
-                    decoration: inputDecoration.copyWith(
-                      hintText: 'Customer name',
-                    ),
-                    style: const TextStyle(fontSize: 12),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 6),
-              SizedBox(
-                width: 120,
-                height: 40,
-                child: TextFormField(
-                  controller: customerPhoneController,
-                  keyboardType: TextInputType.phone,
-                  decoration: inputDecoration.copyWith(hintText: 'Phone'),
-                  style: const TextStyle(fontSize: 12),
-                ),
-              ),
-              if (_selectedCustomerId != null) ...[
-                const SizedBox(width: 6),
-                InkWell(
-                  onTap: _clearCustomerSelection,
-                  borderRadius: BorderRadius.circular(4),
-                  child: const Icon(
-                    Icons.close_rounded,
-                    size: 14,
-                    color: AppTheme.danger,
-                  ),
-                ),
-              ],
-            ],
-          ),
-          const SizedBox(height: 5),
-          // Row 2: address
-          SizedBox(
-            height: 40,
-            child: TextFormField(
-              controller: addressController,
-              decoration: inputDecoration.copyWith(
-                hintText: 'Address (optional)',
-                prefixIcon: const Icon(
-                  Icons.location_on_outlined,
-                  size: 14,
-                  color: AppTheme.textMuted,
-                ),
-              ),
-              style: const TextStyle(fontSize: 12),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ── Input row: product autocomplete + scanner + F2 ─────────────────────
-  Widget _buildInputRow() {
-    return Container(
-      height: 48,
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-      color: Colors.white,
-      child: Row(
-        children: [
-          // Product autocomplete — adds to cart on selection
-          Expanded(
-            child: _CartProductSearch(
-              focusNode: _productSearchFocusNode,
-              controller: _productSearchController,
-              onQuery: _queryProducts,
-              onSelected: (ref) {
-                setState(() {
-                  if (ref.raw != null) {
-                    _applyPickedProduct(ref.raw!);
-                  } else {
-                    _items.add({
-                      'product_id': ref.id,
-                      'name': ref.name,
-                      'quantity': 1.0,
-                      'price': ref.tp,
-                      'discount_pct': 0.0,
-                      'total': ref.tp,
-                    });
-                  }
-                });
-              },
-            ),
-          ),
-          const SizedBox(width: 6),
-
-          // Scanner toggle (F9)
-          Tooltip(
-            message: 'Focus barcode scanner  (F9)',
-            child: InkWell(
-              onTap: _focusBarcodeScanner,
-              borderRadius: BorderRadius.circular(8),
-              child: Container(
-                height: 36,
-                width: 36,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: _scannerEnabled
-                      ? AppTheme.success.withOpacity(.10)
-                      : AppTheme.surfaceSoft,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(
-                    color: _scannerEnabled
-                        ? AppTheme.success.withOpacity(.40)
-                        : AppTheme.border,
-                  ),
-                ),
-                child: Icon(
-                  _scannerEnabled
-                      ? Icons.check_circle_rounded
-                      : Icons.qr_code_scanner_rounded,
-                  size: 16,
-                  color:
-                      _scannerEnabled ? AppTheme.success : AppTheme.textMuted,
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(width: 4),
-
-          // F2 / Add Items (opens full modal picker for multi-select)
-          Tooltip(
-            message: 'Add items  (F2)',
+          Padding(
+            padding: const EdgeInsets.only(right: 8),
             child: OutlinedButton.icon(
               onPressed: _addItemManual,
-              icon: const Icon(Icons.add_rounded, size: 14),
-              label: const Text('F2', style: TextStyle(fontSize: 12)),
-              style: OutlinedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 10),
-                minimumSize: const Size(0, 36),
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              ),
+              icon: const Icon(Icons.inventory_2_outlined, size: 18),
+              label: const Text('Items (F2)'),
             ),
           ),
         ],
       ),
-    );
-  }
-
-  // ── Summary row: item count + subtotal + editable discount/tax ─────────
-  Widget _buildSummaryRow({required double subtotal}) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: AppTheme.surfaceSoft,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: AppTheme.border),
-      ),
-      child: Row(
+      body: Stack(
         children: [
-          // Item count + subtotal (read-only)
-          Text(
-            '${_items.length} item${_items.length == 1 ? '' : 's'}',
-            style: const TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.w700,
-              color: AppTheme.textMuted,
-            ),
-          ),
-          const SizedBox(width: 10),
-          Text(
-            'Sub: ${subtotal.toStringAsFixed(2)}',
-            style: const TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.w800,
-              color: AppTheme.navy,
-              fontFeatures: [FontFeature.tabularFigures()],
-            ),
-          ),
-          const Spacer(),
-
-          // Order Discount (editable inline)
-          const Text(
-            'Disc(-):',
-            style: TextStyle(
-              fontSize: 11,
-              color: AppTheme.textMuted,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(width: 4),
-          SizedBox(
-            width: 70,
-            height: 36,
-            child: TextField(
-              controller: discountController,
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
-              textAlign: TextAlign.right,
-              decoration: const InputDecoration(
-                isDense: true,
-                contentPadding:
-                    EdgeInsets.symmetric(horizontal: 6, vertical: 8),
-                border: OutlineInputBorder(),
-              ),
-              style: const TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w800,
-                fontFeatures: [FontFeature.tabularFigures()],
-              ),
-            ),
-          ),
-          const SizedBox(width: 10),
-
-          // Order Tax (editable inline)
-          const Text(
-            'Tax(+):',
-            style: TextStyle(
-              fontSize: 11,
-              color: AppTheme.textMuted,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(width: 4),
-          SizedBox(
-            width: 70,
-            height: 36,
-            child: TextField(
-              controller: taxController,
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
-              textAlign: TextAlign.right,
-              decoration: const InputDecoration(
-                isDense: true,
-                contentPadding:
-                    EdgeInsets.symmetric(horizontal: 6, vertical: 8),
-                border: OutlineInputBorder(),
-              ),
-              style: const TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w800,
-                fontFeatures: [FontFeature.tabularFigures()],
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ── Fixed bottom action bar ──────────────────────────────────────────────
-  Widget _buildBottomBar({
-    required double total,
-    required double changeAmount,
-  }) {
-    return Container(
-      height: 62,
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        border: Border(top: BorderSide(color: AppTheme.border)),
-      ),
-      child: Row(
-        children: [
-          // Auto Cash toggle
-          const Text(
-            'Auto Cash',
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
-              color: AppTheme.navy,
-            ),
-          ),
-          const SizedBox(width: 4),
-          Transform.scale(
-            scale: 0.8,
-            alignment: Alignment.centerLeft,
-            child: Switch(
-              value: _autoCashIfEmpty,
-              onChanged: (v) => setState(() => _autoCashIfEmpty = v),
-            ),
-          ),
-          const SizedBox(width: 8),
-
-          // Cash Received field
-          SizedBox(
-            width: 110,
-            height: 44,
-            child: TextField(
-              controller: cashReceivedController,
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
-              textAlign: TextAlign.right,
-              decoration: const InputDecoration(
-                labelText: 'Cash Recv.',
-                isDense: true,
-                contentPadding:
-                    EdgeInsets.symmetric(horizontal: 8, vertical: 10),
-                border: OutlineInputBorder(),
-              ),
-              style: const TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w700,
-                fontFeatures: [FontFeature.tabularFigures()],
-              ),
-            ),
-          ),
-          const SizedBox(width: 10),
-
-          // Change amount
           Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
-                'Change',
-                style: TextStyle(
-                  fontSize: 10,
-                  color: AppTheme.textMuted,
-                  fontWeight: FontWeight.w600,
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+                child: _SaleWorkspaceHeader(
+                  customerLabel: customerLabel,
+                  itemCount: _items.length,
+                  total: _money(total),
+                  balance: _money(balance),
+                  onAddItems: _addItemManual,
                 ),
               ),
-              Text(
-                changeAmount.toStringAsFixed(2),
-                style: TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w900,
-                  color: changeAmount > 0 ? AppTheme.success : AppTheme.navy,
-                  fontFeatures: const [FontFeature.tabularFigures()],
+              const SizedBox(height: 12),
+              Expanded(
+                child: Form(
+                  key: _formKey,
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 120),
+                    child: wide
+                        ? Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Expanded(
+                                flex: 7,
+                                child: Column(
+                                  children: [
+                                    partyPanel,
+                                    const SizedBox(height: 14),
+                                    itemsPanel,
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(width: 16),
+                              SizedBox(
+                                width: 390,
+                                child: paymentAndTotalsPanel,
+                              ),
+                            ],
+                          )
+                        : Column(
+                            children: [
+                              partyPanel,
+                              const SizedBox(height: 14),
+                              itemsPanel,
+                              const SizedBox(height: 14),
+                              paymentAndTotalsPanel,
+                            ],
+                          ),
+                  ),
                 ),
+              ),
+              _CreateSaleBottomBar(
+                itemCount: _items.length,
+                total: _money(total),
+                paid: _money(paid),
+                balance: _money(balance),
+                submitting: _submitting,
+                onSubmit: _submitSale,
               ),
             ],
           ),
-
-          const Spacer(),
-
-          // Total payable
-          Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              const Text(
-                'Total Payable',
-                style: TextStyle(
-                  fontSize: 10,
-                  color: AppTheme.textMuted,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              Text(
-                total.toStringAsFixed(2),
-                style: const TextStyle(
-                  fontSize: 17,
-                  fontWeight: FontWeight.w900,
-                  color: AppTheme.navy,
-                  fontFeatures: [FontFeature.tabularFigures()],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(width: 12),
-
-          // Clear cart
-          OutlinedButton(
-            onPressed: () => _resetForNextSale(),
-            style: OutlinedButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 14),
-              minimumSize: const Size(0, 38),
-              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              side: const BorderSide(color: AppTheme.danger),
-              foregroundColor: AppTheme.danger,
-              textStyle: const TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            child: const Text('Clear'),
-          ),
-          const SizedBox(width: 8),
-
-          // Save Sale (Ctrl+↵)
-          SizedBox(
-            height: 38,
-            child: FilledButton.icon(
-              onPressed: _submitting ? null : _submitSale,
-              icon: _submitting
-                  ? const SizedBox(
-                      width: 14,
-                      height: 14,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: Colors.white,
-                      ),
-                    )
-                  : const Icon(Icons.check_circle_rounded, size: 16),
-              label: Text(
-                _submitting ? 'Saving…' : 'Save Sale  Ctrl+↵',
-                style: const TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-            ),
-          ),
+          Positioned(left: 0, top: 0, child: _hiddenBarcodeField()),
         ],
       ),
-    );
+        ),
+      ),
+    ),
+  );
   }
 
 }
@@ -1985,320 +1572,136 @@ class _PlainStat extends StatelessWidget {
   }
 }
 
+class _CustomerInfoPanel extends StatelessWidget {
+  final TextEditingController customerNameController;
+  final TextEditingController customerPhoneController;
+  final TextEditingController addressController;
+  final String? selectedCustomerId;
+  final VoidCallback onClearCustomer;
 
-// ── Cart product autocomplete (Point 1) ────────────────────────────────────
-// Overlay-based dropdown; adds product to cart on selection.
-class _CartProductSearch extends StatefulWidget {
-  final FocusNode focusNode;
-  final TextEditingController controller;
-  final Future<List<ProductRef>> Function(String q) onQuery;
-  final void Function(ProductRef ref) onSelected;
-
-  const _CartProductSearch({
-    required this.focusNode,
-    required this.controller,
-    required this.onQuery,
-    required this.onSelected,
+  const _CustomerInfoPanel({
+    required this.customerNameController,
+    required this.customerPhoneController,
+    required this.addressController,
+    required this.selectedCustomerId,
+    required this.onClearCustomer,
   });
 
   @override
-  State<_CartProductSearch> createState() => _CartProductSearchState();
+  Widget build(BuildContext context) {
+    return EnterprisePanel(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Expanded(child: Text('Walk-in details', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800))),
+              if (selectedCustomerId != null)
+                TextButton.icon(
+                  onPressed: onClearCustomer,
+                  icon: const Icon(Icons.close_rounded, size: 18),
+                  label: const Text('Clear'),
+                ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final wide = constraints.maxWidth >= 760;
+              final name = TextFormField(
+                controller: customerNameController,
+                decoration: const InputDecoration(
+                  labelText: 'Customer Name',
+                  hintText: 'Walk-in customer name',
+                  prefixIcon: Icon(Icons.person_outline),
+                ),
+              );
+              final phone = TextFormField(
+                controller: customerPhoneController,
+                keyboardType: TextInputType.phone,
+                decoration: const InputDecoration(
+                  labelText: 'Phone',
+                  hintText: '03xx-xxxxxxx',
+                  prefixIcon: Icon(Icons.phone_outlined),
+                ),
+              );
+              if (!wide) {
+                return Column(
+                  children: [
+                    name,
+                    const SizedBox(height: 10),
+                    phone,
+                    const SizedBox(height: 10),
+                    _addressField(),
+                  ],
+                );
+              }
+              return Column(
+                children: [
+                  Row(children: [Expanded(child: name), const SizedBox(width: 10), Expanded(child: phone)]),
+                  const SizedBox(height: 10),
+                  _addressField(),
+                ],
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _addressField() {
+    return TextFormField(
+      controller: addressController,
+      maxLines: 2,
+      decoration: const InputDecoration(
+        labelText: 'Address',
+        hintText: 'Customer address',
+        prefixIcon: Icon(Icons.location_on_outlined),
+      ),
+    );
+  }
 }
 
-class _CartProductSearchState extends State<_CartProductSearch> {
-  final LayerLink _layerLink = LayerLink();
-  Timer? _debounce;
-  OverlayEntry? _overlayEntry;
-  List<ProductRef> _suggestions = [];
-  int _highlightIndex = -1;
-  bool _loading = false;
+class _ScannerPanel extends StatelessWidget {
+  final bool scannerEnabled;
+  final VoidCallback onActivateScanner;
+  final VoidCallback onOpenPicker;
 
-  @override
-  void initState() {
-    super.initState();
-    widget.focusNode.addListener(_onFocusChanged);
-    widget.controller.addListener(_onTextChanged);
-  }
-
-  @override
-  void dispose() {
-    _debounce?.cancel();
-    widget.focusNode.removeListener(_onFocusChanged);
-    widget.controller.removeListener(_onTextChanged);
-    _removeOverlay();
-    super.dispose();
-  }
-
-  void _onFocusChanged() {
-    if (!widget.focusNode.hasFocus) {
-      _removeOverlay();
-    }
-  }
-
-  void _onTextChanged() {
-    final q = widget.controller.text.trim();
-    if (q.isEmpty) {
-      _debounce?.cancel();
-      _removeOverlay();
-      if (mounted) {
-        setState(() {
-          _suggestions = [];
-          _highlightIndex = -1;
-          _loading = false;
-        });
-      }
-      return;
-    }
-    // Show loading immediately, debounce the actual fetch.
-    if (mounted) setState(() => _loading = true);
-    _debounce?.cancel();
-    _debounce = Timer(const Duration(milliseconds: 300), () => _fetch(q));
-  }
-
-  Future<void> _fetch(String q) async {
-    final results = await widget.onQuery(q);
-    if (!mounted) return;
-    setState(() {
-      _suggestions = results;
-      _highlightIndex = results.isNotEmpty ? 0 : -1;
-      _loading = false;
-    });
-    if (results.isEmpty) {
-      _removeOverlay();
-    } else {
-      _showOverlay();
-    }
-  }
-
-  void _showOverlay() {
-    _removeOverlay();
-    final overlay = Overlay.of(context);
-    _overlayEntry = OverlayEntry(builder: (_) => _buildDropdown());
-    overlay.insert(_overlayEntry!);
-  }
-
-  void _removeOverlay() {
-    _overlayEntry?.remove();
-    _overlayEntry = null;
-  }
-
-  void _selectIndex(int i) {
-    if (i < 0 || i >= _suggestions.length) return;
-    final ref = _suggestions[i];
-    widget.controller.clear();
-    _removeOverlay();
-    setState(() {
-      _suggestions = [];
-      _highlightIndex = -1;
-    });
-    widget.onSelected(ref);
-  }
-
-  void _moveHighlight(int delta) {
-    if (_suggestions.isEmpty) return;
-    setState(() {
-      _highlightIndex =
-          (_highlightIndex + delta).clamp(0, _suggestions.length - 1);
-    });
-    _overlayEntry?.markNeedsBuild();
-  }
-
-  Widget _buildDropdown() {
-    return CompositedTransformFollower(
-      link: _layerLink,
-      showWhenUnlinked: false,
-      offset: const Offset(0, 38),
-      child: Align(
-        alignment: Alignment.topLeft,
-        child: SizedBox(
-          width: 420,
-          child: Material(
-          elevation: 8,
-          borderRadius: BorderRadius.circular(8),
-          color: Colors.white,
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxHeight: 320),
-            child: ListView.builder(
-              padding: EdgeInsets.zero,
-              shrinkWrap: true,
-              itemCount: _suggestions.length,
-              itemBuilder: (ctx, i) {
-                final ref = _suggestions[i];
-                final highlighted = i == _highlightIndex;
-                final sub = [
-                  if (ref.sku != null && ref.sku!.isNotEmpty)
-                    'SKU: ${ref.sku}',
-                  if (ref.barcode != null && ref.barcode!.isNotEmpty)
-                    ref.barcode!,
-                ].join('  ');
-                return GestureDetector(
-                  onTap: () => _selectIndex(i),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 8,
-                    ),
-                    decoration: BoxDecoration(
-                      color: highlighted
-                          ? AppTheme.primarySoft
-                          : Colors.transparent,
-                      border: const Border(
-                        bottom: BorderSide(color: AppTheme.border),
-                      ),
-                    ),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                ref.name,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w600,
-                                  color: highlighted
-                                      ? AppTheme.primary
-                                      : AppTheme.navy,
-                                ),
-                              ),
-                              if (sub.isNotEmpty)
-                                Text(
-                                  sub,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    fontSize: 11,
-                                    color: AppTheme.textMuted,
-                                  ),
-                                ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.end,
-                          children: [
-                            Text(
-                              ref.tp.toStringAsFixed(2),
-                              style: const TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w700,
-                                color: AppTheme.success,
-                              ),
-                            ),
-                            if (ref.stock != null)
-                              Text(
-                                'Stock: ${ref.stock!.toStringAsFixed(0)}',
-                                style: const TextStyle(
-                                  fontSize: 11,
-                                  color: AppTheme.textMuted,
-                                ),
-                              ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                );
-              },
-            ),
-          ),
-        ),
-      ),
-    ),
-  );
-  }
+  const _ScannerPanel({
+    required this.scannerEnabled,
+    required this.onActivateScanner,
+    required this.onOpenPicker,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return CompositedTransformTarget(
-      link: _layerLink,
-      // Focus wraps the TextField so onKeyEvent fires while the TextField has focus.
-      child: Focus(
-        onKeyEvent: (node, event) {
-          if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
-            return KeyEventResult.ignored;
-          }
-          if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
-            _moveHighlight(1);
-            return KeyEventResult.handled;
-          } else if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
-            _moveHighlight(-1);
-            return KeyEventResult.handled;
-          } else if (event.logicalKey == LogicalKeyboardKey.enter ||
-              event.logicalKey == LogicalKeyboardKey.numpadEnter) {
-            if (_highlightIndex >= 0) {
-              _selectIndex(_highlightIndex);
-              return KeyEventResult.handled;
-            }
-          } else if (event.logicalKey == LogicalKeyboardKey.escape) {
-            _removeOverlay();
-            setState(() {
-              _suggestions = [];
-              _highlightIndex = -1;
-            });
-            return KeyEventResult.handled;
-          }
-          return KeyEventResult.ignored;
-        },
-        child: SizedBox(
-          height: 36,
-          child: TextField(
-            controller: widget.controller,
-            focusNode: widget.focusNode,
-            decoration: InputDecoration(
-              hintText: 'Search product… (name / SKU / barcode)',
-              prefixIcon: _loading
-                  ? const Padding(
-                      padding: EdgeInsets.all(10),
-                      child: SizedBox(
-                        width: 14,
-                        height: 14,
-                        child: CircularProgressIndicator(strokeWidth: 1.5),
-                      ),
-                    )
-                  : const Icon(Icons.search, size: 16),
-              suffixIcon: widget.controller.text.isNotEmpty
-                  ? IconButton(
-                      icon: const Icon(Icons.close, size: 14),
-                      padding: EdgeInsets.zero,
-                      onPressed: () {
-                        widget.controller.clear();
-                        _removeOverlay();
-                        setState(() {
-                          _suggestions = [];
-                          _highlightIndex = -1;
-                        });
-                      },
-                    )
-                  : null,
-              isDense: true,
-              contentPadding: const EdgeInsets.symmetric(
-                horizontal: 8,
-                vertical: 8,
-              ),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(8),
-                borderSide: const BorderSide(color: AppTheme.border),
-              ),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(8),
-                borderSide: const BorderSide(color: AppTheme.border),
-              ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(8),
-                borderSide:
-                    const BorderSide(color: AppTheme.primary, width: 1.5),
-              ),
-              filled: true,
-              fillColor: AppTheme.surfaceSoft,
+    return EnterprisePanel(
+      padding: const EdgeInsets.all(12),
+      child: Row(
+        children: [
+          Icon(scannerEnabled ? Icons.check_circle_rounded : Icons.qr_code_scanner_rounded,
+              color: scannerEnabled ? AppTheme.success : AppTheme.primary),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              scannerEnabled ? 'Scanner active' : 'Search products or scan barcode',
+              style: const TextStyle(fontWeight: FontWeight.w700),
             ),
-            style: const TextStyle(fontSize: 13),
           ),
-        ),
+          OutlinedButton.icon(
+            onPressed: onActivateScanner,
+            icon: const Icon(Icons.qr_code_scanner_rounded, size: 18),
+            label: const Text('Scan'),
+          ),
+          const SizedBox(width: 8),
+          FilledButton.icon(
+            onPressed: onOpenPicker,
+            icon: const Icon(Icons.add_rounded, size: 18),
+            label: const Text('Items'),
+          ),
+        ],
       ),
     );
   }

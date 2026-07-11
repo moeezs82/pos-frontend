@@ -10,7 +10,20 @@ class ProductRef {
   final int id;
   final String name;
   final double tp; // trade/default price
-  const ProductRef({required this.id, required this.name, required this.tp});
+  final String? sku;
+  final String? barcode;
+  final double? stock;
+  final Map<String, dynamic>? raw; // original API map for _applyPickedProduct
+
+  const ProductRef({
+    required this.id,
+    required this.name,
+    required this.tp,
+    this.sku,
+    this.barcode,
+    this.stock,
+    this.raw,
+  });
 }
 
 /// ======= Fast POS Items Table =======
@@ -20,12 +33,18 @@ class ItemsTable extends StatefulWidget {
   final Future<List<ProductRef>> Function(String query) onQueryProducts;
   final void Function(List<Map<String, dynamic>> nextItems) onItemsChanged;
 
+  /// When [compact] is true the table renders as a plain borderless table
+  /// (no EnterprisePanel card, no section header, tighter row padding)
+  /// suitable for embedding inside the reference-style left panel layout.
+  final bool compact;
+
   const ItemsTable({
     super.key,
     required this.items,
     required this.onQueryProducts,
     required this.onItemsChanged,
     required this.onAddItem,
+    this.compact = false,
   });
 
   @override
@@ -232,6 +251,12 @@ class _ItemsTableState extends State<ItemsTable> {
 
   @override
   Widget build(BuildContext context) {
+    if (widget.compact) return _buildCompact(context);
+    return _buildFull(context);
+  }
+
+  // ── Full (non-compact) build ────────────────────────────────────────────
+  Widget _buildFull(BuildContext context) {
     final t = Theme.of(context);
     final currency = (num v) => "\$${v.toStringAsFixed(2)}";
 
@@ -488,6 +513,185 @@ class _ItemsTableState extends State<ItemsTable> {
               ),
             ),
           ],
+        ],
+      ),
+    );
+  }
+
+  // ── Compact build: returns a ListView so the parent can give it
+  //    an Expanded container for independent scrolling.
+  //    The table header is NOT rendered here — the parent renders it
+  //    as a fixed element above this ListView.
+  Widget _buildCompact(BuildContext context) {
+    if (widget.items.isEmpty) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.all(24),
+          child: Text(
+            'No items yet.\nType in the search bar above or scan a barcode.',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: AppTheme.textMuted, fontSize: 12),
+          ),
+        ),
+      );
+    }
+
+    return ListView.builder(
+      padding: EdgeInsets.zero,
+      itemCount: widget.items.length,
+      itemBuilder: (ctx, i) => _buildCompactRow(i),
+    );
+  }
+
+  Widget _buildCompactRow(int i) {
+    final item = widget.items[i];
+    final ctrls = _rowCtrls[i]!;
+    final lineTotal = _calcLineTotal(
+      price: _num(ctrls.price.text),
+      qty: _num(ctrls.qty.text),
+      discountPct: _num(ctrls.discount.text),
+    );
+
+    return Container(
+      height: 58,
+      decoration: const BoxDecoration(
+        border: Border(
+          bottom: BorderSide(color: AppTheme.border, width: 0.8),
+        ),
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          // Product name — no icon, flexible
+          Expanded(
+            flex: 5,
+            child: Padding(
+              padding: const EdgeInsets.only(right: 4),
+              child: Text(
+                (item['name'] ?? '').toString(),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontWeight: FontWeight.w700,
+                  fontSize: 12,
+                ),
+              ),
+            ),
+          ),
+          // Price
+          Expanded(
+            flex: 2,
+            child: _CellNumberField(
+              controller: ctrls.price,
+              focusNode: ctrls.priceFocus,
+              compact: true,
+              onSubmitted: (_) {
+                _commitRow(i);
+                _focusNextFrom(i, _CellField.price);
+              },
+              onChanged: (_) {
+                setState(() {});
+                _scheduleCommitRow(i);
+              },
+            ),
+          ),
+          const SizedBox(width: 4),
+          // Discount
+          Expanded(
+            flex: 2,
+            child: _CellNumberField(
+              controller: ctrls.discount,
+              focusNode: ctrls.discountFocus,
+              suffix: '%',
+              compact: true,
+              onSubmitted: (_) {
+                _commitRow(i);
+                _focusNextFrom(i, _CellField.discount);
+              },
+              onChanged: (_) {
+                setState(() {});
+                _scheduleCommitRow(i);
+              },
+            ),
+          ),
+          const SizedBox(width: 4),
+          // Qty with +/- buttons
+          Expanded(
+            flex: 3,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _QtyBtn(
+                  icon: Icons.remove,
+                  onTap: () {
+                    final cur = double.tryParse(ctrls.qty.text.trim()) ?? 0;
+                    ctrls.qty.text = _formatQty(cur - 1);
+                    _commitRow(i);
+                    setState(() {});
+                  },
+                ),
+                Expanded(
+                  child: _CellNumberField(
+                    controller: ctrls.qty,
+                    focusNode: ctrls.qtyFocus,
+                    isInteger: true,
+                    allowNegative: true,
+                    compact: true,
+                    onSubmitted: (_) {
+                      _commitRow(i);
+                      _focusNextFrom(i, _CellField.qty);
+                    },
+                    onChanged: (_) {
+                      setState(() {});
+                      _scheduleCommitRow(i);
+                    },
+                  ),
+                ),
+                _QtyBtn(
+                  icon: Icons.add,
+                  onTap: () {
+                    final cur = double.tryParse(ctrls.qty.text.trim()) ?? 0;
+                    ctrls.qty.text = _formatQty(cur + 1);
+                    _commitRow(i);
+                    setState(() {});
+                  },
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 4),
+          // Line total (no-wrap)
+          Expanded(
+            flex: 2,
+            child: Text(
+              lineTotal.toStringAsFixed(2),
+              textAlign: TextAlign.right,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontWeight: FontWeight.w800,
+                fontSize: 12,
+                color: lineTotal < 0 ? AppTheme.warning : AppTheme.navy,
+                fontFeatures: const [FontFeature.tabularFigures()],
+              ),
+            ),
+          ),
+          // Remove button
+          SizedBox(
+            width: 28,
+            child: IconButton(
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+              tooltip: 'Remove',
+              icon: const Icon(
+                Icons.close_rounded,
+                color: AppTheme.danger,
+                size: 16,
+              ),
+              onPressed: () => _removeRow(i),
+            ),
+          ),
         ],
       ),
     );
@@ -874,6 +1078,7 @@ class _CellNumberField extends StatelessWidget {
   final String suffix;
   final bool isInteger;
   final bool allowNegative;
+  final bool compact;
   final void Function(String)? onSubmitted;
   final void Function(String)? onChanged;
 
@@ -883,6 +1088,7 @@ class _CellNumberField extends StatelessWidget {
     this.suffix = "",
     this.isInteger = false,
     this.allowNegative = false,
+    this.compact = false,
     this.onSubmitted,
     this.onChanged,
   });
@@ -907,13 +1113,20 @@ class _CellNumberField extends StatelessWidget {
       },
       decoration: InputDecoration(
         isDense: true,
-        contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+        contentPadding: compact
+            ? const EdgeInsets.symmetric(horizontal: 4, vertical: 8)
+            : const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
         suffixText: suffix.isEmpty ? null : suffix,
-        border: const OutlineInputBorder(),
+        border: compact
+            ? const OutlineInputBorder(
+                borderRadius: BorderRadius.all(Radius.circular(3)),
+              )
+            : const OutlineInputBorder(),
       ),
-      style: const TextStyle(
+      style: TextStyle(
         fontWeight: FontWeight.w600,
-        fontFeatures: [FontFeature.tabularFigures()],
+        fontSize: compact ? 12 : 14,
+        fontFeatures: const [FontFeature.tabularFigures()],
       ),
     );
   }
@@ -952,6 +1165,33 @@ class _CellKey {
       other is _CellKey && other.row == row && other.field == field;
   @override
   int get hashCode => Object.hash(row, field);
+}
+
+/// ======= Compact +/- qty button =======
+class _QtyBtn extends StatelessWidget {
+  final IconData icon;
+  final VoidCallback onTap;
+
+  const _QtyBtn({required this.icon, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(3),
+      child: Container(
+        width: 20,
+        height: 26,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: AppTheme.surfaceSoft,
+          borderRadius: BorderRadius.circular(3),
+          border: Border.all(color: AppTheme.border),
+        ),
+        child: Icon(icon, size: 12, color: AppTheme.navy),
+      ),
+    );
+  }
 }
 
 /// ======= Mock backend for demo only – remove in prod =======
