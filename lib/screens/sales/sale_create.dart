@@ -14,6 +14,7 @@ import 'package:enterprise_pos/widgets/user_picker_sheet.dart';
 import 'package:enterprise_pos/widgets/vendor_picker_sheet.dart';
 import 'package:enterprise_pos/services/party_prefetch.dart';
 import 'package:enterprise_pos/services/party_pick_caches.dart';
+import 'package:enterprise_pos/services/catalog_cache_service.dart';
 import 'package:enterprise_pos/widgets/party_autocomplete_field.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/enterprise/enterprise_panel.dart';
@@ -108,6 +109,19 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     final branchId = context.read<BranchProvider>().selectedBranchId?.toString();
     PartyPrefetch.warmForSale(token, branchId: branchId);
 
+    // Offline composition (handover doc G1). Mirror the server catalog
+    // (products + price/tax + customers) into local SQLite so a sale can be
+    // built with no connectivity and after an app restart — the gap the
+    // in-memory-only warm caches above leave open. Then seed the instant
+    // pickers from that local cache. All fire-and-forget: if the refresh
+    // can't reach the server, the pickers simply read whatever was cached
+    // on the last successful sync.
+    final branchIdInt = int.tryParse(branchId ?? '');
+    _hydrateOfflinePickers(branchIdInt); // immediate, in case we're offline now
+    CatalogCacheService.instance
+        .refresh(token: token, branchId: branchIdInt)
+        .then((_) => _hydrateOfflinePickers(branchIdInt));
+
     _barcodeFocusNode.addListener(() {
       setState(() => _scannerEnabled = _barcodeFocusNode.hasFocus);
     });
@@ -132,6 +146,13 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     });
   }
 
+
+  /// Seeds the product/customer instant-suggestion buckets from the local
+  /// catalog cache so the pickers show data even offline / after a restart.
+  void _hydrateOfflinePickers(int? branchIdInt) {
+    ProductPickCache.hydrateFromCatalog(vendorId: _selectedVendorId, branchId: branchIdInt);
+    CustomerPickCache.hydrateFromCatalog(branchId: branchIdInt);
+  }
 
   Future<void> _openItemPickerOnFirstLoad() async {
     if (_didAutoOpenPicker || !mounted) return;
@@ -496,8 +517,22 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
   Future<void> _onBarcodeScanned(String code) async {
     if (code.isEmpty) return;
 
-    final product = await _productService.getProductByBarcode(
+    // Try the live lookup first; if the server is unreachable, fall back to
+    // the local catalog cache so scanning still works offline (handover doc
+    // G1). getProductByBarcode returns null for "not found" and throws for a
+    // network error — both fall through to the cache.
+    Map<String, dynamic>? product;
+    try {
+      product = await _productService.getProductByBarcode(
+        code,
+        vendorId: _selectedVendorId,
+      );
+    } catch (_) {
+      product = null;
+    }
+    product ??= await CatalogCacheService.instance.productByBarcode(
       code,
+      branchId: int.tryParse(_effectiveBranchIdStr()),
       vendorId: _selectedVendorId,
     );
     if (product != null) {
@@ -1181,6 +1216,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
             _productService,
             query,
             vendorId: _selectedVendorId,
+            branchId: int.tryParse(_effectiveBranchIdStr()),
           ),
           labelOf: (p) => (p['name'] ?? '').toString(),
           subtitleOf: (p) =>

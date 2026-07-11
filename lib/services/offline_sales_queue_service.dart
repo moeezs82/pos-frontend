@@ -30,6 +30,15 @@ class OfflineSaleQueueItem {
   final String? lastError;
   final DateTime createdAt;
 
+  /// How many sync attempts have been made (handover doc G6). Drives
+  /// exponential backoff and the give-up-after-N cap so a genuinely broken
+  /// item can't loop forever on every reconnect.
+  final int attempts;
+
+  /// Earliest time the next automatic sync should try this item again — set
+  /// when a retryable failure schedules a backoff. Null means "due now".
+  final DateTime? nextRetryAt;
+
   OfflineSaleQueueItem({
     required this.id,
     required this.clientRef,
@@ -39,7 +48,16 @@ class OfflineSaleQueueItem {
     this.serverInvoiceNo,
     this.lastError,
     required this.createdAt,
+    this.attempts = 0,
+    this.nextRetryAt,
   });
+
+  /// True when an automatic sync should skip this item for now because its
+  /// backoff window hasn't elapsed. A manual per-row "Retry" ignores this.
+  bool get isDueForAutoRetry {
+    final t = nextRetryAt;
+    return t == null || !t.isAfter(DateTime.now());
+  }
 
   /// Best-effort display total, pulled from the same `meta.totals_snapshot`
   /// that sale_create.dart already builds for the receipt (see
@@ -59,6 +77,7 @@ class OfflineSaleQueueItem {
   }
 
   factory OfflineSaleQueueItem.fromMap(Map<String, dynamic> map) {
+    final retryRaw = map['next_retry_at'] as String?;
     return OfflineSaleQueueItem(
       id: map['id'] as int,
       clientRef: map['client_ref'] as String,
@@ -68,6 +87,8 @@ class OfflineSaleQueueItem {
       serverInvoiceNo: map['server_invoice_no'] as String?,
       lastError: map['last_error'] as String?,
       createdAt: DateTime.parse(map['created_at'] as String),
+      attempts: (map['attempts'] as int?) ?? 0,
+      nextRetryAt: (retryRaw == null || retryRaw.isEmpty) ? null : DateTime.tryParse(retryRaw),
     );
   }
 }
@@ -88,7 +109,7 @@ class OfflineSalesQueueService {
     final path = p.join(dbPath, 'offline_sales_queue.db');
     return openDatabase(
       path,
-      version: 1,
+      version: 2,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE offline_sales_queue (
@@ -99,9 +120,21 @@ class OfflineSalesQueueService {
             status TEXT NOT NULL DEFAULT 'pending',
             server_invoice_no TEXT,
             last_error TEXT,
-            created_at TEXT NOT NULL
+            created_at TEXT NOT NULL,
+            attempts INTEGER NOT NULL DEFAULT 0,
+            next_retry_at TEXT
           )
         ''');
+      },
+      // v1 → v2 adds the retry-bookkeeping columns (handover doc G6). Existing
+      // queued sales are preserved; they just start with attempts = 0.
+      onUpgrade: (db, oldVersion, newVersion) async {
+        if (oldVersion < 2) {
+          await db.execute(
+              'ALTER TABLE offline_sales_queue ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0');
+          await db.execute(
+              'ALTER TABLE offline_sales_queue ADD COLUMN next_retry_at TEXT');
+        }
       },
     );
   }
@@ -190,11 +223,53 @@ class OfflineSalesQueueService {
     );
   }
 
+  /// Schedules a backoff retry for a *retryable* failure (transient 5xx/429,
+  /// or a network blip) — handover doc G3/G6. Keeps the item `pending`,
+  /// records the new attempt count and the earliest time an automatic sync
+  /// should try it again. A manual per-row Retry ignores next_retry_at.
+  Future<void> scheduleRetry(
+    String clientRef, {
+    required int attempts,
+    required DateTime nextRetryAt,
+    String? lastError,
+  }) async {
+    final db = await _database;
+    await db.update(
+      'offline_sales_queue',
+      {
+        'status': OfflineSaleStatus.pending.name,
+        'attempts': attempts,
+        'next_retry_at': nextRetryAt.toIso8601String(),
+        'last_error': lastError,
+      },
+      where: 'client_ref = ?',
+      whereArgs: [clientRef],
+    );
+  }
+
+  /// Records one more attempt against an item (used when moving it to the
+  /// terminal `failed` state so the dead-letter row can show how many tries
+  /// it took before giving up).
+  Future<void> bumpAttempts(String clientRef, int attempts) async {
+    final db = await _database;
+    await db.update(
+      'offline_sales_queue',
+      {'attempts': attempts},
+      where: 'client_ref = ?',
+      whereArgs: [clientRef],
+    );
+  }
+
   Future<void> markFailed(String clientRef, {required String lastError}) async {
     final db = await _database;
     await db.update(
       'offline_sales_queue',
-      {'status': OfflineSaleStatus.failed.name, 'last_error': lastError},
+      {
+        'status': OfflineSaleStatus.failed.name,
+        'last_error': lastError,
+        // Dead-lettered: no automatic retry window any more (handover doc G6).
+        'next_retry_at': null,
+      },
       where: 'client_ref = ?',
       whereArgs: [clientRef],
     );

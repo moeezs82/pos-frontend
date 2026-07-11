@@ -2,6 +2,48 @@ import 'dart:convert';
 import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 
+/// A non-2xx HTTP response surfaced as a typed error.
+///
+/// Before this existed, [ApiClient._handleResponse] threw a bare
+/// `Exception(message)` that carried no status code, so the offline-sync
+/// layer couldn't tell a transient 503/429 (retry with backoff) apart from
+/// a 401 (re-auth) or a permanent 422 (dead-letter). Every non-2xx response
+/// now carries its [statusCode] so callers can classify it — this is the
+/// foundation the sync error-taxonomy (handover doc G3/G4/G6) is built on.
+///
+/// Network-unreachable failures (no HTTP response at all) are still surfaced
+/// as SocketException/TimeoutException/etc. and detected by isNetworkFailure;
+/// an ApiException always means the server *did* answer, just not with 2xx.
+class ApiException implements Exception {
+  final int statusCode;
+  final String message;
+
+  /// The decoded JSON body when the server returned one, so callers that
+  /// need field-level validation detail (e.g. a 422) can read it without a
+  /// second parse. Null when the body wasn't JSON.
+  final Map<String, dynamic>? body;
+
+  ApiException(this.statusCode, this.message, {this.body});
+
+  /// Transient server/infra conditions worth retrying with backoff.
+  bool get isRetryable =>
+      statusCode == 408 || // Request Timeout
+      statusCode == 425 || // Too Early
+      statusCode == 429 || // Too Many Requests
+      statusCode == 500 ||
+      statusCode == 502 ||
+      statusCode == 503 ||
+      statusCode == 504;
+
+  /// Auth failures — Laravel returns 401, or 419 for an expired session.
+  /// The queued sale should NOT be marked failed; it should trigger re-auth
+  /// and stay pending (handover doc G4).
+  bool get isAuthFailure => statusCode == 401 || statusCode == 419;
+
+  @override
+  String toString() => 'ApiException($statusCode): $message';
+}
+
 class ApiDownloadResponse {
   final Uint8List bytes;
   final String filename;
@@ -140,19 +182,27 @@ class ApiClient {
       Uri.parse("$baseUrl$path"),
       headers: _headers,
     );
-    final body = jsonDecode(res.body);
-
-    if (res.statusCode >= 200 && res.statusCode < 300) {
-      return body;
-    } else {
-      throw Exception(body["message"] ?? "Delete failed: ${res.body}");
-    }
+    return _handleResponse(res);
   }
 
   Map<String, dynamic> _handleResponse(http.Response res) {
-    final json = jsonDecode(res.body);
-    if (res.statusCode >= 200 && res.statusCode < 300) return json;
-    throw Exception(json['message'] ?? "API Error: ${res.statusCode}");
+    // A non-2xx response may not be JSON (proxy error page, maintenance
+    // HTML, etc.). Decode defensively so the status code is never lost just
+    // because the body wasn't parseable.
+    Map<String, dynamic>? decoded;
+    try {
+      final json = jsonDecode(res.body);
+      if (json is Map<String, dynamic>) decoded = json;
+    } catch (_) {
+      // Non-JSON body — fall through with decoded == null.
+    }
+
+    if (res.statusCode >= 200 && res.statusCode < 300) {
+      return decoded ?? <String, dynamic>{};
+    }
+
+    final message = decoded?['message']?.toString() ?? "API Error: ${res.statusCode}";
+    throw ApiException(res.statusCode, message, body: decoded);
   }
 
   String? _filenameFromHeaders(Map<String, String> headers) {

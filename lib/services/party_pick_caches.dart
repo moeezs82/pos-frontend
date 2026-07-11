@@ -2,6 +2,7 @@ import 'package:enterprise_pos/api/customer_service.dart';
 import 'package:enterprise_pos/api/vendor_service.dart';
 import 'package:enterprise_pos/api/user_service.dart';
 import 'package:enterprise_pos/api/product_service.dart';
+import 'package:enterprise_pos/services/catalog_cache_service.dart';
 import 'package:enterprise_pos/services/pick_cache.dart';
 
 /// Each cache below is a process-wide singleton (simple static instance —
@@ -48,13 +49,35 @@ class CustomerPickCache {
   /// by the autocomplete field once the user is actually typing, since a
   /// 10-100 row local cache can never represent a 10,000-row customer list.
   /// Does NOT touch the shared cache bucket; this is a one-off lookup.
+  ///
+  /// Offline fallback (handover doc G1): if the live search can't reach the
+  /// server, fall back to the local catalog cache so a cashier can still find
+  /// a previously-synced customer with no connectivity. Online, the server's
+  /// answer is authoritative and the cache is not consulted.
   static Future<List<PartyMap>> searchRemote(
     CustomerService service,
     String query, {
     int perPage = 25,
+    int? branchId,
   }) async {
-    final entry = await fetchPage(service, page: 1, search: query, perPage: perPage);
-    return entry.items;
+    try {
+      final entry = await fetchPage(service, page: 1, search: query, perPage: perPage);
+      return entry.items;
+    } catch (_) {
+      return CatalogCacheService.instance
+          .searchCustomers(query, branchId: branchId, limit: perPage);
+    }
+  }
+
+  /// Seeds the in-memory bucket from the local catalog cache when it's empty,
+  /// so the "instant list" (shown before the user types) works offline and
+  /// after an app restart — not just within a single online session.
+  static Future<void> hydrateFromCatalog({int? branchId}) async {
+    if (cache.peek(keyFor()) != null) return; // already warm this session
+    final items = await CatalogCacheService.instance
+        .searchCustomers('', branchId: branchId, limit: 200);
+    if (items.isEmpty || cache.peek(keyFor()) != null) return;
+    cache.put(keyFor(), PickCacheEntry<PartyMap>(items: items, fetchedAt: DateTime.now()));
   }
 }
 
@@ -270,19 +293,43 @@ class ProductPickCache {
 
   /// Hits the backend's full-database product search directly for [query]
   /// — see CustomerPickCache.searchRemote for why this bypasses the bucket.
+  ///
+  /// Offline fallback (handover doc G1): if the live search can't reach the
+  /// server, fall back to the local catalog cache so a cashier can still find
+  /// and price a product with no connectivity. This is the change that makes
+  /// composing a sale offline actually possible — the queue could always
+  /// accept a sale, but without this the cashier couldn't build one.
   static Future<List<PartyMap>> searchRemote(
     ProductService service,
     String query, {
     int? vendorId,
     int perPage = 25,
+    int? branchId,
   }) async {
-    final entry = await fetchPage(
-      service,
-      page: 1,
-      search: query,
-      vendorId: vendorId,
-      perPage: perPage,
-    );
-    return entry.items;
+    try {
+      final entry = await fetchPage(
+        service,
+        page: 1,
+        search: query,
+        vendorId: vendorId,
+        perPage: perPage,
+      );
+      return entry.items;
+    } catch (_) {
+      return CatalogCacheService.instance
+          .searchProducts(query, branchId: branchId, vendorId: vendorId, limit: perPage);
+    }
+  }
+
+  /// Seeds the in-memory bucket for [vendorId] from the local catalog cache
+  /// when it's empty, so the product list shows instantly offline and after
+  /// an app restart. No-op if the bucket is already warm or the cache is empty.
+  static Future<void> hydrateFromCatalog({int? vendorId, int? branchId}) async {
+    final key = keyFor(vendorId: vendorId);
+    if (cache.peek(key) != null) return;
+    final items = await CatalogCacheService.instance
+        .searchProducts('', branchId: branchId, vendorId: vendorId, limit: 200);
+    if (items.isEmpty || cache.peek(key) != null) return;
+    cache.put(key, PickCacheEntry<PartyMap>(items: items, fetchedAt: DateTime.now()));
   }
 }

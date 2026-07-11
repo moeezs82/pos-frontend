@@ -28,11 +28,25 @@ class _OfflineSyncScreenState extends State<OfflineSyncScreen> {
 
   late final OfflineSyncService _syncService;
 
+  bool _authExpired = false;
+
   @override
   void initState() {
     super.initState();
     final token = context.read<AuthProvider>().token!;
-    _syncService = OfflineSyncService(token: token);
+    _syncService = OfflineSyncService(
+      token: token,
+      onAuthRequired: () {
+        // Token rejected mid-sync (handover doc G4). The queued sales stay
+        // safely pending; the cashier just needs to sign in again.
+        if (!mounted) return;
+        _authExpired = true;
+        AppFeedback.error(
+          context,
+          'Your session has expired. Please sign out and sign in again — your unsynced sales are safe and will sync after you do.',
+        );
+      },
+    );
     _load();
   }
 
@@ -69,22 +83,44 @@ class _OfflineSyncScreenState extends State<OfflineSyncScreen> {
 
   Future<void> _syncAll() async {
     if (_syncing) return;
-    setState(() => _syncing = true);
+    setState(() {
+      _syncing = true;
+      _authExpired = false;
+    });
     try {
-      var synced = 0, failed = 0;
-      final results = await _syncService.syncAll();
+      var synced = 0, failed = 0, retrying = 0;
+      // Manual "Sync Now" forces a full flush — ignore per-item backoff
+      // windows since the cashier explicitly asked to try right now.
+      final results = await _syncService.syncAll(respectBackoff: false);
       for (final r in results) {
-        if (r.outcome == SyncOutcome.synced) synced++;
-        if (r.outcome == SyncOutcome.failed) failed++;
+        switch (r.outcome) {
+          case SyncOutcome.synced:
+            synced++;
+            break;
+          case SyncOutcome.failed:
+            failed++;
+            break;
+          case SyncOutcome.retrying:
+            retrying++;
+            break;
+          case SyncOutcome.stillOffline:
+          case SyncOutcome.authRequired:
+            break;
+        }
       }
       await _load();
       await _refreshBadge();
       if (!mounted) return;
-      final stillOffline = results.isNotEmpty && results.last.outcome == SyncOutcome.stillOffline;
-      if (stillOffline) {
+
+      final last = results.isNotEmpty ? results.last.outcome : null;
+      if (_authExpired || last == SyncOutcome.authRequired) {
+        // The onAuthRequired callback already surfaced the re-auth message.
+      } else if (last == SyncOutcome.stillOffline) {
         AppFeedback.warning(context, "Still offline — couldn't reach the backend. $synced synced before stopping.");
       } else if (failed > 0) {
-        AppFeedback.warning(context, "$synced synced, $failed need manual review.");
+        AppFeedback.warning(context, "$synced synced, $failed need manual review, $retrying will retry.");
+      } else if (retrying > 0) {
+        AppFeedback.info(context, "$synced synced. $retrying will retry automatically shortly.");
       } else if (synced > 0) {
         AppFeedback.success(context, "$synced sale(s) synced successfully.");
       } else {
@@ -108,6 +144,12 @@ class _OfflineSyncScreenState extends State<OfflineSyncScreen> {
           break;
         case SyncOutcome.stillOffline:
           AppFeedback.warning(context, "Still offline — couldn't reach the backend.");
+          break;
+        case SyncOutcome.retrying:
+          AppFeedback.info(context, "Server busy — this sale will retry automatically shortly.");
+          break;
+        case SyncOutcome.authRequired:
+          // onAuthRequired already showed the re-auth message.
           break;
         case SyncOutcome.failed:
           AppFeedback.error(context, "Needs review: ${result.error}");
@@ -234,7 +276,8 @@ class _QueueRow extends StatelessWidget {
                 Text(item.displayCustomerName, style: const TextStyle(fontWeight: FontWeight.w800)),
                 const SizedBox(height: 2),
                 Text(
-                  '${_formatDateTime(item.occurredAt)}  •  \$${item.displayTotal.toStringAsFixed(2)}',
+                  '${_formatDateTime(item.occurredAt)}  •  \$${item.displayTotal.toStringAsFixed(2)}'
+                  '${item.attempts > 0 ? '  •  ${item.attempts} attempt${item.attempts == 1 ? '' : 's'}' : ''}',
                   style: const TextStyle(color: AppTheme.textMuted, fontSize: 12.5, fontWeight: FontWeight.w600),
                 ),
                 if (item.status == OfflineSaleStatus.synced && item.serverInvoiceNo != null) ...[

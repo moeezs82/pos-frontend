@@ -137,7 +137,11 @@ class PartySectionCard extends StatelessWidget {
                   controller: customerController,
                   getCachedItems: () =>
                       CustomerPickCache.cache.peek(CustomerPickCache.keyFor())?.items ?? const [],
-                  onSearchRemote: (query) => CustomerPickCache.searchRemote(customerService, query),
+                  onSearchRemote: (query) => CustomerPickCache.searchRemote(
+                    customerService,
+                    query,
+                    branchId: int.tryParse(branchId ?? ''),
+                  ),
                   labelOf: _customerLabel,
                   subtitleOf: (c) => (c['phone'] ?? '').toString(),
                   idOf: (c) => (c['id'] ?? '').toString(),
