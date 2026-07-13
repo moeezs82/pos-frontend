@@ -616,48 +616,23 @@ class _ItemsTableState extends State<ItemsTable> {
             ),
           ),
           const SizedBox(width: 4),
-          // Qty with +/- buttons
+          // Qty — plain editable field (no ± buttons)
           Expanded(
             flex: 3,
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                _QtyBtn(
-                  icon: Icons.remove,
-                  onTap: () {
-                    final cur = double.tryParse(ctrls.qty.text.trim()) ?? 0;
-                    ctrls.qty.text = _formatQty(cur - 1);
-                    _commitRow(i);
-                    setState(() {});
-                  },
-                ),
-                Expanded(
-                  child: _CellNumberField(
-                    controller: ctrls.qty,
-                    focusNode: ctrls.qtyFocus,
-                    isInteger: true,
-                    allowNegative: true,
-                    compact: true,
-                    onSubmitted: (_) {
-                      _commitRow(i);
-                      _focusNextFrom(i, _CellField.qty);
-                    },
-                    onChanged: (_) {
-                      setState(() {});
-                      _scheduleCommitRow(i);
-                    },
-                  ),
-                ),
-                _QtyBtn(
-                  icon: Icons.add,
-                  onTap: () {
-                    final cur = double.tryParse(ctrls.qty.text.trim()) ?? 0;
-                    ctrls.qty.text = _formatQty(cur + 1);
-                    _commitRow(i);
-                    setState(() {});
-                  },
-                ),
-              ],
+            child: _CellNumberField(
+              controller: ctrls.qty,
+              focusNode: ctrls.qtyFocus,
+              isInteger: true,
+              allowNegative: true,
+              compact: true,
+              onSubmitted: (_) {
+                _commitRow(i);
+                _focusNextFrom(i, _CellField.qty);
+              },
+              onChanged: (_) {
+                setState(() {});
+                _scheduleCommitRow(i);
+              },
             ),
           ),
           const SizedBox(width: 4),
@@ -1167,32 +1142,6 @@ class _CellKey {
   int get hashCode => Object.hash(row, field);
 }
 
-/// ======= Compact +/- qty button =======
-class _QtyBtn extends StatelessWidget {
-  final IconData icon;
-  final VoidCallback onTap;
-
-  const _QtyBtn({required this.icon, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(3),
-      child: Container(
-        width: 20,
-        height: 26,
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          color: AppTheme.surfaceSoft,
-          borderRadius: BorderRadius.circular(3),
-          border: Border.all(color: AppTheme.border),
-        ),
-        child: Icon(icon, size: 12, color: AppTheme.navy),
-      ),
-    );
-  }
-}
 
 /// ======= Mock backend for demo only – remove in prod =======
 Future<Map<String, dynamic>> _fakeGetProducts(String q) async {

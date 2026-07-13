@@ -77,17 +77,27 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
   final _barcodeFocusNode = FocusNode();
   bool _scannerEnabled = false;
 
-  // Named focus nodes for keyboard-shortcut field-jumping (Part C).
-  // Each controller is cleared before focus is requested so the field opens
-  // with a blank search query rather than leftover text.
+  // Named focus nodes for keyboard-shortcut field-jumping.
+  // Party autocomplete fields (controllers cleared before focus so the field
+  // opens with a blank query rather than leftover text).
   final _customerFocusNode = FocusNode();
   final _salesmanFocusNode = FocusNode();
   final _deliveryBoyFocusNode = FocusNode();
+  final _vendorFocusNode = FocusNode();
   final _productSearchFocusNode = FocusNode();
   final _customerController = TextEditingController();
   final _salesmanController = TextEditingController();
   final _deliveryBoyController = TextEditingController();
+  final _vendorController = TextEditingController();
   final _productSearchController = TextEditingController();
+  // Walk-in inline fields
+  final _walkInNameFocusNode = FocusNode();
+  final _walkInPhoneFocusNode = FocusNode();
+  final _walkInAddressFocusNode = FocusNode();
+  // Summary / bottom-bar numeric fields (select-all on focus)
+  final _discountFocusNode = FocusNode();
+  final _taxFocusNode = FocusNode();
+  final _cashReceivedFocusNode = FocusNode();
 
   bool _submitting = false;
   bool _autoCashIfEmpty = true;
@@ -183,11 +193,19 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     _customerFocusNode.dispose();
     _salesmanFocusNode.dispose();
     _deliveryBoyFocusNode.dispose();
+    _vendorFocusNode.dispose();
     _productSearchFocusNode.dispose();
     _customerController.dispose();
     _salesmanController.dispose();
     _deliveryBoyController.dispose();
+    _vendorController.dispose();
     _productSearchController.dispose();
+    _walkInNameFocusNode.dispose();
+    _walkInPhoneFocusNode.dispose();
+    _walkInAddressFocusNode.dispose();
+    _discountFocusNode.dispose();
+    _taxFocusNode.dispose();
+    _cashReceivedFocusNode.dispose();
     super.dispose();
   }
 
@@ -246,6 +264,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         _customerLocked = true; // lock editing when customer picked
       });
     }
+    _restoreSaleScreenFocus();
   }
 
   Future<void> _pickCustomer() async {
@@ -280,6 +299,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       _selectedVendorId = _metaInt(vendor?['id']);
       _items = []; // avoid cross-vendor mix
     });
+    _restoreSaleScreenFocus();
   }
 
   Future<void> _pickVendor() async {
@@ -307,6 +327,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       _selectedUser = user;
       _selectedUserId = _metaInt(user?['id']);
     });
+    _restoreSaleScreenFocus();
   }
 
   Future<void> _pickUser() async {
@@ -336,6 +357,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       _selectedDeliveryBoy = user;
       _selectedDeliveryBoyId = _metaInt(user?['id']);
     });
+    _restoreSaleScreenFocus();
   }
 
   Future<void> _pickDeliveryBoy() async {
@@ -1144,6 +1166,26 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     });
   }
 
+  /// Focus [node] and select all text in [ctrl] so typing replaces the current
+  /// value. Used for numeric fields (discount, tax, cash received).
+  void _focusAndSelectAll(FocusNode node, TextEditingController ctrl) {
+    node.requestFocus();
+    ctrl.selection = TextSelection(baseOffset: 0, extentOffset: ctrl.text.length);
+  }
+
+  /// After an autocomplete dropdown closes (selection or clear), focus drifts
+  /// out of the Create Sale shortcut scope.  Schedule a post-frame callback to
+  /// return focus to the page node so local shortcuts (F2, Ctrl+Enter, etc.)
+  /// work again immediately without requiring a manual click.
+  void _restoreSaleScreenFocus() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final route = ModalRoute.of(context);
+      if (route?.isCurrent != true) return;
+      _pageFocusNode.requestFocus();
+    });
+  }
+
   // ── Derived cart ID set for the product panel in-cart badges ────────────
   Set<int> get _cartProductIds {
     return _items
@@ -1176,20 +1218,31 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         .clamp(0.0, double.infinity)
         .toDouble();
 
+    // ── Focus + shortcut scope ──────────────────────────────────────────────
+    // CallbackShortcuts must be an ANCESTOR of Focus(_pageFocusNode) so that
+    // the local bindings fire when _pageFocusNode holds focus (e.g. after
+    // clicking blank space). In the old layout _pageFocusNode was the parent
+    // of CallbackShortcuts — making it invisible to the local handler, so
+    // key events fell through to the global AppKeyboardShortcuts (where F2
+    // opens a new Create Sale screen instead of the product picker here).
+    //
+    // onTap instead of onTapDown: by the time onTap fires, any inner widget
+    // that was tapped (TextField, button) has already called requestFocus().
+    // We only take focus when no text-editing widget currently holds it, so
+    // TextFields stay interactive and shortcuts are never swallowed.
     return GestureDetector(
       behavior: HitTestBehavior.translucent,
-      onTapDown: (_) {
-        final current = FocusManager.instance.primaryFocus;
-        if (current == null || current == _pageFocusNode) {
+      onTap: () {
+        final pf = FocusManager.instance.primaryFocus;
+        final ctx = pf?.context;
+        final isEditingText = ctx != null &&
+            ctx.findAncestorWidgetOfExactType<EditableText>() != null;
+        if (!isEditingText) {
           _pageFocusNode.requestFocus();
         }
       },
-      child: Focus(
-        focusNode: _pageFocusNode,
-        autofocus: true,
-        skipTraversal: true,
-        child: CallbackShortcuts(
-          bindings: <ShortcutActivator, VoidCallback>{
+      child: CallbackShortcuts(
+        bindings: <ShortcutActivator, VoidCallback>{
             const SingleActivator(LogicalKeyboardKey.f2): () => _addItemManual(),
             _ctrl(LogicalKeyboardKey.keyI): () => _addItemManual(),
             _cmd(LogicalKeyboardKey.keyI): () => _addItemManual(),
@@ -1223,10 +1276,44 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
             _ctrlShift(LogicalKeyboardKey.keyP): () {
               _productSearchFocusNode.requestFocus();
             },
+            // ── New focus shortcuts ──────────────────────────────────────────
+            _ctrlShift(LogicalKeyboardKey.keyV): () {
+              _vendorController.clear();
+              _vendorFocusNode.requestFocus();
+            },
+            _cmdShift(LogicalKeyboardKey.keyV): () {
+              _vendorController.clear();
+              _vendorFocusNode.requestFocus();
+            },
+            _ctrlShift(LogicalKeyboardKey.keyN): () {
+              _walkInNameFocusNode.requestFocus();
+            },
+            _ctrlShift(LogicalKeyboardKey.keyH): () {
+              _walkInPhoneFocusNode.requestFocus();
+            },
+            _ctrlShift(LogicalKeyboardKey.keyA): () {
+              _walkInAddressFocusNode.requestFocus();
+            },
+            _ctrlShift(LogicalKeyboardKey.keyR): () {
+              _focusAndSelectAll(_cashReceivedFocusNode, cashReceivedController);
+            },
+            _cmdShift(LogicalKeyboardKey.keyR): () {
+              _focusAndSelectAll(_cashReceivedFocusNode, cashReceivedController);
+            },
+            _ctrlShift(LogicalKeyboardKey.keyG): () {
+              _focusAndSelectAll(_discountFocusNode, discountController);
+            },
+            _ctrlShift(LogicalKeyboardKey.keyT): () {
+              _focusAndSelectAll(_taxFocusNode, taxController);
+            },
           },
-          child: Scaffold(
-            backgroundColor: AppTheme.bg,
-            body: Form(
+          child: Focus(
+            focusNode: _pageFocusNode,
+            autofocus: true,
+            skipTraversal: true,
+            child: Scaffold(
+              backgroundColor: AppTheme.bg,
+              body: Form(
               key: _formKey,
               child: Stack(
                 children: [
@@ -1339,9 +1426,11 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
             customerFocusNode: _customerFocusNode,
             salesmanFocusNode: _salesmanFocusNode,
             deliveryBoyFocusNode: _deliveryBoyFocusNode,
+            vendorFocusNode: _vendorFocusNode,
             customerController: _customerController,
             salesmanController: _salesmanController,
             deliveryBoyController: _deliveryBoyController,
+            vendorController: _vendorController,
           ),
 
           // 2. FIXED — walk-in customer details (compact single-row layout)
@@ -1451,26 +1540,34 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
               ),
               const SizedBox(width: 8),
               Expanded(
-                child: SizedBox(
-                  height: 40,
-                  child: TextFormField(
-                    controller: customerNameController,
-                    decoration: inputDecoration.copyWith(
-                      hintText: 'Customer name',
+                child: Tooltip(
+                  message: 'Focus: Ctrl+Shift+N',
+                  child: SizedBox(
+                    height: 40,
+                    child: TextFormField(
+                      controller: customerNameController,
+                      focusNode: _walkInNameFocusNode,
+                      decoration: inputDecoration.copyWith(
+                        hintText: 'Customer name',
+                      ),
+                      style: const TextStyle(fontSize: 12),
                     ),
-                    style: const TextStyle(fontSize: 12),
                   ),
                 ),
               ),
               const SizedBox(width: 6),
-              SizedBox(
-                width: 120,
-                height: 40,
-                child: TextFormField(
-                  controller: customerPhoneController,
-                  keyboardType: TextInputType.phone,
-                  decoration: inputDecoration.copyWith(hintText: 'Phone'),
-                  style: const TextStyle(fontSize: 12),
+              Tooltip(
+                message: 'Focus: Ctrl+Shift+H',
+                child: SizedBox(
+                  width: 120,
+                  height: 40,
+                  child: TextFormField(
+                    controller: customerPhoneController,
+                    focusNode: _walkInPhoneFocusNode,
+                    keyboardType: TextInputType.phone,
+                    decoration: inputDecoration.copyWith(hintText: 'Phone'),
+                    style: const TextStyle(fontSize: 12),
+                  ),
                 ),
               ),
               if (_selectedCustomerId != null) ...[
@@ -1489,19 +1586,23 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
           ),
           const SizedBox(height: 5),
           // Row 2: address
-          SizedBox(
-            height: 40,
-            child: TextFormField(
-              controller: addressController,
-              decoration: inputDecoration.copyWith(
-                hintText: 'Address (optional)',
-                prefixIcon: const Icon(
-                  Icons.location_on_outlined,
-                  size: 14,
-                  color: AppTheme.textMuted,
+          Tooltip(
+            message: 'Focus: Ctrl+Shift+A',
+            child: SizedBox(
+              height: 40,
+              child: TextFormField(
+                controller: addressController,
+                focusNode: _walkInAddressFocusNode,
+                decoration: inputDecoration.copyWith(
+                  hintText: 'Address (optional)',
+                  prefixIcon: const Icon(
+                    Icons.location_on_outlined,
+                    size: 14,
+                    color: AppTheme.textMuted,
+                  ),
                 ),
+                style: const TextStyle(fontSize: 12),
               ),
-              style: const TextStyle(fontSize: 12),
             ),
           ),
         ],
@@ -1638,24 +1739,28 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
             ),
           ),
           const SizedBox(width: 4),
-          SizedBox(
-            width: 70,
-            height: 36,
-            child: TextField(
-              controller: discountController,
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
-              textAlign: TextAlign.right,
-              decoration: const InputDecoration(
-                isDense: true,
-                contentPadding:
-                    EdgeInsets.symmetric(horizontal: 6, vertical: 8),
-                border: OutlineInputBorder(),
-              ),
-              style: const TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w800,
-                fontFeatures: [FontFeature.tabularFigures()],
+          Tooltip(
+            message: 'Focus: Ctrl+Shift+G',
+            child: SizedBox(
+              width: 70,
+              height: 36,
+              child: TextField(
+                controller: discountController,
+                focusNode: _discountFocusNode,
+                keyboardType:
+                    const TextInputType.numberWithOptions(decimal: true),
+                textAlign: TextAlign.right,
+                decoration: const InputDecoration(
+                  isDense: true,
+                  contentPadding:
+                      EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+                  border: OutlineInputBorder(),
+                ),
+                style: const TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w800,
+                  fontFeatures: [FontFeature.tabularFigures()],
+                ),
               ),
             ),
           ),
@@ -1671,24 +1776,28 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
             ),
           ),
           const SizedBox(width: 4),
-          SizedBox(
-            width: 70,
-            height: 36,
-            child: TextField(
-              controller: taxController,
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
-              textAlign: TextAlign.right,
-              decoration: const InputDecoration(
-                isDense: true,
-                contentPadding:
-                    EdgeInsets.symmetric(horizontal: 6, vertical: 8),
-                border: OutlineInputBorder(),
-              ),
-              style: const TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w800,
-                fontFeatures: [FontFeature.tabularFigures()],
+          Tooltip(
+            message: 'Focus: Ctrl+Shift+T',
+            child: SizedBox(
+              width: 70,
+              height: 36,
+              child: TextField(
+                controller: taxController,
+                focusNode: _taxFocusNode,
+                keyboardType:
+                    const TextInputType.numberWithOptions(decimal: true),
+                textAlign: TextAlign.right,
+                decoration: const InputDecoration(
+                  isDense: true,
+                  contentPadding:
+                      EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+                  border: OutlineInputBorder(),
+                ),
+                style: const TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w800,
+                  fontFeatures: [FontFeature.tabularFigures()],
+                ),
               ),
             ),
           ),
@@ -1732,25 +1841,29 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
           const SizedBox(width: 8),
 
           // Cash Received field
-          SizedBox(
-            width: 110,
-            height: 44,
-            child: TextField(
-              controller: cashReceivedController,
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
-              textAlign: TextAlign.right,
-              decoration: const InputDecoration(
-                labelText: 'Cash Recv.',
-                isDense: true,
-                contentPadding:
-                    EdgeInsets.symmetric(horizontal: 8, vertical: 10),
-                border: OutlineInputBorder(),
-              ),
-              style: const TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w700,
-                fontFeatures: [FontFeature.tabularFigures()],
+          Tooltip(
+            message: 'Focus: Ctrl+Shift+R',
+            child: SizedBox(
+              width: 110,
+              height: 44,
+              child: TextField(
+                controller: cashReceivedController,
+                focusNode: _cashReceivedFocusNode,
+                keyboardType:
+                    const TextInputType.numberWithOptions(decimal: true),
+                textAlign: TextAlign.right,
+                decoration: const InputDecoration(
+                  labelText: 'Cash Recv.',
+                  isDense: true,
+                  contentPadding:
+                      EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+                  border: OutlineInputBorder(),
+                ),
+                style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  fontFeatures: [FontFeature.tabularFigures()],
+                ),
               ),
             ),
           ),

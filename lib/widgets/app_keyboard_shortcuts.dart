@@ -64,11 +64,25 @@ class PosShortcutCatalog {
   ];
 
   static const saleCreate = <PosShortcutInfo>[
-    PosShortcutInfo(keys: 'F2 / Ctrl + I', title: 'Open item selector', section: 'Create Sale', icon: Icons.add_shopping_cart_rounded),
-    PosShortcutInfo(keys: 'F3 / Ctrl + Shift + C', title: 'Pick customer', section: 'Create Sale', icon: Icons.person_search_rounded),
-    PosShortcutInfo(keys: 'F4 / Ctrl + Shift + D', title: 'Pick delivery boy', section: 'Create Sale', icon: Icons.delivery_dining_rounded),
-    PosShortcutInfo(keys: 'F9', title: 'Focus barcode scanner', section: 'Create Sale', icon: Icons.qr_code_scanner_rounded),
-    PosShortcutInfo(keys: 'Ctrl + Enter', title: 'Save sale', section: 'Create Sale', icon: Icons.check_circle_rounded),
+    // Open Pickers
+    PosShortcutInfo(keys: 'F2 / Ctrl + I', title: 'Open item selector', section: 'Open Pickers', icon: Icons.add_shopping_cart_rounded),
+    PosShortcutInfo(keys: 'F3 / Ctrl + Shift + C', title: 'Pick customer', section: 'Open Pickers', icon: Icons.person_search_rounded),
+    PosShortcutInfo(keys: 'F4 / Ctrl + Shift + D', title: 'Pick delivery boy', section: 'Open Pickers', icon: Icons.delivery_dining_rounded),
+    // Focus Fields
+    PosShortcutInfo(keys: 'Ctrl + Shift + U', title: 'Focus Customer field', section: 'Focus Fields', icon: Icons.person_rounded),
+    PosShortcutInfo(keys: 'Ctrl + Shift + S', title: 'Focus Salesman field', section: 'Focus Fields', icon: Icons.badge_rounded),
+    PosShortcutInfo(keys: 'Ctrl + Shift + B', title: 'Focus Delivery Boy field', section: 'Focus Fields', icon: Icons.delivery_dining_rounded),
+    PosShortcutInfo(keys: 'Ctrl + Shift + V', title: 'Focus Vendor field', section: 'Focus Fields', icon: Icons.storefront_rounded),
+    PosShortcutInfo(keys: 'Ctrl + Shift + P', title: 'Focus Product search', section: 'Focus Fields', icon: Icons.search_rounded),
+    PosShortcutInfo(keys: 'F9', title: 'Focus barcode scanner', section: 'Focus Fields', icon: Icons.qr_code_scanner_rounded),
+    PosShortcutInfo(keys: 'Ctrl + Shift + N', title: 'Focus Walk-in Name', section: 'Focus Fields', icon: Icons.person_outline_rounded),
+    PosShortcutInfo(keys: 'Ctrl + Shift + H', title: 'Focus Walk-in Phone', section: 'Focus Fields', icon: Icons.phone_rounded),
+    PosShortcutInfo(keys: 'Ctrl + Shift + A', title: 'Focus Walk-in Address', section: 'Focus Fields', icon: Icons.location_on_rounded),
+    PosShortcutInfo(keys: 'Ctrl + Shift + G', title: 'Focus Discount field', section: 'Focus Fields', icon: Icons.discount_rounded),
+    PosShortcutInfo(keys: 'Ctrl + Shift + T', title: 'Focus Tax field', section: 'Focus Fields', icon: Icons.percent_rounded),
+    PosShortcutInfo(keys: 'Ctrl + Shift + R', title: 'Focus Cash Received', section: 'Focus Fields', icon: Icons.payments_rounded),
+    // Sale Actions
+    PosShortcutInfo(keys: 'Ctrl + Enter', title: 'Save sale', section: 'Sale Actions', icon: Icons.check_circle_rounded),
   ];
 
   static const cashLedgerCreate = <PosShortcutInfo>[
@@ -263,17 +277,14 @@ void _showShortcutGuide(
   bool includeSaleCreate = false,
   List<PosShortcutInfo> extra = const [],
 }) {
-  final rows = <PosShortcutInfo>[
-    ...PosShortcutCatalog.global.where((item) => !item.masterOnly || auth.isMasterAdmin),
-    if (includeSaleCreate) ...PosShortcutCatalog.saleCreate,
-    ...extra,
-  ];
+  final globalRows =
+      PosShortcutCatalog.global.where((item) => !item.masterOnly || auth.isMasterAdmin).toList();
 
   showDialog(
     context: appNavigatorKey.currentContext ?? context,
     builder: (dialogContext) => Dialog(
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 720),
+        constraints: const BoxConstraints(maxWidth: 760),
         child: Padding(
           padding: const EdgeInsets.all(18),
           child: Column(
@@ -311,16 +322,37 @@ void _showShortcutGuide(
               const SizedBox(height: 16),
               Flexible(
                 child: SingleChildScrollView(
-                  child: Wrap(
-                    spacing: 10,
-                    runSpacing: 10,
-                    children: rows.map((item) => _ShortcutCard(info: item)).toList(),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // ── Global shortcuts (flat, no section header) ─────────
+                      Wrap(
+                        spacing: 10,
+                        runSpacing: 10,
+                        children: [
+                          ...globalRows.map((item) => _ShortcutCard(info: item)),
+                          ...extra.map((item) => _ShortcutCard(info: item)),
+                        ],
+                      ),
+                      // ── Create Sale shortcuts grouped by section ───────────
+                      if (includeSaleCreate) ...[
+                        const SizedBox(height: 20),
+                        const Divider(height: 1),
+                        const SizedBox(height: 16),
+                        const Text(
+                          'Create Sale',
+                          style: TextStyle(fontSize: 15, fontWeight: FontWeight.w900, color: AppTheme.navy),
+                        ),
+                        const SizedBox(height: 12),
+                        ..._buildSaleCreateSections(),
+                      ],
+                    ],
                   ),
                 ),
               ),
               const SizedBox(height: 16),
               const Text(
-                'Tip: Most shortcuts work from any logged-in page. Create Sale has extra F2/F3/F4/F9 and Ctrl + Enter shortcuts.',
+                'Tip: Focus-field shortcuts select all text in numeric fields so typing immediately replaces the value.',
                 style: TextStyle(color: AppTheme.textMuted, fontWeight: FontWeight.w700, fontSize: 12.5),
               ),
             ],
@@ -329,6 +361,48 @@ void _showShortcutGuide(
       ),
     ),
   );
+}
+
+/// Groups [PosShortcutCatalog.saleCreate] by [section] and returns a list of
+/// section-header + card-wrap widgets in insertion order.
+List<Widget> _buildSaleCreateSections() {
+  final ordered = <String>[];
+  final grouped = <String, List<PosShortcutInfo>>{};
+
+  for (final info in PosShortcutCatalog.saleCreate) {
+    if (!grouped.containsKey(info.section)) {
+      ordered.add(info.section);
+      grouped[info.section] = [];
+    }
+    grouped[info.section]!.add(info);
+  }
+
+  final widgets = <Widget>[];
+  for (final section in ordered) {
+    widgets.add(
+      Padding(
+        padding: const EdgeInsets.only(bottom: 8),
+        child: Text(
+          section,
+          style: const TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w800,
+            color: AppTheme.textMuted,
+            letterSpacing: 0.5,
+          ),
+        ),
+      ),
+    );
+    widgets.add(
+      Wrap(
+        spacing: 10,
+        runSpacing: 10,
+        children: grouped[section]!.map((item) => _ShortcutCard(info: item)).toList(),
+      ),
+    );
+    widgets.add(const SizedBox(height: 14));
+  }
+  return widgets;
 }
 
 class _ShortcutCard extends StatelessWidget {

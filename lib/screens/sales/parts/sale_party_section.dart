@@ -57,6 +57,7 @@ class PartySectionCard extends StatelessWidget {
   final FocusNode? customerFocusNode;
   final FocusNode? salesmanFocusNode;
   final FocusNode? deliveryBoyFocusNode;
+  final FocusNode? vendorFocusNode;
 
   /// Optional external [TextEditingController]s — cleared by the parent before
   /// requesting focus, so the field opens with a blank query rather than
@@ -64,6 +65,7 @@ class PartySectionCard extends StatelessWidget {
   final TextEditingController? customerController;
   final TextEditingController? salesmanController;
   final TextEditingController? deliveryBoyController;
+  final TextEditingController? vendorController;
 
   const PartySectionCard({
     super.key,
@@ -91,9 +93,11 @@ class PartySectionCard extends StatelessWidget {
     this.customerFocusNode,
     this.salesmanFocusNode,
     this.deliveryBoyFocusNode,
+    this.vendorFocusNode,
     this.customerController,
     this.salesmanController,
     this.deliveryBoyController,
+    this.vendorController,
   });
 
   String _customerLabel(PartyMap c) {
@@ -201,6 +205,8 @@ class PartySectionCard extends StatelessWidget {
                 PartyAutocompleteField<PartyMap>(
                   label: 'Vendor',
                   hintText: 'Type vendor name… (optional)',
+                  focusNode: vendorFocusNode,
+                  controller: vendorController,
                   getCachedItems: () =>
                       VendorPickCache.cache.peek(VendorPickCache.keyFor())?.items ?? const [],
                   onSearchRemote: (query) => VendorPickCache.searchRemote(vendorService, query),
