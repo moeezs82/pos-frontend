@@ -20,6 +20,8 @@ import 'package:enterprise_pos/screens/sync/offline_sync_screen.dart';
 import 'package:enterprise_pos/screens/users_screen.dart';
 import 'package:enterprise_pos/screens/vendors/vendors_screen.dart';
 import 'package:enterprise_pos/providers/offline_queue_provider.dart';
+import 'package:enterprise_pos/providers/register_shift_provider.dart';
+import 'package:enterprise_pos/screens/register_shifts/register_shift_screen.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/branch_indicator.dart';
 import 'package:enterprise_pos/widgets/app_keyboard_shortcuts.dart';
@@ -36,6 +38,7 @@ class HomeScreen extends StatelessWidget {
     final auth = context.watch<AuthProvider>();
     final branch = context.watch<BranchProvider>();
     final offlineQueue = context.watch<OfflineQueueProvider>();
+    final registerShift = context.watch<RegisterShiftProvider>();
     final masterNeedsBranch = auth.isMasterAdmin && !branch.hasActiveBranch;
     final width = MediaQuery.of(context).size.width;
     final cols = width >= 1280
@@ -71,12 +74,27 @@ class HomeScreen extends StatelessWidget {
         ),
       _Tile(
         icon: Icons.point_of_sale_rounded,
+        title: registerShift.hasActiveShift ? 'Active Shift' : 'Open Shift',
+        shortcut: 'F6',
+        subtitle: registerShift.hasActiveShift ? 'Shift #${registerShift.id} • Manage drawer' : 'Start register before sales',
+        color: registerShift.hasActiveShift ? AppTheme.success : AppTheme.warning,
+        emphasized: true,
+        onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const RegisterShiftScreen())),
+      ),
+      _Tile(
+        icon: Icons.point_of_sale_rounded,
         title: 'Create Sale',
         shortcut: 'Ctrl+N / F2',
         subtitle: 'Fast checkout',
         color: AppTheme.primary,
         emphasized: true,
-        onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const CreateSaleScreen())),
+        onTap: () {
+          if (!registerShift.hasActiveShift) {
+            Navigator.push(context, MaterialPageRoute(builder: (_) => const RegisterShiftScreen()));
+            return;
+          }
+          Navigator.push(context, MaterialPageRoute(builder: (_) => const CreateSaleScreen()));
+        },
       ),
       _Tile(
         icon: Icons.receipt_long_rounded,

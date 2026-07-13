@@ -32,6 +32,7 @@ class SaleService {
     Map<String, dynamic>? meta,
     String? clientRef,
     DateTime? occurredAt,
+    String? registerShiftClientRef,
   }) async {
     final payload = buildSalePayload(
       customerId: customerId,
@@ -46,6 +47,7 @@ class SaleService {
       meta: meta,
       clientRef: clientRef,
       occurredAt: occurredAt,
+      registerShiftClientRef: registerShiftClientRef,
     );
 
     // Ensure your ApiClient sends JSON (sets Content-Type: application/json)
@@ -82,6 +84,7 @@ class SaleService {
     Map<String, dynamic>? meta,
     String? clientRef,
     DateTime? occurredAt,
+    String? registerShiftClientRef,
   }) {
     return <String, dynamic>{
       // "branch_id": branchId,
@@ -96,6 +99,7 @@ class SaleService {
       if (meta != null) "meta": meta,
       if (clientRef != null) "client_ref": clientRef,
       if (occurredAt != null) "occurred_at": occurredAt.toIso8601String(),
+      if (registerShiftClientRef != null) "register_shift_client_ref": registerShiftClientRef,
       "items": items
           .map(
             (it) => {

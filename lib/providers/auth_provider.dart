@@ -17,6 +17,16 @@ class AuthProvider with ChangeNotifier {
   bool get isMasterAdmin => _readBool(_user?['is_master_admin']);
   int? get activeBranchId => _readInt(_user?['branch_id']) ?? _readInt(_asMap(_user?['branch'])?['id']);
 
+  bool hasPermission(String permission) {
+    if (isMasterAdmin) return true;
+    final permissions = _user?['permissions'];
+    if (permissions is! Iterable) return false;
+    return permissions.any((item) {
+      if (item is Map) return item['name']?.toString() == permission;
+      return item.toString() == permission;
+    });
+  }
+
   void setRememberMe(bool value) {
     _rememberMe = value;
     notifyListeners();

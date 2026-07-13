@@ -4,6 +4,7 @@ import 'dart:ui' show FontFeature;
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/providers/offline_queue_provider.dart';
+import 'package:enterprise_pos/providers/register_shift_provider.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/app_keyboard_shortcuts.dart';
 import 'package:enterprise_pos/widgets/branch_indicator.dart';
@@ -81,6 +82,7 @@ class _SaleStatusBarState extends State<SaleStatusBar> {
   Widget build(BuildContext context) {
     final auth = context.watch<AuthProvider>();
     final pendingCount = context.watch<OfflineQueueProvider>().pendingCount;
+    final shift = context.watch<RegisterShiftProvider>();
 
     final userName = _extractName(auth.user);
     final roleLabel = _extractRole(auth.user);
@@ -135,6 +137,13 @@ class _SaleStatusBarState extends State<SaleStatusBar> {
           ),
 
           const Spacer(),
+
+          if (shift.hasActiveShift) ...[
+            Icon(Icons.point_of_sale_rounded, size: 13, color: AppTheme.success),
+            const SizedBox(width: 4),
+            Text('Shift #${shift.id}', style: TextStyle(color: textColor, fontSize: 11, fontWeight: FontWeight.w800)),
+            const SizedBox(width: 10),
+          ],
 
           // Connectivity indicator
           _ConnectivityDot(online: _online),

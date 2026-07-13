@@ -5,6 +5,7 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'providers/auth_provider.dart';
 import 'providers/branch_provider.dart';
 import 'providers/offline_queue_provider.dart';
+import 'providers/register_shift_provider.dart';
 import 'providers/printer_config_provider.dart';
 import 'screens/login_screen.dart';
 import 'screens/home_screen.dart';
@@ -37,6 +38,7 @@ class MyApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => BranchProvider()),
         ChangeNotifierProvider(create: (_) => PrinterConfigProvider()..loadFromCache()),
         ChangeNotifierProvider(create: (_) => OfflineQueueProvider()),
+        ChangeNotifierProvider(create: (_) => RegisterShiftProvider()),
       ],
       child: MaterialApp(
         debugShowCheckedModeBanner: false,
@@ -45,42 +47,113 @@ class MyApp extends StatelessWidget {
         title: 'Enterprise POS',
         theme: AppTheme.light,
         scrollBehavior: const _AppScrollBehavior(),
-        builder: (context, child) => AppKeyboardShortcuts(child: child ?? const SizedBox.shrink()),
-        home: Consumer2<AuthProvider, BranchProvider>(
-          builder: (ctx, auth, branchProvider, _) {
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (!ctx.mounted) return;
-              if (auth.isAuthenticated) {
-                branchProvider.syncFromAuthUser(auth.user);
-                // No-op once already loaded for this exact token; does a
-                // real, authenticated fetch the first time (or after a
-                // different user logs in).
-                ctx.read<PrinterConfigProvider>().ensureLoadedFor(auth.token);
-                ctx.read<OfflineQueueProvider>().refresh();
-                // Auto-trigger a background sync attempt when the device
-                // regains connectivity (§2.5) — a UX nicety on top of the
-                // manual "Sync Now" button on the sync screen, not a
-                // replacement for it, since a device can show "connected"
-                // while the backend itself is still down.
-                if (auth.token != null) {
-                  ConnectivityAutoSyncService.instance.start(
-                    token: auth.token!,
-                    onSynced: () => ctx.read<OfflineQueueProvider>().refresh(),
-                  );
-                }
-              } else {
-                branchProvider.reset();
-                ctx.read<PrinterConfigProvider>().stopAutoRefresh();
-                ConnectivityAutoSyncService.instance.stop();
-              }
-            });
-
-            return auth.isAuthenticated ? const HomeScreen() : const LoginScreen();
-          },
+        // _AuthOrchestrator lives in MaterialApp.builder, which wraps the
+        // entire app ABOVE the Navigator.  It is never unmounted by route
+        // pushes or replacements, so it reacts to every auth state change
+        // (login, logout, re-login) regardless of which screen is active.
+        //
+        // The previous Consumer2 addPostFrameCallback approach broke because
+        // LoginScreen calls Navigator.pushReplacement(HomeScreen), which
+        // removes Consumer2's route from the stack.  From that point on,
+        // Consumer2 was never rebuilt, so initialize/clear/start were never
+        // called again — leaving RegisterShiftProvider._token and
+        // ConnectivityAutoSyncService stuck on the first user's revoked
+        // token for every subsequent session.
+        builder: (context, child) => _AuthOrchestrator(
+          child: AppKeyboardShortcuts(child: child ?? const SizedBox.shrink()),
+        ),
+        home: Consumer<AuthProvider>(
+          builder: (_, auth, __) =>
+              auth.isAuthenticated ? const HomeScreen() : const LoginScreen(),
         ),
       ),
     );
   }
+}
+
+/// Permanent auth-state orchestrator.
+///
+/// Placed in [MaterialApp.builder] so it lives above the Navigator and is
+/// never unmounted by route changes.  It registers a direct listener on
+/// [AuthProvider] (not a Consumer rebuild) and synchronises all
+/// token-dependent services whenever the auth state changes:
+///
+/// • [RegisterShiftProvider.initialize] / [RegisterShiftProvider.clear]
+/// • [ConnectivityAutoSyncService.start] / [ConnectivityAutoSyncService.stop]
+/// • [BranchProvider.syncFromAuthUser] / [BranchProvider.reset]
+/// • [PrinterConfigProvider.ensureLoadedFor] / [PrinterConfigProvider.stopAutoRefresh]
+/// • [OfflineQueueProvider.refresh]
+///
+/// The idempotent guards inside each of those services ensure that repeated
+/// calls with the same token (e.g. from a BranchProvider change triggering
+/// an auth rebuild) are cheap no-ops.
+class _AuthOrchestrator extends StatefulWidget {
+  final Widget child;
+  const _AuthOrchestrator({required this.child});
+
+  @override
+  State<_AuthOrchestrator> createState() => _AuthOrchestratorState();
+}
+
+class _AuthOrchestratorState extends State<_AuthOrchestrator> {
+  late final AuthProvider _auth;
+
+  @override
+  void initState() {
+    super.initState();
+    _auth = context.read<AuthProvider>();
+    _auth.addListener(_onAuthChanged);
+
+    // Handle the startup case where tryAutoLogin() completes before or right
+    // after the first frame — the listener covers the "after" path; the
+    // postFrameCallback covers the "already done by first build" path.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _onAuthChanged();
+    });
+  }
+
+  @override
+  void dispose() {
+    _auth.removeListener(_onAuthChanged);
+    super.dispose();
+  }
+
+  void _onAuthChanged() {
+    if (!mounted) return;
+    final auth = context.read<AuthProvider>();
+
+    if (auth.isAuthenticated) {
+      final token = auth.token!;
+      final userId = (auth.user?['id'] ?? '').toString();
+
+      context.read<BranchProvider>().syncFromAuthUser(auth.user);
+      context.read<PrinterConfigProvider>().ensureLoadedFor(token);
+      context.read<OfflineQueueProvider>().refresh();
+
+      // initialize() is guarded by _initializedToken == token, so repeated
+      // calls for the same session (e.g. from a branch switch notifying
+      // listeners) are instant no-ops.
+      context
+          .read<RegisterShiftProvider>()
+          .initialize(token, userId: userId);
+
+      ConnectivityAutoSyncService.instance.start(
+        token: token,
+        onSynced: () {
+          if (mounted) context.read<OfflineQueueProvider>().refresh();
+        },
+      );
+    } else {
+      context.read<BranchProvider>().reset();
+      context.read<PrinterConfigProvider>().stopAutoRefresh();
+      ConnectivityAutoSyncService.instance.stop();
+      // clear() is also guarded — repeated calls when already cleared are no-ops.
+      context.read<RegisterShiftProvider>().clear();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
 }
 
 class _AppScrollBehavior extends MaterialScrollBehavior {
