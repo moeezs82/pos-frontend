@@ -162,11 +162,15 @@ class PartySectionCard extends StatelessWidget {
                   focusNode: salesmanFocusNode,
                   controller: salesmanController,
                   getCachedItems: () => UserPickCache.cache
-                          .peek(UserPickCache.keyFor(branchId: branchId, role: null))
+                          .peek(UserPickCache.keyFor(branchId: branchId, role: 'salesman'))
                           ?.items ??
                       const [],
-                  onSearchRemote: (query) =>
-                      UserPickCache.searchRemote(userService, query, branchId: branchId),
+                  onSearchRemote: (query) => UserPickCache.searchRemote(
+                    userService,
+                    query,
+                    branchId: branchId,
+                    role: 'salesman',
+                  ),
                   labelOf: _personLabel,
                   subtitleOf: (u) => (u['phone'] ?? '').toString(),
                   idOf: (u) => (u['id'] ?? '').toString(),

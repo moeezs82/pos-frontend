@@ -171,6 +171,25 @@ class OfflineSalesQueueService {
 
   /// Queue order = oldest occurred_at first, so same-day invoice numbering
   /// stays roughly chronological once synced (§1.3, §2.4).
+  ///
+  /// Includes only `pending` items (not `failed`). Used by
+  /// [OfflineSyncService.syncAll] so that dead-lettered items never re-enter
+  /// automatic retry — they require explicit manual review and correction via
+  /// [updatePayloadAndReset] before they can sync again.
+  Future<List<OfflineSaleQueueItem>> pending() async {
+    final db = await _database;
+    final rows = await db.query(
+      'offline_sales_queue',
+      where: 'status = ?',
+      whereArgs: [OfflineSaleStatus.pending.name],
+      orderBy: 'occurred_at ASC',
+    );
+    return rows.map(OfflineSaleQueueItem.fromMap).toList();
+  }
+
+  /// Includes both `pending` and `failed` items. Used only by the Offline
+  /// Sync screen UI so managers can see dead-lettered items alongside pending
+  /// ones. The sync engine uses [pending] instead.
   Future<List<OfflineSaleQueueItem>> pendingOrFailed() async {
     final db = await _database;
     final rows = await db.query(
@@ -269,6 +288,31 @@ class OfflineSalesQueueService {
         'last_error': lastError,
         // Dead-lettered: no automatic retry window any more (handover doc G6).
         'next_retry_at': null,
+      },
+      where: 'client_ref = ?',
+      whereArgs: [clientRef],
+    );
+  }
+
+  /// Replaces the stored payload for a dead-lettered (failed) item and
+  /// resets it to [pending] so the sync engine picks it up on the next run.
+  ///
+  /// Use this when a manager has corrected a business-validation error in
+  /// the queued sale (e.g. swapped an invalid salesman for a valid one).
+  /// Resetting [attempts] to 0 gives the corrected sale a fresh backoff slate.
+  Future<void> updatePayloadAndReset(
+    String clientRef,
+    Map<String, dynamic> newPayload,
+  ) async {
+    final db = await _database;
+    await db.update(
+      'offline_sales_queue',
+      {
+        'payload': jsonEncode(newPayload),
+        'status': OfflineSaleStatus.pending.name,
+        'attempts': 0,
+        'next_retry_at': null,
+        'last_error': null,
       },
       where: 'client_ref = ?',
       whereArgs: [clientRef],

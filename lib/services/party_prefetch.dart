@@ -57,11 +57,16 @@ class PartyPrefetch {
 
   static void warmSalesmen(String token, {String? branchId}) {
     final service = UsersService(token: token);
-    final key = UserPickCache.keyFor(branchId: branchId, role: null);
+    // Filter to the 'salesman' role so the Salesman autocomplete on Create Sale
+    // only shows users who can legally be assigned as a salesman.  Matches the
+    // role name stored by RolePermissionSeeder ('salesman') and the same filter
+    // the Delivery Boy field already uses ('delivery').
+    const role = 'salesman';
+    final key = UserPickCache.keyFor(branchId: branchId, role: role);
     UserPickCache.cache
         .refresh(
           key,
-          () => UserPickCache.fetchPage(service, page: 1, branchId: branchId, perPage: _warmPageSize),
+          () => UserPickCache.fetchPage(service, page: 1, branchId: branchId, role: role, perPage: _warmPageSize),
           requestKey: '$key::::1',
         )
         .catchError((_) {});

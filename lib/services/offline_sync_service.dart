@@ -61,7 +61,9 @@ class OfflineSyncService {
     return Duration(seconds: seconds + jitter);
   }
 
-  /// Syncs everything currently pending/failed, oldest occurred_at first.
+  /// Syncs everything currently `pending`, oldest occurred_at first.
+  /// `failed` (dead-lettered) items are excluded — they need explicit
+  /// manager correction via [updatePayloadAndReset] before they can sync.
   ///
   /// [respectBackoff] — when true (automatic triggers) items still inside
   /// their backoff window are skipped; the manual "Sync Now" button passes
@@ -75,7 +77,10 @@ class OfflineSyncService {
     void Function(SyncResult result)? onEach,
     bool respectBackoff = true,
   }) async {
-    final items = await _queue.pendingOrFailed();
+    // Use pending() — not pendingOrFailed() — so dead-lettered (failed) items
+    // are never automatically retried. They require explicit manager review and
+    // correction via updatePayloadAndReset() before they re-enter the queue.
+    final items = await _queue.pending();
     final results = <SyncResult>[];
     if (items.isEmpty) return results;
 

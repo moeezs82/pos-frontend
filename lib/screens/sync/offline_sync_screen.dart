@@ -7,6 +7,7 @@ import 'package:enterprise_pos/services/offline_sales_queue_service.dart';
 import 'package:enterprise_pos/services/offline_sync_service.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/app_feedback.dart';
+import 'package:enterprise_pos/widgets/user_picker_sheet.dart';
 
 /// Queued-sales list + "Sync Now" / per-row retry (handover doc §2.4).
 /// Every sync attempt here goes through the same POST /sales endpoint a
@@ -131,6 +132,44 @@ class _OfflineSyncScreenState extends State<OfflineSyncScreen> {
     }
   }
 
+  /// Opens a dialog where a manager can correct a dead-lettered sale's
+  /// salesman and immediately re-submit it. Only offered for `failed` items.
+  Future<void> _editAndRetry(OfflineSaleQueueItem item) async {
+    final token = context.read<AuthProvider>().token!;
+    // branch_id is stored in the payload by sale_create.dart at queue time.
+    final branchId = item.payload['branch_id']?.toString();
+
+    final patched = await showDialog<Map<String, dynamic>>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => _EditFailedSaleDialog(
+        item: item,
+        token: token,
+        branchId: branchId,
+      ),
+    );
+
+    if (patched == null || !mounted) return;
+
+    // Persist the corrected payload and reset status to pending.
+    await OfflineSalesQueueService.instance.updatePayloadAndReset(
+      item.clientRef,
+      patched,
+    );
+
+    // Reload so _items reflects the new pending status.
+    await _load();
+    if (!mounted) return;
+
+    // Find the freshly-reset item and submit it right away so the manager
+    // sees the result (synced or another error) immediately.
+    final updated = _items.firstWhere(
+      (i) => i.clientRef == item.clientRef,
+      orElse: () => item,
+    );
+    await _retryOne(updated);
+  }
+
   Future<void> _retryOne(OfflineSaleQueueItem item) async {
     setState(() => _syncingRefs.add(item.clientRef));
     try {
@@ -238,6 +277,9 @@ class _OfflineSyncScreenState extends State<OfflineSyncScreen> {
                             item: _items[i],
                             busy: _syncingRefs.contains(_items[i].clientRef),
                             onRetry: () => _retryOne(_items[i]),
+                            onEdit: _items[i].status == OfflineSaleStatus.failed
+                                ? () => _editAndRetry(_items[i])
+                                : null,
                           ),
                         ),
                 ),
@@ -252,7 +294,17 @@ class _QueueRow extends StatelessWidget {
   final bool busy;
   final VoidCallback onRetry;
 
-  const _QueueRow({required this.item, required this.busy, required this.onRetry});
+  /// Non-null only for `failed` items — opens the Edit & Retry dialog so a
+  /// manager can correct business-validation errors (e.g. wrong salesman) and
+  /// immediately re-submit. Null for pending/syncing/synced rows.
+  final VoidCallback? onEdit;
+
+  const _QueueRow({
+    required this.item,
+    required this.busy,
+    required this.onRetry,
+    this.onEdit,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -306,10 +358,29 @@ class _QueueRow extends StatelessWidget {
                     padding: EdgeInsets.all(8),
                     child: SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)),
                   )
-                : IconButton(
-                    tooltip: 'Retry',
-                    onPressed: onRetry,
-                    icon: const Icon(Icons.refresh_rounded),
+                : Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // Edit & Retry — only for failed items that need human correction.
+                      if (onEdit != null)
+                        Tooltip(
+                          message: 'Fix & Retry',
+                          child: IconButton(
+                            onPressed: onEdit,
+                            icon: const Icon(Icons.edit_rounded, size: 20),
+                            color: AppTheme.warning,
+                          ),
+                        ),
+                      Tooltip(
+                        message: item.status == OfflineSaleStatus.failed
+                            ? 'Retry as-is (without editing)'
+                            : 'Retry',
+                        child: IconButton(
+                          onPressed: onRetry,
+                          icon: const Icon(Icons.refresh_rounded),
+                        ),
+                      ),
+                    ],
                   ),
         ],
       ),
@@ -319,6 +390,218 @@ class _QueueRow extends StatelessWidget {
   String _formatDateTime(DateTime dt) {
     String two(int n) => n.toString().padLeft(2, '0');
     return '${dt.year}-${two(dt.month)}-${two(dt.day)} ${two(dt.hour)}:${two(dt.minute)}';
+  }
+}
+
+/// Dialog that lets a manager correct a business-validation error in a
+/// dead-lettered sale and immediately re-submit it. The initial design targets
+/// the most common failure cause — an invalid or missing salesman — but the
+/// dialog can be extended for other correctable fields without changing the
+/// queue or sync engine.
+///
+/// Returns the patched payload map on "Save & Retry", or null on cancel.
+class _EditFailedSaleDialog extends StatefulWidget {
+  final OfflineSaleQueueItem item;
+  final String token;
+  final String? branchId;
+
+  const _EditFailedSaleDialog({
+    required this.item,
+    required this.token,
+    this.branchId,
+  });
+
+  @override
+  State<_EditFailedSaleDialog> createState() => _EditFailedSaleDialogState();
+}
+
+class _EditFailedSaleDialogState extends State<_EditFailedSaleDialog> {
+  /// Tracks the currently chosen salesman within this dialog session.
+  /// Initialized from the snapshot stored in the payload (could be null if
+  /// no salesman was set when the sale was created offline).
+  Map<String, dynamic>? _selectedSalesman;
+
+  @override
+  void initState() {
+    super.initState();
+    final snapshot = (widget.item.payload['meta'] as Map?)?['salesman_snapshot'];
+    if (snapshot is Map<String, dynamic>) {
+      _selectedSalesman = snapshot;
+    }
+  }
+
+  Future<void> _pickSalesman() async {
+    final picked = await showModalBottomSheet<Map<String, dynamic>?>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (_) => SizedBox(
+        height: MediaQuery.of(context).size.height * 0.75,
+        child: UserPickerSheet(
+          token: widget.token,
+          branchId: widget.branchId,
+          role: 'salesman',
+          title: 'Select Salesman',
+          searchHint: 'Search salesman by name, email, phone…',
+          allowQuickAdd: false,
+        ),
+      ),
+    );
+    // UserPickerSheet pops null both when dismissed AND when the "No User"
+    // tile is tapped — we cannot distinguish the two cases. Treat null as
+    // "no change" to avoid accidentally clearing a valid salesman. The
+    // manager can use the inline "Clear" link to explicitly remove one.
+    if (picked != null && mounted) {
+      setState(() => _selectedSalesman = picked);
+    }
+  }
+
+  /// Builds the corrected payload without mutating the original.
+  Map<String, dynamic> _buildPatchedPayload() {
+    final patched = Map<String, dynamic>.from(widget.item.payload);
+    final meta = Map<String, dynamic>.from(
+      (patched['meta'] as Map<String, dynamic>?) ?? {},
+    );
+
+    if (_selectedSalesman != null) {
+      patched['salesman_id'] = _selectedSalesman!['id'];
+      meta['salesman_snapshot'] = {
+        'id': _selectedSalesman!['id'],
+        'name': (_selectedSalesman!['name'] ?? '').toString(),
+      };
+    } else {
+      patched.remove('salesman_id');
+      meta.remove('salesman_snapshot');
+    }
+
+    patched['meta'] = meta;
+    return patched;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final salesmanName = _selectedSalesman != null
+        ? (_selectedSalesman!['name'] ?? '').toString()
+        : null;
+    final error = widget.item.lastError ?? 'Unknown error.';
+
+    return AlertDialog(
+      title: const Text('Fix & Retry', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 17)),
+      contentPadding: const EdgeInsets.fromLTRB(24, 16, 24, 4),
+      actionsPadding: const EdgeInsets.fromLTRB(24, 0, 24, 16),
+      content: SizedBox(
+        width: 440,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Error banner — read-only, tells the manager what went wrong.
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppTheme.danger.withOpacity(.07),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: AppTheme.danger.withOpacity(.25)),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Padding(
+                    padding: EdgeInsets.only(top: 1),
+                    child: Icon(Icons.error_outline_rounded, color: AppTheme.danger, size: 17),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      error,
+                      style: const TextStyle(
+                        fontSize: 12.5,
+                        color: AppTheme.danger,
+                        fontWeight: FontWeight.w600,
+                        height: 1.4,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 18),
+
+            // Salesman field
+            const Text(
+              'SALESMAN',
+              style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: AppTheme.textMuted, letterSpacing: .5),
+            ),
+            const SizedBox(height: 6),
+            InkWell(
+              onTap: _pickSalesman,
+              borderRadius: BorderRadius.circular(10),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+                decoration: BoxDecoration(
+                  color: AppTheme.surfaceSoft,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: AppTheme.border),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.person_outline_rounded,
+                      size: 18,
+                      color: salesmanName != null ? AppTheme.primary : AppTheme.textMuted,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        salesmanName ?? 'Tap to select a salesman…',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w700,
+                          color: salesmanName != null ? null : AppTheme.textMuted,
+                        ),
+                      ),
+                    ),
+                    const Icon(Icons.arrow_drop_down_rounded, color: AppTheme.textMuted),
+                  ],
+                ),
+              ),
+            ),
+            if (_selectedSalesman != null) ...[
+              const SizedBox(height: 4),
+              Align(
+                alignment: Alignment.centerRight,
+                child: GestureDetector(
+                  onTap: () => setState(() => _selectedSalesman = null),
+                  child: const Text(
+                    'Clear salesman',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: AppTheme.textMuted,
+                      decoration: TextDecoration.underline,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        FilledButton.icon(
+          onPressed: () => Navigator.pop(context, _buildPatchedPayload()),
+          icon: const Icon(Icons.refresh_rounded, size: 17),
+          label: const Text('Save & Retry'),
+        ),
+      ],
+    );
   }
 }
 
