@@ -174,6 +174,15 @@ class ReceiptPreviewService {
 
               // ── RECEIPT META ───────────────────────────────────────────────
               pw.Center(child: pw.Text("Receipt# $receiptNo", style: bold)),
+              // Show a subtle "Offline Receipt / Pending Sync" note when the
+              // receipt number is an offline reference (starts with OFF-).
+              if (receiptNo.startsWith('OFF-'))
+                pw.Center(
+                  child: pw.Text(
+                    "Offline Receipt — Pending Sync",
+                    style: const pw.TextStyle(fontSize: 7),
+                  ),
+                ),
               pw.Center(child: pw.Text(dt, style: small)),
               divider(),
 

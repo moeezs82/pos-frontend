@@ -491,6 +491,8 @@ class _SalesScreenState extends State<SalesScreen> {
                               final s = _sales[i];
                               final invoice = (s['invoice_no'] ?? '')
                                   .toString();
+                              final offlineRef =
+                                  (s['offline_invoice_no'] ?? '').toString();
                               final customer =
                                   (s['customer']?['first_name'] ?? 'Walk-in')
                                       .toString();
@@ -648,17 +650,22 @@ class _SalesScreenState extends State<SalesScreen> {
                                               overflow: TextOverflow.ellipsis,
                                             ),
                                           ),
-                                          // if (dt != null)
-                                          //   Text(
-                                          //     "$dateLabel • $timeLabel",
-                                          //     style: const TextStyle(
-                                          //       color: Colors.grey,
-                                          //       fontSize: 11,
-                                          //       fontWeight: FontWeight.w500,  
-                                          //     ),
-                                          //   ),
                                         ],
                                       ),
+                                      // Show offline origin indicator when
+                                      // the sale was created offline.
+                                      if (offlineRef.isNotEmpty)
+                                        Padding(
+                                          padding: const EdgeInsets.only(top: 1),
+                                          child: Text(
+                                            'Offline ref: $offlineRef',
+                                            style: const TextStyle(
+                                              fontSize: 10,
+                                              color: Colors.blueGrey,
+                                            ),
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        ),
                                       const SizedBox(height: 2),
                                       Wrap(
                                         spacing: 0,

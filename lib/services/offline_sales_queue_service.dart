@@ -27,6 +27,13 @@ class OfflineSaleQueueItem {
   final DateTime occurredAt;
   final OfflineSaleStatus status;
   final String? serverInvoiceNo;
+
+  /// The customer-friendly offline receipt reference generated on-device
+  /// (e.g. "OFF-B1-MAIN-20260714-0001"). Printed on the receipt while the
+  /// sale is pending sync. Retained after sync alongside the official
+  /// invoice_no for traceability.
+  final String? offlineInvoiceNo;
+
   final String? lastError;
   final DateTime createdAt;
 
@@ -46,6 +53,7 @@ class OfflineSaleQueueItem {
     required this.occurredAt,
     required this.status,
     this.serverInvoiceNo,
+    this.offlineInvoiceNo,
     this.lastError,
     required this.createdAt,
     this.attempts = 0,
@@ -85,6 +93,7 @@ class OfflineSaleQueueItem {
       occurredAt: DateTime.parse(map['occurred_at'] as String),
       status: _statusFromString(map['status'] as String),
       serverInvoiceNo: map['server_invoice_no'] as String?,
+      offlineInvoiceNo: map['offline_invoice_no'] as String?,
       lastError: map['last_error'] as String?,
       createdAt: DateTime.parse(map['created_at'] as String),
       attempts: (map['attempts'] as int?) ?? 0,
@@ -109,7 +118,7 @@ class OfflineSalesQueueService {
     final path = p.join(dbPath, 'offline_sales_queue.db');
     return openDatabase(
       path,
-      version: 2,
+      version: 3,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE offline_sales_queue (
@@ -119,6 +128,7 @@ class OfflineSalesQueueService {
             occurred_at TEXT NOT NULL,
             status TEXT NOT NULL DEFAULT 'pending',
             server_invoice_no TEXT,
+            offline_invoice_no TEXT,
             last_error TEXT,
             created_at TEXT NOT NULL,
             attempts INTEGER NOT NULL DEFAULT 0,
@@ -126,14 +136,18 @@ class OfflineSalesQueueService {
           )
         ''');
       },
-      // v1 → v2 adds the retry-bookkeeping columns (handover doc G6). Existing
-      // queued sales are preserved; they just start with attempts = 0.
       onUpgrade: (db, oldVersion, newVersion) async {
+        // v1 → v2: retry-bookkeeping columns (handover doc G6).
         if (oldVersion < 2) {
           await db.execute(
               'ALTER TABLE offline_sales_queue ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0');
           await db.execute(
               'ALTER TABLE offline_sales_queue ADD COLUMN next_retry_at TEXT');
+        }
+        // v2 → v3: customer-friendly offline invoice reference column.
+        if (oldVersion < 3) {
+          await db.execute(
+              'ALTER TABLE offline_sales_queue ADD COLUMN offline_invoice_no TEXT');
         }
       },
     );
@@ -152,18 +166,20 @@ class OfflineSalesQueueService {
     required String clientRef,
     required Map<String, dynamic> payload,
     required DateTime occurredAt,
+    String? offlineInvoiceNo,
     String? initialError,
   }) async {
     final db = await _database;
     await db.insert(
       'offline_sales_queue',
       {
-        'client_ref': clientRef,
-        'payload': jsonEncode(payload),
-        'occurred_at': occurredAt.toIso8601String(),
-        'status': OfflineSaleStatus.pending.name,
-        'last_error': initialError,
-        'created_at': DateTime.now().toIso8601String(),
+        'client_ref':        clientRef,
+        'payload':           jsonEncode(payload),
+        'occurred_at':       occurredAt.toIso8601String(),
+        'status':            OfflineSaleStatus.pending.name,
+        'offline_invoice_no': offlineInvoiceNo,
+        'last_error':        initialError,
+        'created_at':        DateTime.now().toIso8601String(),
       },
       conflictAlgorithm: ConflictAlgorithm.ignore,
     );
@@ -220,11 +236,22 @@ class OfflineSalesQueueService {
     await _updateStatus(clientRef, OfflineSaleStatus.syncing);
   }
 
-  Future<void> markSynced(String clientRef, {required String serverInvoiceNo}) async {
+  Future<void> markSynced(
+    String clientRef, {
+    required String serverInvoiceNo,
+    String? offlineInvoiceNo,
+  }) async {
     final db = await _database;
     await db.update(
       'offline_sales_queue',
-      {'status': OfflineSaleStatus.synced.name, 'server_invoice_no': serverInvoiceNo, 'last_error': null},
+      {
+        'status':            OfflineSaleStatus.synced.name,
+        'server_invoice_no': serverInvoiceNo,
+        // Persist the offline reference returned by the server (same as what
+        // was sent, or corrected if there was a conflict).
+        if (offlineInvoiceNo != null) 'offline_invoice_no': offlineInvoiceNo,
+        'last_error': null,
+      },
       where: 'client_ref = ?',
       whereArgs: [clientRef],
     );

@@ -33,6 +33,7 @@ class SaleService {
     String? clientRef,
     DateTime? occurredAt,
     String? registerShiftClientRef,
+    String? offlineInvoiceNo,
   }) async {
     final payload = buildSalePayload(
       customerId: customerId,
@@ -48,6 +49,7 @@ class SaleService {
       clientRef: clientRef,
       occurredAt: occurredAt,
       registerShiftClientRef: registerShiftClientRef,
+      offlineInvoiceNo: offlineInvoiceNo,
     );
 
     // Ensure your ApiClient sends JSON (sets Content-Type: application/json)
@@ -85,6 +87,10 @@ class SaleService {
     String? clientRef,
     DateTime? occurredAt,
     String? registerShiftClientRef,
+    /// Customer-friendly offline receipt reference (e.g. "OFF-B1-MAIN-20260714-0001").
+    /// Stored permanently on the sale for traceability. Never used as the official
+    /// invoice number — that is always allocated by InvoiceSequenceService.
+    String? offlineInvoiceNo,
   }) {
     return <String, dynamic>{
       // "branch_id": branchId,
@@ -100,6 +106,7 @@ class SaleService {
       if (clientRef != null) "client_ref": clientRef,
       if (occurredAt != null) "occurred_at": occurredAt.toIso8601String(),
       if (registerShiftClientRef != null) "register_shift_client_ref": registerShiftClientRef,
+      if (offlineInvoiceNo != null) "offline_invoice_no": offlineInvoiceNo,
       "items": items
           .map(
             (it) => {

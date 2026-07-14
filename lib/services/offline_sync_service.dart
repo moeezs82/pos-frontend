@@ -16,12 +16,17 @@ class SyncResult {
   final String clientRef;
   final SyncOutcome outcome;
   final String? invoiceNo;
+
+  /// The customer-facing offline reference returned by the server after sync
+  /// (mirrors what the device sent in the sale payload as offline_invoice_no).
+  final String? offlineInvoiceNo;
   final String? error;
 
   SyncResult({
     required this.clientRef,
     required this.outcome,
     this.invoiceNo,
+    this.offlineInvoiceNo,
     this.error,
   });
 }
@@ -118,10 +123,22 @@ class OfflineSyncService {
       final res = await _client.post('/sales', body: item.payload).timeout(const Duration(seconds: 20));
       // Covers both a fresh create AND the idempotent-replay response
       // (already_existed: true) — either way the sale is confirmed synced.
-      final sale = res['data']?['sale'] as Map?;
-      final invoiceNo = (sale?['invoice_no'] ?? '').toString();
-      await _queue.markSynced(item.clientRef, serverInvoiceNo: invoiceNo);
-      return SyncResult(clientRef: item.clientRef, outcome: SyncOutcome.synced, invoiceNo: invoiceNo);
+      final data = res['data'] as Map? ?? {};
+      final sale = data['sale'] as Map? ?? {};
+      // invoice_no is also returned at the top level of data for convenience.
+      final invoiceNo = (data['invoice_no'] ?? sale['invoice_no'] ?? '').toString();
+      final offlineInvoiceNo = (data['offline_invoice_no'] ?? sale['offline_invoice_no'])?.toString();
+      await _queue.markSynced(
+        item.clientRef,
+        serverInvoiceNo: invoiceNo,
+        offlineInvoiceNo: offlineInvoiceNo,
+      );
+      return SyncResult(
+        clientRef: item.clientRef,
+        outcome: SyncOutcome.synced,
+        invoiceNo: invoiceNo,
+        offlineInvoiceNo: offlineInvoiceNo,
+      );
     } catch (e) {
       return _classifyFailure(item, e, reconcileFirst: reconcileFirst);
     }
@@ -228,7 +245,12 @@ class OfflineSyncService {
         final ref = (match['client_ref'] ?? '').toString();
         if (ref.isEmpty) continue;
         final invoiceNo = (match['invoice_no'] ?? '').toString();
-        await _queue.markSynced(ref, serverInvoiceNo: invoiceNo);
+        final offlineInvoiceNo = match['offline_invoice_no']?.toString();
+        await _queue.markSynced(
+          ref,
+          serverInvoiceNo: invoiceNo,
+          offlineInvoiceNo: offlineInvoiceNo,
+        );
         synced.add(ref);
       }
       return synced;
@@ -249,8 +271,18 @@ class OfflineSyncService {
 
       final match = found.first as Map;
       final invoiceNo = (match['invoice_no'] ?? '').toString();
-      await _queue.markSynced(item.clientRef, serverInvoiceNo: invoiceNo);
-      return SyncResult(clientRef: item.clientRef, outcome: SyncOutcome.synced, invoiceNo: invoiceNo);
+      final offlineInvoiceNo = match['offline_invoice_no']?.toString();
+      await _queue.markSynced(
+        item.clientRef,
+        serverInvoiceNo: invoiceNo,
+        offlineInvoiceNo: offlineInvoiceNo,
+      );
+      return SyncResult(
+        clientRef: item.clientRef,
+        outcome: SyncOutcome.synced,
+        invoiceNo: invoiceNo,
+        offlineInvoiceNo: offlineInvoiceNo,
+      );
     } catch (_) {
       // verify-batch itself failed to reach the server -> still offline.
       return null;

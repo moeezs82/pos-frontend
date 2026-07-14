@@ -7,6 +7,8 @@ import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/providers/branch_provider.dart';
 import 'package:enterprise_pos/providers/offline_queue_provider.dart';
 import 'package:enterprise_pos/providers/printer_config_provider.dart';
+import 'package:enterprise_pos/providers/register_shift_provider.dart';
+import 'package:enterprise_pos/services/offline_invoice_seq_service.dart';
 import 'package:enterprise_pos/services/offline_sales_queue_service.dart';
 import 'package:enterprise_pos/utils/network_failure.dart';
 import 'package:uuid/uuid.dart';
@@ -850,6 +852,32 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     final clientRef = const Uuid().v4();
     final occurredAt = DateTime.now();
 
+    // Generate a customer-friendly offline invoice reference.  This is
+    // generated up-front for EVERY sale (online or offline) so:
+    //   • The same reference is printed on the receipt and stored on the
+    //     server record, enabling "find this receipt" searches later.
+    //   • The UUID client_ref remains internal (idempotency only).
+    //   • Online sales that succeed immediately also carry offline_invoice_no
+    //     so that receipts and server records are always cross-searchable.
+    final shiftProvider = context.read<RegisterShiftProvider>();
+    final registerCode =
+        shiftProvider.shift?['register']?['code']?.toString() ?? 'REG';
+    final branchIdForSeq =
+        (globalBranchId ?? int.tryParse(_selectedBranchId ?? '0') ?? 0);
+
+    String? offlineInvoiceNo;
+    try {
+      offlineInvoiceNo = await OfflineInvoiceSeqService.instance.next(
+        branchId: branchIdForSeq,
+        registerCode: registerCode,
+        occurredAt: occurredAt,
+      );
+    } catch (e, s) {
+      // Non-fatal: fall back to null — the sale can still proceed without it.
+      debugPrint('offline_invoice_seq error: $e');
+      debugPrintStack(stackTrace: s);
+    }
+
     Map<String, dynamic>? res;
     var queuedOffline = false;
 
@@ -882,6 +910,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         meta: meta,
         clientRef: clientRef,
         occurredAt: occurredAt,
+        offlineInvoiceNo: offlineInvoiceNo,
       );
 
       String? queueReason;
@@ -908,6 +937,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
           clientRef: clientRef,
           payload: payload,
           occurredAt: occurredAt,
+          offlineInvoiceNo: offlineInvoiceNo,
           initialError: queueReason,
         );
         queuedOffline = true;
@@ -917,12 +947,15 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         }
       }
 
-      // Real invoice numbers are only ever generated server-side, at the
-      // moment of persistence (§3) — a queued offline sale doesn't have one
-      // yet, so use a clearly-distinct temporary display reference instead.
+      // receiptNo: prefer the server-confirmed invoice number for online
+      // sales; use the customer-friendly offline reference for queued sales.
+      // Never expose the UUID client_ref on a customer-facing receipt.
       final receiptNo = queuedOffline
-          ? 'OFFLINE-${_offlineStamp(occurredAt)}-${clientRef.substring(0, 8)}'
-          : (res?['data']?['sale']?['invoice_no'] ?? res?['data']?['id'] ?? 'N/A')
+          ? (offlineInvoiceNo ?? 'OFF-PENDING')
+          : (res?['data']?['invoice_no'] ??
+                  res?['data']?['sale']?['invoice_no'] ??
+                  res?['data']?['id'] ??
+                  'N/A')
               .toString();
 
       final receiptItems = _items.map((i) {
@@ -1072,7 +1105,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       if (queuedOffline) {
         AppFeedback.warning(
           context,
-          "Offline — Pending Sync. Sale saved locally as $receiptNo. ${queueReason ?? ''} It will get a real invoice number once synced.",
+          "Offline — Pending Sync. Receipt: $receiptNo. ${queueReason ?? ''} Official invoice number will be assigned when synced.",
         );
       } else {
         AppFeedback.success(context, "Sale $receiptNo created successfully. Ready for next sale.");
@@ -1088,14 +1121,6 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     } finally {
       if (mounted) setState(() => _submitting = false);
     }
-  }
-
-  /// yyyyMMdd-HHmmss stamp for the temporary offline display reference
-  /// (handover doc §2.3) — never a real invoice number, which is only ever
-  /// assigned server-side at sync time.
-  String _offlineStamp(DateTime dt) {
-    String two(int n) => n.toString().padLeft(2, '0');
-    return '${dt.year}${two(dt.month)}${two(dt.day)}-${two(dt.hour)}${two(dt.minute)}${two(dt.second)}';
   }
 
   void _resetForNextSale({bool keepInitialCustomer = false}) {

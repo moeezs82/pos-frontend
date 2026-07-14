@@ -806,6 +806,9 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
       "payments": paymentsRaw,
     };
 
+    // For reprints: use the official invoice_no. Also surface the offline
+    // reference in the receipt footer via meta so the cashier can correlate
+    // a printed offline receipt with the synced sale.
     final receiptNo = (sale['invoice_no'] ?? sale['id'] ?? 'N/A').toString();
     final createdAtStr = sale['created_at']?.toString();
     final dateTime = DateTime.tryParse(createdAtStr ?? '') ?? DateTime.now();
@@ -1016,6 +1019,31 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
                             Text("Salesman: ${_salesmanDisplayName()}"),
                             Text("Vendor: ${_vendorDisplayName()}"),
                             Text("Customer: ${_customerDisplayName()}"),
+                            // Show the original offline receipt reference when
+                            // the sale was created while the device was offline.
+                            if ((_sale!['offline_invoice_no'] ?? '').toString().isNotEmpty)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 3),
+                                child: Row(
+                                  children: [
+                                    const Icon(
+                                      Icons.offline_bolt,
+                                      size: 13,
+                                      color: Colors.blueGrey,
+                                    ),
+                                    const SizedBox(width: 4),
+                                    Expanded(
+                                      child: Text(
+                                        "Original Offline Ref: ${_sale!['offline_invoice_no']}",
+                                        style: const TextStyle(
+                                          fontSize: 12,
+                                          color: Colors.blueGrey,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
                             // Text("Branch: ${_sale!['branch']?['name']}"),
                             // Text("Status: ${_sale!['status']}"),
                           ],

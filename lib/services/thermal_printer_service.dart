@@ -179,6 +179,10 @@ class ThermalPrinterService {
     }
 
     printer.text('Receipt# $receiptNo', styles: const PosStyles(align: PosAlign.center, bold: true));
+    // Show a subtle note for offline receipts (pending server sync).
+    if (receiptNo.startsWith('OFF-')) {
+      printer.text('Offline Receipt - Pending Sync', styles: const PosStyles(align: PosAlign.center));
+    }
     printer.text(_fmtDate(dateTime), styles: const PosStyles(align: PosAlign.center));
     printer.hr();
 
