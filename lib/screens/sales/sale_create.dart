@@ -367,7 +367,64 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
 
   // ---------------- Items ----------------
 
-  /// Adds or updates a single product in [_items].
+  /// Centralized single-product add for barcode, autocomplete, and product
+  /// panel taps. If a compatible positive-qty row already exists it is
+  /// incremented by 1; otherwise a new row is appended.
+  ///
+  /// "Compatible" means same [product_id] AND non-negative quantity so that
+  /// deliberate inline-return rows (negative qty) are never merged into a
+  /// normal sale line.
+  ///
+  /// Call inside setState — does NOT call setState itself.
+  void _addOrIncrementProduct(Map<String, dynamic> product) {
+    final productId = int.tryParse(product['id']?.toString() ?? '') ?? 0;
+    if (productId == 0) return;
+
+    final price = double.tryParse(product['price']?.toString() ?? '') ?? 0.0;
+
+    final idx = _items.indexWhere((it) {
+      final existingId =
+          int.tryParse(it['product_id']?.toString() ?? '') ?? 0;
+      if (existingId != productId) return false;
+      // Do not merge into inline-return (negative-qty) rows.
+      final existingQty =
+          double.tryParse(it['quantity']?.toString() ?? '') ?? 0.0;
+      return existingQty >= 0;
+    });
+
+    if (idx != -1) {
+      // Increment quantity while preserving edited price and discount.
+      final existingQty =
+          double.tryParse(_items[idx]['quantity']?.toString() ?? '') ?? 0.0;
+      final newQty = existingQty + 1.0;
+      final discPct =
+          double.tryParse(_items[idx]['discount_pct']?.toString() ?? '') ?? 0.0;
+      final rowPrice =
+          double.tryParse(_items[idx]['price']?.toString() ?? '') ?? price;
+      _items[idx]['quantity'] = newQty;
+      _items[idx]['total'] =
+          _lineTotal(price: rowPrice, qty: newQty, discPct: discPct);
+    } else {
+      _items.add({
+        'product_id': productId,
+        'name': product['name'],
+        'cost_price': product['cost_price'],
+        'wholesale_price': product['wholesale_price'],
+        'quantity': 1.0,
+        'price': price,
+        'discount_pct': 0.0,
+        'total': _lineTotal(price: price, qty: 1.0, discPct: 0.0),
+      });
+    }
+  }
+
+  /// Sets a product's cart quantity to an explicit [qty] value (used only by
+  /// the F2 multi-select picker where the user has intentionally specified the
+  /// quantity). Preserves the existing row's price and discount when updating.
+  ///
+  /// For all single-product entry points (barcode, autocomplete, product-panel
+  /// tap) use [_addOrIncrementProduct] instead.
+  ///
   /// Call inside setState — does NOT call setState itself.
   void _applyPickedProduct(Map<String, dynamic> product, {double qty = 1.0}) {
     final productId = int.tryParse(product['id']?.toString() ?? '') ?? 0;
@@ -566,19 +623,9 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       // inside the setState closure (local variable reassigned via ??= above
       // prevents automatic narrowing inside lambdas).
       final p = product;
-      final price = double.tryParse(p['price']?.toString() ?? '') ?? 0.0;
-      setState(() {
-        _items.add({
-          "product_id": p['id'],
-          "name": p['name'],
-          "cost_price": p['cost_price'],
-          "wholesale_price": p['wholesale_price'],
-          "quantity": 1.0,
-          "price": price,
-          "discount_pct": 0.0,
-          "total": _lineTotal(price: price, qty: 1.0, discPct: 0.0),
-        });
-      });
+      // Use the centralized merge method so repeated scans of the same
+      // barcode increment the existing cart row instead of creating duplicates.
+      setState(() => _addOrIncrementProduct(p));
     } else {
       if (!mounted) return;
       AppFeedback.warning(context, "Product not found: $code");
@@ -1353,7 +1400,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
                                 vendorId: _selectedVendorId,
                                 cartProductIds: _cartProductIds,
                                 onProductTapped: (p) =>
-                                    setState(() => _applyPickedProduct(p)),
+                                    setState(() => _addOrIncrementProduct(p)),
                                 onOpenModal: _addItemManual,
                                 showSearchBar: true,
                               ),
@@ -1625,20 +1672,17 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
               controller: _productSearchController,
               onQuery: _queryProducts,
               onSelected: (ref) {
-                setState(() {
-                  if (ref.raw != null) {
-                    _applyPickedProduct(ref.raw!);
-                  } else {
-                    _items.add({
-                      'product_id': ref.id,
+                // Route through the centralized merge/increment method for
+                // both raw-data-available and raw-data-missing cases so that
+                // selecting the same product twice always increments the
+                // existing row rather than appending a new one.
+                final productMap = ref.raw ??
+                    <String, dynamic>{
+                      'id': ref.id,
                       'name': ref.name,
-                      'quantity': 1.0,
                       'price': ref.tp,
-                      'discount_pct': 0.0,
-                      'total': ref.tp,
-                    });
-                  }
-                });
+                    };
+                setState(() => _addOrIncrementProduct(productMap));
               },
             ),
           ),
