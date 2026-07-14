@@ -1187,7 +1187,47 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
           })
           .toList(growable: false);
     } catch (_) {
-      return const <ProductRef>[];
+      // Offline / server-unreachable fallback: search the local SQLite catalog
+      // so the product autocomplete keeps working with no connectivity.
+      // Uses the same CatalogCacheService that the barcode scanner already falls
+      // back to, giving the cashier a consistent offline experience.
+      try {
+        final branchIdInt = int.tryParse(_effectiveBranchIdStr());
+        final offlineRows = await CatalogCacheService.instance.searchProducts(
+          q,
+          branchId: branchIdInt,
+          vendorId: _selectedVendorId,
+          limit: 50,
+        );
+        return offlineRows.map<ProductRef>((m) {
+          double tp = 0;
+          for (final k in const ['price', 'tp', 'sell_price', 'unit_price']) {
+            final v = m[k];
+            if (v != null) {
+              final n = double.tryParse(v.toString());
+              if (n != null) {
+                tp = n;
+                break;
+              }
+            }
+          }
+          return ProductRef(
+            id: _metaInt(m['id']) ?? 0,
+            name: (m['name'] ?? 'Unnamed').toString(),
+            tp: tp,
+            sku: (m['sku'] ?? '').toString().trim().isEmpty
+                ? null
+                : m['sku'].toString().trim(),
+            barcode: (m['barcode'] ?? '').toString().trim().isEmpty
+                ? null
+                : m['barcode'].toString().trim(),
+            stock: null, // branch_stock not stored in the SQLite cache shape
+            raw: m,
+          );
+        }).toList(growable: false);
+      } catch (_) {
+        return const <ProductRef>[];
+      }
     }
   }
 
@@ -1398,6 +1438,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
                                 key: ValueKey(_selectedVendorId),
                                 token: token,
                                 vendorId: _selectedVendorId,
+                                branchId: int.tryParse(_effectiveBranchIdStr()),
                                 cartProductIds: _cartProductIds,
                                 onProductTapped: (p) =>
                                     setState(() => _addOrIncrementProduct(p)),

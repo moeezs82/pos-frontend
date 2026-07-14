@@ -321,15 +321,23 @@ class ProductPickCache {
     }
   }
 
-  /// Seeds the in-memory bucket for [vendorId] from the local catalog cache
-  /// when it's empty, so the product list shows instantly offline and after
-  /// an app restart. No-op if the bucket is already warm or the cache is empty.
+  /// Seeds (or re-seeds) the in-memory bucket for [vendorId] from the local
+  /// SQLite catalog so the instant-filter in [SaleProductPanel._onSearchChanged]
+  /// works across the full local catalog rather than just the server warm page.
+  ///
+  /// Unlike the old implementation, this intentionally does NOT early-return
+  /// when the bucket already exists.  [PartyPrefetch.warmProducts] populates
+  /// the bucket with server page 1 (≤200 rows); that is not the full catalog.
+  /// This method is called both immediately in initState (before the server
+  /// warm completes) and again after [CatalogCacheService.refresh] finishes, so
+  /// the bucket always ends up holding the freshest, most-complete local data.
+  ///
+  /// The only early-return is when SQLite has no rows yet (first ever run).
   static Future<void> hydrateFromCatalog({int? vendorId, int? branchId}) async {
     final key = keyFor(vendorId: vendorId);
-    if (cache.peek(key) != null) return;
     final items = await CatalogCacheService.instance
-        .searchProducts('', branchId: branchId, vendorId: vendorId, limit: 200);
-    if (items.isEmpty || cache.peek(key) != null) return;
+        .searchProducts('', branchId: branchId, vendorId: vendorId, limit: 500);
+    if (items.isEmpty) return; // first run — nothing cached in SQLite yet
     cache.put(key, PickCacheEntry<PartyMap>(items: items, fetchedAt: DateTime.now()));
   }
 }

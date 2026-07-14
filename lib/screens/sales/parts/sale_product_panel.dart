@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:enterprise_pos/api/common_service.dart';
 import 'package:enterprise_pos/api/product_service.dart';
 import 'package:enterprise_pos/forms/product_form_screen.dart';
+import 'package:enterprise_pos/services/catalog_cache_service.dart';
 import 'package:enterprise_pos/services/party_pick_caches.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:flutter/material.dart';
@@ -16,6 +17,11 @@ import 'package:flutter/material.dart';
 class SaleProductPanel extends StatefulWidget {
   final String token;
   final int? vendorId;
+
+  /// Branch used to scope the offline SQLite fallback search so results are
+  /// limited to the active branch's stock. Nullable — null means "all branches"
+  /// which is the safe default when no branch is selected.
+  final int? branchId;
 
   /// IDs of products already in the cart — used to show the in-cart badge.
   final Set<int> cartProductIds;
@@ -50,6 +56,7 @@ class SaleProductPanel extends StatefulWidget {
     required this.onProductTapped,
     required this.onOpenModal,
     this.vendorId,
+    this.branchId,
     this.searchFocusNode,
     this.externalSearchController,
     this.showSearchBar = true,
@@ -188,7 +195,30 @@ class _SaleProductPanelState extends State<SaleProductPanel> {
         _lastPage = entry.lastPage;
       });
     } catch (_) {
-      // Silent refresh failures keep whatever is already on screen.
+      // Offline / server-unreachable fallback: query the local SQLite catalog
+      // so the grid stays usable when the server is down.  All matching
+      // products are loaded into a single virtual page (pagination bar hides
+      // automatically when _lastPage ≤ 1) so the user can search to filter
+      // rather than paginating.  The server-side pagination resumes the next
+      // time connectivity is restored and _fetchProducts succeeds.
+      try {
+        final offlineItems = await CatalogCacheService.instance.searchProducts(
+          _search,
+          branchId: widget.branchId,
+          vendorId: widget.vendorId,
+          limit: 500,
+        );
+        if (mounted && offlineItems.isNotEmpty) {
+          setState(() {
+            if (replace) _products.clear();
+            _products.addAll(offlineItems);
+            _page = 1;
+            _lastPage = 1; // collapse pagination while offline
+          });
+        }
+      } catch (_) {
+        // Double failure: keep whatever is already on screen.
+      }
     } finally {
       if (mounted) {
         setState(() {
