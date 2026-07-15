@@ -825,6 +825,13 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         "method": "cash",
       });
     }
+    final Map<String, dynamic>? refundToSend =
+        _autoCashIfEmpty && total < 0
+        ? {
+            'amount': total.abs().toStringAsFixed(2),
+            'method': 'cash',
+          }
+        : null;
 
     final paid = paymentsToSend.fold<double>(
       0.0,
@@ -836,9 +843,9 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     final cashReceived = enteredCashReceived > 0
         ? enteredCashReceived
         : (_autoCashIfEmpty && total > 0 ? total : 0.0);
-    final changeAmount = (cashReceived - total)
-        .clamp(0.0, double.infinity)
-        .toDouble();
+    final changeAmount = total > 0
+        ? (cashReceived - total).clamp(0.0, double.infinity).toDouble()
+        : 0.0;
 
     setState(() => _submitting = true);
 
@@ -894,6 +901,12 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         changeAmount: changeAmount,
         paymentsToSend: paymentsToSend,
       );
+      if (refundToSend != null) {
+        meta['refund_snapshot'] = {
+          'amount': total.abs(),
+          'method': 'cash',
+        };
+      }
       final payload = _saleService.buildSalePayload(
         branchId: effectiveBranchId,
         customerId: _selectedCustomerId != null
@@ -905,6 +918,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         saleType: _selectedDeliveryBoyId != null ? 'delivery' : null,
         items: _items,
         payments: paymentsToSend,
+        refund: refundToSend,
         discount: discount,
         tax: tax,
         meta: meta,
@@ -1326,9 +1340,11 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     final effectiveCashReceived = enteredCashReceived > 0
         ? enteredCashReceived
         : (_autoCashIfEmpty && total > 0 ? total : 0.0);
-    final changeAmount = (effectiveCashReceived - total)
-        .clamp(0.0, double.infinity)
-        .toDouble();
+    final changeAmount = total > 0
+        ? (effectiveCashReceived - total)
+              .clamp(0.0, double.infinity)
+              .toDouble()
+        : 0.0;
 
     // ── Focus + shortcut scope ──────────────────────────────────────────────
     // CallbackShortcuts must be an ANCESTOR of Focus(_pageFocusNode) so that

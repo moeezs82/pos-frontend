@@ -237,6 +237,17 @@ class OfflineSyncService {
       case 404:
         return 'A product or record in this sale no longer exists on the server.';
       case 409:
+        final code = e.body?['code']?.toString() ?? '';
+        if (code == 'OFFLINE_INVOICE_NO_COLLISION') {
+          final offlineNo = (e.body?['data'] as Map?)?['offline_invoice_no']?.toString() ?? '';
+          final conflictingNo = (e.body?['data'] as Map?)?['conflicting_invoice_no']?.toString() ?? '';
+          return 'Offline reference number${offlineNo.isNotEmpty ? " $offlineNo" : ""} '
+              'is already recorded against a different sale'
+              '${conflictingNo.isNotEmpty ? " ($conflictingNo)" : ""}. '
+              'Two terminals may share the same register code, or the offline '
+              'sequence was reset (reinstall / data clear). '
+              'This sale must be manually reconciled — contact your administrator.';
+        }
         return 'This sale conflicts with a business rule on the server: ${e.message}';
       case 422:
         return 'The server rejected this sale: ${e.message}';

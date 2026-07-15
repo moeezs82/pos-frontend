@@ -3,11 +3,11 @@ import 'package:provider/provider.dart';
 
 import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/providers/offline_queue_provider.dart';
+import 'package:enterprise_pos/screens/sync/offline_sale_detail_screen.dart';
 import 'package:enterprise_pos/services/offline_sales_queue_service.dart';
 import 'package:enterprise_pos/services/offline_sync_service.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/app_feedback.dart';
-import 'package:enterprise_pos/widgets/user_picker_sheet.dart';
 
 /// Queued-sales list + "Sync Now" / per-row retry (handover doc §2.4).
 /// Every sync attempt here goes through the same POST /sales endpoint a
@@ -56,15 +56,10 @@ class _OfflineSyncScreenState extends State<OfflineSyncScreen> {
       _loading = true;
       _loadError = null;
     });
-    // Guarded so a local-DB problem shows a real error with a Retry button
-    // instead of spinning forever — this is what silently hung before the
-    // Windows sqlite backend was wired up correctly.
     try {
       final all = await OfflineSalesQueueService.instance.all();
       if (!mounted) return;
       setState(() {
-        // Newest first for display; sync order (oldest occurred_at first)
-        // is handled internally by OfflineSyncService.
         _items = all.reversed.toList();
         _loading = false;
       });
@@ -90,8 +85,6 @@ class _OfflineSyncScreenState extends State<OfflineSyncScreen> {
     });
     try {
       var synced = 0, failed = 0, retrying = 0;
-      // Manual "Sync Now" forces a full flush — ignore per-item backoff
-      // windows since the cashier explicitly asked to try right now.
       final results = await _syncService.syncAll(respectBackoff: false);
       for (final r in results) {
         switch (r.outcome) {
@@ -115,7 +108,7 @@ class _OfflineSyncScreenState extends State<OfflineSyncScreen> {
 
       final last = results.isNotEmpty ? results.last.outcome : null;
       if (_authExpired || last == SyncOutcome.authRequired) {
-        // The onAuthRequired callback already surfaced the re-auth message.
+        // onAuthRequired callback already surfaced the re-auth message.
       } else if (last == SyncOutcome.stillOffline) {
         AppFeedback.warning(context, "Still offline — couldn't reach the backend. $synced synced before stopping.");
       } else if (failed > 0) {
@@ -132,42 +125,25 @@ class _OfflineSyncScreenState extends State<OfflineSyncScreen> {
     }
   }
 
-  /// Opens a dialog where a manager can correct a dead-lettered sale's
-  /// salesman and immediately re-submit it. Only offered for `failed` items.
-  Future<void> _editAndRetry(OfflineSaleQueueItem item) async {
-    final token = context.read<AuthProvider>().token!;
-    // branch_id is stored in the payload by sale_create.dart at queue time.
-    final branchId = item.payload['branch_id']?.toString();
-
-    final patched = await showDialog<Map<String, dynamic>>(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => _EditFailedSaleDialog(
-        item: item,
-        token: token,
-        branchId: branchId,
+  /// Opens the full detail screen for ANY dead-lettered sale.
+  ///
+  /// The detail screen lets a manager view the complete invoice, then either:
+  ///   • Create as New Sale — posts a replica with a fresh client_ref, no
+  ///     offline_invoice_no, and removes the dead-lettered row on success.
+  ///   • Discard — hard-deletes the row after confirmation.
+  ///
+  /// Returns `true` when the queue changed so we reload the list.
+  Future<void> _viewDetails(OfflineSaleQueueItem item) async {
+    final changed = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => OfflineSaleDetailScreen(item: item),
       ),
     );
-
-    if (patched == null || !mounted) return;
-
-    // Persist the corrected payload and reset status to pending.
-    await OfflineSalesQueueService.instance.updatePayloadAndReset(
-      item.clientRef,
-      patched,
-    );
-
-    // Reload so _items reflects the new pending status.
-    await _load();
-    if (!mounted) return;
-
-    // Find the freshly-reset item and submit it right away so the manager
-    // sees the result (synced or another error) immediately.
-    final updated = _items.firstWhere(
-      (i) => i.clientRef == item.clientRef,
-      orElse: () => item,
-    );
-    await _retryOne(updated);
+    if (changed == true && mounted) {
+      await _load();
+      await _refreshBadge();
+    }
   }
 
   Future<void> _retryOne(OfflineSaleQueueItem item) async {
@@ -188,7 +164,6 @@ class _OfflineSyncScreenState extends State<OfflineSyncScreen> {
           AppFeedback.info(context, "Server busy — this sale will retry automatically shortly.");
           break;
         case SyncOutcome.authRequired:
-          // onAuthRequired already showed the re-auth message.
           break;
         case SyncOutcome.failed:
           AppFeedback.error(context, "Needs review: ${result.error}");
@@ -241,111 +216,203 @@ class _OfflineSyncScreenState extends State<OfflineSyncScreen> {
                   ),
                 )
               : Column(
-              children: [
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(16),
-                  color: AppTheme.surfaceSoft,
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          pendingOrFailed == 0
-                              ? 'All sales are synced.'
-                              : '$pendingOrFailed sale(s) waiting to sync.',
-                          style: const TextStyle(fontWeight: FontWeight.w800),
-                        ),
-                      ),
-                      FilledButton.icon(
-                        onPressed: (_syncing || pendingOrFailed == 0) ? null : _syncAll,
-                        icon: _syncing
-                            ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
-                            : const Icon(Icons.sync_rounded),
-                        label: Text(_syncing ? 'Syncing…' : 'Sync Now'),
-                      ),
-                    ],
-                  ),
-                ),
-                Expanded(
-                  child: _items.isEmpty
-                      ? const Center(child: Text('No offline sales recorded yet.'))
-                      : ListView.separated(
-                          padding: const EdgeInsets.all(12),
-                          itemCount: _items.length,
-                          separatorBuilder: (_, __) => const SizedBox(height: 8),
-                          itemBuilder: (_, i) => _QueueRow(
-                            item: _items[i],
-                            busy: _syncingRefs.contains(_items[i].clientRef),
-                            onRetry: () => _retryOne(_items[i]),
-                            onEdit: _items[i].status == OfflineSaleStatus.failed
-                                ? () => _editAndRetry(_items[i])
-                                : null,
+                  children: [
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(16),
+                      color: AppTheme.surfaceSoft,
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              pendingOrFailed == 0
+                                  ? 'All sales are synced.'
+                                  : '$pendingOrFailed sale(s) waiting to sync.',
+                              style: const TextStyle(fontWeight: FontWeight.w800),
+                            ),
                           ),
-                        ),
+                          FilledButton.icon(
+                            onPressed: (_syncing || pendingOrFailed == 0) ? null : _syncAll,
+                            icon: _syncing
+                                ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                                : const Icon(Icons.sync_rounded),
+                            label: Text(_syncing ? 'Syncing…' : 'Sync Now'),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Expanded(
+                      child: _items.isEmpty
+                          ? const Center(child: Text('No offline sales recorded yet.'))
+                          : ListView.separated(
+                              padding: const EdgeInsets.all(12),
+                              itemCount: _items.length,
+                              separatorBuilder: (_, __) => const SizedBox(height: 8),
+                              itemBuilder: (_, i) {
+                                final item = _items[i];
+                                final isCollision = _isCollisionError(item);
+                                return _QueueRow(
+                                  item: item,
+                                  busy: _syncingRefs.contains(item.clientRef),
+                                  isCollision: isCollision,
+                                  onRetry: () => _retryOne(item),
+                                  onViewDetails: item.status == OfflineSaleStatus.failed
+                                      ? () => _viewDetails(item)
+                                      : null,
+                                );
+                              },
+                            ),
+                    ),
+                  ],
                 ),
-              ],
-            ),
     );
   }
+
+  /// True when a dead-lettered item failed specifically due to an
+  /// offline_invoice_no collision — i.e., the error requires assigning a
+  /// new reference number rather than fixing a business-validation field.
+  bool _isCollisionError(OfflineSaleQueueItem item) {
+    final err = item.lastError ?? '';
+    return item.status == OfflineSaleStatus.failed &&
+        (err.contains('already recorded against a different sale') ||
+         err.contains('OFFLINE_INVOICE_NO_COLLISION'));
+  }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Queue row
+// ─────────────────────────────────────────────────────────────────────────────
 
 class _QueueRow extends StatelessWidget {
   final OfflineSaleQueueItem item;
   final bool busy;
+  final bool isCollision;
   final VoidCallback onRetry;
 
-  /// Non-null only for `failed` items — opens the Edit & Retry dialog so a
-  /// manager can correct business-validation errors (e.g. wrong salesman) and
-  /// immediately re-submit. Null for pending/syncing/synced rows.
-  final VoidCallback? onEdit;
+  /// Non-null for all failed items — opens the full detail / replay screen.
+  final VoidCallback? onViewDetails;
 
   const _QueueRow({
     required this.item,
     required this.busy,
     required this.onRetry,
-    this.onEdit,
+    this.isCollision = false,
+    this.onViewDetails,
   });
 
   @override
   Widget build(BuildContext context) {
-    final canRetry = item.status == OfflineSaleStatus.pending || item.status == OfflineSaleStatus.failed;
+    final canRetry = item.status == OfflineSaleStatus.pending ||
+        item.status == OfflineSaleStatus.failed;
 
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: AppTheme.border),
+        border: Border.all(
+          color: item.status == OfflineSaleStatus.failed
+              ? (isCollision
+                  ? AppTheme.warning.withOpacity(.5)
+                  : AppTheme.danger.withOpacity(.3))
+              : AppTheme.border,
+          width: item.status == OfflineSaleStatus.failed ? 1.5 : 1,
+        ),
       ),
       child: Row(
         children: [
-          _StatusDot(status: item.status),
+          _StatusDot(status: item.status, isCollision: isCollision),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(item.displayCustomerName, style: const TextStyle(fontWeight: FontWeight.w800)),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        item.displayCustomerName,
+                        style: const TextStyle(fontWeight: FontWeight.w800),
+                      ),
+                    ),
+                    // Show collision chip for ref-collision dead letters.
+                    if (isCollision)
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 7, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: AppTheme.warning.withOpacity(.12),
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(
+                              color: AppTheme.warning.withOpacity(.4)),
+                        ),
+                        child: const Text(
+                          'REF COLLISION',
+                          style: TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.w800,
+                            color: AppTheme.warning,
+                            letterSpacing: .3,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
                 const SizedBox(height: 2),
                 Text(
-                  '${_formatDateTime(item.occurredAt)}  •  \$${item.displayTotal.toStringAsFixed(2)}'
+                  '${_formatDateTime(item.occurredAt)}  •  '
+                  '\$${item.displayTotal.toStringAsFixed(2)}'
                   '${item.attempts > 0 ? '  •  ${item.attempts} attempt${item.attempts == 1 ? '' : 's'}' : ''}',
-                  style: const TextStyle(color: AppTheme.textMuted, fontSize: 12.5, fontWeight: FontWeight.w600),
+                  style: const TextStyle(
+                    color: AppTheme.textMuted,
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
-                if (item.status == OfflineSaleStatus.synced && item.serverInvoiceNo != null) ...[
-                  const SizedBox(height: 2),
-                  Text('Synced as ${item.serverInvoiceNo}', style: const TextStyle(color: AppTheme.success, fontSize: 12.5, fontWeight: FontWeight.w700)),
-                ],
-                if (item.status != OfflineSaleStatus.synced && item.lastError != null && item.lastError!.isNotEmpty) ...[
+                if (item.offlineInvoiceNo != null &&
+                    item.status != OfflineSaleStatus.synced) ...[
                   const SizedBox(height: 2),
                   Text(
-                    item.status == OfflineSaleStatus.failed ? item.lastError! : 'Queued: ${item.lastError}',
+                    'Receipt ref: ${item.offlineInvoiceNo}',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: isCollision
+                          ? AppTheme.warning
+                          : AppTheme.textMuted,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+                if (item.status == OfflineSaleStatus.synced &&
+                    item.serverInvoiceNo != null) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    'Synced as ${item.serverInvoiceNo}',
+                    style: const TextStyle(
+                      color: AppTheme.success,
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+                if (item.status != OfflineSaleStatus.synced &&
+                    item.lastError != null &&
+                    item.lastError!.isNotEmpty) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    item.status == OfflineSaleStatus.failed
+                        ? item.lastError!
+                        : 'Queued: ${item.lastError}',
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                      color: item.status == OfflineSaleStatus.failed ? AppTheme.danger : AppTheme.textMuted,
+                      color: item.status == OfflineSaleStatus.failed
+                          ? AppTheme.danger
+                          : AppTheme.textMuted,
                       fontSize: 12,
-                      fontWeight: item.status == OfflineSaleStatus.failed ? FontWeight.w600 : FontWeight.w500,
+                      fontWeight: item.status == OfflineSaleStatus.failed
+                          ? FontWeight.w600
+                          : FontWeight.w500,
                     ),
                   ),
                 ],
@@ -356,19 +423,25 @@ class _QueueRow extends StatelessWidget {
             busy
                 ? const Padding(
                     padding: EdgeInsets.all(8),
-                    child: SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)),
+                    child: SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
                   )
                 : Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      // Edit & Retry — only for failed items that need human correction.
-                      if (onEdit != null)
+                      // View Details — opens the full invoice + replay screen.
+                      // Available for all failed items regardless of error type.
+                      if (onViewDetails != null)
                         Tooltip(
-                          message: 'Fix & Retry',
+                          message: 'View details & recovery options',
                           child: IconButton(
-                            onPressed: onEdit,
-                            icon: const Icon(Icons.edit_rounded, size: 20),
-                            color: AppTheme.warning,
+                            onPressed: onViewDetails,
+                            icon: const Icon(
+                                Icons.receipt_long_rounded, size: 20),
+                            color: AppTheme.info,
                           ),
                         ),
                       Tooltip(
@@ -393,234 +466,34 @@ class _QueueRow extends StatelessWidget {
   }
 }
 
-/// Dialog that lets a manager correct a business-validation error in a
-/// dead-lettered sale and immediately re-submit it. The initial design targets
-/// the most common failure cause — an invalid or missing salesman — but the
-/// dialog can be extended for other correctable fields without changing the
-/// queue or sync engine.
-///
-/// Returns the patched payload map on "Save & Retry", or null on cancel.
-class _EditFailedSaleDialog extends StatefulWidget {
-  final OfflineSaleQueueItem item;
-  final String token;
-  final String? branchId;
 
-  const _EditFailedSaleDialog({
-    required this.item,
-    required this.token,
-    this.branchId,
-  });
-
-  @override
-  State<_EditFailedSaleDialog> createState() => _EditFailedSaleDialogState();
-}
-
-class _EditFailedSaleDialogState extends State<_EditFailedSaleDialog> {
-  /// Tracks the currently chosen salesman within this dialog session.
-  /// Initialized from the snapshot stored in the payload (could be null if
-  /// no salesman was set when the sale was created offline).
-  Map<String, dynamic>? _selectedSalesman;
-
-  @override
-  void initState() {
-    super.initState();
-    final snapshot = (widget.item.payload['meta'] as Map?)?['salesman_snapshot'];
-    if (snapshot is Map<String, dynamic>) {
-      _selectedSalesman = snapshot;
-    }
-  }
-
-  Future<void> _pickSalesman() async {
-    final picked = await showModalBottomSheet<Map<String, dynamic>?>(
-      context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (_) => SizedBox(
-        height: MediaQuery.of(context).size.height * 0.75,
-        child: UserPickerSheet(
-          token: widget.token,
-          branchId: widget.branchId,
-          role: 'salesman',
-          title: 'Select Salesman',
-          searchHint: 'Search salesman by name, email, phone…',
-          allowQuickAdd: false,
-        ),
-      ),
-    );
-    // UserPickerSheet pops null both when dismissed AND when the "No User"
-    // tile is tapped — we cannot distinguish the two cases. Treat null as
-    // "no change" to avoid accidentally clearing a valid salesman. The
-    // manager can use the inline "Clear" link to explicitly remove one.
-    if (picked != null && mounted) {
-      setState(() => _selectedSalesman = picked);
-    }
-  }
-
-  /// Builds the corrected payload without mutating the original.
-  Map<String, dynamic> _buildPatchedPayload() {
-    final patched = Map<String, dynamic>.from(widget.item.payload);
-    final meta = Map<String, dynamic>.from(
-      (patched['meta'] as Map<String, dynamic>?) ?? {},
-    );
-
-    if (_selectedSalesman != null) {
-      patched['salesman_id'] = _selectedSalesman!['id'];
-      meta['salesman_snapshot'] = {
-        'id': _selectedSalesman!['id'],
-        'name': (_selectedSalesman!['name'] ?? '').toString(),
-      };
-    } else {
-      patched.remove('salesman_id');
-      meta.remove('salesman_snapshot');
-    }
-
-    patched['meta'] = meta;
-    return patched;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final salesmanName = _selectedSalesman != null
-        ? (_selectedSalesman!['name'] ?? '').toString()
-        : null;
-    final error = widget.item.lastError ?? 'Unknown error.';
-
-    return AlertDialog(
-      title: const Text('Fix & Retry', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 17)),
-      contentPadding: const EdgeInsets.fromLTRB(24, 16, 24, 4),
-      actionsPadding: const EdgeInsets.fromLTRB(24, 0, 24, 16),
-      content: SizedBox(
-        width: 440,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Error banner — read-only, tells the manager what went wrong.
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: AppTheme.danger.withOpacity(.07),
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: AppTheme.danger.withOpacity(.25)),
-              ),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Padding(
-                    padding: EdgeInsets.only(top: 1),
-                    child: Icon(Icons.error_outline_rounded, color: AppTheme.danger, size: 17),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      error,
-                      style: const TextStyle(
-                        fontSize: 12.5,
-                        color: AppTheme.danger,
-                        fontWeight: FontWeight.w600,
-                        height: 1.4,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 18),
-
-            // Salesman field
-            const Text(
-              'SALESMAN',
-              style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: AppTheme.textMuted, letterSpacing: .5),
-            ),
-            const SizedBox(height: 6),
-            InkWell(
-              onTap: _pickSalesman,
-              borderRadius: BorderRadius.circular(10),
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
-                decoration: BoxDecoration(
-                  color: AppTheme.surfaceSoft,
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: AppTheme.border),
-                ),
-                child: Row(
-                  children: [
-                    Icon(
-                      Icons.person_outline_rounded,
-                      size: 18,
-                      color: salesmanName != null ? AppTheme.primary : AppTheme.textMuted,
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        salesmanName ?? 'Tap to select a salesman…',
-                        style: TextStyle(
-                          fontWeight: FontWeight.w700,
-                          color: salesmanName != null ? null : AppTheme.textMuted,
-                        ),
-                      ),
-                    ),
-                    const Icon(Icons.arrow_drop_down_rounded, color: AppTheme.textMuted),
-                  ],
-                ),
-              ),
-            ),
-            if (_selectedSalesman != null) ...[
-              const SizedBox(height: 4),
-              Align(
-                alignment: Alignment.centerRight,
-                child: GestureDetector(
-                  onTap: () => setState(() => _selectedSalesman = null),
-                  child: const Text(
-                    'Clear salesman',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: AppTheme.textMuted,
-                      decoration: TextDecoration.underline,
-                    ),
-                  ),
-                ),
-              ),
-            ],
-            const SizedBox(height: 8),
-          ],
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Cancel'),
-        ),
-        FilledButton.icon(
-          onPressed: () => Navigator.pop(context, _buildPatchedPayload()),
-          icon: const Icon(Icons.refresh_rounded, size: 17),
-          label: const Text('Save & Retry'),
-        ),
-      ],
-    );
-  }
-}
+// ─────────────────────────────────────────────────────────────────────────────
+// Shared widgets
+// ─────────────────────────────────────────────────────────────────────────────
 
 class _StatusDot extends StatelessWidget {
   final OfflineSaleStatus status;
-  const _StatusDot({required this.status});
+  final bool isCollision;
+
+  const _StatusDot({required this.status, this.isCollision = false});
 
   @override
   Widget build(BuildContext context) {
-    final (color, icon) = switch (status) {
-      OfflineSaleStatus.pending => (AppTheme.warning, Icons.schedule_rounded),
-      OfflineSaleStatus.syncing => (AppTheme.info, Icons.sync_rounded),
-      OfflineSaleStatus.synced => (AppTheme.success, Icons.check_circle_rounded),
-      OfflineSaleStatus.failed => (AppTheme.danger, Icons.error_rounded),
-    };
+    final (color, icon) = isCollision
+        ? (AppTheme.warning, Icons.swap_horiz_rounded)
+        : switch (status) {
+            OfflineSaleStatus.pending => (AppTheme.warning, Icons.schedule_rounded),
+            OfflineSaleStatus.syncing => (AppTheme.info, Icons.sync_rounded),
+            OfflineSaleStatus.synced  => (AppTheme.success, Icons.check_circle_rounded),
+            OfflineSaleStatus.failed  => (AppTheme.danger, Icons.error_rounded),
+          };
     return Container(
       height: 38,
       width: 38,
-      decoration: BoxDecoration(color: color.withOpacity(.12), borderRadius: BorderRadius.circular(12)),
+      decoration: BoxDecoration(
+        color: color.withOpacity(.12),
+        borderRadius: BorderRadius.circular(12),
+      ),
       child: Icon(icon, color: color, size: 20),
     );
   }

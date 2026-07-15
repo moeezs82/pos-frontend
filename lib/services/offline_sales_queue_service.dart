@@ -1,6 +1,8 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 // Driven through sqflite_common_ffi (not the plain sqflite plugin) because
 // this is a Windows desktop app — see the pubspec.yaml comment next to
 // sqflite_common_ffi for why. The API surface (Database, openDatabase,
@@ -114,8 +116,14 @@ class OfflineSalesQueueService {
   }
 
   Future<Database> _open() async {
-    final dbPath = await getDatabasesPath();
-    final path = p.join(dbPath, 'offline_sales_queue.db');
+    // Use the OS-stable app support directory so the queue database persists
+    // across app restarts regardless of the process working directory.
+    // On Windows this is typically:
+    //   C:\Users\{user}\AppData\Roaming\{org}\{appName}\
+    final appSupport = await getApplicationSupportDirectory();
+    final dir = Directory(p.join(appSupport.path, 'databases'));
+    if (!await dir.exists()) await dir.create(recursive: true);
+    final path = p.join(dir.path, 'offline_sales_queue.db');
     return openDatabase(
       path,
       version: 3,
@@ -341,6 +349,60 @@ class OfflineSalesQueueService {
         'next_retry_at': null,
         'last_error': null,
       },
+      where: 'client_ref = ?',
+      whereArgs: [clientRef],
+    );
+  }
+
+  /// Replaces the offline_invoice_no in both the payload JSON and the
+  /// dedicated column for a dead-lettered OFFLINE_INVOICE_NO_COLLISION item,
+  /// then resets it to [pending].
+  ///
+  /// The [clientRef] is preserved — a new receipt reference is assigned but
+  /// the idempotency key stays the same, so the backend correctly treats a
+  /// second sync attempt as a fresh (non-duplicate) create.
+  Future<void> reassignOfflineRef(
+    String clientRef,
+    String newOfflineInvoiceNo,
+  ) async {
+    final db = await _database;
+    final rows = await db.query(
+      'offline_sales_queue',
+      where: 'client_ref = ?',
+      whereArgs: [clientRef],
+      limit: 1,
+    );
+    if (rows.isEmpty) return;
+
+    final current = rows.first;
+    final payload = jsonDecode(current['payload'] as String) as Map<String, dynamic>;
+    final updatedPayload = Map<String, dynamic>.from(payload)
+      ..['offline_invoice_no'] = newOfflineInvoiceNo;
+
+    await db.update(
+      'offline_sales_queue',
+      {
+        'payload':             jsonEncode(updatedPayload),
+        'offline_invoice_no':  newOfflineInvoiceNo,
+        'status':              OfflineSaleStatus.pending.name,
+        'attempts':            0,
+        'next_retry_at':       null,
+        'last_error':          null,
+      },
+      where: 'client_ref = ?',
+      whereArgs: [clientRef],
+    );
+  }
+
+  /// Permanently removes a queue item by [clientRef].
+  ///
+  /// Use this ONLY after a successful server confirmation (replay succeeded)
+  /// or an explicit manager discard decision. Never call this on a pending
+  /// item — the sale would be lost without being recorded on the server.
+  Future<void> purge(String clientRef) async {
+    final db = await _database;
+    await db.delete(
+      'offline_sales_queue',
       where: 'client_ref = ?',
       whereArgs: [clientRef],
     );

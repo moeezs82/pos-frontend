@@ -27,6 +27,7 @@ class SaleService {
     String? saleType,
     List<Map<String, dynamic>> items = const [],
     List<Map<String, dynamic>> payments = const [],
+    Map<String, dynamic>? refund,
     double discount = 0.0,
     double tax = 0.0,
     Map<String, dynamic>? meta,
@@ -43,6 +44,7 @@ class SaleService {
       saleType: saleType,
       items: items,
       payments: payments,
+      refund: refund,
       discount: discount,
       tax: tax,
       meta: meta,
@@ -81,6 +83,7 @@ class SaleService {
     String? saleType,
     List<Map<String, dynamic>> items = const [],
     List<Map<String, dynamic>> payments = const [],
+    Map<String, dynamic>? refund,
     double discount = 0.0,
     double tax = 0.0,
     Map<String, dynamic>? meta,
@@ -120,6 +123,7 @@ class SaleService {
       "payments": payments
           .map((p) => {"amount": p["amount"], "method": p["method"]})
           .toList(),
+      if (refund != null) "refund": refund,
     };
   }
 }

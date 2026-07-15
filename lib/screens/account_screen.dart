@@ -1,6 +1,9 @@
 import 'package:enterprise_pos/api/account_service.dart';
+import 'package:enterprise_pos/api/common_service.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
+import 'package:enterprise_pos/providers/branch_provider.dart';
 import 'package:enterprise_pos/screens/cashbook/widgets/cb_pagination.dart';
+import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -13,6 +16,7 @@ class AccountsScreen extends StatefulWidget {
 
 class _AccountsScreenState extends State<AccountsScreen> {
   late AccountService _svc;
+  bool _isMasterAdmin = false;
 
   // data
   List<Map<String, dynamic>> _items = [];
@@ -32,13 +36,24 @@ class _AccountsScreenState extends State<AccountsScreen> {
   final _vCtrl = ScrollController();
   final _hCtrl = ScrollController();
 
-  // toggle CRUD controls (turn off if backend is read-only)
-  final bool _enableCrud = true;
+  bool get _enableCrud => _isMasterAdmin;
+
+  static const _coreAccountCodes = {
+    '1000', '1010', '1200', '1210', '1400',
+    '2000', '2100', '2105', '2205', '3100',
+    '4000', '5100', '5205',
+  };
 
   @override
   void initState() {
     super.initState();
-    final token = Provider.of<AuthProvider>(context, listen: false).token!;
+    final auth = Provider.of<AuthProvider>(context, listen: false);
+    _isMasterAdmin = auth.isMasterAdmin;
+    if (!_isMasterAdmin || auth.token == null) {
+      _loading = false;
+      return;
+    }
+    final token = auth.token!;
     _svc = AccountService(token: token);
     _init();
   }
@@ -187,8 +202,21 @@ class _AccountsScreenState extends State<AccountsScreen> {
       ],
       rows: _items.map((a) {
         final active = (a["is_active"] ?? true) == true;
+        final isCore = _coreAccountCodes.contains(a["code"]?.toString());
         return DataRow(cells: [
-          DataCell(Text(a["code"] ?? "")),
+          DataCell(Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(a["code"] ?? ""),
+              if (isCore) ...[
+                const SizedBox(width: 6),
+                const Tooltip(
+                  message: 'Protected system account',
+                  child: Icon(Icons.lock_rounded, size: 15, color: AppTheme.textMuted),
+                ),
+              ],
+            ],
+          )),
           DataCell(Text(a["name"] ?? "")),
           DataCell(Text(a["type"] ?? "")),
           DataCell(Icon(
@@ -199,13 +227,13 @@ class _AccountsScreenState extends State<AccountsScreen> {
           DataCell(Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              if (_enableCrud)
+              if (_enableCrud && !isCore)
                 IconButton(
                   tooltip: "Edit",
                   icon: const Icon(Icons.edit, size: 18),
                   onPressed: () => _openCreateEditDialog(row: a),
                 ),
-              if (_enableCrud)
+              if (_enableCrud && !isCore)
                 IconButton(
                   tooltip: active ? "Deactivate" : "Activate",
                   icon: Icon(active ? Icons.visibility_off : Icons.visibility, size: 18),
@@ -274,6 +302,7 @@ class _AccountsScreenState extends State<AccountsScreen> {
 
   Future<void> _openCreateEditDialog({Map<String, dynamic>? row}) async {
     if (!_enableCrud) return;
+    final isCore = row != null && _coreAccountCodes.contains(row["code"]?.toString());
     final codeCtrl = TextEditingController(text: row?["code"] ?? "");
     final nameCtrl = TextEditingController(text: row?["name"] ?? "");
     bool isActive = (row?["is_active"] ?? true) == true;
@@ -297,6 +326,7 @@ class _AccountsScreenState extends State<AccountsScreen> {
               children: [
                 TextField(
                   controller: codeCtrl,
+                  readOnly: isCore,
                   decoration: const InputDecoration(
                     labelText: "Code",
                     border: OutlineInputBorder(),
@@ -327,14 +357,15 @@ class _AccountsScreenState extends State<AccountsScreen> {
                       child: Text("${t["name"]} (${t["code"]})"),
                     );
                   }).toList(),
-                  onChanged: (v) => setStateDialog(() => accountTypeId = v),
+                  onChanged: isCore ? null : (v) => setStateDialog(() => accountTypeId = v),
                 ),
                 const SizedBox(height: 12),
                 SwitchListTile(
                   dense: true,
                   title: const Text("Active"),
                   value: isActive,
-                  onChanged: (v) => setStateDialog(() => isActive = v),
+                  subtitle: isCore ? const Text('Required by system posting and reports') : null,
+                  onChanged: isCore ? null : (v) => setStateDialog(() => isActive = v),
                 ),
               ],
             ),
@@ -408,10 +439,30 @@ class _AccountsScreenState extends State<AccountsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (!_isMasterAdmin) {
+      return Scaffold(
+        appBar: AppBar(title: const Text('Chart of Accounts')),
+        body: const Center(
+          child: Padding(
+            padding: EdgeInsets.all(24),
+            child: Text('Chart of Accounts is available only to Master Admin.'),
+          ),
+        ),
+      );
+    }
+
     return Scaffold(
       appBar: AppBar(
         title: const Text("Chart of Accounts"),
         actions: [
+          TextButton.icon(
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const BranchPaymentMappingsScreen()),
+            ),
+            icon: const Icon(Icons.account_balance_wallet_rounded),
+            label: const Text('Payment mappings'),
+          ),
           IconButton(
             onPressed: () => _fetch(page: _currentPage),
             tooltip: "Refresh",
@@ -443,4 +494,273 @@ class _AccountsScreenState extends State<AccountsScreen> {
       ),
     );
   }
+}
+
+class BranchPaymentMappingsScreen extends StatefulWidget {
+  const BranchPaymentMappingsScreen({super.key});
+
+  @override
+  State<BranchPaymentMappingsScreen> createState() => _BranchPaymentMappingsScreenState();
+}
+
+class _BranchPaymentMappingsScreenState extends State<BranchPaymentMappingsScreen> {
+  static const _methods = ['cash', 'card', 'bank', 'wallet'];
+
+  late AccountService _accountsApi;
+  late CommonService _commonApi;
+  List<Map<String, dynamic>> _branches = [];
+  List<Map<String, dynamic>> _assetAccounts = [];
+  Map<String, Map<String, dynamic>> _mappings = {};
+  int? _branchId;
+  bool _loading = true;
+  String? _error;
+  String? _savingMethod;
+
+  @override
+  void initState() {
+    super.initState();
+    final auth = context.read<AuthProvider>();
+    if (!auth.isMasterAdmin || auth.token == null) {
+      _loading = false;
+      _error = 'Branch payment mappings are available only to Master Admin.';
+      return;
+    }
+    _accountsApi = AccountService(token: auth.token!);
+    _commonApi = CommonService(token: auth.token!);
+    _loadInitial();
+  }
+
+  Future<void> _loadInitial() async {
+    try {
+      final results = await Future.wait([
+        _commonApi.getBranches(),
+        _accountsApi.getAccounts(isActive: true),
+      ]);
+      final branches = results[0] as List<Map<String, dynamic>>;
+      final accountResult = results[1] as Map<String, dynamic>;
+      final accounts = List<Map<String, dynamic>>.from(accountResult['items'] ?? const []);
+      final preferred = context.read<BranchProvider>().selectedBranchId;
+      final selected = branches.any((b) => _asInt(b['id']) == preferred)
+          ? preferred
+          : (branches.isEmpty ? null : _asInt(branches.first['id']));
+
+      if (!mounted) return;
+      setState(() {
+        _branches = branches;
+        _assetAccounts = accounts.where((a) => a['type']?.toString() == 'ASSET').toList();
+        _branchId = selected;
+        _loading = selected != null;
+        _error = selected == null ? 'No branches are available.' : null;
+      });
+      if (selected != null) await _loadMappings(selected);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = e.toString();
+      });
+    }
+  }
+
+  Future<void> _loadMappings(int branchId) async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final rows = await _accountsApi.getPaymentMappings(branchId: branchId);
+      if (!mounted || _branchId != branchId) return;
+      setState(() {
+        _mappings = {for (final row in rows) row['method'].toString(): row};
+        _loading = false;
+      });
+    } catch (e) {
+      if (!mounted || _branchId != branchId) return;
+      setState(() {
+        _loading = false;
+        _error = e.toString();
+      });
+    }
+  }
+
+  Future<void> _save(String method, int accountId) async {
+    final branchId = _branchId;
+    if (branchId == null || _savingMethod != null) return;
+    setState(() => _savingMethod = method);
+    try {
+      await _accountsApi.updatePaymentMapping(
+        branchId: branchId,
+        method: method,
+        accountId: accountId,
+      );
+      await _loadMappings(branchId);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('${_label(method)} account mapping updated.')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
+      }
+    } finally {
+      if (mounted) setState(() => _savingMethod = null);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Branch Payment Mappings'),
+        actions: [
+          IconButton(
+            tooltip: 'Refresh',
+            onPressed: _branchId == null ? null : () => _loadMappings(_branchId!),
+            icon: const Icon(Icons.refresh_rounded),
+          ),
+        ],
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              'Choose the asset account used when each payment method posts cash for a branch.',
+              style: Theme.of(context).textTheme.bodyLarge?.copyWith(color: AppTheme.textMuted),
+            ),
+            const SizedBox(height: 16),
+            DropdownButtonFormField<int>(
+              value: _branchId,
+              isExpanded: true,
+              decoration: const InputDecoration(
+                labelText: 'Branch',
+                prefixIcon: Icon(Icons.apartment_rounded),
+                border: OutlineInputBorder(),
+              ),
+              items: _branches.map((branch) {
+                final id = _asInt(branch['id'])!;
+                return DropdownMenuItem<int>(
+                  value: id,
+                  child: Text(branch['name']?.toString() ?? 'Branch #$id'),
+                );
+              }).toList(),
+              onChanged: (id) {
+                if (id == null || id == _branchId) return;
+                setState(() => _branchId = id);
+                _loadMappings(id);
+              },
+            ),
+            const SizedBox(height: 18),
+            if (_loading)
+              const Expanded(child: Center(child: CircularProgressIndicator()))
+            else if (_error != null)
+              Expanded(
+                child: Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.error_outline_rounded, size: 40, color: AppTheme.danger),
+                      const SizedBox(height: 10),
+                      Text(_error!, textAlign: TextAlign.center),
+                      const SizedBox(height: 12),
+                      if (_branchId != null)
+                        OutlinedButton.icon(
+                          onPressed: () => _loadMappings(_branchId!),
+                          icon: const Icon(Icons.refresh_rounded),
+                          label: const Text('Retry'),
+                        ),
+                    ],
+                  ),
+                ),
+              )
+            else
+              Expanded(
+                child: ListView.separated(
+                  itemCount: _methods.length,
+                  separatorBuilder: (_, __) => const SizedBox(height: 12),
+                  itemBuilder: (context, index) {
+                    final method = _methods[index];
+                    final mapping = _mappings[method];
+                    final selectedId = _asInt(mapping?['account_id']);
+                    final inherited = mapping?['is_inherited'] == true;
+                    return Card(
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Row(
+                          children: [
+                            CircleAvatar(
+                              backgroundColor: AppTheme.primarySoft,
+                              child: Icon(_icon(method), color: AppTheme.primary),
+                            ),
+                            const SizedBox(width: 14),
+                            SizedBox(
+                              width: 150,
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(_label(method), style: const TextStyle(fontWeight: FontWeight.w800)),
+                                  Text(
+                                    inherited ? 'Copied from default' : 'Configured for branch',
+                                    style: const TextStyle(fontSize: 12, color: AppTheme.textMuted),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: DropdownButtonFormField<int>(
+                                value: _assetAccounts.any((a) => _asInt(a['id']) == selectedId) ? selectedId : null,
+                                isExpanded: true,
+                                decoration: const InputDecoration(
+                                  labelText: 'Posting account',
+                                  border: OutlineInputBorder(),
+                                  isDense: true,
+                                ),
+                                items: _assetAccounts.map((account) {
+                                  final id = _asInt(account['id'])!;
+                                  return DropdownMenuItem<int>(
+                                    value: id,
+                                    child: Text('${account['code']} — ${account['name']}'),
+                                  );
+                                }).toList(),
+                                onChanged: _savingMethod == null
+                                    ? (id) {
+                                        if (id != null && id != selectedId) _save(method, id);
+                                      }
+                                    : null,
+                              ),
+                            ),
+                            if (_savingMethod == method) ...[
+                              const SizedBox(width: 12),
+                              const SizedBox(width: 22, height: 22, child: CircularProgressIndicator(strokeWidth: 2)),
+                            ],
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  static int? _asInt(dynamic value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    return int.tryParse(value?.toString() ?? '');
+  }
+
+  static String _label(String method) => '${method[0].toUpperCase()}${method.substring(1)}';
+
+  static IconData _icon(String method) => switch (method) {
+        'cash' => Icons.payments_rounded,
+        'card' => Icons.credit_card_rounded,
+        'bank' => Icons.account_balance_rounded,
+        _ => Icons.account_balance_wallet_rounded,
+      };
 }

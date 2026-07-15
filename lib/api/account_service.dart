@@ -107,4 +107,34 @@ class AccountService {
     if (res["success"] == true) return;
     throw Exception(res["message"] ?? "Failed to change active state");
   }
+
+  Future<List<Map<String, dynamic>>> getPaymentMappings({required int branchId}) async {
+    final res = await _client.get(
+      "/accounts/payment-mappings",
+      query: {"branch_id": branchId.toString()},
+    );
+    if (res["success"] == true) {
+      final data = res["data"] as Map? ?? const {};
+      final rows = data["mappings"] as List? ?? const [];
+      return rows
+          .map<Map<String, dynamic>>((e) => Map<String, dynamic>.from(e as Map))
+          .toList();
+    }
+    throw Exception(res["message"] ?? "Failed to load payment account mappings");
+  }
+
+  Future<Map<String, dynamic>> updatePaymentMapping({
+    required int branchId,
+    required String method,
+    required int accountId,
+  }) async {
+    final res = await _client.put(
+      "/accounts/payment-mappings/$branchId/$method",
+      body: {"account_id": accountId},
+    );
+    if (res["success"] == true) {
+      return Map<String, dynamic>.from(res["data"] as Map);
+    }
+    throw Exception(res["message"] ?? "Failed to update payment account mapping");
+  }
 }
