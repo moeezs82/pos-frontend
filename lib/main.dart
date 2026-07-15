@@ -2,17 +2,20 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'api/core/api_client.dart';
 import 'providers/auth_provider.dart';
 import 'providers/branch_provider.dart';
 import 'providers/offline_queue_provider.dart';
 import 'providers/register_shift_provider.dart';
 import 'providers/printer_config_provider.dart';
+import 'providers/subscription_provider.dart';
 import 'screens/login_screen.dart';
 import 'screens/home_screen.dart';
 import 'services/connectivity_auto_sync_service.dart';
 import 'theme/app_theme.dart';
 import 'services/app_navigator.dart';
 import 'widgets/app_keyboard_shortcuts.dart';
+import 'widgets/subscription_warning_banner.dart';
 
 void main() {
   // The offline sales queue (handover doc §2.1) is driven through
@@ -39,6 +42,7 @@ class MyApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => PrinterConfigProvider()..loadFromCache()),
         ChangeNotifierProvider(create: (_) => OfflineQueueProvider()),
         ChangeNotifierProvider(create: (_) => RegisterShiftProvider()),
+        ChangeNotifierProvider(create: (_) => SubscriptionProvider()),
       ],
       child: MaterialApp(
         debugShowCheckedModeBanner: false,
@@ -104,6 +108,17 @@ class _AuthOrchestratorState extends State<_AuthOrchestrator> {
     _auth = context.read<AuthProvider>();
     _auth.addListener(_onAuthChanged);
 
+    // Wire up the global 402 interceptor so that any API call that receives
+    // BRANCH_SUBSCRIPTION_EXPIRED immediately marks the branch as locked in
+    // SubscriptionProvider — without every screen needing its own catch clause.
+    ApiClient.onSubscriptionExpired = (body) {
+      if (!mounted) return;
+      final auth = context.read<AuthProvider>();
+      final branchId = auth.activeBranchId;
+      if (branchId == null) return;
+      context.read<SubscriptionProvider>().markExpiredFromResponse(branchId, body);
+    };
+
     // Handle the startup case where tryAutoLogin() completes before or right
     // after the first frame — the listener covers the "after" path; the
     // postFrameCallback covers the "already done by first build" path.
@@ -115,6 +130,7 @@ class _AuthOrchestratorState extends State<_AuthOrchestrator> {
   @override
   void dispose() {
     _auth.removeListener(_onAuthChanged);
+    ApiClient.onSubscriptionExpired = null;
     super.dispose();
   }
 
@@ -125,6 +141,7 @@ class _AuthOrchestratorState extends State<_AuthOrchestrator> {
     if (auth.isAuthenticated) {
       final token = auth.token!;
       final userId = (auth.user?['id'] ?? '').toString();
+      final branchId = auth.activeBranchId;
 
       context.read<BranchProvider>().syncFromAuthUser(auth.user);
       context.read<PrinterConfigProvider>().ensureLoadedFor(token);
@@ -143,12 +160,24 @@ class _AuthOrchestratorState extends State<_AuthOrchestrator> {
           if (mounted) context.read<OfflineQueueProvider>().refresh();
         },
       );
+
+      // Check subscription for the active branch on every auth change (login,
+      // branch switch, session restore).  The provider's internal rate-limiter
+      // turns this into a no-op if checked recently.
+      if (branchId != null) {
+        context.read<SubscriptionProvider>().checkForBranch(
+          token: token,
+          branchId: branchId,
+        );
+      }
     } else {
       context.read<BranchProvider>().reset();
       context.read<PrinterConfigProvider>().stopAutoRefresh();
       ConnectivityAutoSyncService.instance.stop();
       // clear() is also guarded — repeated calls when already cleared are no-ops.
       context.read<RegisterShiftProvider>().clear();
+      context.read<SubscriptionProvider>().clear();
+      SubscriptionWarningBanner.resetSession();
     }
   }
 

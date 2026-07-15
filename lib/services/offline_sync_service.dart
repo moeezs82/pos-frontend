@@ -167,6 +167,16 @@ class OfflineSyncService {
         return _scheduleOrGiveUp(item, 'Server busy (${e.statusCode}) — will retry: ${e.message}');
       }
 
+      // 402 — branch subscription lock. This is a branch-level block, not a
+      // problem with the sale payload. Dead-letter immediately with a clear
+      // subscription message — retrying will not help until the subscription
+      // is fixed by the platform administrator.
+      if (e.statusCode == 402) {
+        await _queue.bumpAttempts(item.clientRef, item.attempts + 1);
+        await _queue.markFailed(item.clientRef, lastError: _humanize(e));
+        return SyncResult(clientRef: item.clientRef, outcome: SyncOutcome.failed, error: e.message);
+      }
+
       // Terminal business/validation error (422 deleted product, 409 rule,
       // 404, 403). A human must decide — dead-letter it (handover doc G3).
       await _queue.bumpAttempts(item.clientRef, item.attempts + 1);
@@ -215,6 +225,15 @@ class OfflineSyncService {
   /// dead-letter row (handover doc §C).
   String _humanize(ApiException e) {
     switch (e.statusCode) {
+      case 402:
+        // Distinguish the two subscription codes so the message is actionable.
+        final code = e.body?['code']?.toString() ?? '';
+        if (code == 'BRANCH_SUBSCRIPTION_NOT_CONFIGURED') {
+          return 'This branch has no subscription configured. '
+              'Contact the platform administrator to activate the branch before sales can be synced.';
+        }
+        return 'This branch\'s subscription has expired or been suspended. '
+            'Contact the administrator to reactivate the subscription before sales can be synced.';
       case 404:
         return 'A product or record in this sale no longer exists on the server.';
       case 409:

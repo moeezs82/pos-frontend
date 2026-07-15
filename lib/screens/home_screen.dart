@@ -1,5 +1,6 @@
 import 'package:enterprise_pos/screens/account_screen.dart';
 import 'package:enterprise_pos/providers/branch_provider.dart';
+import 'package:enterprise_pos/providers/subscription_provider.dart';
 import 'package:enterprise_pos/screens/branches/branch_control_screen.dart';
 import 'package:enterprise_pos/screens/cashbook/expense_create_screen.dart';
 import 'package:enterprise_pos/screens/cash_ledger/cash_ledger_screen.dart';
@@ -16,6 +17,8 @@ import 'package:enterprise_pos/screens/sales/sale_returns_screen.dart';
 import 'package:enterprise_pos/screens/sales/sale_screen.dart';
 import 'package:enterprise_pos/screens/settings/printer_settings_screen.dart';
 import 'package:enterprise_pos/screens/stock_screen.dart';
+import 'package:enterprise_pos/screens/subscription/branch_lock_screen.dart';
+import 'package:enterprise_pos/screens/subscription/subscription_management_screen.dart';
 import 'package:enterprise_pos/screens/sync/offline_sync_screen.dart';
 import 'package:enterprise_pos/screens/users_screen.dart';
 import 'package:enterprise_pos/screens/vendors/vendors_screen.dart';
@@ -25,6 +28,7 @@ import 'package:enterprise_pos/screens/register_shifts/register_shift_screen.dar
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/branch_indicator.dart';
 import 'package:enterprise_pos/widgets/app_keyboard_shortcuts.dart';
+import 'package:enterprise_pos/widgets/subscription_warning_banner.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/auth_provider.dart';
@@ -37,9 +41,20 @@ class HomeScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final auth = context.watch<AuthProvider>();
     final branch = context.watch<BranchProvider>();
+    final sub = context.watch<SubscriptionProvider>();
     final offlineQueue = context.watch<OfflineQueueProvider>();
     final registerShift = context.watch<RegisterShiftProvider>();
     final masterNeedsBranch = auth.isMasterAdmin && !branch.hasActiveBranch;
+
+    // ── Branch lock gate ─────────────────────────────────────────────────────
+    // When the current branch's subscription is expired or suspended, replace
+    // the entire home UI with the lock screen.  This is a widget swap inside
+    // the same authenticated scaffold — the Navigator stack, queued offline
+    // sales, and the Sanctum token are all preserved so the user can log out
+    // or switch to another active branch without data loss.
+    if (sub.isLocked && branch.hasActiveBranch) {
+      return const BranchLockScreen();
+    }
     final width = MediaQuery.of(context).size.width;
     final cols = width >= 1280
         ? 4
@@ -71,6 +86,14 @@ class HomeScreen extends StatelessWidget {
           subtitle: 'Configure and test the receipt printer',
           color: AppTheme.navy,
           onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PrinterSettingsScreen())),
+        ),
+      if (auth.isMasterAdmin)
+        _Tile(
+          icon: Icons.workspace_premium_rounded,
+          title: 'Branch Subscriptions',
+          subtitle: 'Manage subscription status for all branches',
+          color: AppTheme.purple,
+          onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const SubscriptionManagementScreen())),
         ),
       _Tile(
         icon: Icons.point_of_sale_rounded,
@@ -185,28 +208,40 @@ class HomeScreen extends StatelessWidget {
           ),
         ],
       ),
-      body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 30),
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          _WelcomeHeader(userName: userName, role: role),
-          const SizedBox(height: 18),
-          if (masterNeedsBranch) ...[
-            _MasterBranchRequiredCard(
-              onOpenBranchControl: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const BranchControlScreen())),
+          // Non-blocking expiry warning — appears as a slim coloured strip
+          // when the subscription is within the alert window but not yet
+          // locked.  It is placed outside the scrollable list so it stays
+          // visible even when the user scrolls down the tile grid.
+          const SubscriptionWarningBanner(),
+          Expanded(
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 30),
+              children: [
+                _WelcomeHeader(userName: userName, role: role),
+                const SizedBox(height: 18),
+                if (masterNeedsBranch) ...[
+                  _MasterBranchRequiredCard(
+                    onOpenBranchControl: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const BranchControlScreen())),
+                  ),
+                ] else ...[
+                  const _ShortcutHintBar(),
+                  const SizedBox(height: 16),
+                  const TodaySnapshotSection(),
+                  const SizedBox(height: 20),
+                  const _SectionTitle(title: 'Quick actions', subtitle: 'Most-used tasks are one tap away'),
+                  const SizedBox(height: 10),
+                  _TileGrid(tiles: quickActions, columns: cols),
+                  const SizedBox(height: 20),
+                  const _SectionTitle(title: 'Manage business', subtitle: 'Sales, stock, parties, accounts and claims'),
+                  const SizedBox(height: 10),
+                  _TileGrid(tiles: management, columns: cols),
+                ],
+              ],
             ),
-          ] else ...[
-            const _ShortcutHintBar(),
-            const SizedBox(height: 16),
-            const TodaySnapshotSection(),
-            const SizedBox(height: 20),
-            const _SectionTitle(title: 'Quick actions', subtitle: 'Most-used tasks are one tap away'),
-            const SizedBox(height: 10),
-            _TileGrid(tiles: quickActions, columns: cols),
-            const SizedBox(height: 20),
-            const _SectionTitle(title: 'Manage business', subtitle: 'Sales, stock, parties, accounts and claims'),
-            const SizedBox(height: 10),
-            _TileGrid(tiles: management, columns: cols),
-          ],
+          ),
         ],
       ),
     );

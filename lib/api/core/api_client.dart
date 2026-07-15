@@ -63,6 +63,15 @@ class ApiClient {
   static const String baseUrl = "http://localhost/pos-backend/public/api/v1";
   final String? token;
 
+  /// Set this callback in main.dart to be notified whenever any API call
+  /// returns 402 BRANCH_SUBSCRIPTION_EXPIRED.  The callback receives the full
+  /// decoded response body so the SubscriptionProvider can update state
+  /// without a separate server round-trip.
+  ///
+  /// Deliberately static (not per-instance) so every ApiClient instance —
+  /// regardless of which service created it — fires the same interceptor.
+  static void Function(Map<String, dynamic> body)? onSubscriptionExpired;
+
   ApiClient({this.token});
 
   Map<String, String> get _headers => {
@@ -199,6 +208,18 @@ class ApiClient {
 
     if (res.statusCode >= 200 && res.statusCode < 300) {
       return decoded ?? <String, dynamic>{};
+    }
+
+    // Intercept branch-subscription failures before throwing so the
+    // SubscriptionProvider can update state from any API call, not just
+    // explicit status checks.  Both codes (not_configured and expired/suspended)
+    // use the same callback — the provider reads the 'code' field to distinguish.
+    if (res.statusCode == 402 && decoded != null) {
+      final code = decoded['code']?.toString();
+      if (code == 'BRANCH_SUBSCRIPTION_EXPIRED' ||
+          code == 'BRANCH_SUBSCRIPTION_NOT_CONFIGURED') {
+        ApiClient.onSubscriptionExpired?.call(decoded);
+      }
     }
 
     final message = decoded?['message']?.toString() ?? "API Error: ${res.statusCode}";
