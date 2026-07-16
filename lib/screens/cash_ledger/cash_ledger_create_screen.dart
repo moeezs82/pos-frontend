@@ -1,5 +1,6 @@
 import 'package:enterprise_pos/api/cash_ledger_service.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
+import 'package:enterprise_pos/providers/payment_method_provider.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/app_keyboard_shortcuts.dart';
 import 'package:enterprise_pos/widgets/customer_picker_sheet.dart';
@@ -105,13 +106,6 @@ class _CashLedgerCreateScreenState extends State<CashLedgerCreateScreen> {
 
   String _partyKind = 'none'; // none|customer|vendor|user
   Map<String, dynamic>? _selectedParty;
-
-  static const _methods = [
-    {'value': 'cash', 'label': 'Cash', 'icon': Icons.payments_rounded},
-    {'value': 'bank', 'label': 'Bank', 'icon': Icons.account_balance_rounded},
-    {'value': 'card', 'label': 'Card', 'icon': Icons.credit_card_rounded},
-    {'value': 'wallet', 'label': 'Wallet', 'icon': Icons.account_balance_wallet_rounded},
-  ];
 
   CashLedgerCategoryMeta get _meta => CashLedgerCategoryMeta.byValue(_category);
 
@@ -457,20 +451,31 @@ class _CashLedgerCreateScreenState extends State<CashLedgerCreateScreen> {
                 color: AppTheme.teal,
               ),
               const SizedBox(height: 14),
-              Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: _methods.map((m) {
-                  final selected = _method == m['value'];
-                  return ChoiceChip(
-                    selected: selected,
-                    avatar: Icon(m['icon'] as IconData, size: 18),
-                    label: Text(m['label'].toString()),
-                    onSelected: (_) => setState(() => _method = m['value'].toString()),
+              Builder(builder: (context) {
+                final methods =
+                    context.watch<PaymentMethodProvider>().activeMethods;
+                if (methods.isEmpty) {
+                  return const Text(
+                    'No payment methods configured for this branch.',
+                    style: TextStyle(color: AppTheme.textMuted, fontSize: 12),
                   );
-                }).toList(),
-              ),
-              if (!_meta.isInflow && _method == 'cash') ...[
+                }
+                return Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: methods.map((m) {
+                    final selected = _method == m.method;
+                    return ChoiceChip(
+                      selected: selected,
+                      avatar: Icon(m.icon, size: 18),
+                      label: Text(m.displayName),
+                      onSelected: (_) => setState(() => _method = m.method),
+                    );
+                  }).toList(),
+                );
+              }),
+              if (!_meta.isInflow &&
+                  (context.watch<PaymentMethodProvider>().affectsCashDrawer(_method))) ...[
                 const SizedBox(height: 8),
                 SwitchListTile(
                   contentPadding: EdgeInsets.zero,

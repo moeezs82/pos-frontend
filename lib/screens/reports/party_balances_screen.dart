@@ -5,6 +5,7 @@ import 'package:enterprise_pos/api/vendor_service.dart';
 import 'package:enterprise_pos/forms/customer_form_screen.dart';
 import 'package:enterprise_pos/forms/vendor_form_screen.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
+import 'package:enterprise_pos/widgets/payment_method_dropdown.dart';
 import 'package:enterprise_pos/screens/purchases/purchase_create.dart';
 import 'package:enterprise_pos/screens/sales/sale_create.dart';
 import 'package:enterprise_pos/services/report_file_saver.dart';
@@ -238,10 +239,8 @@ class _PartyBalancesScreenState extends State<PartyBalancesScreen> {
                   decoration: const InputDecoration(labelText: 'Amount', border: OutlineInputBorder()),
                 ),
                 const SizedBox(height: 12),
-                DropdownButtonFormField<String>(
+                PaymentMethodDropdown(
                   value: method,
-                  decoration: const InputDecoration(labelText: 'Method', border: OutlineInputBorder()),
-                  items: const ['cash', 'card', 'bank', 'wallet'].map((m) => DropdownMenuItem(value: m, child: Text(m.toUpperCase()))).toList(),
                   onChanged: (v) => setLocal(() => method = v ?? 'cash'),
                 ),
                 const SizedBox(height: 12),

@@ -56,6 +56,7 @@ class _RegisterShiftScreenState extends State<RegisterShiftScreen> {
                 const SizedBox(height: 16),
                 _summaryGrid(state),
                 const SizedBox(height: 16),
+                _methodTotals(state),
                 _actions(state),
                 const SizedBox(height: 16),
                 _movementList(state.shift?['movements']),
@@ -174,6 +175,66 @@ class _RegisterShiftScreenState extends State<RegisterShiftScreen> {
           }).toList(),
         );
       },
+    );
+  }
+
+  Widget _methodTotals(RegisterShiftProvider state) {
+    final raw = state.summary['method_totals'];
+    if (raw is! List || raw.isEmpty) return const SizedBox.shrink();
+
+    String money(dynamic v) => (v is num ? v.toDouble() : double.tryParse(v?.toString() ?? '') ?? 0.0)
+        .toStringAsFixed(2);
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: Card(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Payment methods',
+                  style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15)),
+              const SizedBox(height: 4),
+              const Text('Only drawer methods affect expected cash.',
+                  style: TextStyle(color: AppTheme.textMuted, fontSize: 12)),
+              const SizedBox(height: 12),
+              ...raw.map((m) {
+                final map = (m is Map) ? m : const {};
+                final drawer = map['affects_cash_drawer'] == true;
+                return Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: Row(
+                    children: [
+                      Icon(drawer ? Icons.payments_rounded : Icons.credit_card_rounded,
+                          size: 18,
+                          color: drawer ? AppTheme.primary : AppTheme.textMuted),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          (map['name'] ?? map['method'] ?? '').toString(),
+                          style: const TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                      if (!drawer)
+                        const Padding(
+                          padding: EdgeInsets.only(right: 8),
+                          child: Text('non-drawer',
+                              style: TextStyle(fontSize: 11, color: AppTheme.textMuted)),
+                        ),
+                      Text('In ${money(map['in'])}',
+                          style: const TextStyle(color: AppTheme.success, fontWeight: FontWeight.w600)),
+                      const SizedBox(width: 12),
+                      Text('Out ${money(map['out'])}',
+                          style: const TextStyle(color: AppTheme.danger, fontWeight: FontWeight.w600)),
+                    ],
+                  ),
+                );
+              }),
+            ],
+          ),
+        ),
+      ),
     );
   }
 

@@ -10,6 +10,7 @@ import 'package:enterprise_pos/screens/cashbook/widgets/cb_pagination.dart';
 import 'package:enterprise_pos/screens/cashbook/widgets/cb_totals.dart';
 import 'package:enterprise_pos/screens/cashbook/widgets/cb_txn_list.dart';
 import 'package:enterprise_pos/widgets/branch_indicator.dart';
+import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -61,6 +62,9 @@ class _CashBookScreenState extends State<CashBookScreen> {
       _dPageOut = "0.00",
       _dPageExp = "0.00",
       _dPageNet = "0.00";
+
+  // Per-method funds breakdown (Cash / Bank / KNET / …) for the daily summary.
+  List<Map<String, dynamic>> _dByMethod = [];
 
   // Filters
   String? _accountId; // optional
@@ -224,6 +228,9 @@ class _CashBookScreenState extends State<CashBookScreen> {
         _dPageNet = (pageTotals['net'] ?? "0.00").toString();
 
         _dailyRows = List<Map<String, dynamic>>.from(data['rows'] ?? []);
+        _dByMethod = List<Map<String, dynamic>>.from(
+          (data['by_method'] as List?)?.map((e) => Map<String, dynamic>.from(e)) ?? const [],
+        );
 
         final p = data['pagination'] ?? {};
         _currentPage = (p['current_page'] ?? 1) as int;
@@ -236,6 +243,52 @@ class _CashBookScreenState extends State<CashBookScreen> {
   }
 
   double _parse(String s) => double.tryParse(s) ?? 0.0;
+
+  /// Funds-by-method breakdown for the selected period: closing balance per
+  /// method with opening / in / out. Answers "how much cash vs bank vs KNET".
+  Widget _fundsByMethodCard() {
+    String money(dynamic v) =>
+        (v is num ? v.toDouble() : double.tryParse(v?.toString() ?? '') ?? 0.0)
+            .toStringAsFixed(2);
+
+    return Card(
+      margin: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Funds by method',
+                style: TextStyle(fontWeight: FontWeight.w800, fontSize: 14)),
+            const SizedBox(height: 8),
+            // Header
+            Row(
+              children: const [
+                Expanded(flex: 3, child: Text('Method', style: TextStyle(color: AppTheme.textMuted, fontSize: 11, fontWeight: FontWeight.w700))),
+                Expanded(flex: 2, child: Text('Opening', textAlign: TextAlign.right, style: TextStyle(color: AppTheme.textMuted, fontSize: 11, fontWeight: FontWeight.w700))),
+                Expanded(flex: 2, child: Text('In', textAlign: TextAlign.right, style: TextStyle(color: AppTheme.textMuted, fontSize: 11, fontWeight: FontWeight.w700))),
+                Expanded(flex: 2, child: Text('Out', textAlign: TextAlign.right, style: TextStyle(color: AppTheme.textMuted, fontSize: 11, fontWeight: FontWeight.w700))),
+                Expanded(flex: 2, child: Text('Closing', textAlign: TextAlign.right, style: TextStyle(color: AppTheme.textMuted, fontSize: 11, fontWeight: FontWeight.w700))),
+              ],
+            ),
+            const Divider(height: 12),
+            ..._dByMethod.map((m) => Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 3),
+                  child: Row(
+                    children: [
+                      Expanded(flex: 3, child: Text((m['name'] ?? m['method'] ?? '').toString(), style: const TextStyle(fontWeight: FontWeight.w700))),
+                      Expanded(flex: 2, child: Text(money(m['opening']), textAlign: TextAlign.right)),
+                      Expanded(flex: 2, child: Text(money(m['in']), textAlign: TextAlign.right, style: const TextStyle(color: AppTheme.success, fontWeight: FontWeight.w600))),
+                      Expanded(flex: 2, child: Text(money(m['out']), textAlign: TextAlign.right, style: const TextStyle(color: AppTheme.danger, fontWeight: FontWeight.w600))),
+                      Expanded(flex: 2, child: Text(money(m['closing']), textAlign: TextAlign.right, style: const TextStyle(fontWeight: FontWeight.w800))),
+                    ],
+                  ),
+                )),
+          ],
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -334,6 +387,8 @@ class _CashBookScreenState extends State<CashBookScreen> {
             pageOutflow: _pageOutflow,
             parse: _parse,
           ),
+
+          if (_dailyMode && _dByMethod.isNotEmpty) _fundsByMethodCard(),
 
           Expanded(
             child: _loading

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import 'package:enterprise_pos/providers/auth_provider.dart';
+import 'package:enterprise_pos/providers/payment_method_provider.dart';
 import 'package:enterprise_pos/api/cashbook_service.dart';
 
 class CashbookDayDetailsScreen extends StatefulWidget {
@@ -399,8 +400,16 @@ class _FilterBarState extends State<_FilterBar> {
           _Dropdown<String?>(
             label: "Method",
             value: _method,
-            items: const [null, "cash", "card", "bank", "wallet"],
-            display: (v) => v ?? "Any",
+            items: [
+              null,
+              ...context
+                  .watch<PaymentMethodProvider>()
+                  .activeMethods
+                  .map((m) => m.method),
+            ],
+            display: (v) => v == null
+                ? "Any"
+                : context.read<PaymentMethodProvider>().displayNameFor(v),
             onChanged: (v) {
               setState(() => _method = v);
               _apply();

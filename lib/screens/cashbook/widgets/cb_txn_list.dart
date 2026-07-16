@@ -1,5 +1,7 @@
 import 'dart:ui' show FontFeature;
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:enterprise_pos/providers/payment_method_provider.dart';
 
 class CBTxnList extends StatelessWidget {
   final List<Map<String, dynamic>> txns;
@@ -170,7 +172,11 @@ class _MetaLine extends StatelessWidget {
   Widget build(BuildContext context) {
     final parts = <String>[];
     if (reference.isNotEmpty) parts.add('Ref: $reference');
-    if (method.isNotEmpty) parts.add('Method: $method');
+    if (method.isNotEmpty) {
+      // Show the friendly payment-method name (KNET, Bank Transfer, …).
+      final name = context.read<PaymentMethodProvider>().displayNameFor(method);
+      parts.add('Method: $name');
+    }
     if (source.isNotEmpty) parts.add('Source: $source');
 
     if (parts.isEmpty) return const SizedBox.shrink();
