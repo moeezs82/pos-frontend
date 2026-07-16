@@ -251,6 +251,30 @@ class ThermalPrinterService {
       PosColumn(text: 'Grand Total', width: 8, styles: const PosStyles(bold: true, height: PosTextSize.size2)),
       PosColumn(text: _m(grandTotal), width: 4, styles: const PosStyles(bold: true, height: PosTextSize.size2, align: PosAlign.right)),
     ]);
+
+    // Payment method breakdown (split tender / non-cash tenders).
+    final paymentsSnap = (meta?['payments_snapshot'] is List)
+        ? (meta!['payments_snapshot'] as List)
+        : const [];
+    final showBreakdown = paymentsSnap.length > 1 ||
+        (paymentsSnap.length == 1 &&
+            paymentsSnap.first is Map &&
+            (((paymentsSnap.first as Map)['method']?.toString() ?? 'cash') != 'cash'));
+    if (showBreakdown) {
+      for (final p in paymentsSnap) {
+        final map = (p is Map) ? p : const {};
+        final label = (map['label'] ?? map['method'] ?? 'Paid').toString();
+        final amt = (map['amount'] is num)
+            ? (map['amount'] as num).toDouble()
+            : double.tryParse((map['amount'] ?? '').toString()) ?? 0.0;
+        final ref = (map['reference'] ?? '').toString().trim();
+        printer.row([
+          PosColumn(text: ref.isEmpty ? label : '$label ($ref)', width: 8),
+          PosColumn(text: _m(amt), width: 4, styles: const PosStyles(align: PosAlign.right)),
+        ]);
+      }
+    }
+
     if (cashReceived > 0) {
       printer.row([
         PosColumn(text: 'Cash Received', width: 8, styles: const PosStyles(bold: true)),

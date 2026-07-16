@@ -6,6 +6,7 @@ import 'package:enterprise_pos/screens/sales/sale_detail.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/app_feedback.dart';
 import 'package:enterprise_pos/widgets/branch_indicator.dart';
+import 'package:enterprise_pos/widgets/payment_method_dropdown.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -272,17 +273,17 @@ class _CustomerEditScreenState extends State<CustomerEditScreen>
                           ),
                         ),
                         const SizedBox(height: 12),
-                        DropdownButtonFormField<String>(
+                        PaymentMethodDropdown(
                           value: methodPay,
+                          enabled: !saving,
+                          labelText: 'Payment Method',
                           decoration: const InputDecoration(
                             labelText: 'Payment Method',
                             prefixIcon: Icon(Icons.account_balance_wallet_rounded),
+                            border: OutlineInputBorder(),
                           ),
-                          items: const [
-                            DropdownMenuItem(value: 'cash', child: Text('Cash')),
-                            DropdownMenuItem(value: 'bank', child: Text('Bank')),
-                          ],
-                          onChanged: saving ? null : (val) => methodPay = val ?? 'cash',
+                          onChanged: (val) =>
+                              setState(() => methodPay = val ?? 'cash'),
                         ),
                       ],
                     ),

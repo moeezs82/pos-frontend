@@ -96,6 +96,11 @@ class ReceiptPreviewService {
         ? (meta!["change_amount"] as num).toDouble()
         : double.tryParse((meta?["change_amount"] ?? "").toString()) ?? 0.0;
 
+    // Payment method breakdown (split tender), e.g. Cash 1000 + Bank 500.
+    final paymentsSnap = (meta?["payments_snapshot"] is List)
+        ? (meta!["payments_snapshot"] as List)
+        : const [];
+
     final doc = pw.Document();
     final pageFormat = paperWidth == 'mm58' ? PdfPageFormat.roll57 : PdfPageFormat.roll80;
 
@@ -271,6 +276,23 @@ class ReceiptPreviewService {
 
               // Grand total always shows.
               kv("Grand Total", _m(grandTotal), bold2: true),
+
+              // Payment method breakdown — printed for split tenders or any
+              // non-cash tender (e.g. Cash 1000, Bank 500, KNET 250 (TXN…)).
+              if (paymentsSnap.length > 1 ||
+                  (paymentsSnap.length == 1 &&
+                      (paymentsSnap.first is Map) &&
+                      (((paymentsSnap.first as Map)['method']?.toString() ?? 'cash') != 'cash')))
+                ...paymentsSnap.map((p) {
+                  final map = (p is Map) ? p : const <String, dynamic>{};
+                  final label = (map['label'] ?? map['method'] ?? 'Paid').toString();
+                  final amt = (map['amount'] is num)
+                      ? (map['amount'] as num).toDouble()
+                      : double.tryParse((map['amount'] ?? '').toString()) ?? 0.0;
+                  final ref = (map['reference'] ?? '').toString().trim();
+                  return kv(ref.isEmpty ? label : "$label ($ref)", _m(amt));
+                }),
+
               if (cashReceived > 0) kv("Cash", _m(cashReceived), bold2: true),
               if (changeAmount > 0) kv("Change", _m(changeAmount), bold2: true),
 

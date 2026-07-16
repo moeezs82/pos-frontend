@@ -3,6 +3,7 @@ import 'package:enterprise_pos/api/core/api_client.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/screens/sales/sale_detail.dart';
 import 'package:enterprise_pos/widgets/branch_indicator.dart';
+import 'package:enterprise_pos/widgets/payment_method_dropdown.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
@@ -778,18 +779,8 @@ class _RefundDialogState extends State<_RefundDialog> {
               ),
             ),
             const SizedBox(height: 10),
-            DropdownButtonFormField<String>(
+            PaymentMethodDropdown(
               value: _method,
-              decoration: const InputDecoration(
-                labelText: "Method",
-                border: OutlineInputBorder(),
-              ),
-              items: const [
-                DropdownMenuItem(value: "cash", child: Text("Cash")),
-                DropdownMenuItem(value: "card", child: Text("Card")),
-                DropdownMenuItem(value: "bank", child: Text("Bank")),
-                DropdownMenuItem(value: "wallet", child: Text("Wallet")),
-              ],
               onChanged: (v) => setState(() => _method = v ?? 'cash'),
             ),
             const SizedBox(height: 10),

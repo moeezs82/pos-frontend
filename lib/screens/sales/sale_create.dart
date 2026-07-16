@@ -729,12 +729,16 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     required double changeAmount,
     required List<Map<String, dynamic>> paymentsToSend,
   }) {
+    final pmProvider = context.read<PaymentMethodProvider>();
     final typedPayments = paymentsToSend.map((payment) {
+      final ref = _metaText(payment['reference']);
+      final code =
+          _metaText(payment['method']).isEmpty ? 'cash' : _metaText(payment['method']);
       return <String, dynamic>{
-        'method': _metaText(payment['method']).isEmpty
-            ? 'cash'
-            : _metaText(payment['method']),
+        'method': code,
+        'label': pmProvider.displayNameFor(code),
         'amount': _metaNum(payment['amount']),
+        if (ref.isNotEmpty) 'reference': ref,
       };
     }).toList(growable: false);
 
@@ -836,7 +840,18 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     final saleReference = saleReferenceController.text.trim();
 
     final List<Map<String, dynamic>> paymentsToSend = [];
-    if (_autoCashIfEmpty && total > 0) {
+    if (total > 0 && _payments.isNotEmpty) {
+      // Explicit split tender: send every row (method + amount + optional ref).
+      for (final p in _payments) {
+        final ref = (p['reference'] ?? '').toString().trim();
+        paymentsToSend.add({
+          "amount": _pmAmt(p['amount']).toStringAsFixed(2),
+          "method": p['method'] ?? 'cash',
+          if (ref.isNotEmpty) "reference": ref,
+        });
+      }
+    } else if (_autoCashIfEmpty && total > 0) {
+      // Quick single tender via the selected method.
       paymentsToSend.add({
         "amount": total.toStringAsFixed(2),
         "method": effectiveMethod,
@@ -860,12 +875,14 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     );
     final balance = total - paid;
 
+    // Cash Received / Change apply to the CASH (drawer) portion only, and are
+    // printed on the invoice (e.g. bill 1500, cash received 2000 → change 500).
+    final cashDue = _saleCashDue(total);
     final enteredCashReceived = _toDouble(cashReceivedController);
-    final cashReceived = enteredCashReceived > 0
-        ? enteredCashReceived
-        : (_autoCashIfEmpty && total > 0 ? total : 0.0);
-    final changeAmount = total > 0
-        ? (cashReceived - total).clamp(0.0, double.infinity).toDouble()
+    final cashReceived =
+        enteredCashReceived > 0 ? enteredCashReceived : cashDue;
+    final changeAmount = cashDue > 0
+        ? (cashReceived - cashDue).clamp(0.0, double.infinity).toDouble()
         : 0.0;
 
     setState(() => _submitting = true);
@@ -1343,6 +1360,136 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         .toSet();
   }
 
+  // ── Split-tender helpers ────────────────────────────────────────────────
+  double _pmAmt(dynamic v) => double.tryParse(v?.toString() ?? '') ?? 0.0;
+
+  bool _methodIsDrawer(String? code) {
+    final pm = context.read<PaymentMethodProvider>();
+    return pm.byCode(code ?? '')?.affectsCashDrawer ??
+        (code == null || code == 'cash');
+  }
+
+  /// Total tendered: explicit split rows if any, else the auto-cash full amount.
+  double _salePaid(double total) {
+    if (_payments.isNotEmpty) {
+      return _payments.fold<double>(0.0, (s, p) => s + _pmAmt(p['amount']));
+    }
+    if (_autoCashIfEmpty && total > 0) return total;
+    return 0.0;
+  }
+
+  /// Cash (drawer) portion due — drives the Cash Received / Change fields and
+  /// what gets printed on the invoice.
+  double _saleCashDue(double total) {
+    if (_payments.isNotEmpty) {
+      return _payments
+          .where((p) => _methodIsDrawer(p['method']?.toString()))
+          .fold<double>(0.0, (s, p) => s + _pmAmt(p['amount']));
+    }
+    if (_autoCashIfEmpty && total > 0) {
+      final def = context.read<PaymentMethodProvider>().defaultMethod;
+      final code = _saleMethod ?? def?.method;
+      return _methodIsDrawer(code) ? total : 0.0;
+    }
+    return 0.0;
+  }
+
+  Future<void> _addSalePaymentDialog(double total) async {
+    final pm = context.read<PaymentMethodProvider>();
+    var methods = pm.activeMethods;
+    if (methods.isEmpty) {
+      await pm.reload();
+      methods = pm.activeMethods;
+    }
+    if (methods.isEmpty) {
+      if (mounted) {
+        AppFeedback.error(context, 'No payment methods configured for this branch.');
+      }
+      return;
+    }
+
+    final remaining = total - _salePaid(total);
+    final amountCtl = TextEditingController(
+        text: remaining > 0 ? remaining.toStringAsFixed(2) : '');
+    final refCtl = TextEditingController();
+    String method = (pm.defaultMethod ?? methods.first).method;
+
+    await showDialog(
+      context: context,
+      builder: (_) => StatefulBuilder(
+        builder: (context, setLocal) {
+          final selected = pm.byCode(method);
+          final showReference = selected != null && !selected.affectsCashDrawer;
+          return AlertDialog(
+            title: const Text('Add Payment'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: amountCtl,
+                  autofocus: true,
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                  decoration: const InputDecoration(
+                    labelText: 'Amount',
+                    prefixIcon: Icon(Icons.payments_outlined),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  value: method,
+                  isExpanded: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Method',
+                    prefixIcon: Icon(Icons.account_balance_wallet_outlined),
+                  ),
+                  items: methods
+                      .map((m) => DropdownMenuItem(
+                            value: m.method,
+                            child: Text(m.displayName),
+                          ))
+                      .toList(),
+                  onChanged: (v) => setLocal(() => method = v ?? method),
+                ),
+                if (showReference) ...[
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: refCtl,
+                    decoration: const InputDecoration(
+                      labelText: 'Reference (optional)',
+                      hintText: 'Txn / approval / cheque no…',
+                      prefixIcon: Icon(Icons.tag_outlined),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () {
+                  final amount = double.tryParse(amountCtl.text.trim()) ?? 0.0;
+                  if (amount <= 0) return;
+                  final ref = refCtl.text.trim();
+                  setState(() => _payments.add({
+                        'amount': amount,
+                        'method': method,
+                        if (ref.isNotEmpty) 'reference': ref,
+                      }));
+                  Navigator.pop(context);
+                },
+                child: const Text('Add'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final isAll = context.watch<BranchProvider>().isAll;
@@ -1359,14 +1506,15 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     final tax = _toDouble(taxController);
     final total = subtotal - discount + tax;
 
+    // Change is computed against the CASH (drawer) portion only — a split of
+    // 1000 cash + 500 bank on a 1500 bill has no change; 2000 cash on a 1500
+    // bill shows 500 change and prints it on the invoice.
+    final cashDue = _saleCashDue(total);
     final enteredCashReceived = _toDouble(cashReceivedController);
-    final effectiveCashReceived = enteredCashReceived > 0
-        ? enteredCashReceived
-        : (_autoCashIfEmpty && total > 0 ? total : 0.0);
-    final changeAmount = total > 0
-        ? (effectiveCashReceived - total)
-              .clamp(0.0, double.infinity)
-              .toDouble()
+    final effectiveCashReceived =
+        enteredCashReceived > 0 ? enteredCashReceived : cashDue;
+    final changeAmount = cashDue > 0
+        ? (effectiveCashReceived - cashDue).clamp(0.0, double.infinity).toDouble()
         : 0.0;
 
     // ── Focus + shortcut scope ──────────────────────────────────────────────
@@ -1513,6 +1661,9 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
                           ],
                         ),
                       ),
+
+                      // Split-tender summary (visible when >1 tender entered)
+                      if (_payments.isNotEmpty) _buildSplitStrip(total),
 
                       // ── Fixed bottom action bar ───────────────────────
                       _buildBottomBar(
@@ -1955,6 +2106,58 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     );
   }
 
+  // ── Split-tender summary strip ──────────────────────────────────────────
+  Widget _buildSplitStrip(double total) {
+    final pm = context.read<PaymentMethodProvider>();
+    final paid = _salePaid(total);
+    final balance = total - paid;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: const BoxDecoration(
+        color: AppTheme.surfaceSoft,
+        border: Border(top: BorderSide(color: AppTheme.border)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.call_split_rounded, size: 16, color: AppTheme.textMuted),
+          const SizedBox(width: 8),
+          Expanded(
+            child: SizedBox(
+              height: 34,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                itemCount: _payments.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 6),
+                itemBuilder: (_, i) {
+                  final p = _payments[i];
+                  final name = pm.displayNameFor(p['method']?.toString());
+                  final amt = _pmAmt(p['amount']).toStringAsFixed(2);
+                  final ref = (p['reference'] ?? '').toString().trim();
+                  return InputChip(
+                    label: Text(ref.isEmpty ? '$name  $amt' : '$name  $amt · $ref'),
+                    onDeleted: () => setState(() => _payments.removeAt(i)),
+                  );
+                },
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text('Paid ${paid.toStringAsFixed(2)}',
+              style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12)),
+          const SizedBox(width: 10),
+          Text(
+            'Balance ${balance.toStringAsFixed(2)}',
+            style: TextStyle(
+              fontWeight: FontWeight.w800,
+              fontSize: 12,
+              color: balance.abs() < 0.005 ? AppTheme.success : AppTheme.danger,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   // ── Fixed bottom action bar ──────────────────────────────────────────────
   Widget _buildBottomBar({
     required double total,
@@ -1963,9 +2166,9 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     final pm = context.watch<PaymentMethodProvider>();
     final methods = pm.activeMethods;
     final currentMethod = _saleMethod ?? pm.defaultMethod?.method;
-    final showCashFields =
-        pm.byCode(currentMethod ?? '')?.affectsCashDrawer ??
-            (currentMethod == null || currentMethod == 'cash');
+    final hasSplit = _payments.isNotEmpty;
+    // Show Cash Received/Change whenever a physical-cash portion exists.
+    final showCashFields = _saleCashDue(total) > 0;
     return Container(
       height: 62,
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -1995,8 +2198,8 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
           ),
           const SizedBox(width: 8),
 
-          // Payment method selector (dynamic, branch-configured)
-          if (methods.isNotEmpty)
+          // Payment method selector (single-tender only; hidden when splitting)
+          if (methods.isNotEmpty && !hasSplit)
             SizedBox(
               width: 128,
               height: 44,
@@ -2078,7 +2281,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
                 ),
               ],
             ),
-          ] else
+          ] else if (!hasSplit)
             // Non-drawer tender (KNET/card/bank/cheque): optional reference.
             SizedBox(
               width: 150,
@@ -2100,6 +2303,19 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
                 ),
               ),
             ),
+
+          const SizedBox(width: 8),
+          // Split tender — add another payment row (e.g. 1000 cash + 500 bank).
+          OutlinedButton.icon(
+            onPressed: () => _addSalePaymentDialog(total),
+            icon: const Icon(Icons.call_split_rounded, size: 16),
+            label: Text(hasSplit ? 'Add (${_payments.length})' : 'Split'),
+            style: OutlinedButton.styleFrom(
+              minimumSize: const Size(0, 38),
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+          ),
 
           const Spacer(),
 

@@ -4,6 +4,8 @@ import 'package:enterprise_pos/api/core/api_client.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/providers/printer_config_provider.dart';
 import 'package:enterprise_pos/widgets/branch_indicator.dart';
+import 'package:enterprise_pos/widgets/payment_method_dropdown.dart';
+import 'package:enterprise_pos/providers/payment_method_provider.dart';
 import 'package:enterprise_pos/widgets/product_picker_sheet.dart';
 import 'package:enterprise_pos/widgets/vendor_picker_sheet.dart';
 import 'package:flutter/material.dart';
@@ -111,10 +113,13 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
 
   Future<void> _addPayment() async {
     final amountController = TextEditingController();
-    String method = "cash";
+    final referenceController = TextEditingController();
+    String method =
+        context.read<PaymentMethodProvider>().defaultMethod?.method ?? 'cash';
     await showDialog(
       context: context,
-      builder: (_) => AlertDialog(
+      builder: (_) => StatefulBuilder(
+        builder: (context, setLocal) => AlertDialog(
         title: const Text("Add Payment"),
         content: Column(
           mainAxisSize: MainAxisSize.min,
@@ -128,19 +133,18 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
               ),
             ),
             const SizedBox(height: 12),
-            DropdownButtonFormField<String>(
+            PaymentMethodDropdown(
               value: method,
+              onChanged: (val) => setLocal(() => method = val ?? method),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: referenceController,
               decoration: const InputDecoration(
-                labelText: "Method",
+                labelText: "Reference (optional)",
+                hintText: "Txn / approval / cheque no…",
                 border: OutlineInputBorder(),
               ),
-              items: const [
-                DropdownMenuItem(value: "cash", child: Text("Cash")),
-                DropdownMenuItem(value: "card", child: Text("Card")),
-                DropdownMenuItem(value: "bank", child: Text("Bank")),
-                DropdownMenuItem(value: "wallet", child: Text("Wallet")),
-              ],
-              onChanged: (val) => method = val!,
             ),
           ],
         ),
@@ -154,7 +158,12 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
               try {
                 await _api.post(
                   "/sales/${widget.saleId}/payments",
-                  body: {"amount": amountController.text, "method": method},
+                  body: {
+                    "amount": amountController.text,
+                    "method": method,
+                    if (referenceController.text.trim().isNotEmpty)
+                      "reference": referenceController.text.trim(),
+                  },
                 );
                 if (!mounted) return;
                 Navigator.pop(context);
@@ -171,16 +180,20 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
           ),
         ],
       ),
+      ),
     );
   }
 
   Future<void> _editPayment(Map p) async {
     final amountCtl = TextEditingController(text: p['amount'].toString());
+    final referenceCtl =
+        TextEditingController(text: (p['reference'] ?? '').toString());
     String method = (p['method'] ?? 'cash').toString();
 
     await showDialog(
       context: context,
-      builder: (_) => AlertDialog(
+      builder: (_) => StatefulBuilder(
+        builder: (context, setLocal) => AlertDialog(
         title: const Text("Edit Payment"),
         content: Column(
           mainAxisSize: MainAxisSize.min,
@@ -194,19 +207,17 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
               ),
             ),
             const SizedBox(height: 12),
-            DropdownButtonFormField<String>(
+            PaymentMethodDropdown(
               value: method,
+              onChanged: (v) => setLocal(() => method = v ?? method),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: referenceCtl,
               decoration: const InputDecoration(
-                labelText: "Method",
+                labelText: "Reference (optional)",
                 border: OutlineInputBorder(),
               ),
-              items: const [
-                DropdownMenuItem(value: "cash", child: Text("Cash")),
-                DropdownMenuItem(value: "card", child: Text("Card")),
-                DropdownMenuItem(value: "bank", child: Text("Bank")),
-                DropdownMenuItem(value: "wallet", child: Text("Wallet")),
-              ],
-              onChanged: (v) => method = v!,
             ),
           ],
         ),
@@ -221,7 +232,11 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
               try {
                 await _api.put(
                   "/sales/${widget.saleId}/payments/${p['id']}",
-                  body: {"amount": amountCtl.text, "method": method},
+                  body: {
+                    "amount": amountCtl.text,
+                    "method": method,
+                    "reference": referenceCtl.text.trim(),
+                  },
                 );
                 if (!mounted) return;
                 Navigator.pop(context);
@@ -236,6 +251,7 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
             },
           ),
         ],
+      ),
       ),
     );
   }

@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:enterprise_pos/api/core/api_client.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
+import 'package:enterprise_pos/providers/payment_method_provider.dart';
 import 'package:enterprise_pos/screens/purchases/purchase_detail.dart';
 import 'package:enterprise_pos/widgets/branch_indicator.dart';
 import 'package:flutter/material.dart';
@@ -974,23 +975,29 @@ class _ReceiptDialogState extends State<_ReceiptDialog> {
               ),
             ),
             const SizedBox(height: 10),
-            DropdownButtonFormField<String>(
-              value: _method,
-              decoration: const InputDecoration(
-                labelText: "Method",
-                border: OutlineInputBorder(),
-              ),
-              items: const [
-                DropdownMenuItem(value: "cash", child: Text("Cash")),
-                DropdownMenuItem(value: "bank", child: Text("Bank")),
-                DropdownMenuItem(
-                  value: "credit_note",
-                  child: Text("Credit Note"),
+            Builder(builder: (context) {
+              final pm = context.watch<PaymentMethodProvider>();
+              final codes = {
+                ...pm.activeMethods.map((m) => m.method),
+                'credit_note',
+              };
+              return DropdownButtonFormField<String>(
+                value: codes.contains(_method) ? _method : null,
+                isExpanded: true,
+                decoration: const InputDecoration(
+                  labelText: "Method",
+                  border: OutlineInputBorder(),
                 ),
-                DropdownMenuItem(value: "wallet", child: Text("Wallet")),
-              ],
-              onChanged: (v) => setState(() => _method = v ?? 'cash'),
-            ),
+                items: [
+                  for (final m in pm.activeMethods)
+                    DropdownMenuItem(value: m.method, child: Text(m.displayName)),
+                  // Non-cash settlement: vendor issues a credit note (reduces AP).
+                  const DropdownMenuItem(
+                      value: "credit_note", child: Text("Credit Note")),
+                ],
+                onChanged: (v) => setState(() => _method = v ?? 'cash'),
+              );
+            }),
             const SizedBox(height: 10),
             TextField(
               controller: _refCtrl,

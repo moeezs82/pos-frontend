@@ -9,6 +9,7 @@ import 'package:enterprise_pos/forms/user_form_screen.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/app_feedback.dart';
 import 'package:enterprise_pos/widgets/branch_indicator.dart';
+import 'package:enterprise_pos/widgets/payment_method_dropdown.dart';
 import 'package:enterprise_pos/widgets/enterprise/enterprise_panel.dart';
 import 'package:enterprise_pos/widgets/enterprise/enterprise_ui.dart';
 import 'package:flutter/material.dart';
@@ -963,19 +964,15 @@ class _PaymentPanel extends StatelessWidget {
           onFieldSubmitted: (_) => onSubmit(),
         );
 
-    Widget methodField() => DropdownButtonFormField<String>(
+    Widget methodField() => PaymentMethodDropdown(
           value: method,
+          enabled: !posting,
+          onChanged: onMethodChanged,
           decoration: const InputDecoration(
             labelText: 'Method',
             prefixIcon: Icon(Icons.account_balance_rounded),
+            border: OutlineInputBorder(),
           ),
-          items: const [
-            DropdownMenuItem(value: 'cash', child: Text('Cash')),
-            DropdownMenuItem(value: 'bank', child: Text('Bank')),
-            DropdownMenuItem(value: 'card', child: Text('Card')),
-            DropdownMenuItem(value: 'wallet', child: Text('Wallet')),
-          ],
-          onChanged: posting ? null : onMethodChanged,
         );
 
     Widget referenceField() => TextFormField(
