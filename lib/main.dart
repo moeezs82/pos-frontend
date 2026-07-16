@@ -9,6 +9,7 @@ import 'providers/offline_queue_provider.dart';
 import 'providers/register_shift_provider.dart';
 import 'providers/printer_config_provider.dart';
 import 'providers/subscription_provider.dart';
+import 'providers/payment_method_provider.dart';
 import 'screens/login_screen.dart';
 import 'screens/home_screen.dart';
 import 'services/connectivity_auto_sync_service.dart';
@@ -43,6 +44,7 @@ class MyApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => OfflineQueueProvider()),
         ChangeNotifierProvider(create: (_) => RegisterShiftProvider()),
         ChangeNotifierProvider(create: (_) => SubscriptionProvider()),
+        ChangeNotifierProvider(create: (_) => PaymentMethodProvider()),
       ],
       child: MaterialApp(
         debugShowCheckedModeBanner: false,
@@ -154,6 +156,13 @@ class _AuthOrchestratorState extends State<_AuthOrchestrator> {
           .read<RegisterShiftProvider>()
           .initialize(token, userId: userId);
 
+      // Load the branch's active payment methods (also cached for offline
+      // sale creation). Guarded by token+branch so branch-switch notifications
+      // are cheap no-ops.
+      context
+          .read<PaymentMethodProvider>()
+          .initialize(token, branchId: branchId);
+
       ConnectivityAutoSyncService.instance.start(
         token: token,
         onSynced: () {
@@ -177,6 +186,7 @@ class _AuthOrchestratorState extends State<_AuthOrchestrator> {
       // clear() is also guarded — repeated calls when already cleared are no-ops.
       context.read<RegisterShiftProvider>().clear();
       context.read<SubscriptionProvider>().clear();
+      context.read<PaymentMethodProvider>().clear();
       SubscriptionWarningBanner.resetSession();
     }
   }

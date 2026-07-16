@@ -8,6 +8,7 @@ import 'package:enterprise_pos/providers/branch_provider.dart';
 import 'package:enterprise_pos/providers/offline_queue_provider.dart';
 import 'package:enterprise_pos/providers/printer_config_provider.dart';
 import 'package:enterprise_pos/providers/register_shift_provider.dart';
+import 'package:enterprise_pos/providers/payment_method_provider.dart';
 import 'package:enterprise_pos/services/offline_invoice_seq_service.dart';
 import 'package:enterprise_pos/services/offline_sales_queue_service.dart';
 import 'package:enterprise_pos/utils/network_failure.dart';
@@ -63,6 +64,11 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
   // cart & payments
   List<Map<String, dynamic>> _items = [];
   List<Map<String, dynamic>> _payments = [];
+
+  // Selected tender for the quick single-payment flow. Null falls back to the
+  // branch's default drawer method resolved from PaymentMethodProvider.
+  String? _saleMethod;
+  final saleReferenceController = TextEditingController();
 
   // discount/tax live controllers (now edited inline in totals)
   final discountController = TextEditingController(text: "0");
@@ -186,6 +192,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     discountController.dispose();
     taxController.dispose();
     cashReceivedController.dispose();
+    saleReferenceController.dispose();
     _barcodeController.dispose();
     _barcodeFocusNode.dispose();
     _pageFocusNode.dispose();
@@ -818,18 +825,32 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     double tax = double.tryParse(taxController.text.trim()) ?? 0.0;
     double total = subtotal - discount + tax;
 
+    // Resolve the selected tender (falls back to the branch default drawer
+    // method). Reference only applies to non-drawer methods (KNET/card/bank…).
+    final pmProvider = context.read<PaymentMethodProvider>();
+    final effectiveMethod =
+        _saleMethod ?? pmProvider.defaultMethod?.method ?? 'cash';
+    final isDrawerMethod =
+        pmProvider.byCode(effectiveMethod)?.affectsCashDrawer ??
+            (effectiveMethod == 'cash');
+    final saleReference = saleReferenceController.text.trim();
+
     final List<Map<String, dynamic>> paymentsToSend = [];
     if (_autoCashIfEmpty && total > 0) {
       paymentsToSend.add({
         "amount": total.toStringAsFixed(2),
-        "method": "cash",
+        "method": effectiveMethod,
+        if (!isDrawerMethod && saleReference.isNotEmpty)
+          "reference": saleReference,
       });
     }
     final Map<String, dynamic>? refundToSend =
         _autoCashIfEmpty && total < 0
         ? {
             'amount': total.abs().toStringAsFixed(2),
-            'method': 'cash',
+            'method': effectiveMethod,
+            if (!isDrawerMethod && saleReference.isNotEmpty)
+              'reference': saleReference,
           }
         : null;
 
@@ -904,7 +925,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       if (refundToSend != null) {
         meta['refund_snapshot'] = {
           'amount': total.abs(),
-          'method': 'cash',
+          'method': effectiveMethod,
         };
       }
       final payload = _saleService.buildSalePayload(
@@ -1144,6 +1165,8 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       discountController.text = '0';
       taxController.text = '0';
       cashReceivedController.clear();
+      saleReferenceController.clear();
+      _saleMethod = null;
       _selectedVendor = null;
       _selectedVendorId = null;
       _selectedUser = null;
@@ -1937,6 +1960,12 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     required double total,
     required double changeAmount,
   }) {
+    final pm = context.watch<PaymentMethodProvider>();
+    final methods = pm.activeMethods;
+    final currentMethod = _saleMethod ?? pm.defaultMethod?.method;
+    final showCashFields =
+        pm.byCode(currentMethod ?? '')?.affectsCashDrawer ??
+            (currentMethod == null || currentMethod == 'cash');
     return Container(
       height: 62,
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -1966,59 +1995,111 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
           ),
           const SizedBox(width: 8),
 
-          // Cash Received field
-          Tooltip(
-            message: 'Focus: Ctrl+Shift+R',
-            child: SizedBox(
-              width: 110,
+          // Payment method selector (dynamic, branch-configured)
+          if (methods.isNotEmpty)
+            SizedBox(
+              width: 128,
               height: 44,
-              child: TextField(
-                controller: cashReceivedController,
-                focusNode: _cashReceivedFocusNode,
-                keyboardType:
-                    const TextInputType.numberWithOptions(decimal: true),
-                textAlign: TextAlign.right,
+              child: DropdownButtonFormField<String>(
+                value: currentMethod,
+                isExpanded: true,
                 decoration: const InputDecoration(
-                  labelText: 'Cash Recv.',
+                  labelText: 'Method',
                   isDense: true,
                   contentPadding:
                       EdgeInsets.symmetric(horizontal: 8, vertical: 10),
                   border: OutlineInputBorder(),
                 ),
                 style: const TextStyle(
-                  fontSize: 13,
+                  fontSize: 12,
                   fontWeight: FontWeight.w700,
-                  fontFeatures: [FontFeature.tabularFigures()],
+                  color: AppTheme.navy,
+                ),
+                items: methods
+                    .map((m) => DropdownMenuItem(
+                          value: m.method,
+                          child: Text(m.displayName, overflow: TextOverflow.ellipsis),
+                        ))
+                    .toList(),
+                onChanged: (v) => setState(() => _saleMethod = v),
+              ),
+            ),
+          const SizedBox(width: 8),
+
+          // Cash Received + Change apply only to physical drawer cash.
+          if (showCashFields) ...[
+            Tooltip(
+              message: 'Focus: Ctrl+Shift+R',
+              child: SizedBox(
+                width: 110,
+                height: 44,
+                child: TextField(
+                  controller: cashReceivedController,
+                  focusNode: _cashReceivedFocusNode,
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                  textAlign: TextAlign.right,
+                  decoration: const InputDecoration(
+                    labelText: 'Cash Recv.',
+                    isDense: true,
+                    contentPadding:
+                        EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+                    border: OutlineInputBorder(),
+                  ),
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    fontFeatures: [FontFeature.tabularFigures()],
+                  ),
                 ),
               ),
             ),
-          ),
-          const SizedBox(width: 10),
-
-          // Change amount
-          Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Change',
-                style: TextStyle(
-                  fontSize: 10,
-                  color: AppTheme.textMuted,
+            const SizedBox(width: 10),
+            Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Change',
+                  style: TextStyle(
+                    fontSize: 10,
+                    color: AppTheme.textMuted,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                Text(
+                  changeAmount.toStringAsFixed(2),
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w900,
+                    color: changeAmount > 0 ? AppTheme.success : AppTheme.navy,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                ),
+              ],
+            ),
+          ] else
+            // Non-drawer tender (KNET/card/bank/cheque): optional reference.
+            SizedBox(
+              width: 150,
+              height: 44,
+              child: TextField(
+                controller: saleReferenceController,
+                textAlign: TextAlign.left,
+                decoration: const InputDecoration(
+                  labelText: 'Reference',
+                  hintText: 'Txn / approval',
+                  isDense: true,
+                  contentPadding:
+                      EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+                  border: OutlineInputBorder(),
+                ),
+                style: const TextStyle(
+                  fontSize: 12,
                   fontWeight: FontWeight.w600,
                 ),
               ),
-              Text(
-                changeAmount.toStringAsFixed(2),
-                style: TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w900,
-                  color: changeAmount > 0 ? AppTheme.success : AppTheme.navy,
-                  fontFeatures: const [FontFeature.tabularFigures()],
-                ),
-              ),
-            ],
-          ),
+            ),
 
           const Spacer(),
 

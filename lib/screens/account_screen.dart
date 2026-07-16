@@ -3,6 +3,7 @@ import 'package:enterprise_pos/api/common_service.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/providers/branch_provider.dart';
 import 'package:enterprise_pos/screens/cashbook/widgets/cb_pagination.dart';
+import 'package:enterprise_pos/screens/settings/payment_methods_admin_screen.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -458,10 +459,10 @@ class _AccountsScreenState extends State<AccountsScreen> {
           TextButton.icon(
             onPressed: () => Navigator.push(
               context,
-              MaterialPageRoute(builder: (_) => const BranchPaymentMappingsScreen()),
+              MaterialPageRoute(builder: (_) => const PaymentMethodsAdminScreen()),
             ),
             icon: const Icon(Icons.account_balance_wallet_rounded),
-            label: const Text('Payment mappings'),
+            label: const Text('Payment methods'),
           ),
           IconButton(
             onPressed: () => _fetch(page: _currentPage),

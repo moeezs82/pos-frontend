@@ -120,8 +120,21 @@ class SaleService {
             },
           )
           .toList(),
+      // Preserve every payment property — not just amount/method — so a
+      // KNET/card/bank reference, note, paid date and per-payment client_ref
+      // survive to the backend (and offline replay).
       "payments": payments
-          .map((p) => {"amount": p["amount"], "method": p["method"]})
+          .map((p) => <String, dynamic>{
+                "amount": p["amount"],
+                "method": p["method"],
+                if (p["reference"] != null &&
+                    p["reference"].toString().trim().isNotEmpty)
+                  "reference": p["reference"],
+                if (p["note"] != null && p["note"].toString().trim().isNotEmpty)
+                  "note": p["note"],
+                if (p["paid_at"] != null) "paid_at": p["paid_at"],
+                if (p["client_ref"] != null) "client_ref": p["client_ref"],
+              })
           .toList(),
       if (refund != null) "refund": refund,
     };

@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:enterprise_pos/api/catalog_service.dart';
 import 'package:path/path.dart' as p;
 // Windows-desktop app → sqflite via FFI, same as offline_sales_queue_service.
@@ -442,6 +444,34 @@ class CatalogCacheService {
     final db = await _database;
     await db.insert('sync_meta', {'key': key, 'value': value},
         conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Payment methods (offline sale creation)
+  //
+  // Stored as a small JSON blob in sync_meta keyed by branch, so no schema
+  // migration/version bump is needed. Best-effort: callers must tolerate an
+  // empty list.
+  // ---------------------------------------------------------------------------
+
+  String _paymentMethodsKey(int? branchId) => 'payment_methods:${_branchKey(branchId)}';
+
+  Future<void> savePaymentMethods(int? branchId, List<Map<String, dynamic>> methods) async {
+    await _setMeta(_paymentMethodsKey(branchId), jsonEncode(methods));
+  }
+
+  Future<List<Map<String, dynamic>>> loadPaymentMethods(int? branchId) async {
+    final raw = await _getMeta(_paymentMethodsKey(branchId));
+    if (raw == null || raw.isEmpty) return const [];
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is List) {
+        return decoded
+            .map<Map<String, dynamic>>((e) => Map<String, dynamic>.from(e as Map))
+            .toList();
+      }
+    } catch (_) {/* corrupt cache — ignore */}
+    return const [];
   }
 
   static int _asInt(dynamic v) {

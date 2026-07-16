@@ -3,6 +3,8 @@ import 'package:enterprise_pos/api/purchase_service.dart';
 import 'package:enterprise_pos/api/vendor_service.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/providers/branch_provider.dart';
+import 'package:enterprise_pos/providers/payment_method_provider.dart';
+import 'package:enterprise_pos/models/payment_method.dart';
 import 'package:enterprise_pos/screens/sales/parts/create_sale_items_section.dart';
 import 'package:enterprise_pos/screens/sales/parts/sale_totals_card.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
@@ -328,52 +330,92 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
 
   Future<void> _addPaymentDialog() async {
     final amountCtl = TextEditingController(text: _balance > 0 ? _balance.toStringAsFixed(2) : '');
-    String method = 'cash';
+    final referenceCtl = TextEditingController();
+
+    final pmProvider = context.read<PaymentMethodProvider>();
+    final methods = pmProvider.activeMethods;
+
+    if (methods.isEmpty) {
+      // Fall back to a reload; if still empty, tell the user to configure them.
+      await pmProvider.reload();
+    }
+    final available = pmProvider.activeMethods;
+    if (available.isEmpty) {
+      if (mounted) {
+        AppFeedback.error(context, 'No payment methods configured for this branch.');
+      }
+      return;
+    }
+
+    String method = (pmProvider.defaultMethod ?? available.first).method;
 
     await showDialog(
       context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('Add Payment'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: amountCtl,
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
-              decoration: const InputDecoration(
-                labelText: 'Amount',
-                prefixIcon: Icon(Icons.payments_outlined),
-              ),
-            ),
-            const SizedBox(height: 12),
-            DropdownButtonFormField<String>(
-              value: method,
-              decoration: const InputDecoration(
-                labelText: 'Method',
-                prefixIcon: Icon(Icons.account_balance_wallet_outlined),
-              ),
-              items: const [
-                DropdownMenuItem(value: 'cash', child: Text('Cash')),
-                DropdownMenuItem(value: 'card', child: Text('Card')),
-                DropdownMenuItem(value: 'bank', child: Text('Bank')),
-                DropdownMenuItem(value: 'wallet', child: Text('Wallet')),
+      builder: (_) => StatefulBuilder(
+        builder: (context, setLocal) {
+          final selected = pmProvider.byCode(method);
+          final showReference = selected != null && !selected.affectsCashDrawer;
+          return AlertDialog(
+            title: const Text('Add Payment'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: amountCtl,
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  decoration: const InputDecoration(
+                    labelText: 'Amount',
+                    prefixIcon: Icon(Icons.payments_outlined),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  value: method,
+                  isExpanded: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Method',
+                    prefixIcon: Icon(Icons.account_balance_wallet_outlined),
+                  ),
+                  items: available
+                      .map((m) => DropdownMenuItem(
+                            value: m.method,
+                            child: Text(m.displayName),
+                          ))
+                      .toList(),
+                  onChanged: (value) => setLocal(() => method = value ?? method),
+                ),
+                if (showReference) ...[
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: referenceCtl,
+                    decoration: const InputDecoration(
+                      labelText: 'Reference (optional)',
+                      hintText: 'Cheque no, bank ref, approval code…',
+                      prefixIcon: Icon(Icons.tag_outlined),
+                    ),
+                  ),
+                ],
               ],
-              onChanged: (value) => method = value ?? 'cash',
             ),
-          ],
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-          FilledButton(
-            onPressed: () {
-              final amount = double.tryParse(amountCtl.text.trim()) ?? 0.0;
-              if (amount <= 0) return;
-              setState(() => _payments.add({'amount': amount, 'method': method}));
-              Navigator.pop(context);
-            },
-            child: const Text('Add Payment'),
-          ),
-        ],
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+              FilledButton(
+                onPressed: () {
+                  final amount = double.tryParse(amountCtl.text.trim()) ?? 0.0;
+                  if (amount <= 0) return;
+                  final ref = referenceCtl.text.trim();
+                  setState(() => _payments.add({
+                        'amount': amount,
+                        'method': method,
+                        if (ref.isNotEmpty) 'reference': ref,
+                      }));
+                  Navigator.pop(context);
+                },
+                child: const Text('Add Payment'),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -484,21 +526,25 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
 
       final uiPayments = List<Map<String, dynamic>>.from(_payments);
       if (_autoCashIfEmpty && uiPayments.isEmpty && _total > 0) {
-        uiPayments.add({'amount': _total, 'method': 'cash'});
+        // Auto-cash uses the branch's default drawer method, not a literal.
+        final defaultCode =
+            context.read<PaymentMethodProvider>().defaultMethod?.method ?? 'cash';
+        uiPayments.add({'amount': _total, 'method': defaultCode});
       }
 
-      Map<String, dynamic>? paymentToSend;
-      if (uiPayments.length == 1) {
-        paymentToSend = {
-          'amount': _toNum(uiPayments.first['amount']),
-          'method': uiPayments.first['method'] ?? 'cash',
-        };
-      } else if (uiPayments.length > 1) {
-        paymentToSend = {
-          'amount': uiPayments.fold<double>(0.0, (sum, p) => sum + _toNum(p['amount'])),
-          'method': uiPayments.first['method'] ?? 'cash',
-        };
-      }
+      // Send every row as its own payment — never collapse a Cash + Bank split
+      // into a single method.
+      final paymentsPayload = uiPayments
+          .map((p) => <String, dynamic>{
+                'amount': _toNum(p['amount']),
+                'method': p['method'] ?? 'cash',
+                if (p['reference'] != null &&
+                    p['reference'].toString().trim().isNotEmpty)
+                  'reference': p['reference'],
+                if (p['note'] != null && p['note'].toString().trim().isNotEmpty)
+                  'note': p['note'],
+              })
+          .toList();
 
       final payload = <String, dynamic>{
         if (_selectedVendorId != null) 'vendor_id': _selectedVendorId,
@@ -506,7 +552,7 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
         'tax': _tax,
         'receive_now': _receiveNow,
         'items': itemsPayload,
-        if (paymentToSend != null) 'payment': paymentToSend,
+        if (paymentsPayload.isNotEmpty) 'payments': paymentsPayload,
       };
 
       final res = await _purchaseService.createPurchase(payload);
