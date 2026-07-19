@@ -18,6 +18,7 @@ class RegisterShiftProvider extends ChangeNotifier {
 
   Map<String, dynamic>? _shift;
   Map<String, dynamic> _summary = const {};
+  Map<String, dynamic> _activity = const {}; // unified drawer activity + reconciliation
   List<Map<String, dynamic>> _occupiedShifts = const [];
   bool _loading = false;
   String? _error;
@@ -39,6 +40,11 @@ class RegisterShiftProvider extends ChangeNotifier {
 
   Map<String, dynamic>? get shift => _shift;
   Map<String, dynamic> get summary => _summary;
+  Map<String, dynamic> get activity => _activity;
+  List<Map<String, dynamic>> get activityItems =>
+      (_activity['items'] as List?)?.map((e) => Map<String, dynamic>.from(e as Map)).toList() ?? const [];
+  Map<String, dynamic> get reconciliation =>
+      (_activity['reconciliation'] as Map?)?.cast<String, dynamic>() ?? const {};
   List<Map<String, dynamic>> get occupiedShifts => _occupiedShifts;
   bool get hasOccupiedRegisters => _occupiedShifts.isNotEmpty;
   bool get hasActiveShift => _shift != null && _shift!['status'] == 'open';
@@ -87,6 +93,7 @@ class RegisterShiftProvider extends ChangeNotifier {
     // shift while the network round-trip is in flight.
     _shift = null;
     _summary = const {};
+    _activity = const {};
     _occupiedShifts = const [];
     _error = null;
     notifyListeners();
@@ -131,6 +138,9 @@ class RegisterShiftProvider extends ChangeNotifier {
       _summary = data?['summary'] == null
           ? const {}
           : Map<String, dynamic>.from(data!['summary'] as Map);
+      _activity = data?['activity'] == null
+          ? const {}
+          : Map<String, dynamic>.from(data!['activity'] as Map);
       final occupied = data?['occupied_shifts'];
       _occupiedShifts = occupied is List
           ? occupied
@@ -206,6 +216,7 @@ class RegisterShiftProvider extends ChangeNotifier {
     });
     _shift = null;
     _summary = const {};
+    _activity = const {};
     _occupiedShifts = const [];
     await _persist();
     notifyListeners();
@@ -238,6 +249,7 @@ class RegisterShiftProvider extends ChangeNotifier {
     _userId = null;
     _shift = null;
     _summary = const {};
+    _activity = const {};
     _occupiedShifts = const [];
     _error = null;
 

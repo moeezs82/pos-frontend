@@ -59,7 +59,7 @@ class _RegisterShiftScreenState extends State<RegisterShiftScreen> {
                 _methodTotals(state),
                 _actions(state),
                 const SizedBox(height: 16),
-                _movementList(state.shift?['movements']),
+                _activityList(state),
               ],
               if (state.error != null) Padding(padding: const EdgeInsets.only(top: 16), child: Text('Last server check: ${state.error}', style: const TextStyle(color: AppTheme.warning))),
             ]),
@@ -201,7 +201,7 @@ class _RegisterShiftScreenState extends State<RegisterShiftScreen> {
               const SizedBox(height: 12),
               ...raw.map((m) {
                 final map = (m is Map) ? m : const {};
-                final drawer = map['affects_cash_drawer'] == true;
+                final drawer = _asBool(map['affects_cash_drawer']);
                 return Padding(
                   padding: const EdgeInsets.symmetric(vertical: 4),
                   child: Row(
@@ -219,7 +219,7 @@ class _RegisterShiftScreenState extends State<RegisterShiftScreen> {
                       if (!drawer)
                         const Padding(
                           padding: EdgeInsets.only(right: 8),
-                          child: Text('non-drawer',
+                          child: Text('Does not affect drawer',
                               style: TextStyle(fontSize: 11, color: AppTheme.textMuted)),
                         ),
                       Text('In ${money(map['in'])}',
@@ -244,8 +244,19 @@ class _RegisterShiftScreenState extends State<RegisterShiftScreen> {
     const Spacer(), FilledButton.icon(style: FilledButton.styleFrom(backgroundColor: AppTheme.danger), onPressed: _closeDialog, icon: const Icon(Icons.lock_rounded), label: const Text('Close Shift')),
   ]);
 
-  Widget _movementList(dynamic rawMovements) {
-    final movements = rawMovements is List ? rawMovements : const [];
+  static bool _asBool(dynamic v) =>
+      v == true || v == 1 || v == '1' || v == 'true';
+
+  String _money(dynamic v) =>
+      (v is num ? v.toDouble() : double.tryParse(v?.toString() ?? '') ?? 0.0).toStringAsFixed(2);
+
+  /// Unified, read-only drawer activity: every shift-linked cash effect (sales,
+  /// receipts, refunds, expenses, loans, manual movements) — so expected cash
+  /// can be reconstructed without recording a duplicate manual Cash In/Out.
+  Widget _activityList(RegisterShiftProvider state) {
+    final items = state.activityItems;
+    final recon = state.reconciliation;
+
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(18),
@@ -254,43 +265,149 @@ class _RegisterShiftScreenState extends State<RegisterShiftScreen> {
           children: [
             const Row(
               children: [
-                Icon(Icons.swap_vert_rounded, color: AppTheme.primary),
+                Icon(Icons.receipt_long_rounded, color: AppTheme.primary),
                 SizedBox(width: 8),
-                Text('Register Cash Movements', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
+                Text('Register Activity', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
               ],
             ),
+            const SizedBox(height: 4),
+            const Text(
+              'Sales, expenses, receipts and refunds linked to this shift appear automatically. '
+              'Use Cash In/Out only for a separate physical drawer movement.',
+              style: TextStyle(color: AppTheme.textMuted, fontSize: 12),
+            ),
             const SizedBox(height: 12),
-            if (movements.isEmpty)
+            if (recon.isNotEmpty) _reconStrip(recon),
+            const SizedBox(height: 8),
+            if (items.isEmpty)
               const Padding(
                 padding: EdgeInsets.symmetric(vertical: 18),
-                child: Center(child: Text('No Cash In or Cash Out recorded in this shift.', style: TextStyle(color: AppTheme.textMuted))),
+                child: Center(
+                  child: Text(
+                    'No cash activity in this shift yet.\nSales and expenses will appear here automatically.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: AppTheme.textMuted),
+                  ),
+                ),
               )
             else
-              ...movements.map((item) {
-                final movement = item is Map ? item : const {};
-                final creator = movement['creator'] is Map ? movement['creator'] as Map : const {};
-                final approver = movement['approver'] is Map ? movement['approver'] as Map : const {};
-                final isIn = movement['direction'] == 'in';
-                return ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  leading: CircleAvatar(
-                    backgroundColor: (isIn ? AppTheme.success : AppTheme.danger).withValues(alpha: .12),
-                    foregroundColor: isIn ? AppTheme.success : AppTheme.danger,
-                    child: Icon(isIn ? Icons.south_west_rounded : Icons.north_east_rounded),
-                  ),
-                  title: Text(
-                    '${isIn ? 'Cash In' : 'Cash Out'} • ${movement['reason'] ?? 'No reason'}',
-                    style: const TextStyle(fontWeight: FontWeight.w700),
-                  ),
-                  subtitle: Text('${creator['name'] ?? 'Unknown user'} • ${movement['occurred_at'] ?? ''}${movement['note'] == null ? '' : '\n${movement['note']}'}${approver.isEmpty ? '' : '\nApproved by ${approver['name']}'}'),
-                  trailing: Text(
-                    '${isIn ? '+' : '-'}${movement['amount'] ?? '0.00'}',
-                    style: TextStyle(fontSize: 17, fontWeight: FontWeight.w900, color: isIn ? AppTheme.success : AppTheme.danger),
-                  ),
-                );
-              }),
+              ...items.map(_activityTile),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _reconStrip(Map<String, dynamic> r) {
+    final reconciled = _asBool(r['is_reconciled']);
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppTheme.surfaceSoft,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppTheme.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              _reconCell('Opening', _money(r['opening_cash'])),
+              _reconCell('Cash In', _money(r['drawer_in']), color: AppTheme.success),
+              _reconCell('Cash Out', _money(r['drawer_out']), color: AppTheme.danger),
+              _reconCell('Expected', _money(r['expected_cash']), bold: true),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Icon(reconciled ? Icons.check_circle_rounded : Icons.error_rounded,
+                  size: 15, color: reconciled ? AppTheme.success : AppTheme.warning),
+              const SizedBox(width: 6),
+              Text(
+                reconciled
+                    ? 'Activity reconciles to expected cash (Opening + In − Out).'
+                    : 'Activity does not reconcile — review pending/other movements.',
+                style: TextStyle(
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w700,
+                  color: reconciled ? AppTheme.textMuted : AppTheme.warning,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _reconCell(String label, String value, {Color? color, bool bold = false}) => Expanded(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(label, style: const TextStyle(fontSize: 10.5, color: AppTheme.textMuted, fontWeight: FontWeight.w700)),
+            const SizedBox(height: 2),
+            Text(value,
+                style: TextStyle(
+                  fontSize: bold ? 15 : 13.5,
+                  fontWeight: bold ? FontWeight.w900 : FontWeight.w700,
+                  color: color ?? AppTheme.navy,
+                )),
+          ],
+        ),
+      );
+
+  Widget _activityTile(Map<String, dynamic> item) {
+    final isIn = item['direction'] == 'in';
+    final isManual = _asBool(item['is_manual']);
+    final label = (item['label'] ?? 'Movement').toString();
+    final reference = (item['reference'] ?? '').toString();
+    final method = (item['method'] ?? '').toString();
+    final user = (item['user_name'] ?? '').toString();
+    final when = (item['occurred_at'] ?? '').toString();
+    final note = item['note']?.toString();
+
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      leading: CircleAvatar(
+        backgroundColor: (isIn ? AppTheme.success : AppTheme.danger).withValues(alpha: .12),
+        foregroundColor: isIn ? AppTheme.success : AppTheme.danger,
+        child: Icon(isIn ? Icons.south_west_rounded : Icons.north_east_rounded),
+      ),
+      title: Row(
+        children: [
+          Flexible(
+            child: Text(
+              reference.isEmpty ? label : '$label • $reference',
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontWeight: FontWeight.w700),
+            ),
+          ),
+          const SizedBox(width: 6),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            decoration: BoxDecoration(
+              color: (isManual ? AppTheme.warning : AppTheme.info).withValues(alpha: .12),
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Text(
+              isManual ? 'Manual' : 'Auto',
+              style: TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w800,
+                color: isManual ? AppTheme.warning : AppTheme.info,
+              ),
+            ),
+          ),
+        ],
+      ),
+      subtitle: Text(
+        '${method.isEmpty ? '' : '$method • '}${user.isEmpty ? '' : '$user • '}$when'
+        '${note == null || note.isEmpty ? '' : '\n$note'}',
+      ),
+      trailing: Text(
+        '${isIn ? '+' : '-'}${_money(item['amount'])}',
+        style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900, color: isIn ? AppTheme.success : AppTheme.danger),
       ),
     );
   }
@@ -474,6 +591,11 @@ class _RegisterShiftScreenState extends State<RegisterShiftScreen> {
       if (!mounted) return;
       final shift = data['shift'] is Map ? data['shift'] as Map : const {};
       final summary = data['summary'] is Map ? data['summary'] as Map : const {};
+      final activity = data['activity'] is Map ? data['activity'] as Map : const {};
+      final activityItems = (activity['items'] as List?)
+              ?.map((e) => Map<String, dynamic>.from(e as Map))
+              .toList() ??
+          const <Map<String, dynamic>>[];
       await showDialog<void>(context: context, builder: (d) => AlertDialog(
         title: Text('Shift #$shiftId Details'),
         content: SizedBox(width: 820, height: 560, child: ListView(children: [
@@ -484,7 +606,15 @@ class _RegisterShiftScreenState extends State<RegisterShiftScreen> {
             Chip(label: Text('Variance: ${shift['variance'] ?? '0.00'}')),
           ]),
           const SizedBox(height: 12),
-          _movementList(shift['movements']),
+          const Text('Register Activity', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800)),
+          const SizedBox(height: 6),
+          if (activityItems.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 14),
+              child: Text('No cash activity recorded in this shift.', style: TextStyle(color: AppTheme.textMuted)),
+            )
+          else
+            ...activityItems.map(_activityTile),
         ])),
         actions: [TextButton(onPressed: () => Navigator.pop(d), child: const Text('Close'))],
       ));
