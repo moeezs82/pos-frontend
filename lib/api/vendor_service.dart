@@ -132,6 +132,7 @@ class VendorService {
     int? branchId,
     String? from,
     String? to,
+    bool latest = false,
   }) async {
     final params = {
       'page': '$page',
@@ -139,6 +140,7 @@ class VendorService {
       // if (branchId != null) 'branch_id': '$branchId',
       if (from != null) 'from': from,
       if (to != null) 'to': to,
+      if (latest) 'latest': '1',
     };
     return await _client.get('/vendors/$id/ledger', query: params);
   }
@@ -151,12 +153,14 @@ class VendorService {
     int perPage = 15,
     String? from,
     String? to,
+    bool latest = false,
   }) async {
     final params = {
       'page': '$page',
       'per_page': '$perPage',
       if (from != null && from.isNotEmpty) 'from': from,
       if (to != null && to.isNotEmpty) 'to': to,
+      if (latest) 'latest': '1',
     };
     return await _client.get('/vendors/$id/loan-ledger', query: params);
   }

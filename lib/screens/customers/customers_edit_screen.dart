@@ -6,6 +6,7 @@ import 'package:enterprise_pos/screens/sales/sale_detail.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/app_feedback.dart';
 import 'package:enterprise_pos/widgets/branch_indicator.dart';
+import 'package:enterprise_pos/widgets/ledger_pager.dart';
 import 'package:enterprise_pos/widgets/payment_method_dropdown.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -81,8 +82,9 @@ class _CustomerEditScreenState extends State<CustomerEditScreen>
   void _onTabChanged() {
     if (!_tab.indexIsChanging) {
       if (_tab.index == 0 && !_loadedSalesOnce) _loadSales(page: 1);
-      if (_tab.index == 1 && !_loadedLedgerOnce) _loadLedger(page: 1);
-      if (_tab.index == 2 && !_loadedLoanOnce) _loadLoanLedger(page: 1);
+      // Ledgers open on the latest (last) page so the newest entries show first.
+      if (_tab.index == 1 && !_loadedLedgerOnce) _loadLedger(page: 1, latest: true);
+      if (_tab.index == 2 && !_loadedLoanOnce) _loadLoanLedger(page: 1, latest: true);
     }
   }
 
@@ -144,7 +146,7 @@ class _CustomerEditScreenState extends State<CustomerEditScreen>
     }
   }
 
-  Future<void> _loadLedger({required int page}) async {
+  Future<void> _loadLedger({required int page, bool latest = false}) async {
     if (_loadingLedger) return;
     setState(() {
       _loadingLedger = true;
@@ -157,6 +159,7 @@ class _CustomerEditScreenState extends State<CustomerEditScreen>
         page: page,
         perPage: _pageSize,
         branchId: branchId,
+        latest: latest,
       );
       final wrap = (res['data'] as Map).cast<String, dynamic>();
       final items = ((wrap['items'] as List?) ?? const [])
@@ -182,7 +185,7 @@ class _CustomerEditScreenState extends State<CustomerEditScreen>
     }
   }
 
-  Future<void> _loadLoanLedger({required int page}) async {
+  Future<void> _loadLoanLedger({required int page, bool latest = false}) async {
     if (_loadingLoan) return;
     setState(() {
       _loadingLoan = true;
@@ -193,6 +196,7 @@ class _CustomerEditScreenState extends State<CustomerEditScreen>
         id: widget.customerId,
         page: page,
         perPage: _pageSize,
+        latest: latest,
       );
       final wrap = (res['data'] as Map).cast<String, dynamic>();
       final items = ((wrap['items'] as List?) ?? const [])
@@ -389,10 +393,13 @@ class _CustomerEditScreenState extends State<CustomerEditScreen>
       if (!mounted) return;
       if (sheetCtx.mounted) Navigator.pop(sheetCtx);
       await _loadHeader();
+      // After posting, jump to the page containing the newest entry (last page).
       if (_tab.index == 0 && _loadedSalesOnce) {
         await _loadSales(page: _salesPage);
       } else if (_tab.index == 1 && _loadedLedgerOnce) {
-        await _loadLedger(page: _ldgPage);
+        await _loadLedger(page: _ldgPage, latest: true);
+      } else if (_tab.index == 2 && _loadedLoanOnce) {
+        await _loadLoanLedger(page: _loanPage, latest: true);
       }
       if (mounted) AppFeedback.success(context, 'Receipt recorded successfully');
     } catch (e) {
@@ -511,9 +518,8 @@ class _CustomerEditScreenState extends State<CustomerEditScreen>
                               lastPage: _ldgLastPage,
                               total: _ldgTotal,
                               onRetry: () => _loadLedger(page: _ldgPage),
-                              onPrev: () => _loadLedger(page: _ldgPage - 1),
-                              onNext: () => _loadLedger(page: _ldgPage + 1),
-                              onRefresh: () async => _loadLedger(page: 1),
+                              onGoToPage: (p) => _loadLedger(page: p),
+                              onRefresh: () async => _loadLedger(page: _ldgPage),
                               money: _money,
                               toDouble: _toDouble,
                             ),
@@ -528,9 +534,8 @@ class _CustomerEditScreenState extends State<CustomerEditScreen>
                               lastPage: _loanLastPage,
                               total: _loanTotal,
                               onRetry: () => _loadLoanLedger(page: _loanPage),
-                              onPrev: () => _loadLoanLedger(page: _loanPage - 1),
-                              onNext: () => _loadLoanLedger(page: _loanPage + 1),
-                              onRefresh: () async => _loadLoanLedger(page: 1),
+                              onGoToPage: (p) => _loadLoanLedger(page: p),
+                              onRefresh: () async => _loadLoanLedger(page: _loanPage),
                               money: _money,
                               toDouble: _toDouble,
                             ),
@@ -708,8 +713,7 @@ class _LedgerTab extends StatelessWidget {
     required this.lastPage,
     required this.total,
     required this.onRetry,
-    required this.onPrev,
-    required this.onNext,
+    required this.onGoToPage,
     required this.onRefresh,
     required this.money,
     required this.toDouble,
@@ -721,7 +725,8 @@ class _LedgerTab extends StatelessWidget {
   final bool isLoading;
   final String? error;
   final int page, lastPage, total;
-  final VoidCallback onRetry, onPrev, onNext;
+  final VoidCallback onRetry;
+  final ValueChanged<int> onGoToPage;
   final Future<void> Function() onRefresh;
   final String Function(dynamic value) money;
   final double Function(dynamic value) toDouble;
@@ -760,12 +765,12 @@ class _LedgerTab extends StatelessWidget {
             ],
           ],
           const SizedBox(height: 12),
-          _PartyPager(
+          LedgerPager(
             page: page,
             lastPage: lastPage,
             total: total,
-            onPrev: onPrev,
-            onNext: onNext,
+            loading: isLoading,
+            onGoToPage: onGoToPage,
           ),
         ],
       ),
@@ -813,8 +818,7 @@ class _LoanLedgerTab extends StatelessWidget {
     required this.lastPage,
     required this.total,
     required this.onRetry,
-    required this.onPrev,
-    required this.onNext,
+    required this.onGoToPage,
     required this.onRefresh,
     required this.money,
     required this.toDouble,
@@ -827,7 +831,8 @@ class _LoanLedgerTab extends StatelessWidget {
   final bool isLoading;
   final String? error;
   final int page, lastPage, total;
-  final VoidCallback onRetry, onPrev, onNext;
+  final VoidCallback onRetry;
+  final ValueChanged<int> onGoToPage;
   final Future<void> Function() onRefresh;
   final String Function(dynamic value) money;
   final double Function(dynamic value) toDouble;
@@ -919,12 +924,12 @@ class _LoanLedgerTab extends StatelessWidget {
             ],
           ],
           const SizedBox(height: 12),
-          _PartyPager(
+          LedgerPager(
             page: page,
             lastPage: lastPage,
             total: total,
-            onPrev: onPrev,
-            onNext: onNext,
+            loading: isLoading,
+            onGoToPage: onGoToPage,
           ),
         ],
       ),

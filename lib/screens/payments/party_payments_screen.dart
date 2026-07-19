@@ -35,6 +35,10 @@ class _PartyPaymentsScreenState extends State<PartyPaymentsScreen> {
   bool _loadingParties = false;
   bool _loadingDetail = false;
   bool _posting = false;
+  // Monotonic token: a detail/ledger response is applied only if its party
+  // selection is still the current one (discards stale responses when the user
+  // switches party while a request is in flight).
+  int _detailGen = 0;
 
   final _searchController = TextEditingController();
   final _amountController = TextEditingController();
@@ -172,6 +176,8 @@ class _PartyPaymentsScreenState extends State<PartyPaymentsScreen> {
     final id = _idOf(party);
     if (id == null) return;
 
+    final gen = ++_detailGen; // invalidate any earlier in-flight load
+
     setState(() {
       _selectedParty = party;
       _detail = null;
@@ -196,7 +202,7 @@ class _PartyPaymentsScreenState extends State<PartyPaymentsScreen> {
         final ordersRes = await _deliveryBoyService.getOrders(id: id, page: 1, perPage: 8, branchId: branchId);
         final receivedRes = await _deliveryBoyService.getReceived(id: id, page: 1, perPage: 8);
 
-        if (!mounted) return;
+        if (!mounted || gen != _detailGen) return;
         setState(() {
           final orders = _extractItems(ordersRes);
           final received = _extractItems(receivedRes);
@@ -213,11 +219,12 @@ class _PartyPaymentsScreenState extends State<PartyPaymentsScreen> {
       final detailRes = _kind == PartyPaymentKind.customer
           ? await _customerService.getCustomerDetail(id: id, branchId: branchId)
           : await _vendorService.getVendorDetail(id: id, branchId: branchId);
+      // "Recent" ledger = the newest entries, so request the last page.
       final ledgerRes = _kind == PartyPaymentKind.customer
-          ? await _customerService.getCustomerLedger(id: id, page: 1, perPage: 8, branchId: branchId)
-          : await _vendorService.getVendorLedger(id: id, page: 1, perPage: 8, branchId: branchId);
+          ? await _customerService.getCustomerLedger(id: id, page: 1, perPage: 8, branchId: branchId, latest: true)
+          : await _vendorService.getVendorLedger(id: id, page: 1, perPage: 8, branchId: branchId, latest: true);
 
-      if (!mounted) return;
+      if (!mounted || gen != _detailGen) return;
       setState(() {
         _detail = _extractDetail(detailRes);
         final ledgerWrap = (ledgerRes['data'] as Map?)?.cast<String, dynamic>() ?? const <String, dynamic>{};
@@ -229,10 +236,10 @@ class _PartyPaymentsScreenState extends State<PartyPaymentsScreen> {
         _ledgerTotal = _toInt(ledgerWrap['total']) ?? _ledger.length;
       });
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted || gen != _detailGen) return;
       setState(() => _detailError = 'Failed to load ${_kindLabel.toLowerCase()} records: $e');
     } finally {
-      if (mounted) setState(() => _loadingDetail = false);
+      if (mounted && gen == _detailGen) setState(() => _loadingDetail = false);
     }
   }
 

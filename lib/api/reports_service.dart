@@ -142,6 +142,7 @@ class ReportsService {
     int page = 1,
     int perPage = 15,
     int? branchId,
+    bool latest = false,
   }) async {
     final q = <String, String>{
       'party_type': partyType,
@@ -150,6 +151,7 @@ class ReportsService {
       if (partyId != null) 'party_id': '$partyId', // only send when not null
       if (from != null && from.isNotEmpty) 'from': from,
       if (to != null && to.isNotEmpty) 'to': to,
+      if (latest) 'latest': '1',
       // if (branchId != null) 'branch_id': '$branchId',
     };
 

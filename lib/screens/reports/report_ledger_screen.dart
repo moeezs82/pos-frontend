@@ -2,6 +2,7 @@
 import 'package:enterprise_pos/api/reports_service.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/widgets/customer_picker_sheet.dart';
+import 'package:enterprise_pos/widgets/ledger_pager.dart';
 import 'package:enterprise_pos/widgets/vendor_picker_sheet.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
@@ -48,6 +49,7 @@ class _ReportLedgerScreenState extends State<ReportLedgerScreen> {
   _LedgerResult? _result;
   int _currentPage = 1;
   int _perPage = 15;
+  int _fetchGen = 0; // stale-response guard token
 
   @override
   void initState() {
@@ -63,7 +65,7 @@ class _ReportLedgerScreenState extends State<ReportLedgerScreen> {
       final token = context.read<AuthProvider>().token!;
       _service = ReportsService(token: token);
       _branchId = null;
-      _fetch();
+      _fetch(latest: true); // open on the latest page
     });
   }
 
@@ -90,11 +92,12 @@ class _ReportLedgerScreenState extends State<ReportLedgerScreen> {
         _to = DateTime(picked.end.year, picked.end.month, picked.end.day);
         _currentPage = 1;
       });
-      _fetch();
+      _fetch(latest: true); // new filter set => open on its latest page
     }
   }
 
-  Future<void> _fetch() async {
+  Future<void> _fetch({bool latest = false}) async {
+    final gen = ++_fetchGen; // discard stale responses on filter/party change
     setState(() {
       _loading = true;
       _error = null;
@@ -109,13 +112,29 @@ class _ReportLedgerScreenState extends State<ReportLedgerScreen> {
         page: _currentPage,
         perPage: _perPage,
         branchId: _branchId,
+        latest: latest,
       );
-      setState(() => _result = _LedgerResult.fromJson(data));
+      if (!mounted || gen != _fetchGen) return;
+      final result = _LedgerResult.fromJson(data);
+      setState(() {
+        _result = result;
+        // Keep the local page in sync with the server (it resolves latest and
+        // clamps out-of-range), so the pager reflects the real current page.
+        final cp = result.pagination.currentPage;
+        _currentPage = cp < 1 ? 1 : cp;
+      });
     } catch (e) {
+      if (!mounted || gen != _fetchGen) return;
       setState(() => _error = e.toString());
     } finally {
-      if (mounted) setState(() => _loading = false);
+      if (mounted && gen == _fetchGen) setState(() => _loading = false);
     }
+  }
+
+  void _goToPage(int page) {
+    if (_loading) return;
+    _currentPage = page;
+    _fetch(); // explicit navigation: exact page, not follow-latest
   }
 
   /* ------------------------------- Party picker ------------------------------- */
@@ -136,7 +155,7 @@ class _ReportLedgerScreenState extends State<ReportLedgerScreen> {
       _partyId = picked?['id'] as int?;
       _currentPage = 1;
     });
-    _fetch();
+    _fetch(latest: true); // new party context => open on its latest page
   }
 
   void _clearParty() {
@@ -145,7 +164,7 @@ class _ReportLedgerScreenState extends State<ReportLedgerScreen> {
       _partyId = null;
       _currentPage = 1;
     });
-    _fetch();
+    _fetch(latest: true);
   }
 
   /* ------------------------------- UI ------------------------------- */
@@ -358,35 +377,16 @@ class _ReportLedgerScreenState extends State<ReportLedgerScreen> {
 
   SliverToBoxAdapter _buildPagination() {
     final p = _result?.pagination;
-    if (p == null || p.lastPage <= 1) return const SliverToBoxAdapter(child: SizedBox(height: 24));
+    if (p == null) return const SliverToBoxAdapter(child: SizedBox(height: 24));
     return SliverToBoxAdapter(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-        child: Row(
-          children: [
-            Text('Page ${p.currentPage} of ${p.lastPage}', style: TextStyle(color: Colors.grey.shade700)),
-            const Spacer(),
-            IconButton(
-              tooltip: 'Previous',
-              onPressed: (_loading || p.currentPage <= 1)
-                  ? null
-                  : () {
-                      setState(() => _currentPage = p.currentPage - 1);
-                      _fetch();
-                    },
-              icon: const Icon(Icons.chevron_left_rounded),
-            ),
-            IconButton(
-              tooltip: 'Next',
-              onPressed: (_loading || p.currentPage >= p.lastPage)
-                  ? null
-                  : () {
-                      setState(() => _currentPage = p.currentPage + 1);
-                      _fetch();
-                    },
-              icon: const Icon(Icons.chevron_right_rounded),
-            ),
-          ],
+        child: LedgerPager(
+          page: p.currentPage,
+          lastPage: p.lastPage,
+          total: p.total,
+          loading: _loading,
+          onGoToPage: _goToPage,
         ),
       ),
     );
