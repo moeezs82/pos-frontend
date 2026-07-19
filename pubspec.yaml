@@ -127,5 +127,5 @@ msix_config:
   capabilities: internetClient
 
   publisher: "CN=Moeez"
-  certificate_path: "D:\\folder-e\\learning\\flutter\\enterprise_pos\\windows\\signing\\moeez_codesign.pfx"
+  certificate_path: "E:\\learning\\flutter\\enterprise_pos\\windows\\signing\\moeez_codesign.pfx"
   certificate_password: "Moeez@123"

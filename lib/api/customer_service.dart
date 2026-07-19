@@ -12,6 +12,7 @@ class CustomerService {
     String? search,
     int? branchId,
     bool? includeBalance,
+    String? balanceFilter,
   }) async {
     final queryParams = {
       "page": page.toString(),
@@ -19,6 +20,7 @@ class CustomerService {
       if (search != null && search.isNotEmpty) "search": search,
       // if (branchId != null) 'branch_id': branchId.toString(),
       if (includeBalance == true) 'include_balance': '1',
+      if (balanceFilter != null && balanceFilter.isNotEmpty) 'balance_filter': balanceFilter,
     };
 
     final res = await _client.get("/customers", query: queryParams);

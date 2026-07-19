@@ -13,6 +13,7 @@ class DeliveryBoyService {
     String? search,
     int? branchId,
     String role = 'delivery',
+    String? balanceFilter,
   }) async {
     final query = <String, String>{
       'page': '$page',
@@ -20,6 +21,7 @@ class DeliveryBoyService {
       'role': role,
       if (search != null && search.trim().isNotEmpty) 'search': search.trim(),
       if (branchId != null) 'branch_id': '$branchId',
+      if (balanceFilter != null && balanceFilter.isNotEmpty) 'balance_filter': balanceFilter,
     };
 
     final res = await _client.get('/delivery-boys', query: query);

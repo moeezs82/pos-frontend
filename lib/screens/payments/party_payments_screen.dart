@@ -17,6 +17,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 enum PartyPaymentKind { customer, vendor, deliveryBoy }
+enum PartyBalanceFilter { all, advanceCredit,outstanding }
 
 class PartyPaymentsScreen extends StatefulWidget {
   const PartyPaymentsScreen({super.key});
@@ -32,6 +33,7 @@ class _PartyPaymentsScreenState extends State<PartyPaymentsScreen> {
   VoidCallback? _branchListener;
 
   PartyPaymentKind _kind = PartyPaymentKind.customer;
+  PartyBalanceFilter _balanceFilter = PartyBalanceFilter.all;
   bool _loadingParties = false;
   bool _loadingDetail = false;
   bool _posting = false;
@@ -39,11 +41,17 @@ class _PartyPaymentsScreenState extends State<PartyPaymentsScreen> {
   // selection is still the current one (discards stale responses when the user
   // switches party while a request is in flight).
   int _detailGen = 0;
+  int _partyLoadGen = 0;
+  int _partyPage = 1;
+  int _partyLastPage = 1;
+  int _partyTotal = 0;
+  static const int _partyPageSize = 50;
 
   final _searchController = TextEditingController();
   final _amountController = TextEditingController();
   final _referenceController = TextEditingController();
   final _formKey = GlobalKey<FormState>();
+  final _partyScrollController = ScrollController();
 
   String _search = '';
   String _method = 'cash';
@@ -67,6 +75,7 @@ class _PartyPaymentsScreenState extends State<PartyPaymentsScreen> {
     final branchProvider = context.read<BranchProvider>();
     _branchListener = () => _reloadAll(keepSelection: true);
     branchProvider.addListener(_branchListener!);
+    _partyScrollController.addListener(_onPartyScroll);
 
     WidgetsBinding.instance.addPostFrameCallback((_) => _loadParties(resetSelection: true));
   }
@@ -76,6 +85,9 @@ class _PartyPaymentsScreenState extends State<PartyPaymentsScreen> {
     _searchController.dispose();
     _amountController.dispose();
     _referenceController.dispose();
+    _partyScrollController
+      ..removeListener(_onPartyScroll)
+      ..dispose();
     final branchProvider = context.read<BranchProvider>();
     if (_branchListener != null) branchProvider.removeListener(_branchListener!);
     super.dispose();
@@ -98,11 +110,29 @@ class _PartyPaymentsScreenState extends State<PartyPaymentsScreen> {
     }
   }
 
-  Future<void> _loadParties({bool resetSelection = false}) async {
+  void _onPartyScroll() {
+    if (!_partyScrollController.hasClients || _loadingParties || _partyPage >= _partyLastPage) return;
+    if (_partyScrollController.position.extentAfter < 180) {
+      _loadParties(page: _partyPage + 1, append: true);
+    }
+  }
+
+  String get _balanceFilterCode => switch (_balanceFilter) {
+        PartyBalanceFilter.all => 'all',
+        PartyBalanceFilter.advanceCredit => 'advance_credit',
+        PartyBalanceFilter.outstanding => 'outstanding',
+      };
+
+  Future<void> _loadParties({bool resetSelection = false, int page = 1, bool append = false}) async {
     if (_loadingParties) return;
+    final gen = append ? _partyLoadGen : ++_partyLoadGen;
     setState(() {
       _loadingParties = true;
       if (resetSelection) {
+        _parties.clear();
+        _partyPage = 1;
+        _partyLastPage = 1;
+        _partyTotal = 0;
         _selectedParty = null;
         _detail = null;
         _ledger.clear();
@@ -114,33 +144,46 @@ class _PartyPaymentsScreenState extends State<PartyPaymentsScreen> {
       final branchId = context.read<BranchProvider>().selectedBranchId;
       final res = switch (_kind) {
         PartyPaymentKind.customer => await _customerService.getCustomers(
-            page: 1,
+            page: page,
+            perPage: _partyPageSize,
             search: _search,
             includeBalance: true,
+            balanceFilter: _balanceFilterCode,
             branchId: branchId,
           ),
         PartyPaymentKind.vendor => await _vendorService.getVendors(
-            page: 1,
+            page: page,
+            perPage: _partyPageSize,
             search: _search,
             includeBalance: true,
+            balanceFilter: _balanceFilterCode,
             branchId: branchId,
           ),
         PartyPaymentKind.deliveryBoy => await _deliveryBoyService.getDeliveryBoys(
-            page: 1,
+            page: page,
+            perPage: _partyPageSize,
             search: _search,
+            balanceFilter: _balanceFilterCode,
             branchId: branchId,
           ),
       };
 
       final loaded = _extractParties(res);
-      if (!mounted) return;
+      final pagination = _extractPartyPagination(res, fallbackCount: loaded.length, requestedPage: page);
+      if (!mounted || gen != _partyLoadGen) return;
       setState(() {
-        _parties
-          ..clear()
-          ..addAll(loaded);
+        if (!append) _parties.clear();
+        final knownIds = _parties.map(_idOf).whereType<int>().toSet();
+        _parties.addAll(loaded.where((party) {
+          final id = _idOf(party);
+          return id == null || knownIds.add(id);
+        }));
+        _partyPage = pagination.$1;
+        _partyLastPage = pagination.$2;
+        _partyTotal = pagination.$3;
       });
 
-      if (resetSelection && loaded.isNotEmpty) {
+      if (resetSelection && !append && loaded.isNotEmpty) {
         await _selectParty(loaded.first);
       }
     } catch (e) {
@@ -148,6 +191,21 @@ class _PartyPaymentsScreenState extends State<PartyPaymentsScreen> {
     } finally {
       if (mounted) setState(() => _loadingParties = false);
     }
+  }
+
+  (int, int, int) _extractPartyPagination(
+    Map<String, dynamic> res, {
+    required int fallbackCount,
+    required int requestedPage,
+  }) {
+    final data = res['data'];
+    if (data is Map) {
+      final current = _toInt(data['current_page']) ?? requestedPage;
+      final last = (_toInt(data['last_page']) ?? current).clamp(1, 1 << 30).toInt();
+      final total = _toInt(data['total']) ?? fallbackCount;
+      return (current, last, total);
+    }
+    return (requestedPage, requestedPage, fallbackCount);
   }
 
   List<Map<String, dynamic>> _extractParties(Map<String, dynamic> res) {
@@ -308,6 +366,25 @@ class _PartyPaymentsScreenState extends State<PartyPaymentsScreen> {
       _method = 'cash';
       _amountController.clear();
       _referenceController.clear();
+      _selectedParty = null;
+      _detail = null;
+      _ledger.clear();
+      _detailError = null;
+      _partyPage = 1;
+      _partyLastPage = 1;
+      _partyTotal = 0;
+    });
+    _loadParties(resetSelection: true);
+  }
+
+  void _switchBalanceFilter(PartyBalanceFilter filter) {
+    if (_balanceFilter == filter || _loadingParties || _posting) return;
+    ++_detailGen;
+    setState(() {
+      _balanceFilter = filter;
+      _partyPage = 1;
+      _partyLastPage = 1;
+      _partyTotal = 0;
       _selectedParty = null;
       _detail = null;
       _ledger.clear();
@@ -577,6 +654,29 @@ class _PartyPaymentsScreenState extends State<PartyPaymentsScreen> {
                   onClear: _clearSearch,
                 ),
               ),
+              SegmentedButton<PartyBalanceFilter>(
+                segments: const [
+                  ButtonSegment(
+                    value: PartyBalanceFilter.all,
+                    icon: Icon(Icons.people_outline_rounded),
+                    label: Text('All'),
+                  ),
+                  ButtonSegment(
+                    value: PartyBalanceFilter.advanceCredit,
+                    icon: Icon(Icons.savings_outlined),
+                    label: Text('Advance / Credit'),
+                  ),
+                  ButtonSegment(
+                    value: PartyBalanceFilter.outstanding,
+                    icon: Icon(Icons.account_balance_wallet_rounded),
+                    label: Text('Outstanding'),
+                  ),
+                ],
+                selected: {_balanceFilter},
+                onSelectionChanged: (_loadingParties || _posting)
+                    ? null
+                    : (value) => _switchBalanceFilter(value.first),
+              ),
             ],
           ),
           const SizedBox(height: 12),
@@ -620,7 +720,13 @@ class _PartyPaymentsScreenState extends State<PartyPaymentsScreen> {
             padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
             child: EnterpriseSectionHeader(
               title: _kindLabelPlural,
-              subtitle: _loadingParties ? 'Loading...' : '${_parties.length} loaded for quick payment',
+              subtitle: _loadingParties && _parties.isEmpty
+                  ? 'Loading...'
+                  : '${_parties.length} of $_partyTotal loaded • ${switch (_balanceFilter) {
+                      PartyBalanceFilter.outstanding => 'outstanding',
+                      PartyBalanceFilter.all => 'all',
+                      PartyBalanceFilter.advanceCredit => 'advance / credit',
+                    }}',
               icon: _kindIcon,
               color: _kindColor,
             ),
@@ -636,10 +742,29 @@ class _PartyPaymentsScreenState extends State<PartyPaymentsScreen> {
                         subtitle: _search.isEmpty ? 'Search or add parties before recording payments.' : 'No record matched your search.',
                       )
                     : ListView.separated(
+                        controller: _partyScrollController,
                         padding: const EdgeInsets.all(10),
-                        itemCount: _parties.length,
+                        itemCount: _parties.length + (_partyPage < _partyLastPage ? 1 : 0),
                         separatorBuilder: (_, __) => const SizedBox(height: 8),
                         itemBuilder: (context, index) {
+                          if (index == _parties.length) {
+                            return Padding(
+                              padding: const EdgeInsets.all(12),
+                              child: Center(
+                                child: _loadingParties
+                                    ? const SizedBox(
+                                        width: 22,
+                                        height: 22,
+                                        child: CircularProgressIndicator(strokeWidth: 2),
+                                      )
+                                    : OutlinedButton.icon(
+                                        onPressed: () => _loadParties(page: _partyPage + 1, append: true),
+                                        icon: const Icon(Icons.expand_more_rounded),
+                                        label: const Text('Load more'),
+                                      ),
+                              ),
+                            );
+                          }
                           final party = _parties[index];
                           final selected = _selectedParty != null && _idOf(_selectedParty!) == _idOf(party);
                           return _PartyCard(

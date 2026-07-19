@@ -12,12 +12,14 @@ class VendorService {
     String? search,
     bool includeBalance = false,
     int? branchId,
+    String? balanceFilter,
   }) async {
     final queryParams = {
       "page": page.toString(),
       if (perPage != null) "per_page": perPage.toString(),
       if (search != null && search.isNotEmpty) 'search': search,
       if (includeBalance) 'include_balance': '1',
+      if (balanceFilter != null && balanceFilter.isNotEmpty) 'balance_filter': balanceFilter,
       // if (branchId != null) 'branch_id': '$branchId',
     };
 
