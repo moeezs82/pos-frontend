@@ -114,7 +114,12 @@ class _CashLedgerCreateScreenState extends State<CashLedgerCreateScreen> {
   static const _defaultExpenseCode = '5300';
   List<Map<String, dynamic>> _expenseAccounts = [];
   String? _expenseAccountCode;
-  bool _expenseAccountsLoaded = false;
+  bool _expenseLoading = false;
+  bool _expenseLoadedOnce = false;
+  String? _expenseError; // non-null => load failed (distinct from "empty")
+
+  bool get _expenseSelectionReady =>
+      !_isExpense || (!_expenseLoading && _expenseError == null && _expenseAccountCode != null);
 
   bool get _isExpense => _category == 'OTHER_EXPENSE';
 
@@ -133,26 +138,139 @@ class _CashLedgerCreateScreenState extends State<CashLedgerCreateScreen> {
     });
   }
 
-  Future<void> _loadExpenseAccounts() async {
-    if (_expenseAccountsLoaded) return;
-    _expenseAccountsLoaded = true;
+  /// Load the eligible EXPENSE accounts from the dedicated operational endpoint.
+  /// Never swallows failures into an empty list: an error is surfaced with a
+  /// Retry action so we don't claim "no accounts exist" when the call failed.
+  Future<void> _loadExpenseAccounts({bool force = false}) async {
+    if (_expenseLoading) return;
+    if (_expenseLoadedOnce && !force && _expenseError == null) return;
+    setState(() {
+      _expenseLoading = true;
+      _expenseError = null;
+    });
     try {
-      final res = await _accountsApi.getAccounts(
-          isActive: true, typeCode: 'EXPENSE', perPage: 200);
-      final items = List<Map<String, dynamic>>.from(
-        (res['items'] as List?) ?? const [],
-      );
+      final items = await _accountsApi.getExpenseOptions();
       if (!mounted) return;
       setState(() {
         _expenseAccounts = items;
-        // Default to Other/Sundry Expense (5300) if present and active.
-        _expenseAccountCode ??= items.any((a) => a['code'] == _defaultExpenseCode)
+        _expenseLoadedOnce = true;
+        final codes = items
+            .map((a) => a['code']?.toString())
+            .whereType<String>()
+            .toSet();
+        // Drop a previously-selected code that is no longer eligible.
+        if (_expenseAccountCode != null && !codes.contains(_expenseAccountCode)) {
+          _expenseAccountCode = null;
+        }
+        // Default to 5300 only if it is actually eligible and returned.
+        _expenseAccountCode ??= codes.contains(_defaultExpenseCode)
             ? _defaultExpenseCode
             : (items.isNotEmpty ? items.first['code']?.toString() : null);
       });
-    } catch (_) {
-      _expenseAccountsLoaded = false; // allow a retry on next entry into expense
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _expenseError = _friendlyError(e));
+    } finally {
+      if (mounted) setState(() => _expenseLoading = false);
     }
+  }
+
+  /// State-aware expense-account picker: loading, load-error+retry, a genuine
+  /// empty state, or the dropdown. Never renders an empty dropdown for a failed
+  /// or in-flight load.
+  Widget _buildExpenseSelector() {
+    if (_expenseLoading && _expenseAccounts.isEmpty) {
+      return InputDecorator(
+        decoration: const InputDecoration(
+          labelText: 'Expense account *',
+          prefixIcon: Icon(Icons.account_tree_rounded),
+        ),
+        child: Row(
+          children: const [
+            SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+            SizedBox(width: 10),
+            Text('Loading expense accounts…'),
+          ],
+        ),
+      );
+    }
+
+    if (_expenseError != null) {
+      return Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: AppTheme.danger.withOpacity(.06),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: AppTheme.danger.withOpacity(.25)),
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.error_outline_rounded, color: AppTheme.danger, size: 20),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'Could not load expense accounts. $_expenseError',
+                style: const TextStyle(color: AppTheme.danger, fontWeight: FontWeight.w700, fontSize: 12.5),
+              ),
+            ),
+            const SizedBox(width: 8),
+            TextButton.icon(
+              onPressed: _expenseLoading ? null : () => _loadExpenseAccounts(force: true),
+              icon: const Icon(Icons.refresh_rounded, size: 18),
+              label: const Text('Retry'),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (_expenseAccounts.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: AppTheme.surfaceSoft,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: AppTheme.border),
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.info_outline_rounded, color: AppTheme.textMuted, size: 20),
+            const SizedBox(width: 10),
+            const Expanded(
+              child: Text(
+                'No eligible expense accounts are configured. Ask an administrator to add an active expense account in the Chart of Accounts.',
+                style: TextStyle(color: AppTheme.textMuted, fontWeight: FontWeight.w600, fontSize: 12.5),
+              ),
+            ),
+            TextButton.icon(
+              onPressed: () => _loadExpenseAccounts(force: true),
+              icon: const Icon(Icons.refresh_rounded, size: 18),
+              label: const Text('Reload'),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return DropdownButtonFormField<String>(
+      value: _expenseAccountCode,
+      isExpanded: true,
+      decoration: const InputDecoration(
+        labelText: 'Expense account *',
+        prefixIcon: Icon(Icons.account_tree_rounded),
+      ),
+      items: _expenseAccounts
+          .map((a) => DropdownMenuItem<String>(
+                value: a['code']?.toString(),
+                child: Text('${a['code']} · ${a['name']}',
+                    overflow: TextOverflow.ellipsis),
+              ))
+          .toList(),
+      onChanged: (v) => setState(() => _expenseAccountCode = v),
+      validator: (v) => (_isExpense && (v == null || v.isEmpty))
+          ? 'Select an expense account'
+          : null,
+    );
   }
 
   @override
@@ -272,6 +390,15 @@ class _CashLedgerCreateScreenState extends State<CashLedgerCreateScreen> {
 
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
+
+    // Expense entries require a real, eligible account. Guard here too so the
+    // Ctrl+Enter shortcut can't post with a missing/failed-to-load account.
+    if (_isExpense && !_expenseSelectionReady) {
+      _showMessage(_expenseError != null
+          ? 'Fix the expense account load error before saving.'
+          : 'Select an expense account before saving.');
+      return;
+    }
 
     final amount = double.tryParse(_amountCtrl.text.trim().replaceAll(',', '')) ?? 0;
     if (amount <= 0) {
@@ -409,7 +536,7 @@ class _CashLedgerCreateScreenState extends State<CashLedgerCreateScreen> {
                 Expanded(
                   flex: 2,
                   child: FilledButton.icon(
-                    onPressed: _saving ? null : _submit,
+                    onPressed: (_saving || !_expenseSelectionReady) ? null : _submit,
                     icon: _saving
                         ? const SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2))
                         : const Icon(Icons.check_circle_rounded),
@@ -481,25 +608,7 @@ class _CashLedgerCreateScreenState extends State<CashLedgerCreateScreen> {
           ),
           if (_isExpense) ...[
             const SizedBox(height: 14),
-            DropdownButtonFormField<String>(
-              value: _expenseAccountCode,
-              isExpanded: true,
-              decoration: const InputDecoration(
-                labelText: 'Expense account *',
-                prefixIcon: Icon(Icons.account_tree_rounded),
-              ),
-              items: _expenseAccounts
-                  .map((a) => DropdownMenuItem<String>(
-                        value: a['code']?.toString(),
-                        child: Text('${a['code']} · ${a['name']}',
-                            overflow: TextOverflow.ellipsis),
-                      ))
-                  .toList(),
-              onChanged: (v) => setState(() => _expenseAccountCode = v),
-              validator: (v) => (_isExpense && (v == null || v.isEmpty))
-                  ? 'Select an expense account'
-                  : null,
-            ),
+            _buildExpenseSelector(),
           ],
           const SizedBox(height: 14),
           TextFormField(

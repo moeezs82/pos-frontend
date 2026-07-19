@@ -64,6 +64,28 @@ class AccountService {
     throw Exception(res["message"] ?? "Failed to load accounts");
   }
 
+  /// GET /accounts/expense-options
+  ///
+  /// Operational, read-only list of EXPENSE accounts an authorized user may
+  /// pick as a manual "Other Expense" posting target. The backend already
+  /// applies active + EXPENSE + non-system filtering, so no client-side
+  /// account-type filtering is needed.
+  ///
+  /// Returns: [{id, code, name, type, is_active}, ...]
+  /// Throws on any non-success envelope (401/403/422/network) so the caller can
+  /// distinguish "empty" from "failed" — never silently returns [].
+  Future<List<Map<String, dynamic>>> getExpenseOptions() async {
+    final res = await _client.get("/accounts/expense-options");
+    if (res["success"] == true) {
+      final data = res["data"];
+      final list = data is Map ? (data["items"] as List? ?? const []) : const [];
+      return list
+          .map<Map<String, dynamic>>((e) => Map<String, dynamic>.from(e as Map))
+          .toList();
+    }
+    throw Exception(res["message"] ?? "Failed to load expense accounts");
+  }
+
   /// POST /accounts  (optional CRUD)
   Future<Map<String, dynamic>> createAccount({
     required String code,
