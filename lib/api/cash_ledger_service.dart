@@ -108,6 +108,7 @@ class CashLedgerService {
     String direction = 'all',
     String kind = 'all',
     String? category,
+    String? method,
     String? search,
   }) async {
     final q = <String, String>{
@@ -118,12 +119,34 @@ class CashLedgerService {
       if (direction != 'all') 'direction': direction,
       if (kind != 'all') 'kind': kind,
       if (category != null && category.isNotEmpty) 'category': category,
+      if (method != null && method.isNotEmpty) 'method': method,
       if (search != null && search.isNotEmpty) 'search': search,
     };
 
     final res = await _client.get('/cash-ledger/transactions', query: q);
     if (res['success'] == true) return Map<String, dynamic>.from(res['data'] ?? {});
     throw Exception(res['message'] ?? 'Failed to load transactions');
+  }
+
+  /// Read-only subledgers derived from the GL (branch-scoped).
+  Future<Map<String, dynamic>> getLoanSubledger({String? from, String? to, String? search}) =>
+      _getSubledger('loans', from: from, to: to, search: search);
+
+  Future<Map<String, dynamic>> getQametiSubledger({String? from, String? to, String? search}) =>
+      _getSubledger('qameti', from: from, to: to, search: search);
+
+  Future<Map<String, dynamic>> getExpenseSubledger({String? from, String? to, String? search}) =>
+      _getSubledger('expenses', from: from, to: to, search: search);
+
+  Future<Map<String, dynamic>> _getSubledger(String which, {String? from, String? to, String? search}) async {
+    final q = <String, String>{
+      if (from != null && from.isNotEmpty) 'from': from,
+      if (to != null && to.isNotEmpty) 'to': to,
+      if (search != null && search.isNotEmpty) 'search': search,
+    };
+    final res = await _client.get('/cash-ledger/subledgers/$which', query: q);
+    if (res['success'] == true) return Map<String, dynamic>.from(res['data'] ?? {});
+    throw Exception(res['message'] ?? 'Failed to load $which subledger');
   }
 
   /// GET /cash-ledger/cash-flow  (unified summary)
@@ -178,6 +201,7 @@ class CashLedgerService {
     required String date, // YYYY-MM-DD
     String direction = 'all', // in|out|all
     String kind = 'all', // all|module|received|sent|expense
+    String? method,
     String? search,
     int page = 1,
     int perPage = 50,
@@ -186,6 +210,7 @@ class CashLedgerService {
       'date': date,
       if (direction != 'all') 'direction': direction,
       if (kind != 'all') 'kind': kind,
+      if (method != null && method.isNotEmpty) 'method': method,
       if (search != null && search.isNotEmpty) 'search': search,
       'page': page.toString(),
       'per_page': perPage.toString(),

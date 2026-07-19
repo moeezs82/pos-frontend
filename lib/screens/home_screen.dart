@@ -1,8 +1,9 @@
 import 'package:enterprise_pos/screens/account_screen.dart';
+import 'package:enterprise_pos/services/app_navigator.dart';
 import 'package:enterprise_pos/providers/branch_provider.dart';
 import 'package:enterprise_pos/providers/subscription_provider.dart';
 import 'package:enterprise_pos/screens/branches/branch_control_screen.dart';
-import 'package:enterprise_pos/screens/cashbook/expense_create_screen.dart';
+import 'package:enterprise_pos/screens/cash_ledger/cash_ledger_create_screen.dart';
 import 'package:enterprise_pos/screens/cash_ledger/cash_ledger_screen.dart';
 import 'package:enterprise_pos/screens/customers/customers_screen.dart';
 import 'package:enterprise_pos/screens/dashboard/today_snapshot_section.dart';
@@ -74,7 +75,9 @@ class HomeScreen extends StatelessWidget {
           subtitle: branch.hasActiveBranch ? 'Switch active branch' : 'Select working branch',
           color: AppTheme.navy,
           emphasized: true,
-          onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const BranchControlScreen())),
+          onTap: () => PosNavigation.openSingleton(
+              routeId: PosRouteIds.branchControl,
+              builder: (_) => const BranchControlScreen()),
         );
 
     final quickActions = <_Tile>[
@@ -102,7 +105,9 @@ class HomeScreen extends StatelessWidget {
         subtitle: registerShift.hasActiveShift ? 'Shift #${registerShift.id} • Manage drawer' : 'Start register before sales',
         color: registerShift.hasActiveShift ? AppTheme.success : AppTheme.warning,
         emphasized: true,
-        onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const RegisterShiftScreen())),
+        onTap: () => PosNavigation.openSingleton(
+            routeId: PosRouteIds.registerShift,
+            builder: (_) => const RegisterShiftScreen()),
       ),
       _Tile(
         icon: Icons.point_of_sale_rounded,
@@ -113,10 +118,14 @@ class HomeScreen extends StatelessWidget {
         emphasized: true,
         onTap: () {
           if (!registerShift.hasActiveShift) {
-            Navigator.push(context, MaterialPageRoute(builder: (_) => const RegisterShiftScreen()));
+            PosNavigation.openSingleton(
+                routeId: PosRouteIds.registerShift,
+                builder: (_) => const RegisterShiftScreen());
             return;
           }
-          Navigator.push(context, MaterialPageRoute(builder: (_) => const CreateSaleScreen()));
+          PosNavigation.openSingleton(
+              routeId: PosRouteIds.createSale,
+              builder: (_) => const CreateSaleScreen());
         },
       ),
       _Tile(
@@ -126,7 +135,9 @@ class HomeScreen extends StatelessWidget {
         subtitle: 'Cash/account expense',
         color: AppTheme.danger,
         emphasized: true,
-        onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ExpenseCreateScreen())),
+        onTap: () => PosNavigation.openSingleton(
+            routeId: PosRouteIds.cashLedgerCreate,
+            builder: (_) => const CashLedgerCreateScreen(initialCategory: 'OTHER_EXPENSE')),
       ),
       _Tile(
         icon: Icons.account_balance_wallet_rounded,
@@ -135,7 +146,9 @@ class HomeScreen extends StatelessWidget {
         subtitle: 'Customer/vendor payments',
         color: AppTheme.success,
         emphasized: true,
-        onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PartyPaymentsScreen())),
+        onTap: () => PosNavigation.openSingleton(
+            routeId: PosRouteIds.partyPayments,
+            builder: (_) => const PartyPaymentsScreen()),
       ),
       _Tile(
         icon: Icons.shopping_cart_checkout_rounded,
@@ -144,7 +157,9 @@ class HomeScreen extends StatelessWidget {
         subtitle: 'Supplier invoice',
         color: AppTheme.warning,
         emphasized: true,
-        onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const CreatePurchaseScreen())),
+        onTap: () => PosNavigation.openSingleton(
+            routeId: PosRouteIds.createPurchase,
+            builder: (_) => const CreatePurchaseScreen()),
       ),
       _Tile(
         icon: Icons.analytics_rounded,
@@ -153,22 +168,27 @@ class HomeScreen extends StatelessWidget {
         subtitle: 'Balances & exports',
         color: AppTheme.purple,
         emphasized: true,
-        onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ReportsHubScreen())),
+        onTap: () => PosNavigation.openSingleton(
+            routeId: PosRouteIds.reports,
+            builder: (_) => const ReportsHubScreen()),
       ),
     ];
 
     final management = <_Tile>[
-      _Tile(icon: Icons.shopping_bag_rounded, title: 'Sales', shortcut: 'Ctrl+L', subtitle: 'Invoices and payments', color: AppTheme.info, onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const SalesScreen()))),
-      _Tile(icon: Icons.account_balance_wallet_rounded, title: 'Cash Ledger', shortcut: 'Ctrl+B', subtitle: 'All cash in/out, plus daily Day Book', color: AppTheme.primary, onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const CashLedgerScreen()))),
-      _Tile(icon: Icons.inventory_2_rounded, title: 'Products', shortcut: 'Ctrl+P', subtitle: 'Catalog and prices', color: AppTheme.success, onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ProductsScreen()))),
-      _Tile(icon: Icons.warehouse_rounded, title: 'Stock', shortcut: 'Ctrl+I', subtitle: 'Inventory on hand', color: AppTheme.danger, onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const StockScreen()))),
-      _Tile(icon: Icons.people_alt_rounded, title: 'Customers', shortcut: 'Ctrl+Shift+C', subtitle: 'Receivables and profiles', color: AppTheme.warning, onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const CustomersScreen()))),
-      _Tile(icon: Icons.groups_2_rounded, title: 'Vendors', shortcut: 'Ctrl+Shift+V', subtitle: 'Suppliers and payables', color: AppTheme.purple, onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const VendorsScreen()))),
-      _Tile(icon: Icons.assignment_return_rounded, title: 'Sale Returns', shortcut: 'Ctrl+T', subtitle: 'Refund workflow', color: AppTheme.info, onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const SaleReturnsScreen()))),
-      _Tile(icon: Icons.shopping_cart_rounded, title: 'Purchases', shortcut: 'Ctrl+Shift+O', subtitle: 'Bills and payments', color: AppTheme.primaryDark, onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PurchasesScreen()))),
+      _Tile(icon: Icons.shopping_bag_rounded, title: 'Sales', shortcut: 'Ctrl+L', subtitle: 'Invoices and payments', color: AppTheme.info, onTap: () => PosNavigation.openSingleton(routeId: PosRouteIds.sales, builder: (_) => const SalesScreen())),
+      _Tile(icon: Icons.account_balance_wallet_rounded, title: 'Cash Ledger', shortcut: 'Ctrl+B', subtitle: 'All cash in/out, plus daily Day Book', color: AppTheme.primary, onTap: () => PosNavigation.openSingleton(routeId: PosRouteIds.cashLedger, builder: (_) => const CashLedgerScreen())),
+      _Tile(icon: Icons.inventory_2_rounded, title: 'Products', shortcut: 'Ctrl+P', subtitle: 'Catalog and prices', color: AppTheme.success, onTap: () => PosNavigation.openSingleton(routeId: PosRouteIds.products, builder: (_) => const ProductsScreen())),
+      _Tile(icon: Icons.warehouse_rounded, title: 'Stock', shortcut: 'Ctrl+I', subtitle: 'Inventory on hand', color: AppTheme.danger, onTap: () => PosNavigation.openSingleton(routeId: PosRouteIds.stock, builder: (_) => const StockScreen())),
+      _Tile(icon: Icons.people_alt_rounded, title: 'Customers', shortcut: 'Ctrl+Shift+C', subtitle: 'Receivables and profiles', color: AppTheme.warning, onTap: () => PosNavigation.openSingleton(routeId: PosRouteIds.customers, builder: (_) => const CustomersScreen())),
+      _Tile(icon: Icons.groups_2_rounded, title: 'Vendors', shortcut: 'Ctrl+Shift+V', subtitle: 'Suppliers and payables', color: AppTheme.purple, onTap: () => PosNavigation.openSingleton(routeId: PosRouteIds.vendors, builder: (_) => const VendorsScreen())),
+      _Tile(icon: Icons.assignment_return_rounded, title: 'Sale Returns', shortcut: 'Ctrl+T', subtitle: 'Refund workflow', color: AppTheme.info, onTap: () => PosNavigation.openSingleton(routeId: PosRouteIds.saleReturns, builder: (_) => const SaleReturnsScreen())),
+      _Tile(icon: Icons.shopping_cart_rounded, title: 'Purchases', shortcut: 'Ctrl+Shift+O', subtitle: 'Bills and payments', color: AppTheme.primaryDark, onTap: () => PosNavigation.openSingleton(routeId: PosRouteIds.purchases, builder: (_) => const PurchasesScreen())),
       _Tile(icon: Icons.assignment_return_outlined, title: 'Purchase Claim', subtitle: 'Damage/shortage claims', color: AppTheme.warning, onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PurchaseClaimsScreen()))),
-      _Tile(icon: Icons.manage_accounts_rounded, title: 'Users', shortcut: 'Ctrl+U', subtitle: 'Staff and role access', color: AppTheme.info, onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const UsersScreen()))),
-      _Tile(icon: Icons.account_tree_rounded, title: 'Accounts', subtitle: 'Chart of accounts', color: AppTheme.navy, onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AccountsScreen()))),
+      _Tile(icon: Icons.manage_accounts_rounded, title: 'Users', shortcut: 'Ctrl+U', subtitle: 'Staff and role access', color: AppTheme.info, onTap: () => PosNavigation.openSingleton(routeId: PosRouteIds.users, builder: (_) => const UsersScreen())),
+      // Chart of Accounts is Master-Admin only (backend enforces; this hides the
+      // affordance so ordinary users never see or reach it).
+      if (auth.isMasterAdmin)
+        _Tile(icon: Icons.account_tree_rounded, title: 'Accounts', subtitle: 'Chart of accounts', color: AppTheme.navy, onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AccountsScreen()))),
     ];
 
     return Scaffold(
@@ -224,7 +244,7 @@ class HomeScreen extends StatelessWidget {
                 const SizedBox(height: 18),
                 if (masterNeedsBranch) ...[
                   _MasterBranchRequiredCard(
-                    onOpenBranchControl: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const BranchControlScreen())),
+                    onOpenBranchControl: () => PosNavigation.openSingleton(routeId: PosRouteIds.branchControl, builder: (_) => const BranchControlScreen()),
                   ),
                 ] else ...[
                   const _ShortcutHintBar(),
@@ -311,7 +331,9 @@ class _WelcomeHeader extends StatelessWidget {
         );
         return;
       }
-      Navigator.push(context, MaterialPageRoute(builder: (_) => const CreateSaleScreen()));
+      PosNavigation.openSingleton(
+          routeId: PosRouteIds.createSale,
+          builder: (_) => const CreateSaleScreen());
     }
 
     return Container(

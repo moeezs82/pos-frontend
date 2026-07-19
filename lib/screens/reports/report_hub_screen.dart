@@ -1,4 +1,5 @@
-import 'package:enterprise_pos/screens/cashbook/expense_create_screen.dart';
+import 'package:enterprise_pos/screens/cash_ledger/cash_ledger_create_screen.dart';
+import 'package:enterprise_pos/services/app_navigator.dart';
 import 'package:enterprise_pos/screens/reports/enterprise_reports_workspace_screen.dart';
 import 'package:enterprise_pos/screens/reports/party_balances_screen.dart';
 import 'package:enterprise_pos/screens/reports/report_cashbook_screen.dart';
@@ -52,10 +53,16 @@ class ReportsHubScreen extends StatelessWidget {
               ),
               _CommandCard(
                 icon: Icons.receipt_long_rounded,
-                title: 'Create Expense',
-                subtitle: 'Record expense with backend customer/vendor counterparty, payment method, account, date and reference.',
+                title: 'Record Expense',
+                subtitle: 'Record an expense via Cash Ledger: expense account, payment method, date and payee/reference.',
                 accent: Colors.red,
-                onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ExpenseCreateScreen())),
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    settings: const RouteSettings(name: PosRouteIds.cashLedgerCreate),
+                    builder: (_) => const CashLedgerCreateScreen(initialCategory: 'OTHER_EXPENSE'),
+                  ),
+                ),
               ),
               _CommandCard(
                 icon: Icons.dashboard_customize_rounded,
@@ -77,10 +84,10 @@ class ReportsHubScreen extends StatelessWidget {
           _SectionTitle(title: 'Enterprise report shortcuts', caption: 'One tap access to full backend reports with date-time filters and exports'),
           const SizedBox(height: 10),
           _ShortcutWrap(items: _enterpriseShortcuts),
-          const SizedBox(height: 22),
-          _SectionTitle(title: 'Existing focused views', caption: 'Kept for safety; these screens still work as before'),
-          const SizedBox(height: 10),
-          _ShortcutWrap(items: _legacyShortcuts),
+          // const SizedBox(height: 22),
+          // _SectionTitle(title: 'Existing focused views', caption: 'Kept for safety; these screens still work as before'),
+          // const SizedBox(height: 10),
+          // _ShortcutWrap(items: _legacyShortcuts),
         ],
       ),
     );

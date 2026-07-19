@@ -1,5 +1,6 @@
 import 'package:enterprise_pos/api/cash_ledger_service.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
+import 'package:enterprise_pos/providers/payment_method_provider.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/branch_indicator.dart';
 import 'package:enterprise_pos/widgets/enterprise/enterprise_panel.dart';
@@ -35,6 +36,7 @@ class _DayBookDetailScreenState extends State<DayBookDetailScreen> {
   int _lastPage = 1;
   String _direction = 'all'; // in|out|all
   String _kind = 'all'; // all|module|received|sent|expense
+  String? _method; // null = all methods
 
   @override
   void initState() {
@@ -57,6 +59,7 @@ class _DayBookDetailScreenState extends State<DayBookDetailScreen> {
         date: widget.date,
         direction: _direction,
         kind: _kind,
+        method: _method,
         page: page,
         perPage: 50,
       );
@@ -259,6 +262,34 @@ class _DayBookDetailScreenState extends State<DayBookDetailScreen> {
                       ),
                     ],
                   ),
+                  const SizedBox(height: 10),
+                  // Payment method filter (Cash / Bank / KNET / …).
+                  Builder(builder: (context) {
+                    final methods =
+                        context.watch<PaymentMethodProvider>().activeMethods;
+                    if (methods.isEmpty) return const SizedBox.shrink();
+                    return Wrap(
+                      spacing: 8,
+                      children: [
+                        FilterChip(
+                          selected: _method == null,
+                          label: const Text('All methods'),
+                          onSelected: (_) {
+                            setState(() => _method = null);
+                            _fetch(page: 1);
+                          },
+                        ),
+                        ...methods.map((m) => FilterChip(
+                              selected: _method == m.method,
+                              label: Text(m.displayName),
+                              onSelected: (_) {
+                                setState(() => _method = m.method);
+                                _fetch(page: 1);
+                              },
+                            )),
+                      ],
+                    );
+                  }),
                 ],
               ),
             ),
@@ -338,6 +369,21 @@ class _DayBookDetailScreenState extends State<DayBookDetailScreen> {
                 style: const TextStyle(fontWeight: FontWeight.w900, color: AppTheme.navy),
               ),
             ),
+            // Fund / payment account this movement went through.
+            if ((e['method'] ?? e['account']?['name'] ?? '').toString().isNotEmpty) ...[
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                margin: const EdgeInsets.only(right: 6),
+                decoration: BoxDecoration(
+                  color: AppTheme.primarySoft,
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(
+                  (e['method'] ?? e['account']?['name'] ?? '').toString(),
+                  style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: AppTheme.primaryDark),
+                ),
+              ),
+            ],
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
               decoration: BoxDecoration(
@@ -361,6 +407,7 @@ class _DayBookDetailScreenState extends State<DayBookDetailScreen> {
         subtitle: Text(
           [
             (e['party'] ?? 'Unlinked').toString(),
+            if ((e['reference'] ?? '').toString().isNotEmpty) 'Ref: ${e['reference']}',
             if ((e['memo'] ?? '').toString().isNotEmpty) (e['memo']).toString(),
           ].join(' • '),
           maxLines: 1,

@@ -142,4 +142,22 @@ class VendorService {
     };
     return await _client.get('/vendors/$id/ledger', query: params);
   }
+
+  /// Separate Loan Ledger (Loans Receivable only) for this vendor as a
+  /// borrower. Never includes trade AP activity.
+  Future<Map<String, dynamic>> getVendorLoanLedger({
+    required int id,
+    int page = 1,
+    int perPage = 15,
+    String? from,
+    String? to,
+  }) async {
+    final params = {
+      'page': '$page',
+      'per_page': '$perPage',
+      if (from != null && from.isNotEmpty) 'from': from,
+      if (to != null && to.isNotEmpty) 'to': to,
+    };
+    return await _client.get('/vendors/$id/loan-ledger', query: params);
+  }
 }

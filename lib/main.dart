@@ -49,6 +49,7 @@ class MyApp extends StatelessWidget {
       child: MaterialApp(
         debugShowCheckedModeBanner: false,
         navigatorKey: appNavigatorKey,
+        navigatorObservers: [posNavObserver],
         scaffoldMessengerKey: appScaffoldMessengerKey,
         title: 'Enterprise POS',
         theme: AppTheme.light,
@@ -188,6 +189,10 @@ class _AuthOrchestratorState extends State<_AuthOrchestrator> {
       context.read<SubscriptionProvider>().clear();
       context.read<PaymentMethodProvider>().clear();
       SubscriptionWarningBanner.resetSession();
+      // Forget tracked routes so shortcuts never return to a previous session's
+      // screen after re-login. Navigator callbacks keep the registry accurate
+      // once the fresh session starts pushing routes.
+      posNavObserver.reset();
     }
   }
 

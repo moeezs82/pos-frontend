@@ -35,11 +35,15 @@ class PaymentMethodProvider extends ChangeNotifier {
   String? get error => _error;
   bool get hasMethods => activeMethods.isNotEmpty;
 
-  /// A sensible default tender for a fresh cart: the drawer cash method if
-  /// present, otherwise the first active method.
+  /// Default tender for any fresh entry: prefer the Cash method (code 'cash'),
+  /// then any other drawer-affecting method, then the first active method. This
+  /// keeps Cash pre-selected across every screen that picks a payment method.
   PaymentMethod? get defaultMethod {
     final act = activeMethods;
     if (act.isEmpty) return null;
+    for (final m in act) {
+      if (m.method.toLowerCase().trim() == 'cash') return m;
+    }
     return act.firstWhere(
       (m) => m.affectsCashDrawer,
       orElse: () => act.first,

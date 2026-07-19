@@ -3,7 +3,6 @@ import 'package:enterprise_pos/providers/branch_provider.dart';
 import 'package:enterprise_pos/screens/branches/branch_control_screen.dart';
 import 'package:enterprise_pos/screens/cash_ledger/cash_ledger_create_screen.dart';
 import 'package:enterprise_pos/screens/cash_ledger/cash_ledger_screen.dart';
-import 'package:enterprise_pos/screens/cashbook/expense_create_screen.dart';
 import 'package:enterprise_pos/screens/customers/customers_screen.dart';
 import 'package:enterprise_pos/screens/home_screen.dart';
 import 'package:enterprise_pos/screens/payments/party_payments_screen.dart';
@@ -57,7 +56,7 @@ class PosShortcutCatalog {
     PosShortcutInfo(keys: 'Ctrl + M', title: 'Party Payments', section: 'Parties', icon: Icons.account_balance_wallet_rounded),
     PosShortcutInfo(keys: 'Ctrl + B', title: 'Cash Ledger', section: 'Accounts', icon: Icons.payments_rounded),
     PosShortcutInfo(keys: 'Ctrl + Shift + N', title: 'New Cash Ledger Entry', section: 'Accounts', icon: Icons.add_circle_rounded),
-    PosShortcutInfo(keys: 'Ctrl + E', title: 'Add Expense', section: 'Accounts', icon: Icons.money_off_rounded),
+    PosShortcutInfo(keys: 'Ctrl + E', title: 'Record Expense', section: 'Accounts', icon: Icons.money_off_rounded),
     PosShortcutInfo(keys: 'Ctrl + R', title: 'Reports', section: 'Reports', icon: Icons.analytics_rounded),
     PosShortcutInfo(keys: 'F6', title: 'Register Shift', section: 'Accounts', icon: Icons.point_of_sale_rounded),
     PosShortcutInfo(keys: 'Ctrl + U', title: 'Users', section: 'Administration', icon: Icons.manage_accounts_rounded),
@@ -139,6 +138,11 @@ class AppKeyboardShortcuts extends StatelessWidget {
   }
 
   Map<ShortcutActivator, VoidCallback> _bindings(BuildContext context, AuthProvider auth, BranchProvider branch) {
+    // Each destination is an open-or-focus call with a stable route id and a
+    // LAZY builder, so an already-open module is revealed (with its unfinished
+    // state) instead of a duplicate being pushed.
+    void open(String id, WidgetBuilder b) => _openBusiness(auth, branch, id, b);
+
     return <ShortcutActivator, VoidCallback>{
       _ctrl(LogicalKeyboardKey.slash): () => _showShortcutGuide(context, auth),
       _cmd(LogicalKeyboardKey.slash): () => _showShortcutGuide(context, auth),
@@ -147,77 +151,81 @@ class AppKeyboardShortcuts extends StatelessWidget {
       _ctrl(LogicalKeyboardKey.keyH): () => _goHome(auth),
       _cmd(LogicalKeyboardKey.keyH): () => _goHome(auth),
 
-      _ctrl(LogicalKeyboardKey.keyN): () => _openBusiness(auth, branch, const CreateSaleScreen()),
-      _cmd(LogicalKeyboardKey.keyN): () => _openBusiness(auth, branch, const CreateSaleScreen()),
-      const SingleActivator(LogicalKeyboardKey.f2): () => _openBusiness(auth, branch, const CreateSaleScreen()),
+      _ctrl(LogicalKeyboardKey.keyN): () => open(PosRouteIds.createSale, (_) => const CreateSaleScreen()),
+      _cmd(LogicalKeyboardKey.keyN): () => open(PosRouteIds.createSale, (_) => const CreateSaleScreen()),
+      const SingleActivator(LogicalKeyboardKey.f2): () => open(PosRouteIds.createSale, (_) => const CreateSaleScreen()),
 
-      _ctrl(LogicalKeyboardKey.keyL): () => _openBusiness(auth, branch, const SalesScreen()),
-      _cmd(LogicalKeyboardKey.keyL): () => _openBusiness(auth, branch, const SalesScreen()),
+      _ctrl(LogicalKeyboardKey.keyL): () => open(PosRouteIds.sales, (_) => const SalesScreen()),
+      _cmd(LogicalKeyboardKey.keyL): () => open(PosRouteIds.sales, (_) => const SalesScreen()),
 
-      _ctrl(LogicalKeyboardKey.keyO): () => _openBusiness(auth, branch, const CreatePurchaseScreen()),
-      _cmd(LogicalKeyboardKey.keyO): () => _openBusiness(auth, branch, const CreatePurchaseScreen()),
-      _ctrlShift(LogicalKeyboardKey.keyO): () => _openBusiness(auth, branch, const PurchasesScreen()),
-      _cmdShift(LogicalKeyboardKey.keyO): () => _openBusiness(auth, branch, const PurchasesScreen()),
+      _ctrl(LogicalKeyboardKey.keyO): () => open(PosRouteIds.createPurchase, (_) => const CreatePurchaseScreen()),
+      _cmd(LogicalKeyboardKey.keyO): () => open(PosRouteIds.createPurchase, (_) => const CreatePurchaseScreen()),
+      _ctrlShift(LogicalKeyboardKey.keyO): () => open(PosRouteIds.purchases, (_) => const PurchasesScreen()),
+      _cmdShift(LogicalKeyboardKey.keyO): () => open(PosRouteIds.purchases, (_) => const PurchasesScreen()),
 
-      _ctrl(LogicalKeyboardKey.keyP): () => _openBusiness(auth, branch, const ProductsScreen()),
-      _cmd(LogicalKeyboardKey.keyP): () => _openBusiness(auth, branch, const ProductsScreen()),
+      _ctrl(LogicalKeyboardKey.keyP): () => open(PosRouteIds.products, (_) => const ProductsScreen()),
+      _cmd(LogicalKeyboardKey.keyP): () => open(PosRouteIds.products, (_) => const ProductsScreen()),
 
-      _ctrl(LogicalKeyboardKey.keyI): () => _openBusiness(auth, branch, const StockScreen()),
-      _cmd(LogicalKeyboardKey.keyI): () => _openBusiness(auth, branch, const StockScreen()),
+      _ctrl(LogicalKeyboardKey.keyI): () => open(PosRouteIds.stock, (_) => const StockScreen()),
+      _cmd(LogicalKeyboardKey.keyI): () => open(PosRouteIds.stock, (_) => const StockScreen()),
 
-      _ctrlShift(LogicalKeyboardKey.keyC): () => _openBusiness(auth, branch, const CustomersScreen()),
-      _cmdShift(LogicalKeyboardKey.keyC): () => _openBusiness(auth, branch, const CustomersScreen()),
+      _ctrlShift(LogicalKeyboardKey.keyC): () => open(PosRouteIds.customers, (_) => const CustomersScreen()),
+      _cmdShift(LogicalKeyboardKey.keyC): () => open(PosRouteIds.customers, (_) => const CustomersScreen()),
 
-      _ctrlShift(LogicalKeyboardKey.keyV): () => _openBusiness(auth, branch, const VendorsScreen()),
-      _cmdShift(LogicalKeyboardKey.keyV): () => _openBusiness(auth, branch, const VendorsScreen()),
+      _ctrlShift(LogicalKeyboardKey.keyV): () => open(PosRouteIds.vendors, (_) => const VendorsScreen()),
+      _cmdShift(LogicalKeyboardKey.keyV): () => open(PosRouteIds.vendors, (_) => const VendorsScreen()),
 
-      _ctrl(LogicalKeyboardKey.keyM): () => _openBusiness(auth, branch, const PartyPaymentsScreen()),
-      _cmd(LogicalKeyboardKey.keyM): () => _openBusiness(auth, branch, const PartyPaymentsScreen()),
+      _ctrl(LogicalKeyboardKey.keyM): () => open(PosRouteIds.partyPayments, (_) => const PartyPaymentsScreen()),
+      _cmd(LogicalKeyboardKey.keyM): () => open(PosRouteIds.partyPayments, (_) => const PartyPaymentsScreen()),
 
-      _ctrl(LogicalKeyboardKey.keyB): () => _openBusiness(auth, branch, const CashLedgerScreen()),
-      _cmd(LogicalKeyboardKey.keyB): () => _openBusiness(auth, branch, const CashLedgerScreen()),
+      _ctrl(LogicalKeyboardKey.keyB): () => open(PosRouteIds.cashLedger, (_) => const CashLedgerScreen()),
+      _cmd(LogicalKeyboardKey.keyB): () => open(PosRouteIds.cashLedger, (_) => const CashLedgerScreen()),
 
-      _ctrlShift(LogicalKeyboardKey.keyN): () => _openBusiness(auth, branch, const CashLedgerCreateScreen()),
-      _cmdShift(LogicalKeyboardKey.keyN): () => _openBusiness(auth, branch, const CashLedgerCreateScreen()),
+      _ctrlShift(LogicalKeyboardKey.keyN): () => open(PosRouteIds.cashLedgerCreate, (_) => const CashLedgerCreateScreen()),
+      _cmdShift(LogicalKeyboardKey.keyN): () => open(PosRouteIds.cashLedgerCreate, (_) => const CashLedgerCreateScreen()),
 
-      _ctrl(LogicalKeyboardKey.keyE): () => _openBusiness(auth, branch, const ExpenseCreateScreen()),
-      _cmd(LogicalKeyboardKey.keyE): () => _openBusiness(auth, branch, const ExpenseCreateScreen()),
+      // Record Expense = the consolidated Cash Ledger entry with Other Expense
+      // preselected. Same route id as Ctrl+Shift+N so the two shortcuts never
+      // create duplicate Record Entry screens (an already-open one is focused,
+      // preserving unsaved Loan/Qameti data rather than switching category).
+      _ctrl(LogicalKeyboardKey.keyE): () => open(PosRouteIds.cashLedgerCreate, (_) => const CashLedgerCreateScreen(initialCategory: 'OTHER_EXPENSE')),
+      _cmd(LogicalKeyboardKey.keyE): () => open(PosRouteIds.cashLedgerCreate, (_) => const CashLedgerCreateScreen(initialCategory: 'OTHER_EXPENSE')),
 
-      _ctrl(LogicalKeyboardKey.keyR): () => _openBusiness(auth, branch, const ReportsHubScreen()),
-      _cmd(LogicalKeyboardKey.keyR): () => _openBusiness(auth, branch, const ReportsHubScreen()),
+      _ctrl(LogicalKeyboardKey.keyR): () => open(PosRouteIds.reports, (_) => const ReportsHubScreen()),
+      _cmd(LogicalKeyboardKey.keyR): () => open(PosRouteIds.reports, (_) => const ReportsHubScreen()),
 
       const SingleActivator(LogicalKeyboardKey.f6): () =>
-          _openBusiness(auth, branch, const RegisterShiftScreen()),
+          open(PosRouteIds.registerShift, (_) => const RegisterShiftScreen()),
 
-      _ctrl(LogicalKeyboardKey.keyU): () => _openBusiness(auth, branch, const UsersScreen()),
-      _cmd(LogicalKeyboardKey.keyU): () => _openBusiness(auth, branch, const UsersScreen()),
+      _ctrl(LogicalKeyboardKey.keyU): () => open(PosRouteIds.users, (_) => const UsersScreen()),
+      _cmd(LogicalKeyboardKey.keyU): () => open(PosRouteIds.users, (_) => const UsersScreen()),
 
-      _ctrl(LogicalKeyboardKey.keyT): () => _openBusiness(auth, branch, const SaleReturnsScreen()),
-      _cmd(LogicalKeyboardKey.keyT): () => _openBusiness(auth, branch, const SaleReturnsScreen()),
+      _ctrl(LogicalKeyboardKey.keyT): () => open(PosRouteIds.saleReturns, (_) => const SaleReturnsScreen()),
+      _cmd(LogicalKeyboardKey.keyT): () => open(PosRouteIds.saleReturns, (_) => const SaleReturnsScreen()),
 
       _ctrlShift(LogicalKeyboardKey.keyB): () => _openBranchControl(auth),
       _cmdShift(LogicalKeyboardKey.keyB): () => _openBranchControl(auth),
 
-      _ctrl(LogicalKeyboardKey.digit1): () => _openBusiness(auth, branch, const CreateSaleScreen()),
-      _ctrl(LogicalKeyboardKey.numpad1): () => _openBusiness(auth, branch, const CreateSaleScreen()),
-      _ctrl(LogicalKeyboardKey.digit2): () => _openBusiness(auth, branch, const SalesScreen()),
-      _ctrl(LogicalKeyboardKey.numpad2): () => _openBusiness(auth, branch, const SalesScreen()),
-      _ctrl(LogicalKeyboardKey.digit3): () => _openBusiness(auth, branch, const ProductsScreen()),
-      _ctrl(LogicalKeyboardKey.numpad3): () => _openBusiness(auth, branch, const ProductsScreen()),
-      _ctrl(LogicalKeyboardKey.digit4): () => _openBusiness(auth, branch, const StockScreen()),
-      _ctrl(LogicalKeyboardKey.numpad4): () => _openBusiness(auth, branch, const StockScreen()),
-      _ctrl(LogicalKeyboardKey.digit5): () => _openBusiness(auth, branch, const CustomersScreen()),
-      _ctrl(LogicalKeyboardKey.numpad5): () => _openBusiness(auth, branch, const CustomersScreen()),
-      _ctrl(LogicalKeyboardKey.digit6): () => _openBusiness(auth, branch, const VendorsScreen()),
-      _ctrl(LogicalKeyboardKey.numpad6): () => _openBusiness(auth, branch, const VendorsScreen()),
-      _ctrl(LogicalKeyboardKey.digit7): () => _openBusiness(auth, branch, const CreatePurchaseScreen()),
-      _ctrl(LogicalKeyboardKey.numpad7): () => _openBusiness(auth, branch, const CreatePurchaseScreen()),
-      _ctrl(LogicalKeyboardKey.digit8): () => _openBusiness(auth, branch, const PartyPaymentsScreen()),
-      _ctrl(LogicalKeyboardKey.numpad8): () => _openBusiness(auth, branch, const PartyPaymentsScreen()),
-      _ctrl(LogicalKeyboardKey.digit9): () => _openBusiness(auth, branch, const ReportsHubScreen()),
-      _ctrl(LogicalKeyboardKey.numpad9): () => _openBusiness(auth, branch, const ReportsHubScreen()),
-      _ctrl(LogicalKeyboardKey.digit0): () => _openBusiness(auth, branch, const CashLedgerScreen()),
-      _ctrl(LogicalKeyboardKey.numpad0): () => _openBusiness(auth, branch, const CashLedgerScreen()),
+      _ctrl(LogicalKeyboardKey.digit1): () => open(PosRouteIds.createSale, (_) => const CreateSaleScreen()),
+      _ctrl(LogicalKeyboardKey.numpad1): () => open(PosRouteIds.createSale, (_) => const CreateSaleScreen()),
+      _ctrl(LogicalKeyboardKey.digit2): () => open(PosRouteIds.sales, (_) => const SalesScreen()),
+      _ctrl(LogicalKeyboardKey.numpad2): () => open(PosRouteIds.sales, (_) => const SalesScreen()),
+      _ctrl(LogicalKeyboardKey.digit3): () => open(PosRouteIds.products, (_) => const ProductsScreen()),
+      _ctrl(LogicalKeyboardKey.numpad3): () => open(PosRouteIds.products, (_) => const ProductsScreen()),
+      _ctrl(LogicalKeyboardKey.digit4): () => open(PosRouteIds.stock, (_) => const StockScreen()),
+      _ctrl(LogicalKeyboardKey.numpad4): () => open(PosRouteIds.stock, (_) => const StockScreen()),
+      _ctrl(LogicalKeyboardKey.digit5): () => open(PosRouteIds.customers, (_) => const CustomersScreen()),
+      _ctrl(LogicalKeyboardKey.numpad5): () => open(PosRouteIds.customers, (_) => const CustomersScreen()),
+      _ctrl(LogicalKeyboardKey.digit6): () => open(PosRouteIds.vendors, (_) => const VendorsScreen()),
+      _ctrl(LogicalKeyboardKey.numpad6): () => open(PosRouteIds.vendors, (_) => const VendorsScreen()),
+      _ctrl(LogicalKeyboardKey.digit7): () => open(PosRouteIds.createPurchase, (_) => const CreatePurchaseScreen()),
+      _ctrl(LogicalKeyboardKey.numpad7): () => open(PosRouteIds.createPurchase, (_) => const CreatePurchaseScreen()),
+      _ctrl(LogicalKeyboardKey.digit8): () => open(PosRouteIds.partyPayments, (_) => const PartyPaymentsScreen()),
+      _ctrl(LogicalKeyboardKey.numpad8): () => open(PosRouteIds.partyPayments, (_) => const PartyPaymentsScreen()),
+      _ctrl(LogicalKeyboardKey.digit9): () => open(PosRouteIds.reports, (_) => const ReportsHubScreen()),
+      _ctrl(LogicalKeyboardKey.numpad9): () => open(PosRouteIds.reports, (_) => const ReportsHubScreen()),
+      _ctrl(LogicalKeyboardKey.digit0): () => open(PosRouteIds.cashLedger, (_) => const CashLedgerScreen()),
+      _ctrl(LogicalKeyboardKey.numpad0): () => open(PosRouteIds.cashLedger, (_) => const CashLedgerScreen()),
     };
   }
 
@@ -240,23 +248,28 @@ class AppKeyboardShortcuts extends StatelessWidget {
       _message('Branch Control is available only for master admin.');
       return;
     }
-    _push(const BranchControlScreen());
+    PosNavigation.openSingleton(
+      routeId: PosRouteIds.branchControl,
+      builder: (_) => const BranchControlScreen(),
+    );
   }
 
-  void _openBusiness(AuthProvider auth, BranchProvider branch, Widget page) {
+  void _openBusiness(
+    AuthProvider auth,
+    BranchProvider branch,
+    String routeId,
+    WidgetBuilder builder,
+  ) {
     if (!auth.isAuthenticated) return;
     if (auth.isMasterAdmin && !branch.hasActiveBranch) {
       _message('Please select a working branch from Branch Control first.');
-      _push(const BranchControlScreen());
+      PosNavigation.openSingleton(
+        routeId: PosRouteIds.branchControl,
+        builder: (_) => const BranchControlScreen(),
+      );
       return;
     }
-    _push(page);
-  }
-
-  void _push(Widget page) {
-    final state = appNavigatorKey.currentState;
-    if (state == null) return;
-    state.push(MaterialPageRoute(builder: (_) => page));
+    PosNavigation.openSingleton(routeId: routeId, builder: builder);
   }
 
   static void _message(String text) {

@@ -2,6 +2,7 @@ import 'package:enterprise_pos/api/cash_ledger_service.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/screens/cash_ledger/cash_ledger_create_screen.dart';
 import 'package:enterprise_pos/screens/cash_ledger/day_book_detail_screen.dart';
+import 'package:enterprise_pos/screens/cash_ledger/cash_ledger_subledgers.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/branch_indicator.dart';
 import 'package:enterprise_pos/widgets/enterprise/enterprise_panel.dart';
@@ -29,7 +30,7 @@ class _CashLedgerScreenState extends State<CashLedgerScreen> with SingleTickerPr
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 2, vsync: this);
+    _tabController = TabController(length: 5, vsync: this);
   }
 
   @override
@@ -59,8 +60,12 @@ class _CashLedgerScreenState extends State<CashLedgerScreen> with SingleTickerPr
         ],
         bottom: TabBar(
           controller: _tabController,
+          isScrollable: true,
           tabs: const [
             Tab(text: 'Ledger', icon: Icon(Icons.receipt_long_rounded, size: 20)),
+            Tab(text: 'Loans', icon: Icon(Icons.request_quote_rounded, size: 20)),
+            Tab(text: 'Qameti', icon: Icon(Icons.savings_rounded, size: 20)),
+            Tab(text: 'Expenses', icon: Icon(Icons.receipt_rounded, size: 20)),
             Tab(text: 'Day Book', icon: Icon(Icons.calendar_view_day_rounded, size: 20)),
           ],
         ),
@@ -74,6 +79,9 @@ class _CashLedgerScreenState extends State<CashLedgerScreen> with SingleTickerPr
         controller: _tabController,
         children: [
           _LedgerView(key: _ledgerKey),
+          const SubledgerView(kind: SubledgerKind.loans),
+          const SubledgerView(kind: SubledgerKind.qameti),
+          const SubledgerView(kind: SubledgerKind.expenses),
           const _DayBookView(),
         ],
       ),
@@ -403,8 +411,67 @@ class _LedgerViewState extends State<_LedgerView> {
                     ),
                   ],
                 ),
+                if ((_summary['by_account'] as List?)?.isNotEmpty ?? false) ...[
+                  const SizedBox(height: 14),
+                  _fundsByMethod(),
+                ],
               ],
             ),
+        ],
+      ),
+    );
+  }
+
+  /// Per-fund breakdown (Cash / Bank / KNET Clearing / …) for the selected
+  /// period: opening + in - out = closing for each. Answers "how much cash vs
+  /// bank vs other methods do I have".
+  Widget _fundsByMethod() {
+    final list = List<Map<String, dynamic>>.from(
+      (_summary['by_account'] as List?)?.map((e) => Map<String, dynamic>.from(e)) ?? const [],
+    );
+    if (list.isEmpty) return const SizedBox.shrink();
+
+    return Container(
+      decoration: BoxDecoration(
+        color: AppTheme.surfaceSoft,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppTheme.border),
+      ),
+      padding: const EdgeInsets.all(12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('Funds by method',
+              style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13)),
+          const SizedBox(height: 8),
+          Row(
+            children: const [
+              Expanded(flex: 3, child: Text('Method', style: TextStyle(fontSize: 11, color: AppTheme.textMuted, fontWeight: FontWeight.w700))),
+              Expanded(flex: 2, child: Text('Opening', textAlign: TextAlign.right, style: TextStyle(fontSize: 11, color: AppTheme.textMuted, fontWeight: FontWeight.w700))),
+              Expanded(flex: 2, child: Text('In', textAlign: TextAlign.right, style: TextStyle(fontSize: 11, color: AppTheme.textMuted, fontWeight: FontWeight.w700))),
+              Expanded(flex: 2, child: Text('Out', textAlign: TextAlign.right, style: TextStyle(fontSize: 11, color: AppTheme.textMuted, fontWeight: FontWeight.w700))),
+              Expanded(flex: 2, child: Text('Closing', textAlign: TextAlign.right, style: TextStyle(fontSize: 11, color: AppTheme.textMuted, fontWeight: FontWeight.w700))),
+            ],
+          ),
+          const Divider(height: 12),
+          ...list.map((m) {
+            final methods = (m['methods'] as List?)?.cast<dynamic>() ?? const [];
+            final label = methods.isNotEmpty
+                ? methods.join(' / ')
+                : (m['name'] ?? '').toString();
+            return Padding(
+              padding: const EdgeInsets.symmetric(vertical: 3),
+              child: Row(
+                children: [
+                  Expanded(flex: 3, child: Text(label, style: const TextStyle(fontWeight: FontWeight.w700), maxLines: 1, overflow: TextOverflow.ellipsis)),
+                  Expanded(flex: 2, child: Text(_money.format(_toNum(m['opening'])), textAlign: TextAlign.right)),
+                  Expanded(flex: 2, child: Text(_money.format(_toNum(m['in'])), textAlign: TextAlign.right, style: const TextStyle(color: AppTheme.success, fontWeight: FontWeight.w600))),
+                  Expanded(flex: 2, child: Text(_money.format(_toNum(m['out'])), textAlign: TextAlign.right, style: const TextStyle(color: AppTheme.danger, fontWeight: FontWeight.w600))),
+                  Expanded(flex: 2, child: Text(_money.format(_toNum(m['closing'])), textAlign: TextAlign.right, style: const TextStyle(fontWeight: FontWeight.w800))),
+                ],
+              ),
+            );
+          }),
         ],
       ),
     );
@@ -581,6 +648,21 @@ class _LedgerViewState extends State<_LedgerView> {
                 style: const TextStyle(fontWeight: FontWeight.w900, color: AppTheme.navy),
               ),
             ),
+            // Fund / payment account this movement went through.
+            if ((e['method'] ?? e['account']?['name'] ?? '').toString().isNotEmpty) ...[
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                margin: const EdgeInsets.only(right: 6),
+                decoration: BoxDecoration(
+                  color: AppTheme.primarySoft,
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(
+                  (e['method'] ?? e['account']?['name'] ?? '').toString(),
+                  style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: AppTheme.primaryDark),
+                ),
+              ),
+            ],
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
               decoration: BoxDecoration(
@@ -602,7 +684,11 @@ class _LedgerViewState extends State<_LedgerView> {
           ],
         ),
         subtitle: Text(
-          '${e['party'] ?? 'Unlinked'} • ${e['date'] ?? '—'}',
+          [
+            (e['party'] ?? 'Unlinked').toString(),
+            if ((e['reference'] ?? '').toString().isNotEmpty) 'Ref: ${e['reference']}',
+            (e['date'] ?? '—').toString(),
+          ].join(' • '),
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
         ),

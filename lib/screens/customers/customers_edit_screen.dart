@@ -46,12 +46,21 @@ class _CustomerEditScreenState extends State<CustomerEditScreen>
   double _opening = 0.0, _openingForPage = 0.0;
   final List<Map<String, dynamic>> _ledger = [];
 
+  // Separate Loan Ledger (Loans Receivable only — never mixed with trade AR).
+  bool _loadingLoan = false;
+  bool _loadedLoanOnce = false;
+  String? _errorLoan;
+  int _loanPage = 1, _loanLastPage = 1, _loanTotal = 0;
+  double _loanOpening = 0.0, _loanOpeningForPage = 0.0;
+  final List<Map<String, dynamic>> _loanRows = [];
+  Map<String, dynamic> _loanSummary = const {};
+
   @override
   void initState() {
     super.initState();
     final token = context.read<AuthProvider>().token!;
     _service = CustomerService(token: token);
-    _tab = TabController(length: 2, vsync: this);
+    _tab = TabController(length: 3, vsync: this);
     _tab.addListener(_onTabChanged);
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -73,6 +82,7 @@ class _CustomerEditScreenState extends State<CustomerEditScreen>
     if (!_tab.indexIsChanging) {
       if (_tab.index == 0 && !_loadedSalesOnce) _loadSales(page: 1);
       if (_tab.index == 1 && !_loadedLedgerOnce) _loadLedger(page: 1);
+      if (_tab.index == 2 && !_loadedLoanOnce) _loadLoanLedger(page: 1);
     }
   }
 
@@ -172,13 +182,51 @@ class _CustomerEditScreenState extends State<CustomerEditScreen>
     }
   }
 
+  Future<void> _loadLoanLedger({required int page}) async {
+    if (_loadingLoan) return;
+    setState(() {
+      _loadingLoan = true;
+      _errorLoan = null;
+    });
+    try {
+      final res = await _service.getCustomerLoanLedger(
+        id: widget.customerId,
+        page: page,
+        perPage: _pageSize,
+      );
+      final wrap = (res['data'] as Map).cast<String, dynamic>();
+      final items = ((wrap['items'] as List?) ?? const [])
+          .map((e) => (e as Map).cast<String, dynamic>())
+          .toList();
+      if (!mounted) return;
+      setState(() {
+        _loanRows
+          ..clear()
+          ..addAll(items);
+        _loanSummary = ((wrap['summary'] as Map?) ?? const {}).cast<String, dynamic>();
+        _loanOpening = _toDouble(wrap['opening']);
+        _loanOpeningForPage = _toDouble(wrap['opening_for_page']);
+        _loanPage = (wrap['current_page'] as num?)?.toInt() ?? page;
+        _loanLastPage = (wrap['last_page'] as num?)?.toInt() ?? _loanLastPage;
+        _loanTotal = (wrap['total'] as num?)?.toInt() ?? _loanTotal;
+        _loadedLoanOnce = true;
+      });
+    } catch (e) {
+      if (mounted) setState(() => _errorLoan = 'Failed to load loan ledger: $e');
+    } finally {
+      if (mounted) setState(() => _loadingLoan = false);
+    }
+  }
+
   Future<void> _refreshAll() async {
-    if (_loadingHeader || _loadingSales || _loadingLedger) return;
+    if (_loadingHeader || _loadingSales || _loadingLedger || _loadingLoan) return;
     await _loadHeader();
     if (_tab.index == 0) {
       await _loadSales(page: _salesPage);
-    } else {
+    } else if (_tab.index == 1) {
       await _loadLedger(page: _ldgPage);
+    } else {
+      await _loadLoanLedger(page: _loanPage);
     }
     if (mounted) AppFeedback.info(context, 'Customer details refreshed');
   }
@@ -193,6 +241,7 @@ class _CustomerEditScreenState extends State<CustomerEditScreen>
       await _loadHeader();
       if (_tab.index == 0 && _loadedSalesOnce) _loadSales(page: _salesPage);
       if (_tab.index == 1 && _loadedLedgerOnce) _loadLedger(page: _ldgPage);
+      if (_tab.index == 2 && _loadedLoanOnce) _loadLoanLedger(page: _loanPage);
       if (mounted) AppFeedback.success(context, 'Customer updated');
     }
   }
@@ -427,7 +476,8 @@ class _CustomerEditScreenState extends State<CustomerEditScreen>
                               controller: _tab,
                               tabs: const [
                                 Tab(text: 'Sales History'),
-                                Tab(text: 'Ledger'),
+                                Tab(text: 'Trade Ledger'),
+                                Tab(text: 'Loan Ledger'),
                               ],
                             ),
                           ],
@@ -464,6 +514,23 @@ class _CustomerEditScreenState extends State<CustomerEditScreen>
                               onPrev: () => _loadLedger(page: _ldgPage - 1),
                               onNext: () => _loadLedger(page: _ldgPage + 1),
                               onRefresh: () async => _loadLedger(page: 1),
+                              money: _money,
+                              toDouble: _toDouble,
+                            ),
+                            _LoanLedgerTab(
+                              items: _loanRows,
+                              summary: _loanSummary,
+                              opening: _loanOpening,
+                              openingForPage: _loanOpeningForPage,
+                              isLoading: _loadingLoan,
+                              error: _errorLoan,
+                              page: _loanPage,
+                              lastPage: _loanLastPage,
+                              total: _loanTotal,
+                              onRetry: () => _loadLoanLedger(page: _loanPage),
+                              onPrev: () => _loadLoanLedger(page: _loanPage - 1),
+                              onNext: () => _loadLoanLedger(page: _loanPage + 1),
+                              onRefresh: () async => _loadLoanLedger(page: 1),
                               money: _money,
                               toDouble: _toDouble,
                             ),
@@ -730,6 +797,246 @@ class _CustomerLedgerCard extends StatelessWidget {
       balance: money(item['balance']),
       icon: debit > 0 ? Icons.south_west_rounded : Icons.north_east_rounded,
       accentColor: debit > 0 ? AppTheme.warning : AppTheme.success,
+    );
+  }
+}
+
+class _LoanLedgerTab extends StatelessWidget {
+  const _LoanLedgerTab({
+    required this.items,
+    required this.summary,
+    required this.opening,
+    required this.openingForPage,
+    required this.isLoading,
+    required this.error,
+    required this.page,
+    required this.lastPage,
+    required this.total,
+    required this.onRetry,
+    required this.onPrev,
+    required this.onNext,
+    required this.onRefresh,
+    required this.money,
+    required this.toDouble,
+  });
+
+  final List<Map<String, dynamic>> items;
+  final Map<String, dynamic> summary;
+  final double opening;
+  final double openingForPage;
+  final bool isLoading;
+  final String? error;
+  final int page, lastPage, total;
+  final VoidCallback onRetry, onPrev, onNext;
+  final Future<void> Function() onRefresh;
+  final String Function(dynamic value) money;
+  final double Function(dynamic value) toDouble;
+
+  @override
+  Widget build(BuildContext context) {
+    if (isLoading && items.isEmpty) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (error != null && items.isEmpty) {
+      return _PartyErrorView(message: error!, onRetry: onRetry);
+    }
+
+    final given = toDouble(summary['loan_given']);
+    final recovered = toDouble(summary['loan_recovered']);
+    final balance = toDouble(summary['loan_balance']);
+    final needsReview = balance < 0;
+
+    return RefreshIndicator(
+      onRefresh: onRefresh,
+      child: ListView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(16, 4, 16, 22),
+        children: [
+          if (isLoading) ...[
+            const LinearProgressIndicator(minHeight: 2),
+            const SizedBox(height: 10),
+          ],
+          // Loans are tracked separately from the trade (AR) balance.
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: AppTheme.info.withOpacity(.07),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: AppTheme.info.withOpacity(.18)),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.info_outline_rounded, size: 16, color: AppTheme.info),
+                const SizedBox(width: 8),
+                const Expanded(
+                  child: Text(
+                    'Loans (Loans Receivable) are tracked separately and never affect the customer trade balance.',
+                    style: TextStyle(color: AppTheme.textMuted, fontSize: 11.5, fontWeight: FontWeight.w700),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          _PartyMetricGrid(
+            metrics: [
+              _PartyMetric(
+                label: 'Loan Given',
+                value: money(given),
+                icon: Icons.call_made_rounded,
+                color: AppTheme.warning,
+                helper: 'Advanced to borrower',
+              ),
+              _PartyMetric(
+                label: 'Loan Recovered',
+                value: money(recovered),
+                icon: Icons.call_received_rounded,
+                color: AppTheme.success,
+                helper: 'Received back',
+              ),
+              _PartyMetric(
+                label: needsReview ? 'Net Loan · Review' : 'Net Loan Balance',
+                value: money(balance),
+                icon: Icons.account_balance_rounded,
+                color: needsReview ? AppTheme.danger : AppTheme.navy,
+                helper: needsReview
+                    ? 'Credit / over-recovered — review required'
+                    : (balance > 0 ? 'Borrower still owes' : 'Settled'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          if (items.isEmpty)
+            const _PartyEmptyState(
+              icon: Icons.account_balance_wallet_rounded,
+              title: 'No loan activity',
+              subtitle: 'Loan given and loan recovered entries for this borrower will appear here.',
+            )
+          else ...[
+            for (final r in items) ...[
+              _LoanLedgerCard(item: r, money: money, toDouble: toDouble),
+              if (r != items.last) const SizedBox(height: 10),
+            ],
+          ],
+          const SizedBox(height: 12),
+          _PartyPager(
+            page: page,
+            lastPage: lastPage,
+            total: total,
+            onPrev: onPrev,
+            onNext: onNext,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _LoanLedgerCard extends StatelessWidget {
+  const _LoanLedgerCard({
+    required this.item,
+    required this.money,
+    required this.toDouble,
+  });
+
+  final Map<String, dynamic> item;
+  final String Function(dynamic value) money;
+  final double Function(dynamic value) toDouble;
+
+  @override
+  Widget build(BuildContext context) {
+    final given = toDouble(item['given']);
+    final recovered = toDouble(item['recovered']);
+    final isGiven = given > 0;
+    final method = (item['method'] ?? '').toString();
+    final reference = (item['reference'] ?? '').toString();
+    final date = (item['date'] ?? '').toString();
+    final status = (item['status'] ?? 'posted').toString();
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: AppTheme.border),
+      ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final compact = constraints.maxWidth < 700;
+          final left = Row(
+            children: [
+              Container(
+                height: 42,
+                width: 42,
+                decoration: BoxDecoration(
+                  color: (isGiven ? AppTheme.warning : AppTheme.success).withOpacity(.10),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Icon(
+                  isGiven ? Icons.call_made_rounded : Icons.call_received_rounded,
+                  color: isGiven ? AppTheme.warning : AppTheme.success,
+                  size: 22,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      reference.trim().isEmpty ? (isGiven ? 'Loan Given' : 'Loan Recovered') : reference.trim(),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: AppTheme.navy,
+                        fontWeight: FontWeight.w900,
+                        fontSize: 14,
+                      ),
+                    ),
+                    const SizedBox(height: 5),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 5,
+                      children: [
+                        _MetaChip(icon: Icons.calendar_today_rounded, label: date.trim().isEmpty ? '—' : date),
+                        if (method.trim().isNotEmpty)
+                          _MetaChip(icon: Icons.account_balance_wallet_rounded, label: method),
+                        if (status != 'posted')
+                          _MetaChip(icon: Icons.info_outline_rounded, label: status),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          );
+
+          final amountRow = Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            alignment: compact ? WrapAlignment.start : WrapAlignment.end,
+            children: [
+              _AmountBadge(label: 'Given', value: money(given), color: AppTheme.warning),
+              _AmountBadge(label: 'Recovered', value: money(recovered), color: AppTheme.success),
+              _AmountBadge(label: 'Bal', value: money(item['balance']), color: AppTheme.navy, prominent: true),
+            ],
+          );
+
+          if (compact) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [left, const SizedBox(height: 12), amountRow],
+            );
+          }
+          return Row(
+            children: [
+              Expanded(child: left),
+              const SizedBox(width: 14),
+              SizedBox(width: 320, child: amountRow),
+            ],
+          );
+        },
+      ),
     );
   }
 }

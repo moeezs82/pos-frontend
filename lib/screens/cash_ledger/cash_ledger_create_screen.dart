@@ -1,4 +1,6 @@
 import 'package:enterprise_pos/api/cash_ledger_service.dart';
+import 'package:enterprise_pos/api/account_service.dart';
+import 'package:enterprise_pos/api/core/api_client.dart' show ApiException;
 import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/providers/payment_method_provider.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
@@ -96,6 +98,7 @@ class _CashLedgerCreateScreenState extends State<CashLedgerCreateScreen> {
   final _amountFocus = FocusNode();
 
   late final CashLedgerService _service;
+  late final AccountService _accountsApi;
 
   bool _saving = false;
 
@@ -107,6 +110,14 @@ class _CashLedgerCreateScreenState extends State<CashLedgerCreateScreen> {
   String _partyKind = 'none'; // none|customer|vendor|user
   Map<String, dynamic>? _selectedParty;
 
+  // Expense-account selector state (only used when category == OTHER_EXPENSE).
+  static const _defaultExpenseCode = '5300';
+  List<Map<String, dynamic>> _expenseAccounts = [];
+  String? _expenseAccountCode;
+  bool _expenseAccountsLoaded = false;
+
+  bool get _isExpense => _category == 'OTHER_EXPENSE';
+
   CashLedgerCategoryMeta get _meta => CashLedgerCategoryMeta.byValue(_category);
 
   @override
@@ -115,9 +126,33 @@ class _CashLedgerCreateScreenState extends State<CashLedgerCreateScreen> {
     _category = widget.initialCategory ?? CashLedgerCategoryMeta.all.first.value;
     final token = context.read<AuthProvider>().token!;
     _service = CashLedgerService(token: token);
+    _accountsApi = AccountService(token: token);
+    if (_isExpense) _loadExpenseAccounts();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _amountFocus.requestFocus();
     });
+  }
+
+  Future<void> _loadExpenseAccounts() async {
+    if (_expenseAccountsLoaded) return;
+    _expenseAccountsLoaded = true;
+    try {
+      final res = await _accountsApi.getAccounts(
+          isActive: true, typeCode: 'EXPENSE', perPage: 200);
+      final items = List<Map<String, dynamic>>.from(
+        (res['items'] as List?) ?? const [],
+      );
+      if (!mounted) return;
+      setState(() {
+        _expenseAccounts = items;
+        // Default to Other/Sundry Expense (5300) if present and active.
+        _expenseAccountCode ??= items.any((a) => a['code'] == _defaultExpenseCode)
+            ? _defaultExpenseCode
+            : (items.isNotEmpty ? items.first['code']?.toString() : null);
+      });
+    } catch (_) {
+      _expenseAccountsLoaded = false; // allow a retry on next entry into expense
+    }
   }
 
   @override
@@ -137,7 +172,30 @@ class _CashLedgerCreateScreenState extends State<CashLedgerCreateScreen> {
   void _selectCategoryByIndex(int index) {
     final all = CashLedgerCategoryMeta.all;
     if (index < 0 || index >= all.length) return;
-    setState(() => _category = all[index].value);
+    _applyCategory(all[index].value);
+  }
+
+  static bool _isLoanValue(String v) => v == 'LOAN_GIVEN' || v == 'LOAN_RECOVERED';
+  bool get _isLoan => _isLoanValue(_category);
+
+  /// Change category and clear incompatible counterparty state so no stale
+  /// party/ID is ever submitted. Only loan entries carry a (borrower) party;
+  /// Qameti and Expense never attach a commercial party.
+  void _applyCategory(String value) {
+    setState(() {
+      _category = value;
+      if (_isLoanValue(value)) {
+        if (_partyKind == 'none') _partyKind = 'customer';
+      } else {
+        _partyKind = 'none';
+      }
+      _selectedParty = null;
+      // Expense account only applies to OTHER_EXPENSE; clear when leaving.
+      if (value != 'OTHER_EXPENSE') {
+        _expenseAccountCode = null;
+      }
+    });
+    if (value == 'OTHER_EXPENSE') _loadExpenseAccounts();
   }
 
   /// F3 / Ctrl+Shift+P only does something once a party kind other than
@@ -197,6 +255,21 @@ class _CashLedgerCreateScreenState extends State<CashLedgerCreateScreen> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
   }
 
+  /// Surface the backend's useful validation detail (e.g. "Insufficient cash on
+  /// hand. Available: 500.00, requested: 600.00.") instead of a generic message.
+  String _friendlyError(Object e) {
+    if (e is ApiException) {
+      final errs = e.body?['errors'];
+      if (errs is Map && errs.isNotEmpty) {
+        final first = errs.values.first;
+        if (first is List && first.isNotEmpty) return first.first.toString();
+        return first.toString();
+      }
+      if (e.message.trim().isNotEmpty) return e.message;
+    }
+    return e.toString().replaceFirst('Exception: ', '');
+  }
+
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
 
@@ -206,13 +279,15 @@ class _CashLedgerCreateScreenState extends State<CashLedgerCreateScreen> {
       return;
     }
 
-    final hasParty = _partyKind != 'none' && _selectedParty != null;
-    if (_partyKind != 'none' && _selectedParty == null) {
-      _showMessage('Please select the $_partyKind from the list.');
+    // Only loan entries carry a (borrower) party. For Qameti/Expense we never
+    // send a commercial party — the backend rejects it defensively too.
+    final hasParty = _isLoan && _partyKind != 'none' && _selectedParty != null;
+    if (_isLoan && _selectedParty == null) {
+      _showMessage('Please select the borrower from the list.');
       return;
     }
     if (!hasParty && _referenceCtrl.text.trim().isEmpty) {
-      _showMessage('Enter a reference name when no party is linked.');
+      _showMessage('Enter a reference / payee name.');
       return;
     }
 
@@ -228,6 +303,7 @@ class _CashLedgerCreateScreenState extends State<CashLedgerCreateScreen> {
         referenceName: _referenceCtrl.text.trim().isNotEmpty ? _referenceCtrl.text.trim() : null,
         note: _noteCtrl.text.trim().isNotEmpty ? _noteCtrl.text.trim() : null,
         allowNegativeCash: _allowNegativeCash,
+        expenseAccountCode: _isExpense ? _expenseAccountCode : null,
       );
 
       if (!mounted) return;
@@ -237,7 +313,7 @@ class _CashLedgerCreateScreenState extends State<CashLedgerCreateScreen> {
       Navigator.pop(context, true);
     } catch (e) {
       if (!mounted) return;
-      _showMessage(e.toString().replaceFirst('Exception: ', ''));
+      _showMessage(_friendlyError(e));
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -369,7 +445,7 @@ class _CashLedgerCreateScreenState extends State<CashLedgerCreateScreen> {
                 selected: selected,
                 avatar: Icon(c.icon, size: 18, color: selected ? c.color : AppTheme.textMuted),
                 label: Text(c.label),
-                onSelected: (_) => setState(() => _category = c.value),
+                onSelected: (_) => _applyCategory(c.value),
               );
             }).toList(),
           ),
@@ -403,11 +479,35 @@ class _CashLedgerCreateScreenState extends State<CashLedgerCreateScreen> {
               child: Text(_fmtDate(_txnDate), style: const TextStyle(fontWeight: FontWeight.w800)),
             ),
           ),
+          if (_isExpense) ...[
+            const SizedBox(height: 14),
+            DropdownButtonFormField<String>(
+              value: _expenseAccountCode,
+              isExpanded: true,
+              decoration: const InputDecoration(
+                labelText: 'Expense account *',
+                prefixIcon: Icon(Icons.account_tree_rounded),
+              ),
+              items: _expenseAccounts
+                  .map((a) => DropdownMenuItem<String>(
+                        value: a['code']?.toString(),
+                        child: Text('${a['code']} · ${a['name']}',
+                            overflow: TextOverflow.ellipsis),
+                      ))
+                  .toList(),
+              onChanged: (v) => setState(() => _expenseAccountCode = v),
+              validator: (v) => (_isExpense && (v == null || v.isEmpty))
+                  ? 'Select an expense account'
+                  : null,
+            ),
+          ],
           const SizedBox(height: 14),
           TextFormField(
             controller: _referenceCtrl,
             decoration: InputDecoration(
-              labelText: _partyKind == 'none' ? 'Reference name *' : 'Reference / note name',
+              labelText: _isExpense
+                  ? 'Payee / reference *'
+                  : (_partyKind == 'none' ? 'Reference name *' : 'Reference / note name'),
               prefixIcon: const Icon(Icons.badge_rounded),
               hintText: _partyKind == 'none'
                   ? 'Who the money went to / came from (required)'
@@ -489,26 +589,29 @@ class _CashLedgerCreateScreenState extends State<CashLedgerCreateScreen> {
             ],
           ),
         ),
+        // Counterparty is a BORROWER and only applies to loan entries. Qameti
+        // and Other Expense never link a commercial party (they use the
+        // reference / payee field), so this whole panel is hidden for them.
+        if (_isLoan) ...[
         const SizedBox(height: 16),
         EnterprisePanel(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               const EnterpriseSectionHeader(
-                title: 'Party',
-                subtitle: 'Link a user, customer or vendor — or leave unlinked with a reference name.',
+                title: 'Borrower',
+                subtitle: 'Who received / is repaying the loan. Required for loan entries.',
                 icon: Icons.groups_2_rounded,
                 color: AppTheme.warning,
               ),
               const SizedBox(height: 14),
               SegmentedButton<String>(
                 segments: const [
-                  ButtonSegment(value: 'none', label: Text('None'), icon: Icon(Icons.block_rounded)),
                   ButtonSegment(value: 'customer', label: Text('Customer'), icon: Icon(Icons.person_rounded)),
                   ButtonSegment(value: 'vendor', label: Text('Vendor'), icon: Icon(Icons.storefront_rounded)),
                   ButtonSegment(value: 'user', label: Text('User'), icon: Icon(Icons.badge_rounded)),
                 ],
-                selected: {_partyKind},
+                selected: {_partyKind == 'none' ? 'customer' : _partyKind},
                 onSelectionChanged: (set) {
                   setState(() {
                     _partyKind = set.first;
@@ -583,6 +686,7 @@ class _CashLedgerCreateScreenState extends State<CashLedgerCreateScreen> {
             ],
           ),
         ),
+        ], // end if (_isLoan) borrower panel
       ],
     );
   }

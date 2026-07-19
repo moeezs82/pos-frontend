@@ -734,7 +734,7 @@ const _enterpriseReports = <_EnterpriseReportMeta>[
   _EnterpriseReportMeta(key: 'stock-valuation', title: 'Stock Valuation', group: 'Inventory', description: 'Inventory quantity and value.', icon: Icons.price_check_rounded),
   _EnterpriseReportMeta(key: 'stock-movement', title: 'Stock Movement Ledger', group: 'Inventory', description: 'In/out movement ledger.', icon: Icons.swap_vert_circle_rounded),
   _EnterpriseReportMeta(key: 'inventory-adjustment', title: 'Inventory Adjustment', group: 'Inventory', description: 'Adjustment-only movement report.', icon: Icons.tune_rounded),
-  _EnterpriseReportMeta(key: 'cashbook', title: 'Cashbook', group: 'Accounting', description: 'Receipts, payments and cash movement.', icon: Icons.account_balance_wallet_rounded),
+  // _EnterpriseReportMeta(key: 'cashbook', title: 'Cashbook', group: 'Accounting', description: 'Receipts, payments and cash movement.', icon: Icons.account_balance_wallet_rounded),
   _EnterpriseReportMeta(key: 'daybook', title: 'Daybook', group: 'Accounting', description: 'Full day transaction book.', icon: Icons.calendar_view_day_rounded),
   _EnterpriseReportMeta(key: 'profit-loss', title: 'Profit & Loss', group: 'Accounting', description: 'Income, expenses and net result.', icon: Icons.trending_up_rounded),
   _EnterpriseReportMeta(key: 'customer-receivables', title: 'Customer Receivables', group: 'Accounting', description: 'All customer balances and AR base.', icon: Icons.person_search_rounded),

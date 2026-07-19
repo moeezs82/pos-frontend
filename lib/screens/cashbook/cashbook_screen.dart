@@ -1,7 +1,8 @@
 import 'package:enterprise_pos/api/cashbook_service.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/providers/branch_provider.dart';
-import 'package:enterprise_pos/screens/cashbook/expense_create_screen.dart';
+import 'package:enterprise_pos/screens/cash_ledger/cash_ledger_create_screen.dart';
+import 'package:enterprise_pos/services/app_navigator.dart';
 import 'package:enterprise_pos/screens/cashbook/widgets/cashbook_daily_summary_screen.dart';
 import 'package:enterprise_pos/screens/cashbook/widgets/cb_date_range_bar.dart';
 import 'package:enterprise_pos/screens/cashbook/widgets/cb_filters.dart';
@@ -415,9 +416,14 @@ class _CashBookScreenState extends State<CashBookScreen> {
 
 
   Future<void> _openExpenseCreate() async {
+    // Consolidated: expenses are recorded via Cash Ledger → Other Expense.
+    // Named route so a later Ctrl+E focuses this instance instead of duplicating.
     final created = await Navigator.push(
       context,
-      MaterialPageRoute(builder: (_) => const ExpenseCreateScreen()),
+      MaterialPageRoute(
+        settings: const RouteSettings(name: PosRouteIds.cashLedgerCreate),
+        builder: (_) => const CashLedgerCreateScreen(initialCategory: 'OTHER_EXPENSE'),
+      ),
     );
     if (created == true && mounted) {
       _fetch(page: 1);

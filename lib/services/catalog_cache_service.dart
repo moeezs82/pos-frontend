@@ -192,6 +192,18 @@ class CatalogCacheService {
       }
       await _setMeta(_syncedAtKey(branchId), DateTime.now().toIso8601String());
 
+      // Persist active payment methods so an offline cashier can still pick a
+      // tender. Only present on a full snapshot; deltas leave the cache as-is.
+      final paymentMethods = data['payment_methods'] as List?;
+      if (paymentMethods != null && paymentMethods.isNotEmpty) {
+        await savePaymentMethods(
+          branchId,
+          paymentMethods
+              .map((e) => Map<String, dynamic>.from(e as Map))
+              .toList(),
+        );
+      }
+
       return CatalogRefreshResult(
         ok: true,
         wasFullSnapshot: full,

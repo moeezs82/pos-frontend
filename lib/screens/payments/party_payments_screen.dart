@@ -720,6 +720,16 @@ class _PartyPaymentsScreenState extends State<PartyPaymentsScreen> {
             }),
             onDetails: _openDetails,
           ),
+          if (_kind != PartyPaymentKind.deliveryBoy &&
+              (party['loan'] is Map) &&
+              (party['loan']['has_activity'] == true)) ...[
+            const SizedBox(height: 12),
+            _LoanSeparateCard(
+              loanBalance: _money(party['loan']['loan_balance']),
+              needsReview: _toDouble(party['loan']['loan_balance']) < 0,
+              onView: _openDetails,
+            ),
+          ],
           const SizedBox(height: 12),
           _PaymentPanel(
             formKey: _formKey,
@@ -831,6 +841,79 @@ class _PartyCard extends StatelessWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// Read-only, visually separate loan indicator. Loan balances are NEVER
+/// merged into the trade Balance/Sales/Receipts (or Purchases/Payments) cards;
+/// this card simply links to the party's separate Loan Ledger.
+class _LoanSeparateCard extends StatelessWidget {
+  const _LoanSeparateCard({
+    required this.loanBalance,
+    required this.needsReview,
+    required this.onView,
+  });
+
+  final String loanBalance;
+  final bool needsReview;
+  final VoidCallback onView;
+
+  @override
+  Widget build(BuildContext context) {
+    final tone = needsReview ? AppTheme.danger : AppTheme.warning;
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: tone.withOpacity(.06),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: tone.withOpacity(.20)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            height: 40,
+            width: 40,
+            decoration: BoxDecoration(
+              color: tone.withOpacity(.12),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(Icons.request_quote_rounded, color: tone, size: 20),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  needsReview ? 'Loan Balance · Credit / Review' : 'Loan Balance (separate)',
+                  style: const TextStyle(
+                    color: AppTheme.textMuted,
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  loanBalance,
+                  style: TextStyle(color: tone, fontWeight: FontWeight.w900, fontSize: 17),
+                ),
+                const SizedBox(height: 2),
+                const Text(
+                  'Not included in the trade balance above.',
+                  style: TextStyle(color: AppTheme.textMuted, fontSize: 11, fontWeight: FontWeight.w600),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          OutlinedButton.icon(
+            onPressed: onView,
+            icon: const Icon(Icons.open_in_new_rounded, size: 16),
+            label: const Text('Loan Ledger'),
+          ),
+        ],
       ),
     );
   }
