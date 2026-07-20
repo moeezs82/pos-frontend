@@ -138,9 +138,14 @@ class EnterpriseStatPill extends StatelessWidget {
                   fontWeight: FontWeight.w600,
                 ),
               ),
-              Text(
-                value,
-                style: TextStyle(color: AppTheme.navy, fontWeight: FontWeight.w800),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 180),
+                child: Text(
+                  value,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: AppTheme.navy, fontWeight: FontWeight.w800),
+                ),
               ),
             ],
           ),

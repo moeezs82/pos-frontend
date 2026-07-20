@@ -1,4 +1,5 @@
 import 'package:enterprise_pos/theme/app_theme.dart';
+import 'package:enterprise_pos/services/app_currency.dart';
 import 'package:enterprise_pos/widgets/enterprise/enterprise_panel.dart';
 import 'package:flutter/material.dart';
 
@@ -95,7 +96,7 @@ class PaymentsCard extends StatelessWidget {
                   ),
                 ),
                 Text(
-                  '\$$changeAmount',
+                  AppCurrency.format(changeAmount),
                   style: const TextStyle(
                     fontSize: 17,
                     fontWeight: FontWeight.w900,

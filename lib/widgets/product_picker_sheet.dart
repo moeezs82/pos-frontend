@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:enterprise_pos/api/product_service.dart';
 import 'package:enterprise_pos/forms/product_form_screen.dart';
+import 'package:enterprise_pos/services/app_currency.dart';
 import 'package:flutter/material.dart';
 
 class ProductPickerSheet extends StatefulWidget {
@@ -323,7 +324,7 @@ class _ProductPickerSheetState extends State<ProductPickerSheet> {
                                 ),
                               ),
                               Text(
-                                "\$$priceStr",
+                                AppCurrency.format(priceStr),
                                 style: t.textTheme.bodyMedium?.copyWith(
                                   fontWeight: FontWeight.w700,
                                 ),
@@ -342,7 +343,7 @@ class _ProductPickerSheetState extends State<ProductPickerSheet> {
                                 Padding(
                                   padding: const EdgeInsets.only(left: 8),
                                   child: Text(
-                                    "-\$$discountStr",
+                                    AppCurrency.format(-(double.tryParse(discountStr) ?? 0)),
                                     style: const TextStyle(
                                       color: Colors.red,
                                       fontWeight: FontWeight.w600,

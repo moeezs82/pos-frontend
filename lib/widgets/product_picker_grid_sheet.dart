@@ -922,7 +922,7 @@ class _ProductGridCard extends StatelessWidget {
                       ),
                       const SizedBox(height: 8),
                       Text(
-                        "\$$price",
+                        price,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: t.textTheme.bodyMedium?.copyWith(

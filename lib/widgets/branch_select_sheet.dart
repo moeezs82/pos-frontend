@@ -35,6 +35,7 @@ class _BranchSelectSheetState extends State<BranchSelectSheet> {
   }
 
   Future<void> _fetch() async {
+    if (!mounted) return;
     setState(() => _loading = true);
     try {
       final list = await _common.getBranches(search: _search);
@@ -115,15 +116,22 @@ class _BranchSelectSheetState extends State<BranchSelectSheet> {
 
     try {
       final updated = await _common.updateBranch(id, result);
-      await _fetch();
       if (!mounted) return;
+
+      setState(() {
+        final index = _branches.indexWhere((item) => _readInt(item['id']) == id);
+        if (index >= 0) _branches[index] = Map<String, dynamic>.from(updated);
+      });
 
       final branchProvider = context.read<BranchProvider>();
       if (branchProvider.selectedBranchId == id) {
         final auth = context.read<AuthProvider>();
-        await auth.refreshMe();
+        await auth.refreshMe(notify: false);
         if (!mounted) return;
-        branchProvider.syncFromAuthUser(auth.user);
+        branchProvider.syncFromAuthUser(
+          auth.user,
+          activeBranch: updated,
+        );
       }
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('${updated['name'] ?? result['name']} updated.')),
@@ -137,68 +145,10 @@ class _BranchSelectSheetState extends State<BranchSelectSheet> {
   }
 
   Future<Map<String, dynamic>?> _branchDialog({Map<String, dynamic>? branch}) async {
-    final nameController = TextEditingController(text: branch?['name']?.toString() ?? '');
-    final locController = TextEditingController(text: branch?['location']?.toString() ?? '');
-    final phoneController = TextEditingController(text: branch?['phone']?.toString() ?? '');
-    final currencyController = TextEditingController(text: branch?['currency']?.toString() ?? 'KD');
-    bool isActive = branch == null || branch['is_active'] == true || branch['is_active'] == 1;
-
-    final result = await showDialog<Map<String, dynamic>>(
+    return showDialog<Map<String, dynamic>>(
       context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setLocal) => AlertDialog(
-          title: Text(branch == null ? 'Add Branch' : 'Edit Branch'),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-              TextField(decoration: const InputDecoration(labelText: 'Name'), controller: nameController),
-              TextField(decoration: const InputDecoration(labelText: 'Location'), controller: locController),
-              TextField(decoration: const InputDecoration(labelText: 'Phone'), controller: phoneController),
-              TextField(
-                decoration: const InputDecoration(
-                  labelText: 'Currency',
-                  hintText: 'KD, AED, USD, \$, € …',
-                  helperText: 'Used on all prices, reports, receipts and barcode labels.',
-                ),
-                controller: currencyController,
-                maxLength: 20,
-              ),
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                title: const Text('Active'),
-                value: isActive,
-                onChanged: (v) => setLocal(() => isActive = v),
-              ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
-            ElevatedButton(
-              onPressed: () {
-                final name = nameController.text.trim();
-                final currency = currencyController.text.trim();
-                if (name.isEmpty || currency.isEmpty) return;
-                Navigator.pop(ctx, {
-                  'name': name,
-                  'location': locController.text.trim(),
-                  'phone': phoneController.text.trim(),
-                  'currency': currency,
-                  'is_active': isActive,
-                });
-              },
-              child: const Text('Save'),
-            ),
-          ],
-        ),
-      ),
+      builder: (_) => _BranchEditorDialog(branch: branch),
     );
-    nameController.dispose();
-    locController.dispose();
-    phoneController.dispose();
-    currencyController.dispose();
-    return result;
   }
 
   @override
@@ -291,13 +241,14 @@ class _BranchSelectSheetState extends State<BranchSelectSheet> {
                                       enabled: !_switching,
                                       leading: const Icon(Icons.apartment),
                                       title: Text(name),
-                                      subtitle: b['location'] != null && b['location'].toString().trim().isNotEmpty
-                                          ? Text('Location: ${b['location']}')
-                                          : null,
+                                      subtitle: Text([
+                                        if (b['location'] != null && b['location'].toString().trim().isNotEmpty)
+                                          'Location: ${b['location']}',
+                                        'Currency: $currency',
+                                      ].join(' • ')),
                                       trailing: Row(
                                         mainAxisSize: MainAxisSize.min,
                                         children: [
-                                          Text(currency, style: Theme.of(context).textTheme.labelMedium),
                                           IconButton(
                                             tooltip: 'Edit branch',
                                             onPressed: _switching ? null : () => _editBranch(b),
@@ -338,5 +289,91 @@ class _BranchSelectSheetState extends State<BranchSelectSheet> {
     if (value is num) return value.toInt();
     final parsed = int.tryParse(value.toString());
     return parsed != null && parsed > 0 ? parsed : null;
+  }
+}
+
+class _BranchEditorDialog extends StatefulWidget {
+  final Map<String, dynamic>? branch;
+
+  const _BranchEditorDialog({this.branch});
+
+  @override
+  State<_BranchEditorDialog> createState() => _BranchEditorDialogState();
+}
+
+class _BranchEditorDialogState extends State<_BranchEditorDialog> {
+  late final TextEditingController _nameController;
+  late final TextEditingController _locationController;
+  late final TextEditingController _phoneController;
+  late final TextEditingController _currencyController;
+  late bool _isActive;
+
+  @override
+  void initState() {
+    super.initState();
+    final branch = widget.branch;
+    _nameController = TextEditingController(text: branch?['name']?.toString() ?? '');
+    _locationController = TextEditingController(text: branch?['location']?.toString() ?? '');
+    _phoneController = TextEditingController(text: branch?['phone']?.toString() ?? '');
+    _currencyController = TextEditingController(text: branch?['currency']?.toString() ?? 'KD');
+    _isActive = branch == null || branch['is_active'] == true || branch['is_active'] == 1;
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _locationController.dispose();
+    _phoneController.dispose();
+    _currencyController.dispose();
+    super.dispose();
+  }
+
+  void _save() {
+    final name = _nameController.text.trim();
+    final currency = _currencyController.text.trim();
+    if (name.isEmpty || currency.isEmpty) return;
+    Navigator.of(context).pop({
+      'name': name,
+      'location': _locationController.text.trim(),
+      'phone': _phoneController.text.trim(),
+      'currency': currency,
+      'is_active': _isActive,
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(widget.branch == null ? 'Add Branch' : 'Edit Branch'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(decoration: const InputDecoration(labelText: 'Name'), controller: _nameController),
+            TextField(decoration: const InputDecoration(labelText: 'Location'), controller: _locationController),
+            TextField(decoration: const InputDecoration(labelText: 'Phone'), controller: _phoneController),
+            TextField(
+              decoration: const InputDecoration(
+                labelText: 'Currency',
+                hintText: 'KD, AED, USD, \$, € …',
+                helperText: 'Used on all prices, reports, receipts and barcode labels.',
+              ),
+              controller: _currencyController,
+              maxLength: 20,
+            ),
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Active'),
+              value: _isActive,
+              onChanged: (value) => setState(() => _isActive = value),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
+        ElevatedButton(onPressed: _save, child: const Text('Save')),
+      ],
+    );
   }
 }

@@ -1,5 +1,6 @@
 import 'dart:ui' show FontFeature;
 import 'package:enterprise_pos/theme/app_theme.dart';
+import 'package:enterprise_pos/services/app_currency.dart';
 import 'package:enterprise_pos/widgets/enterprise/enterprise_panel.dart';
 import 'package:flutter/material.dart';
 
@@ -32,7 +33,7 @@ class TotalsCardInline extends StatelessWidget {
         children: [
           const Text('Totals', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
           const SizedBox(height: 14),
-          _rowStatic('Subtotal', '\$$subtotal'),
+          _rowStatic('Subtotal', subtotal),
           const SizedBox(height: 8),
           _rowEditable(context, label: 'Discount', controller: discountController, textColor: AppTheme.danger),
           const SizedBox(height: 8),
@@ -40,11 +41,11 @@ class TotalsCardInline extends StatelessWidget {
           const SizedBox(height: 12),
           const Divider(),
           const SizedBox(height: 12),
-          _summaryLine('Grand Total', '\$$total', big: true),
+          _summaryLine('Grand Total', total, big: true),
           const SizedBox(height: 8),
-          _summaryLine('Paid', '\$$paid'),
+          _summaryLine('Paid', paid),
           const SizedBox(height: 8),
-          _summaryLine('Balance', '\$$balance', valueColor: balanceColor),
+          _summaryLine('Balance', balance, valueColor: balanceColor),
         ],
       ),
     );
@@ -54,7 +55,14 @@ class TotalsCardInline extends StatelessWidget {
     return Row(
       children: [
         Expanded(child: Text(label, style: const TextStyle(color: AppTheme.textMuted, fontWeight: FontWeight.w600))),
-        Text(value, style: const TextStyle(fontWeight: FontWeight.w800, fontFeatures: [FontFeature.tabularFigures()])),
+        Flexible(
+          child: Text(
+            value,
+            textAlign: TextAlign.right,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontWeight: FontWeight.w800, fontFeatures: [FontFeature.tabularFigures()]),
+          ),
+        ),
       ],
     );
   }
@@ -74,9 +82,10 @@ class TotalsCardInline extends StatelessWidget {
             controller: controller,
             keyboardType: TextInputType.number,
             textAlign: TextAlign.right,
-            decoration: const InputDecoration(
+            decoration: InputDecoration(
               isDense: true,
-              prefixText: '\$',
+              prefixText: AppCurrency.inputPrefix(),
+              suffixText: AppCurrency.inputSuffix,
               hintText: '0.00',
               contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 9),
             ),
@@ -95,13 +104,19 @@ class TotalsCardInline extends StatelessWidget {
     return Row(
       children: [
         Expanded(child: Text(label, style: const TextStyle(color: AppTheme.textMuted, fontWeight: FontWeight.w600))),
-        Text(
-          value,
-          style: TextStyle(
-            color: valueColor ?? AppTheme.navy,
-            fontSize: big ? 24 : 16,
-            fontWeight: FontWeight.w900,
-            fontFeatures: const [FontFeature.tabularFigures()],
+        Flexible(
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerRight,
+            child: Text(
+              value,
+              style: TextStyle(
+                color: valueColor ?? AppTheme.navy,
+                fontSize: big ? 24 : 16,
+                fontWeight: FontWeight.w900,
+                fontFeatures: const [FontFeature.tabularFigures()],
+              ),
+            ),
           ),
         ),
       ],

@@ -870,11 +870,12 @@ class _PurchaseDetailScreenState extends State<PurchaseDetailScreen> {
                                     controller: _discountCtl,
                                     keyboardType: TextInputType.number,
                                     textAlign: TextAlign.right,
-                                    decoration: const InputDecoration(
+                                    decoration: InputDecoration(
                                       isDense: true,
-                                      border: OutlineInputBorder(),
-                                      prefixText: "- \$",
-                                      hintText: "0.00",
+                                      border: const OutlineInputBorder(),
+                                      prefixText: AppCurrency.inputPrefix(negative: true),
+                                      suffixText: AppCurrency.inputSuffix,
+                                      hintText: '0.00',
                                     ),
                                     onChanged: (_) => setState(() {}),
                                   ),
@@ -898,11 +899,12 @@ class _PurchaseDetailScreenState extends State<PurchaseDetailScreen> {
                                     controller: _taxCtl,
                                     keyboardType: TextInputType.number,
                                     textAlign: TextAlign.right,
-                                    decoration: const InputDecoration(
+                                    decoration: InputDecoration(
                                       isDense: true,
-                                      border: OutlineInputBorder(),
-                                      prefixText: "+ \$",
-                                      hintText: "0.00",
+                                      border: const OutlineInputBorder(),
+                                      prefixText: AppCurrency.inputPrefix(positive: true),
+                                      suffixText: AppCurrency.inputSuffix,
+                                      hintText: '0.00',
                                     ),
                                     onChanged: (_) => setState(() {}),
                                   ),

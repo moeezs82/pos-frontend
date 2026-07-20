@@ -19,7 +19,6 @@ import 'package:enterprise_pos/services/party_pick_caches.dart';
 import 'package:enterprise_pos/widgets/party_autocomplete_field.dart';
 import 'package:flutter/material.dart';
 import 'package:enterprise_pos/services/app_currency.dart';
-import 'package:enterprise_pos/services/app_currency.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
@@ -981,8 +980,8 @@ class _PurchaseWorkspaceHeader extends StatelessWidget {
             runSpacing: 8,
             children: [
               _PlainStat(label: 'Items', value: itemCount.toString()),
-              _PlainStat(label: 'Total', value: '\$$total'),
-              _PlainStat(label: 'Balance', value: '\$$balance'),
+              _PlainStat(label: 'Total', value: total),
+              _PlainStat(label: 'Balance', value: balance),
             ],
           );
           final button = FilledButton.icon(
@@ -1357,8 +1356,8 @@ class _CreatePurchaseBottomBar extends StatelessWidget {
             runSpacing: 8,
             children: [
               EnterpriseStatPill(label: 'Items', value: itemCount.toString(), icon: Icons.inventory_2_outlined, color: AppTheme.primary),
-              EnterpriseStatPill(label: 'Total', value: '\$$total', icon: Icons.payments_outlined, color: AppTheme.success),
-              EnterpriseStatPill(label: 'Balance', value: '\$$balance', icon: Icons.account_balance_wallet_outlined, color: AppTheme.warning),
+              EnterpriseStatPill(label: 'Total', value: total, icon: Icons.payments_outlined, color: AppTheme.success),
+              EnterpriseStatPill(label: 'Balance', value: balance, icon: Icons.account_balance_wallet_outlined, color: AppTheme.warning),
             ],
           );
           final button = SizedBox(

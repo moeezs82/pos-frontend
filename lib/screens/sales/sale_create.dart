@@ -2512,8 +2512,8 @@ class _SaleWorkspaceHeader extends StatelessWidget {
             runSpacing: 8,
             children: [
               _PlainStat(label: 'Items', value: itemCount.toString()),
-              _PlainStat(label: 'Total', value: '\$$total'),
-              _PlainStat(label: 'Balance', value: '\$$balance'),
+              _PlainStat(label: 'Total', value: total),
+              _PlainStat(label: 'Balance', value: balance),
             ],
           );
           final button = FilledButton.icon(
@@ -2935,8 +2935,8 @@ class _CreateSaleBottomBar extends StatelessWidget {
             runSpacing: 8,
             children: [
               EnterpriseStatPill(label: 'Items', value: itemCount.toString(), icon: Icons.inventory_2_outlined, color: AppTheme.primary),
-              EnterpriseStatPill(label: 'Total', value: '\$$total', icon: Icons.payments_outlined, color: AppTheme.success),
-              EnterpriseStatPill(label: 'Balance', value: '\$$balance', icon: Icons.account_balance_wallet_outlined, color: AppTheme.warning),
+              EnterpriseStatPill(label: 'Total', value: total, icon: Icons.payments_outlined, color: AppTheme.success),
+              EnterpriseStatPill(label: 'Balance', value: balance, icon: Icons.account_balance_wallet_outlined, color: AppTheme.warning),
             ],
           );
           final button = SizedBox(

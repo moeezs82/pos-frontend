@@ -99,7 +99,7 @@ class _SaleTotalsEditableState extends State<SaleTotalsEditable> {
     BuildContext context, {
     required String label,
     required TextEditingController controller,
-    String prefix = "\$",
+    bool negative = false,
     Color? textColor,
   }) {
     final t = Theme.of(context);
@@ -128,7 +128,8 @@ class _SaleTotalsEditableState extends State<SaleTotalsEditable> {
           textAlign: TextAlign.right,
           decoration: InputDecoration(
             isDense: true,
-            prefixText: prefix,
+            prefixText: AppCurrency.inputPrefix(negative: negative),
+            suffixText: AppCurrency.inputSuffix,
             hintText: showHint ? "tap to add" : null,
             hintStyle: t.textTheme.titleSmall?.copyWith(color: t.hintColor),
             border: InputBorder.none,
@@ -268,14 +269,13 @@ class _SaleTotalsEditableState extends State<SaleTotalsEditable> {
               context,
               label: "Discount",
               controller: widget.discountController,
-              prefix: "-\$",
+              negative: true,
               textColor: Colors.red[700],
             ),
             _rowEditable(
               context,
               label: "Tax",
               controller: widget.taxController,
-              prefix: "\$",
               textColor: Colors.orange[800],
             ),
             const Divider(height: 12),

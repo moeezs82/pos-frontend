@@ -12,6 +12,18 @@ class AppCurrency {
 
   static String get currency => _currency;
 
+  static bool get usesLeadingSymbol => _isLeadingSymbol(_currency);
+
+  /// Currency decorations for numeric input fields. Controller values remain
+  /// plain numbers so API payloads and calculations are never formatted text.
+  static String? inputPrefix({bool negative = false, bool positive = false}) {
+    final sign = negative ? '-' : (positive ? '+' : '');
+    if (usesLeadingSymbol) return '$sign$_currency ';
+    return sign.isEmpty ? null : '$sign ';
+  }
+
+  static String? get inputSuffix => usesLeadingSymbol ? null : ' $_currency';
+
   static void configure(dynamic value) {
     final next = value?.toString().trim();
     _currency = next == null || next.isEmpty ? 'KD' : next;
