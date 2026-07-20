@@ -1,5 +1,6 @@
 import 'dart:math';
 import 'package:flutter/material.dart';
+import 'package:enterprise_pos/services/app_currency.dart';
 
 class SaleItemsSection extends StatelessWidget {
   final Map<String, dynamic> sale;
@@ -21,7 +22,7 @@ class SaleItemsSection extends StatelessWidget {
 
   // ---- helpers ----
   double _num(dynamic v) => double.tryParse(v?.toString() ?? '') ?? 0.0;
-  String _money(num v) => v.toStringAsFixed(2);
+  String _money(num v) => AppCurrency.format(v);
 
   double _lineTotal(Map i) {
     final price = _num(i['price']);

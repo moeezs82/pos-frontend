@@ -51,7 +51,6 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
   final _barcodeWidthCtrl = TextEditingController(text: '50');
   final _barcodeHeightCtrl = TextEditingController(text: '30');
   final _barcodeGapCtrl = TextEditingController(text: '2');
-  final _barcodeCurrencyCtrl = TextEditingController(text: 'KD');
 
   String _activeConnection = 'none';
   bool _secondaryEnabled = false;
@@ -112,7 +111,6 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
     _barcodeWidthCtrl.dispose();
     _barcodeHeightCtrl.dispose();
     _barcodeGapCtrl.dispose();
-    _barcodeCurrencyCtrl.dispose();
     for (final c in _footerCtrls) {
       c.dispose();
     }
@@ -202,7 +200,6 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
       _barcodeGapCtrl.text = _numberText(config.barcodeLabelGapMm);
       _barcodeDpi = config.barcodeDpi;
       _barcodeOrientation = config.barcodeOrientation;
-      _barcodeCurrencyCtrl.text = config.barcodeCurrency;
       _barcodeShowName = config.barcodeShowName;
       _barcodeShowValue = config.barcodeShowValue;
       _barcodeShowPrice = config.barcodeShowPrice;
@@ -214,6 +211,17 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
 
   List<String> get _currentFooterLines =>
       _footerCtrls.map((c) => c.text.trim()).where((s) => s.isNotEmpty).toList();
+
+  String get _selectedBranchCurrency {
+    if (_selectedBranchId == null) return 'KD';
+    for (final branch in _branches) {
+      if (branch['id'] == _selectedBranchId) {
+        final value = branch['currency']?.toString().trim();
+        return value == null || value.isEmpty ? 'KD' : value;
+      }
+    }
+    return 'KD';
+  }
 
   void _addFooterLine() {
     setState(() => _footerCtrls.add(TextEditingController()));
@@ -265,10 +273,6 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
       _showMessage('Enter a valid label size (15–200 mm wide, 10–200 mm high, gap 0–20 mm).');
       return;
     }
-    if (_barcodeCurrencyCtrl.text.trim().length > 20) {
-      _showMessage('Currency text cannot be longer than 20 characters.');
-      return;
-    }
 
     setState(() => _saving = true);
     try {
@@ -299,7 +303,7 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
         barcodeLabelGapMm: barcodeGap ?? 2,
         barcodeDpi: _barcodeDpi,
         barcodeOrientation: _barcodeOrientation,
-        barcodeCurrency: _barcodeCurrencyCtrl.text.trim(),
+        barcodeCurrency: _selectedBranchCurrency,
         barcodeShowName: _barcodeShowName,
         barcodeShowValue: _barcodeShowValue,
         barcodeShowPrice: _barcodeShowPrice,
@@ -394,7 +398,7 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
       barcodeLabelGapMm: double.tryParse(_barcodeGapCtrl.text.trim()) ?? 2,
       barcodeDpi: _barcodeDpi,
       barcodeOrientation: _barcodeOrientation,
-      barcodeCurrency: _barcodeCurrencyCtrl.text.trim(),
+      barcodeCurrency: _selectedBranchCurrency,
       barcodeShowName: _barcodeShowName,
       barcodeShowValue: _barcodeShowValue,
       barcodeShowPrice: _barcodeShowPrice,
@@ -1062,9 +1066,9 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
                 ),
                 const SizedBox(width: 10),
                 Expanded(
-                  child: TextFormField(
-                    controller: _barcodeCurrencyCtrl,
-                    decoration: const InputDecoration(labelText: 'Currency', hintText: 'KD'),
+                  child: InputDecorator(
+                    decoration: const InputDecoration(labelText: 'Currency (from branch)'),
+                    child: Text(_selectedBranchCurrency, style: const TextStyle(fontWeight: FontWeight.w800)),
                   ),
                 ),
               ],

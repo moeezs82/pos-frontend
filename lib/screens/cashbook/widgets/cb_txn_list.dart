@@ -1,5 +1,6 @@
 import 'dart:ui' show FontFeature;
 import 'package:flutter/material.dart';
+import 'package:enterprise_pos/services/app_currency.dart';
 import 'package:provider/provider.dart';
 import 'package:enterprise_pos/providers/payment_method_provider.dart';
 
@@ -133,7 +134,7 @@ class CBTxnList extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   Text(
-                    '$sign${amount.toStringAsFixed(2)}',
+                    '$sign${AppCurrency.format(amount)}',
                     style: amountStyle?.copyWith(color: amtColor),
                   ),
                   const SizedBox(height: 2),
@@ -142,7 +143,7 @@ class CBTxnList extends StatelessWidget {
                     children: [
                       Text('Running', style: metaStyle),
                       const SizedBox(width: 6),
-                      Text(running.toStringAsFixed(2), style: balanceStyle),
+                      Text(AppCurrency.format(running), style: balanceStyle),
                     ],
                   ),
                 ],

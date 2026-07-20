@@ -29,6 +29,7 @@ import 'package:enterprise_pos/widgets/app_feedback.dart';
 import 'package:enterprise_pos/widgets/app_keyboard_shortcuts.dart';
 import 'package:enterprise_pos/widgets/sale_status_bar.dart';
 import 'package:flutter/material.dart';
+import 'package:enterprise_pos/services/app_currency.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:enterprise_pos/services/thermal_printer_service.dart';
@@ -582,11 +583,11 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          "Cost Price: \$${costPrice.toString()}",
+                          "Cost Price: ${AppCurrency.format(costPrice)}",
                           style: const TextStyle(color: Colors.grey),
                         ),
                         Text(
-                          "Wholesale Price: \$${wholesalePrice.toString()}",
+                          "Wholesale Price: ${AppCurrency.format(wholesalePrice)}",
                           style: const TextStyle(color: Colors.grey),
                         ),
                       ],
@@ -1053,7 +1054,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       final effectiveShopAddress = printerConfig.shopAddress.isNotEmpty ? printerConfig.shopAddress : null;
       final effectiveShopPhone = printerConfig.shopPhone.isNotEmpty ? printerConfig.shopPhone : null;
       final mainTemplate = printerConfig.mainInvoiceTemplate;
-      final secondaryTemplate = printerConfig.secondaryInvoiceTemplate;
+      final kitchenTemplate = printerConfig.kitchenInvoiceTemplate;
       final footerLines = printerConfig.footerLines;
 
       debugPrint('Active printer connection: ${printerConfig.activeConnection}, template: ${mainTemplate.value}');
@@ -1083,12 +1084,12 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
           );
           printedToHardware = true;
 
-          if (printerConfig.secondaryPrintEnabled && (printerConfig.secondaryNetworkIp ?? '').trim().isNotEmpty) {
+          if (printerConfig.kitchenPrintEnabled && (printerConfig.kitchenNetworkIp ?? '').trim().isNotEmpty) {
             await ThermalPrinterService.instance.printSaleReceiptNetwork(
-              printerIp: printerConfig.secondaryNetworkIp!.trim(),
-              port: printerConfig.secondaryNetworkPort,
-              shopName: '$effectiveShopName - SECONDARY COPY',
-              shopAddress: 'SECONDARY COPY',
+              printerIp: printerConfig.kitchenNetworkIp!.trim(),
+              port: printerConfig.kitchenNetworkPort,
+              shopName: '$effectiveShopName - KITCHEN COPY',
+              shopAddress: 'KITCHEN COPY',
               shopPhone: effectiveShopPhone,
               receiptNo: receiptNo,
               dateTime: DateTime.now(),
@@ -1100,8 +1101,8 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
               cashReceived: cashReceived,
               changeAmount: changeAmount,
               meta: meta,
-              sections: secondaryTemplate.sections,
-              paperWidth: secondaryTemplate.paperWidthCode,
+              sections: kitchenTemplate.sections,
+              paperWidth: kitchenTemplate.paperWidthCode,
               footerLines: footerLines,
             );
           }
@@ -2074,7 +2075,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
           ),
           const SizedBox(width: 10),
           Text(
-            'Sub: ${subtotal.toStringAsFixed(2)}',
+            'Sub: ${AppCurrency.format(subtotal)}',
             style: const TextStyle(
               fontSize: 11,
               fontWeight: FontWeight.w800,
@@ -2186,7 +2187,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
                 itemBuilder: (_, i) {
                   final p = _payments[i];
                   final name = pm.displayNameFor(p['method']?.toString());
-                  final amt = _pmAmt(p['amount']).toStringAsFixed(2);
+                  final amt = AppCurrency.format(_pmAmt(p['amount']));
                   final ref = (p['reference'] ?? '').toString().trim();
                   return InputChip(
                     label: Text(ref.isEmpty ? '$name  $amt' : '$name  $amt · $ref'),
@@ -2197,11 +2198,11 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
             ),
           ),
           const SizedBox(width: 8),
-          Text('Paid ${paid.toStringAsFixed(2)}',
+          Text('Paid ${AppCurrency.format(paid)}',
               style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12)),
           const SizedBox(width: 10),
           Text(
-            'Balance ${balance.toStringAsFixed(2)}',
+            'Balance ${AppCurrency.format(balance)}',
             style: TextStyle(
               fontWeight: FontWeight.w800,
               fontSize: 12,
@@ -2326,7 +2327,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
                   ),
                 ),
                 Text(
-                  changeAmount.toStringAsFixed(2),
+                  AppCurrency.format(changeAmount),
                   style: TextStyle(
                     fontSize: 15,
                     fontWeight: FontWeight.w900,
@@ -2388,7 +2389,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
                 ),
               ),
               Text(
-                total.toStringAsFixed(2),
+                AppCurrency.format(total),
                 style: const TextStyle(
                   fontSize: 17,
                   fontWeight: FontWeight.w900,
@@ -2773,7 +2774,7 @@ class _CartProductSearchState extends State<_CartProductSearch> {
                           crossAxisAlignment: CrossAxisAlignment.end,
                           children: [
                             Text(
-                              ref.tp.toStringAsFixed(2),
+                              AppCurrency.format(ref.tp),
                               style: const TextStyle(
                                 fontSize: 13,
                                 fontWeight: FontWeight.w700,

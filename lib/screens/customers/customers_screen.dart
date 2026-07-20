@@ -7,6 +7,7 @@ import 'package:enterprise_pos/widgets/app_feedback.dart';
 import 'package:enterprise_pos/widgets/branch_indicator.dart';
 import 'package:enterprise_pos/widgets/enterprise/enterprise_ui.dart';
 import 'package:flutter/material.dart';
+import 'package:enterprise_pos/services/app_currency.dart';
 import 'package:provider/provider.dart';
 import '../../providers/auth_provider.dart';
 
@@ -150,7 +151,7 @@ class _CustomersScreenState extends State<CustomersScreen> {
     return double.tryParse(v.toString().replaceAll(',', '').trim()) ?? 0;
   }
 
-  String _money(dynamic v) => _toDouble(v).toStringAsFixed(2);
+  String _money(dynamic v) => AppCurrency.format(v);
 
   @override
   Widget build(BuildContext context) {

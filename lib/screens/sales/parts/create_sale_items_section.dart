@@ -1,5 +1,6 @@
 import 'dart:async' show Timer;
 import 'package:flutter/material.dart';
+import 'package:enterprise_pos/services/app_currency.dart';
 import 'dart:ui' show FontFeature;
 import 'package:flutter/services.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
@@ -258,7 +259,7 @@ class _ItemsTableState extends State<ItemsTable> {
   // ── Full (non-compact) build ────────────────────────────────────────────
   Widget _buildFull(BuildContext context) {
     final t = Theme.of(context);
-    final currency = (num v) => "\$${v.toStringAsFixed(2)}";
+    final currency = (num v) => AppCurrency.format(v);
 
     final totalSum = widget.items.fold<double>(
       0,
@@ -640,7 +641,7 @@ class _ItemsTableState extends State<ItemsTable> {
           Expanded(
             flex: 2,
             child: Text(
-              lineTotal.toStringAsFixed(2),
+              AppCurrency.format(lineTotal),
               textAlign: TextAlign.right,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
@@ -966,7 +967,7 @@ class _AddProductBoxState extends State<_AddProductBox> {
                                 ),
                               ),
                               Text(
-                                "\$${p.tp.toStringAsFixed(2)}",
+                                AppCurrency.format(p.tp),
                                 style: const TextStyle(
                                   fontFeatures: [FontFeature.tabularFigures()],
                                 ),

@@ -6,6 +6,7 @@ import 'package:enterprise_pos/widgets/payment_method_dropdown.dart';
 import 'package:enterprise_pos/screens/purchases/purchase_items_section.dart';
 import 'package:enterprise_pos/widgets/product_picker_sheet.dart';
 import 'package:flutter/material.dart';
+import 'package:enterprise_pos/services/app_currency.dart';
 import 'package:provider/provider.dart';
 
 class PurchaseDetailScreen extends StatefulWidget {
@@ -315,7 +316,7 @@ class _PurchaseDetailScreenState extends State<PurchaseDetailScreen> {
 
     // --- helpers (same styling/logic as sales) ---
     double _num(dynamic v) => double.tryParse(v?.toString() ?? '') ?? 0.0;
-    String _money(num v) => v.toStringAsFixed(2);
+    String _money(num v) => AppCurrency.format(v);
     double _calcTotal(double price, double qty, double discPct) {
       final d = (discPct / 100.0).clamp(0, 100);
       final t = qty * price * (1 - d);
@@ -851,7 +852,7 @@ class _PurchaseDetailScreenState extends State<PurchaseDetailScreen> {
                           ListTile(
                             title: const Text("Subtotal"),
                             trailing: Text(
-                              "\$${_money(_purchase!['subtotal'])}",
+                              AppCurrency.format(_purchase!['subtotal']),
                             ),
                           ),
                           // Editable Discount
@@ -928,7 +929,7 @@ class _PurchaseDetailScreenState extends State<PurchaseDetailScreen> {
                                   style: TextStyle(fontWeight: FontWeight.bold),
                                 ),
                                 trailing: Text(
-                                  "\$${previewTotal.toStringAsFixed(2)}",
+                                  AppCurrency.format(previewTotal),
                                   style: const TextStyle(
                                     fontWeight: FontWeight.bold,
                                     fontSize: 18,

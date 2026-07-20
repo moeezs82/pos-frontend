@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
+import 'package:enterprise_pos/services/app_currency.dart';
 
 class ReportCashbookScreen extends StatefulWidget {
   const ReportCashbookScreen({super.key});
@@ -25,7 +26,7 @@ class _ExpenseLine {
 }
 
 class _ReportCashbookScreenState extends State<ReportCashbookScreen> {
-  final _currency = NumberFormat.simpleCurrency(decimalDigits: 2, name: "");
+  final _currency = const AppMoneyFormatter();
   final _dateFmt = DateFormat('yyyy-MM-dd');
 
   late ReportsService _service;
@@ -374,7 +375,7 @@ class _ReportCashbookScreenState extends State<ReportCashbookScreen> {
                           Align(
                             alignment: Alignment.centerRight,
                             child: Text(
-                              "Total: ${_calcTotal().toStringAsFixed(2)}",
+                              "Total: ${AppCurrency.format(_calcTotal())}",
                               style: const TextStyle(
                                 fontWeight: FontWeight.w700,
                               ),

@@ -9,6 +9,7 @@ import 'package:enterprise_pos/widgets/branch_indicator.dart';
 import 'package:enterprise_pos/widgets/ledger_pager.dart';
 import 'package:enterprise_pos/widgets/payment_method_dropdown.dart';
 import 'package:flutter/material.dart';
+import 'package:enterprise_pos/services/app_currency.dart';
 import 'package:provider/provider.dart';
 
 class CustomerEditScreen extends StatefulWidget {
@@ -421,7 +422,7 @@ class _CustomerEditScreenState extends State<CustomerEditScreen>
     return int.tryParse(v.toString()) ?? 0;
   }
 
-  String _money(dynamic v) => _toDouble(v).toStringAsFixed(2);
+  String _money(dynamic v) => AppCurrency.format(v);
 
   String _customerName(Map<String, dynamic> c) {
     final first = (c['first_name'] ?? '').toString().trim();

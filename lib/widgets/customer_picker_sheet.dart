@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:enterprise_pos/api/customer_service.dart';
 import 'package:enterprise_pos/forms/customer_form_screen.dart';
 import 'package:enterprise_pos/services/party_pick_caches.dart';
+import 'package:enterprise_pos/services/app_currency.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
@@ -17,7 +18,7 @@ class CustomerPickerSheet extends StatefulWidget {
 class _CustomerPickerSheetState extends State<CustomerPickerSheet> {
   final _searchCtrl = TextEditingController();
   final _searchFocus = FocusNode();
-  final _money = NumberFormat('#,##0.00');
+  final _money = const AppMoneyFormatter();
 
   List<Map<String, dynamic>> _customers = [];
   int _page = 1;

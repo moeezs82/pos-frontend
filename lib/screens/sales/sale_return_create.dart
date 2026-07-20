@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
+import 'package:enterprise_pos/services/app_currency.dart';
 
 class CreateSaleReturnScreen extends StatefulWidget {
   const CreateSaleReturnScreen({super.key});
@@ -37,7 +38,7 @@ class _CreateSaleReturnScreenState extends State<CreateSaleReturnScreen> {
   final _refundRefCtrl = TextEditingController();
   DateTime? _refundDate;
 
-  final _currency = NumberFormat.simpleCurrency(name: "", decimalDigits: 2);
+  final _currency = const AppMoneyFormatter();
 
   double _toDouble(dynamic v) {
     if (v == null) return 0.0;

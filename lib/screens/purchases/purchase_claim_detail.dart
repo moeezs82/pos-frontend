@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
+import 'package:enterprise_pos/services/app_currency.dart';
 
 class PurchaseClaimDetailScreen extends StatefulWidget {
   final int claimId;
@@ -26,7 +27,7 @@ class _PurchaseClaimDetailScreenState extends State<PurchaseClaimDetailScreen> {
   // Derived amounts
   double _subtotal = 0, _tax = 0, _total = 0, _received = 0, _left = 0;
 
-  final _currency = NumberFormat.simpleCurrency(decimalDigits: 2, name: "");
+  final _currency = const AppMoneyFormatter();
 
   @override
   void initState() {
@@ -584,7 +585,7 @@ class _PurchaseClaimDetailScreenState extends State<PurchaseClaimDetailScreen> {
 
 class _ItemsTable extends StatelessWidget {
   final List<Map<String, dynamic>> items;
-  final NumberFormat currency;
+  final AppMoneyFormatter currency;
 
   const _ItemsTable({required this.items, required this.currency});
 
@@ -970,7 +971,7 @@ class _ReceiptDialogState extends State<_ReceiptDialog> {
               ),
               decoration: InputDecoration(
                 labelText:
-                    "Receipt Amount (max ${widget.maxAmount.toStringAsFixed(2)})",
+                    "Receipt Amount (max ${AppCurrency.format(widget.maxAmount)})",
                 border: const OutlineInputBorder(),
               ),
             ),
@@ -1061,7 +1062,7 @@ class _ReceiptDialogState extends State<_ReceiptDialog> {
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
                   content: Text(
-                    "Amount cannot exceed ${widget.maxAmount.toStringAsFixed(2)}",
+                    "Amount cannot exceed ${AppCurrency.format(widget.maxAmount)}",
                   ),
                 ),
               );

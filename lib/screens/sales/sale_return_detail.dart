@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
+import 'package:enterprise_pos/services/app_currency.dart';
 
 class SaleReturnDetailScreen extends StatefulWidget {
   final int returnId;
@@ -25,7 +26,7 @@ class _SaleReturnDetailScreenState extends State<SaleReturnDetailScreen> {
   // Derived amounts
   double _subtotal = 0, _tax = 0, _total = 0, _refunded = 0, _remaining = 0;
 
-  final _currency = NumberFormat.simpleCurrency(decimalDigits: 2, name: "");
+  final _currency = const AppMoneyFormatter();
 
   @override
   void initState() {
@@ -774,7 +775,7 @@ class _RefundDialogState extends State<_RefundDialog> {
               ),
               decoration: InputDecoration(
                 labelText:
-                    "Refund Amount (max ${widget.maxAmount.toStringAsFixed(2)})",
+                    "Refund Amount (max ${AppCurrency.format(widget.maxAmount)})",
                 border: const OutlineInputBorder(),
               ),
             ),
@@ -846,7 +847,7 @@ class _RefundDialogState extends State<_RefundDialog> {
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
                   content: Text(
-                    "Amount cannot exceed ${widget.maxAmount.toStringAsFixed(2)}",
+                    "Amount cannot exceed ${AppCurrency.format(widget.maxAmount)}",
                   ),
                 ),
               );

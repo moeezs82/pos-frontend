@@ -13,6 +13,7 @@ import 'package:enterprise_pos/screens/cashbook/widgets/cb_txn_list.dart';
 import 'package:enterprise_pos/widgets/branch_indicator.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:flutter/material.dart';
+import 'package:enterprise_pos/services/app_currency.dart';
 import 'package:provider/provider.dart';
 
 class CashBookScreen extends StatefulWidget {
@@ -248,9 +249,7 @@ class _CashBookScreenState extends State<CashBookScreen> {
   /// Funds-by-method breakdown for the selected period: closing balance per
   /// method with opening / in / out. Answers "how much cash vs bank vs KNET".
   Widget _fundsByMethodCard() {
-    String money(dynamic v) =>
-        (v is num ? v.toDouble() : double.tryParse(v?.toString() ?? '') ?? 0.0)
-            .toStringAsFixed(2);
+    String money(dynamic v) => AppCurrency.format(v);
 
     return Card(
       margin: const EdgeInsets.fromLTRB(12, 0, 12, 8),

@@ -18,6 +18,8 @@ import 'package:enterprise_pos/services/party_prefetch.dart';
 import 'package:enterprise_pos/services/party_pick_caches.dart';
 import 'package:enterprise_pos/widgets/party_autocomplete_field.dart';
 import 'package:flutter/material.dart';
+import 'package:enterprise_pos/services/app_currency.dart';
+import 'package:enterprise_pos/services/app_currency.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
@@ -615,7 +617,7 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
   double get _paid => _payments.fold<double>(0.0, (sum, p) => sum + _toNum(p['amount']));
   double get _balance => _total - _paid;
 
-  String _money(num value) => value.toStringAsFixed(2);
+  String _money(num value) => AppCurrency.format(value);
 
   Color _balanceColor(double balance) {
     if (balance > 0) return AppTheme.danger;
@@ -1300,7 +1302,7 @@ class _PurchasePaymentsCard extends StatelessWidget {
                     const SizedBox(width: 10),
                     Expanded(
                       child: Text(
-                        '\$${payment['amount']} • ${(payment['method'] ?? '').toString().toUpperCase()}',
+                        '${AppCurrency.format(payment['amount'])} • ${(payment['method'] ?? '').toString().toUpperCase()}',
                         style: const TextStyle(fontWeight: FontWeight.w800),
                       ),
                     ),

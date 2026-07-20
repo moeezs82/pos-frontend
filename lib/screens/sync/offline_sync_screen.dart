@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:enterprise_pos/services/app_currency.dart';
 import 'package:provider/provider.dart';
 
 import 'package:enterprise_pos/providers/auth_provider.dart';
@@ -361,7 +362,7 @@ class _QueueRow extends StatelessWidget {
                 const SizedBox(height: 2),
                 Text(
                   '${_formatDateTime(item.occurredAt)}  •  '
-                  '\$${item.displayTotal.toStringAsFixed(2)}'
+                  '${AppCurrency.format(item.displayTotal)}'
                   '${item.attempts > 0 ? '  •  ${item.attempts} attempt${item.attempts == 1 ? '' : 's'}' : ''}',
                   style: const TextStyle(
                     color: AppTheme.textMuted,

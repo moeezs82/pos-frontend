@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:enterprise_pos/services/app_currency.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
@@ -22,7 +23,7 @@ class SubledgerView extends StatefulWidget {
 
 class _SubledgerViewState extends State<SubledgerView> {
   late final CashLedgerService _service;
-  final _money = NumberFormat('#,##0.00');
+  final _money = const AppMoneyFormatter();
   final _dateFmt = DateFormat('yyyy-MM-dd');
   final _searchCtrl = TextEditingController();
 

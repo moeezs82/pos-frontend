@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:enterprise_pos/services/app_currency.dart';
 import 'package:provider/provider.dart';
 import '../../api/register_shift_service.dart';
 import '../../providers/auth_provider.dart';
@@ -182,8 +183,7 @@ class _RegisterShiftScreenState extends State<RegisterShiftScreen> {
     final raw = state.summary['method_totals'];
     if (raw is! List || raw.isEmpty) return const SizedBox.shrink();
 
-    String money(dynamic v) => (v is num ? v.toDouble() : double.tryParse(v?.toString() ?? '') ?? 0.0)
-        .toStringAsFixed(2);
+    String money(dynamic v) => AppCurrency.format(v);
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 16),
@@ -247,8 +247,7 @@ class _RegisterShiftScreenState extends State<RegisterShiftScreen> {
   static bool _asBool(dynamic v) =>
       v == true || v == 1 || v == '1' || v == 'true';
 
-  String _money(dynamic v) =>
-      (v is num ? v.toDouble() : double.tryParse(v?.toString() ?? '') ?? 0.0).toStringAsFixed(2);
+  String _money(dynamic v) => AppCurrency.format(v);
 
   /// Unified, read-only drawer activity: every shift-linked cash effect (sales,
   /// receipts, refunds, expenses, loans, manual movements) — so expected cash

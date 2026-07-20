@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:enterprise_pos/services/app_currency.dart';
 import 'dart:ui' show FontFeature;
 
 class SaleTotalsEditable extends StatefulWidget {
@@ -50,7 +51,7 @@ class _SaleTotalsEditableState extends State<SaleTotalsEditable> {
       widget.taxController.text.trim() != _initialTax.trim();
 
   // -------- Helpers --------
-  String _money(num v) => "\$${v.toStringAsFixed(2)}";
+  String _money(num v) => AppCurrency.format(v);
 
   Widget _sectionHeader(String title) {
     return Padding(

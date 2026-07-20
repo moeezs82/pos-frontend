@@ -5,6 +5,7 @@ import 'package:enterprise_pos/services/party_pick_caches.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/enterprise/enterprise_panel.dart';
 import 'package:flutter/material.dart';
+import 'package:enterprise_pos/services/app_currency.dart';
 import 'package:flutter/services.dart';
 
 /// ✅ Full-screen restaurant-style product picker (Grid + multi select + preselected + SET qty modal)
@@ -222,7 +223,7 @@ class _ProductPickerGridSheetState extends State<ProductPickerGridSheet> {
     return int.tryParse(v.toString());
   }
 
-  String _money(dynamic v) => (v ?? "0").toString();
+  String _money(dynamic v) => AppCurrency.format(v);
   String _name(dynamic v) => (v ?? "Unnamed").toString();
 
   String? _imageUrl(Map<String, dynamic> p) {

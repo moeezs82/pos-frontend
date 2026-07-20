@@ -3,6 +3,7 @@ import 'package:enterprise_pos/api/reports_service.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/providers/branch_feature_provider.dart';
 import 'package:enterprise_pos/services/report_file_saver.dart';
+import 'package:enterprise_pos/services/app_currency.dart';
 import 'package:flutter/material.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/app_feedback.dart';
@@ -21,7 +22,7 @@ class EnterpriseReportsWorkspaceScreen extends StatefulWidget {
 
 class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWorkspaceScreen> {
   final _dateTimeFmt = DateFormat('yyyy-MM-dd HH:mm:ss');
-  final _currencyFmt = NumberFormat.simpleCurrency(name: '', decimalDigits: 2);
+  final _currencyFmt = const AppMoneyFormatter();
   final _searchCtrl = TextEditingController();
   Timer? _searchDebounce;
 

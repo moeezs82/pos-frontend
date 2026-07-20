@@ -6,6 +6,7 @@ import 'package:enterprise_pos/providers/branch_provider.dart';
 import 'package:enterprise_pos/screens/cashbook/widgets/cb_pagination.dart';
 import 'package:enterprise_pos/widgets/branch_indicator.dart';
 import 'package:flutter/material.dart';
+import 'package:enterprise_pos/services/app_currency.dart';
 import 'package:provider/provider.dart';
 
 class DayBookDayDetailsScreen extends StatefulWidget {
@@ -105,11 +106,7 @@ class _DayBookDayDetailsScreenState extends State<DayBookDayDetailsScreen> {
     }
   }
 
-  String _fmtMoney(dynamic v) {
-    if (v == null) return "0.00";
-    final d = (v is String) ? double.tryParse(v) : (v is num ? v.toDouble() : 0.0);
-    return (d ?? 0.0).toStringAsFixed(2);
-  }
+  String _fmtMoney(dynamic v) => AppCurrency.format(v);
 
   @override
   Widget build(BuildContext context) {
@@ -292,10 +289,7 @@ class _SummaryBar extends StatelessWidget {
     required this.closing,
   });
 
-  String _fmt(String v) {
-    final d = double.tryParse(v) ?? 0.0;
-    return d.toStringAsFixed(2);
-  }
+  String _fmt(String v) => AppCurrency.format(v);
 
   Widget _pill(String label, String value, {Color? color}) {
     return Container(
@@ -378,11 +372,7 @@ class _EntryCard extends StatelessWidget {
 
   const _EntryCard({required this.row, required this.includeLines});
 
-  String _fmt(dynamic v) {
-    if (v == null) return "0.00";
-    final n = (v is String) ? double.tryParse(v) : (v is num ? v.toDouble() : 0.0);
-    return (n ?? 0.0).toStringAsFixed(2);
-  }
+  String _fmt(dynamic v) => AppCurrency.format(v);
 
   @override
   Widget build(BuildContext context) {

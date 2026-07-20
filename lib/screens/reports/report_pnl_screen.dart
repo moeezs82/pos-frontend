@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
+import 'package:enterprise_pos/services/app_currency.dart';
 
 class ReportPnLScreen extends StatefulWidget {
   const ReportPnLScreen({super.key});
@@ -16,7 +17,7 @@ class ReportPnLScreen extends StatefulWidget {
 class _ReportPnLScreenState extends State<ReportPnLScreen> {
   late ReportsService _service;
 
-  final _currency = NumberFormat.simpleCurrency(decimalDigits: 2, name: "");
+  final _currency = const AppMoneyFormatter();
   final _dateFmt = DateFormat('yyyy-MM-dd');
 
   // Filters
@@ -196,7 +197,7 @@ class _ReportPnLScreenState extends State<ReportPnLScreen> {
 class _SummaryCard extends StatelessWidget {
   final String label;
   final double value;
-  final NumberFormat currency;
+  final AppMoneyFormatter currency;
   final bool highlight;
 
   const _SummaryCard({
@@ -247,7 +248,7 @@ class _Section extends StatelessWidget {
   final String title;
   final List<_PnLRow> rows;
   final double total;
-  final NumberFormat currency;
+  final AppMoneyFormatter currency;
 
   const _Section({
     required this.title,

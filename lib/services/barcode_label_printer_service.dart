@@ -41,9 +41,7 @@ class BarcodeLabelPrinterService {
     final safeName = _printableAscii(productName, maxLength: 80);
     final safeBarcode = _singleLine(barcode, maxLength: 100);
     final currency = _printableAscii(config.barcodeCurrency, maxLength: 20);
-    final priceText = currency.isEmpty
-        ? price.toStringAsFixed(2)
-        : '${price.toStringAsFixed(2)} $currency';
+    final priceText = _priceText(price, currency);
 
     for (var i = 0; i < copies; i++) {
       doc.addPage(
@@ -230,7 +228,7 @@ class BarcodeLabelPrinterService {
     final priceY = (height - _mmToDots(5, c.barcodeDpi)).clamp(0, height - margin);
     final module = (c.barcodeDpi / 203).round().clamp(1, 3);
     final currency = c.barcodeCurrency.trim();
-    final priceText = currency.isEmpty ? price.toStringAsFixed(2) : '${price.toStringAsFixed(2)} $currency';
+    final priceText = _priceText(price, currency);
     final b = StringBuffer('^XA\n^PW$width\n^LL$height\n^LH0,0\n');
     if (c.barcodeShowName) {
       b.writeln('^FO$margin,$nameY^A0N,${_mmToDots(3, c.barcodeDpi)},${_mmToDots(3, c.barcodeDpi)}^FB$contentWidth,1,0,C,0^FD${_zplText(name)}^FS');
@@ -257,7 +255,7 @@ class BarcodeLabelPrinterService {
     final barcodeY = _mmToDots(6, c.barcodeDpi);
     final barHeight = _mmToDots((heightMm * .35).clamp(7, 14), c.barcodeDpi);
     final currency = c.barcodeCurrency.trim();
-    final priceText = currency.isEmpty ? price.toStringAsFixed(2) : '${price.toStringAsFixed(2)} $currency';
+    final priceText = _priceText(price, currency);
     final b = StringBuffer()
       ..writeln('SIZE ${widthMm.toStringAsFixed(2)} mm,${heightMm.toStringAsFixed(2)} mm')
       ..writeln('GAP ${c.barcodeLabelGapMm.toStringAsFixed(2)} mm,0 mm')
@@ -308,6 +306,15 @@ class BarcodeLabelPrinterService {
     return String.fromCharCodes(
       singleLine.codeUnits.map((unit) => unit >= 32 && unit <= 126 ? unit : 63),
     );
+  }
+
+  String _priceText(double price, String currency) {
+    final amount = price.toStringAsFixed(2);
+    if (currency.isEmpty) return amount;
+    return const {r'$', '€', '£', '¥', '₹', '₩', '₽', '₺', '₫', '฿', '₱'}
+            .contains(currency)
+        ? '$currency$amount'
+        : '$amount $currency';
   }
 
   void _validate({

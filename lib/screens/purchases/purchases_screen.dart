@@ -12,6 +12,7 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
+import 'package:enterprise_pos/services/app_currency.dart';
 
 class PurchasesScreen extends StatefulWidget {
   const PurchasesScreen({super.key});
@@ -42,7 +43,7 @@ class _PurchasesScreenState extends State<PurchasesScreen> {
   // UI
   final _scrollController = ScrollController();
   final _searchController = TextEditingController();
-  final _currency = NumberFormat.simpleCurrency(name: "", decimalDigits: 2);
+  final _currency = const AppMoneyFormatter();
   Timer? _searchDebounce;
 
   // Services

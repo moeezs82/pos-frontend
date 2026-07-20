@@ -5,6 +5,7 @@ import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
+import 'package:enterprise_pos/services/app_currency.dart';
 
 class ReportTopBottomProductsScreen extends StatefulWidget {
   const ReportTopBottomProductsScreen({super.key});
@@ -14,7 +15,7 @@ class ReportTopBottomProductsScreen extends StatefulWidget {
 }
 
 class _ReportTopBottomProductsScreenState extends State<ReportTopBottomProductsScreen> {
-  final _currency = NumberFormat.simpleCurrency(decimalDigits: 2, name: "");
+  final _currency = const AppMoneyFormatter();
   final _num = NumberFormat('#,##0.##');
   final _dateFmt = DateFormat('yyyy-MM-dd');
 
@@ -518,7 +519,7 @@ class _Cell extends StatelessWidget {
 
 class _BottomTotalsBar extends StatelessWidget {
   final _Totals totals;
-  final NumberFormat currency;
+  final AppMoneyFormatter currency;
   final NumberFormat numFmt;
   const _BottomTotalsBar({required this.totals, required this.currency, required this.numFmt});
 

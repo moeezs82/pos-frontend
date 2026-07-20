@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
+import 'package:enterprise_pos/services/app_currency.dart';
 
 class CreatePurchaseClaimScreen extends StatefulWidget {
   const CreatePurchaseClaimScreen({super.key});
@@ -43,7 +44,7 @@ class _CreatePurchaseClaimScreenState extends State<CreatePurchaseClaimScreen> {
   final _receiptRefCtrl = TextEditingController();
   DateTime? _receiptDate;
 
-  final _currency = NumberFormat.simpleCurrency(name: "", decimalDigits: 2);
+  final _currency = const AppMoneyFormatter();
 
   double _toDouble(dynamic v) {
     if (v == null) return 0.0;

@@ -15,6 +15,7 @@ import 'package:enterprise_pos/widgets/app_feedback.dart';
 import 'package:enterprise_pos/widgets/branch_indicator.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
+import 'package:enterprise_pos/services/app_currency.dart';
 
 class PartyBalancesScreen extends StatefulWidget {
   final String partyType; // customer | vendor
@@ -27,7 +28,7 @@ class PartyBalancesScreen extends StatefulWidget {
 
 class _PartyBalancesScreenState extends State<PartyBalancesScreen> {
   final _dateTimeFmt = DateFormat('yyyy-MM-dd HH:mm:ss');
-  final _currencyFmt = NumberFormat.simpleCurrency(name: '', decimalDigits: 2);
+  final _currencyFmt = const AppMoneyFormatter();
   final _searchCtrl = TextEditingController();
   Timer? _searchDebounce;
 

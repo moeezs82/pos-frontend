@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:enterprise_pos/services/app_currency.dart';
 
 class CBDailyList extends StatefulWidget {
   final List<Map<String, dynamic>> rows;
@@ -417,4 +418,4 @@ double _toDouble(dynamic v) {
   return 0.0;
 }
 
-String _fmt(dynamic v) => _toDouble(v).toStringAsFixed(2);
+String _fmt(dynamic v) => AppCurrency.format(v);

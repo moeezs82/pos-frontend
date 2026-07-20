@@ -5,6 +5,7 @@ import 'package:enterprise_pos/services/pick_cache.dart';
 import 'package:enterprise_pos/services/party_pick_caches.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:flutter/material.dart';
+import 'package:enterprise_pos/services/app_currency.dart';
 import 'package:intl/intl.dart';
 
 class VendorPickerSheet extends StatefulWidget {
@@ -16,7 +17,7 @@ class VendorPickerSheet extends StatefulWidget {
 }
 
 class _VendorPickerSheetState extends State<VendorPickerSheet> {
-  final _money = NumberFormat('#,##0.00');
+  final _money = const AppMoneyFormatter();
 
   List<Map<String, dynamic>> _vendors = [];
   int _page = 1;

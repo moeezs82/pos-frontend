@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:enterprise_pos/services/app_currency.dart';
 
 class SalePaymentsSection extends StatelessWidget {
   final List payments;
@@ -47,7 +48,7 @@ class SalePaymentsSection extends StatelessWidget {
           const Divider(height: 1),
           if (payments.isEmpty) const ListTile(title: Text("No payments yet")),
           ...payments.map((p) => ListTile(
-                title: Text("\$${p['amount']}"),
+                title: Text(AppCurrency.format(p['amount'])),
                 subtitle: Text("Method: ${p['method']}"),
                 trailing: Row(
                   mainAxisSize: MainAxisSize.min,

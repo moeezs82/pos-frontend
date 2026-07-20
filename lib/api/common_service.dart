@@ -46,4 +46,10 @@ class CommonService {
     final res = await _client.post("/branches", body: branch);
     return res["data"]["branch"] ?? res["data"];
   }
+
+  /// Update a branch (Master Admin only).
+  Future<Map<String, dynamic>> updateBranch(int id, Map<String, dynamic> branch) async {
+    final res = await _client.put("/branches/$id", body: branch);
+    return res["data"]["branch"] ?? res["data"];
+  }
 }

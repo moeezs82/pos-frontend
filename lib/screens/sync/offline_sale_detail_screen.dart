@@ -4,6 +4,7 @@ import 'package:enterprise_pos/services/offline_sales_queue_service.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/app_feedback.dart';
 import 'package:flutter/material.dart';
+import 'package:enterprise_pos/services/app_currency.dart';
 import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 
@@ -476,7 +477,7 @@ class _OfflineSaleDetailScreenState extends State<OfflineSaleDetailScreen> {
 
   String _fmtAmt(dynamic v) {
     final n = _num(v);
-    return '\$${n.toStringAsFixed(2)}';
+    return AppCurrency.format(n);
   }
 
   double _num(dynamic v) => double.tryParse(v?.toString() ?? '') ?? 0.0;

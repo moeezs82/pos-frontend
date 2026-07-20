@@ -10,6 +10,7 @@ import 'package:enterprise_pos/widgets/branch_indicator.dart';
 import 'package:enterprise_pos/widgets/enterprise/enterprise_ui.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:enterprise_pos/services/app_currency.dart';
 import 'package:provider/provider.dart';
 import '../providers/auth_provider.dart';
 
@@ -176,7 +177,9 @@ class _ProductsScreenState extends State<ProductsScreen> {
     }
     if (!mounted) return;
 
-    final config = printerConfig.config;
+    final config = printerConfig.config.copyWith(
+      barcodeCurrency: context.read<BranchProvider>().currency,
+    );
     if (!config.barcodePrintEnabled) {
       AppFeedback.warning(
         context,
@@ -475,7 +478,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
 
                             final brand = (p['brand']?['name'] ?? '—').toString();
                             final category = (p['category']?['name'] ?? '—').toString();
-                            final price = (p['price'] ?? '0').toString();
+                            final price = AppCurrency.format(p['price']);
                             final sku = (p['sku'] ?? '—').toString();
                             final stockColor = stockQty <= 0 ? AppTheme.danger : stockQty <= 5 ? AppTheme.warning : AppTheme.success;
 

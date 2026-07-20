@@ -9,6 +9,7 @@ import 'package:enterprise_pos/providers/payment_method_provider.dart';
 import 'package:enterprise_pos/widgets/product_picker_sheet.dart';
 import 'package:enterprise_pos/widgets/vendor_picker_sheet.dart';
 import 'package:flutter/material.dart';
+import 'package:enterprise_pos/services/app_currency.dart';
 import 'package:provider/provider.dart';
 import 'package:enterprise_pos/services/thermal_printer_service.dart';
 import 'package:enterprise_pos/services/receipt_preview_service.dart';
@@ -329,7 +330,7 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
 
     // --- helpers ---
     double _num(dynamic v) => double.tryParse(v?.toString() ?? '') ?? 0.0;
-    String _money(num v) => v.toStringAsFixed(2);
+    String _money(num v) => AppCurrency.format(v);
     double _calcTotal(double price, double qty, double discPct) {
       final d = (discPct / 100.0).clamp(0, 100);
       final t = qty * price * (1 - d);

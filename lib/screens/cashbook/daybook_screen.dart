@@ -9,6 +9,7 @@ import 'package:enterprise_pos/screens/cashbook/widgets/cb_totals.dart';
 import 'package:enterprise_pos/screens/cashbook/widgets/cb_pagination.dart';
 import 'package:enterprise_pos/widgets/branch_indicator.dart';
 import 'package:flutter/material.dart';
+import 'package:enterprise_pos/services/app_currency.dart';
 import 'package:provider/provider.dart';
 
 /// Simple model for one expense line (top-level so Dart treats it as a type).
@@ -805,7 +806,7 @@ class _DayBookScreenState extends State<DayBookScreen> {
                           Align(
                             alignment: Alignment.centerRight,
                             child: Text(
-                              "Total: ${_calcTotal().toStringAsFixed(2)}",
+                              "Total: ${AppCurrency.format(_calcTotal())}",
                               style: const TextStyle(
                                 fontWeight: FontWeight.w700,
                               ),

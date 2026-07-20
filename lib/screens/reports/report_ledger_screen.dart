@@ -7,6 +7,7 @@ import 'package:enterprise_pos/widgets/vendor_picker_sheet.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
+import 'package:enterprise_pos/services/app_currency.dart';
 
 
 class ReportLedgerScreen extends StatefulWidget {
@@ -24,7 +25,7 @@ class ReportLedgerScreen extends StatefulWidget {
 }
 
 class _ReportLedgerScreenState extends State<ReportLedgerScreen> {
-  final _currency = NumberFormat.simpleCurrency(decimalDigits: 2, name: "");
+  final _currency = const AppMoneyFormatter();
   final _dateFmt = DateFormat('yyyy-MM-dd');
   final _dateTimeFmt = DateFormat('yyyy-MM-dd HH:mm:ss');
 
@@ -597,7 +598,7 @@ class _Pagination {
 class _BottomBarSummary extends StatelessWidget {
   final double opening;
   final double openingForPage;
-  final NumberFormat currency;
+  final AppMoneyFormatter currency;
 
   const _BottomBarSummary({
     super.key,

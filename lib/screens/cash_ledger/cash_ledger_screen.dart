@@ -7,6 +7,7 @@ import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/branch_indicator.dart';
 import 'package:enterprise_pos/widgets/enterprise/enterprise_panel.dart';
 import 'package:flutter/material.dart';
+import 'package:enterprise_pos/services/app_currency.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
@@ -99,7 +100,7 @@ class _LedgerView extends StatefulWidget {
 
 class _LedgerViewState extends State<_LedgerView> {
   late final CashLedgerService _service;
-  final _money = NumberFormat('#,##0.00');
+  final _money = const AppMoneyFormatter();
 
   bool _loading = true;
   bool _loadingFlow = true;
@@ -735,7 +736,7 @@ class _DayBookView extends StatefulWidget {
 
 class _DayBookViewState extends State<_DayBookView> {
   late final CashLedgerService _service;
-  final _money = NumberFormat('#,##0.00');
+  final _money = const AppMoneyFormatter();
   final _dayFmt = DateFormat('EEE, d MMM');
 
   bool _loading = true;

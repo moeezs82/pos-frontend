@@ -5,6 +5,7 @@ import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/branch_indicator.dart';
 import 'package:enterprise_pos/widgets/enterprise/enterprise_panel.dart';
 import 'package:flutter/material.dart';
+import 'package:enterprise_pos/services/app_currency.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
@@ -24,7 +25,7 @@ class DayBookDetailScreen extends StatefulWidget {
 
 class _DayBookDetailScreenState extends State<DayBookDetailScreen> {
   late final CashLedgerService _service;
-  final _money = NumberFormat('#,##0.00');
+  final _money = const AppMoneyFormatter();
 
   bool _loading = true;
   List<Map<String, dynamic>> _items = [];

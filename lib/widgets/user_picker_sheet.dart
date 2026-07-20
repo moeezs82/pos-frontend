@@ -3,6 +3,7 @@ import 'package:enterprise_pos/api/user_service.dart';
 import 'package:enterprise_pos/forms/user_form_screen.dart';
 import 'package:enterprise_pos/services/party_pick_caches.dart';
 import 'package:flutter/material.dart';
+import 'package:enterprise_pos/services/app_currency.dart';
 
 class UserPickerSheet extends StatefulWidget {
   final String token;
@@ -411,7 +412,7 @@ class _UserPickerSheetState extends State<UserPickerSheet> {
                                                 Padding(
                                                   padding: const EdgeInsets.only(top: 8),
                                                   child: Text(
-                                                    'Balance: ${balance.toStringAsFixed(2)}',
+                                                    'Balance: ${AppCurrency.format(balance)}',
                                                     style: TextStyle(
                                                       color: balance > 0 ? Colors.orange.shade800 : Colors.green.shade800,
                                                       fontWeight: FontWeight.w800,

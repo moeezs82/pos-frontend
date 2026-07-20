@@ -5,6 +5,7 @@ import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
+import 'package:enterprise_pos/services/app_currency.dart';
 
 /// Home-screen "how's today going" snapshot: a row of KPI cards (today's
 /// net sales, invoice count, gross profit, top product) plus a low-stock
@@ -20,7 +21,7 @@ class TodaySnapshotSection extends StatefulWidget {
 
 class _TodaySnapshotSectionState extends State<TodaySnapshotSection> {
   final _dateTimeFmt = DateFormat('yyyy-MM-dd HH:mm:ss');
-  final _moneyFmt = NumberFormat.simpleCurrency(name: '', decimalDigits: 0);
+  final _moneyFmt = const AppMoneyFormatter(decimalDigits: 0);
 
   bool _loading = true;
   String? _error;

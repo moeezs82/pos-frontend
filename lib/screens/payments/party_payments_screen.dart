@@ -14,6 +14,7 @@ import 'package:enterprise_pos/widgets/payment_method_dropdown.dart';
 import 'package:enterprise_pos/widgets/enterprise/enterprise_panel.dart';
 import 'package:enterprise_pos/widgets/enterprise/enterprise_ui.dart';
 import 'package:flutter/material.dart';
+import 'package:enterprise_pos/services/app_currency.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
@@ -521,7 +522,7 @@ class _PartyPaymentsScreenState extends State<PartyPaymentsScreen> {
     return double.tryParse(v.toString().replaceAll(',', '').trim()) ?? 0;
   }
 
-  String _money(dynamic v) => _toDouble(v).toStringAsFixed(2);
+  String _money(dynamic v) => AppCurrency.format(v);
 
   String _partyName(Map<String, dynamic> p) {
     if (_kind == PartyPaymentKind.customer) {
@@ -1306,7 +1307,7 @@ class _LedgerPanel extends StatelessWidget {
     return double.tryParse(v.toString().replaceAll(',', '').trim()) ?? 0;
   }
 
-  String _money(dynamic v) => _toDouble(v).toStringAsFixed(2);
+  String _money(dynamic v) => AppCurrency.format(v);
 
   @override
   Widget build(BuildContext context) {
@@ -1371,7 +1372,7 @@ class _LedgerRow extends StatelessWidget {
     return double.tryParse(v.toString().replaceAll(',', '').trim()) ?? 0;
   }
 
-  String _money(dynamic v) => _toDouble(v).toStringAsFixed(2);
+  String _money(dynamic v) => AppCurrency.format(v);
 
   @override
   Widget build(BuildContext context) {

@@ -4,6 +4,7 @@ import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
+import 'package:enterprise_pos/services/app_currency.dart';
 
 class ReportDailySummaryScreen extends StatefulWidget {
   const ReportDailySummaryScreen({super.key});
@@ -14,7 +15,7 @@ class ReportDailySummaryScreen extends StatefulWidget {
 }
 
 class _ReportDailySummaryScreenState extends State<ReportDailySummaryScreen> {
-  final _currency = NumberFormat.simpleCurrency(decimalDigits: 2, name: "");
+  final _currency = const AppMoneyFormatter();
   final _dateFmt = DateFormat('yyyy-MM-dd');
 
   late ReportsService _service;
@@ -526,7 +527,7 @@ class _TableHeader extends StatelessWidget {
 class _TotalsRow extends StatelessWidget {
   final String label;
   final _Totals? totals;
-  final NumberFormat currency;
+  final AppMoneyFormatter currency;
   const _TotalsRow({
     required this.label,
     required this.totals,
@@ -614,7 +615,7 @@ class _Cell extends StatelessWidget {
 
 class _BottomTotalsBar extends StatelessWidget {
   final _Totals totals;
-  final NumberFormat currency;
+  final AppMoneyFormatter currency;
   const _BottomTotalsBar({required this.totals, required this.currency});
 
   @override
@@ -663,7 +664,7 @@ class _BottomTotalsBar extends StatelessWidget {
 class _TotalChip extends StatelessWidget {
   final String label;
   final double value;
-  final NumberFormat currency;
+  final AppMoneyFormatter currency;
   final bool highlight;
   final Color? color;
   const _TotalChip({

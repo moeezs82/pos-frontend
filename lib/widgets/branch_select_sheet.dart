@@ -49,7 +49,7 @@ class _BranchSelectSheetState extends State<BranchSelectSheet> {
     }
   }
 
-  Future<void> _switchTo({required int? id, String? name}) async {
+  Future<void> _switchTo({required int? id, String? name, String? currency}) async {
     final auth = context.read<AuthProvider>();
     if (!auth.isMasterAdmin) return;
 
@@ -66,7 +66,7 @@ class _BranchSelectSheetState extends State<BranchSelectSheet> {
 
       // Fallback if backend returned user without nested branch.
       if (activeBranch == null) {
-        context.read<BranchProvider>().setBranch(id: id, name: name);
+        context.read<BranchProvider>().setBranch(id: id, name: name, currency: currency);
       }
 
       ScaffoldMessenger.of(context).showSnackBar(
@@ -85,40 +85,106 @@ class _BranchSelectSheetState extends State<BranchSelectSheet> {
   Future<void> _createBranch() async {
     if (!context.read<AuthProvider>().isMasterAdmin) return;
 
-    final nameController = TextEditingController();
-    final locController = TextEditingController();
-    final phoneController = TextEditingController();
-    bool isActive = true;
+    final result = await _branchDialog();
+    if (result == null) return;
+
+    try {
+      final newBranch = await _common.createBranch(result);
+      final id = _readInt(newBranch['id']);
+      final name = (newBranch['name'] ?? 'Branch').toString();
+      final currency = (newBranch['currency'] ?? result['currency'] ?? 'KD').toString();
+      await _fetch();
+      if (id != null) {
+        await _switchTo(id: id, name: name, currency: currency);
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.toString().replaceFirst('Exception: ', ''))),
+      );
+    }
+  }
+
+  Future<void> _editBranch(Map<String, dynamic> branch) async {
+    if (!context.read<AuthProvider>().isMasterAdmin) return;
+
+    final id = _readInt(branch['id']);
+    if (id == null) return;
+    final result = await _branchDialog(branch: branch);
+    if (result == null) return;
+
+    try {
+      final updated = await _common.updateBranch(id, result);
+      await _fetch();
+      if (!mounted) return;
+
+      final branchProvider = context.read<BranchProvider>();
+      if (branchProvider.selectedBranchId == id) {
+        final auth = context.read<AuthProvider>();
+        await auth.refreshMe();
+        if (!mounted) return;
+        branchProvider.syncFromAuthUser(auth.user);
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('${updated['name'] ?? result['name']} updated.')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.toString().replaceFirst('Exception: ', ''))),
+      );
+    }
+  }
+
+  Future<Map<String, dynamic>?> _branchDialog({Map<String, dynamic>? branch}) async {
+    final nameController = TextEditingController(text: branch?['name']?.toString() ?? '');
+    final locController = TextEditingController(text: branch?['location']?.toString() ?? '');
+    final phoneController = TextEditingController(text: branch?['phone']?.toString() ?? '');
+    final currencyController = TextEditingController(text: branch?['currency']?.toString() ?? 'KD');
+    bool isActive = branch == null || branch['is_active'] == true || branch['is_active'] == 1;
 
     final result = await showDialog<Map<String, dynamic>>(
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setLocal) => AlertDialog(
-          title: const Text('Add Branch'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
+          title: Text(branch == null ? 'Add Branch' : 'Edit Branch'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
               TextField(decoration: const InputDecoration(labelText: 'Name'), controller: nameController),
               TextField(decoration: const InputDecoration(labelText: 'Location'), controller: locController),
               TextField(decoration: const InputDecoration(labelText: 'Phone'), controller: phoneController),
+              TextField(
+                decoration: const InputDecoration(
+                  labelText: 'Currency',
+                  hintText: 'KD, AED, USD, \$, € …',
+                  helperText: 'Used on all prices, reports, receipts and barcode labels.',
+                ),
+                controller: currencyController,
+                maxLength: 20,
+              ),
               SwitchListTile(
                 contentPadding: EdgeInsets.zero,
                 title: const Text('Active'),
                 value: isActive,
                 onChanged: (v) => setLocal(() => isActive = v),
               ),
-            ],
+              ],
+            ),
           ),
           actions: [
             TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
             ElevatedButton(
               onPressed: () {
                 final name = nameController.text.trim();
-                if (name.isEmpty) return;
+                final currency = currencyController.text.trim();
+                if (name.isEmpty || currency.isEmpty) return;
                 Navigator.pop(ctx, {
                   'name': name,
                   'location': locController.text.trim(),
                   'phone': phoneController.text.trim(),
+                  'currency': currency,
                   'is_active': isActive,
                 });
               },
@@ -128,23 +194,11 @@ class _BranchSelectSheetState extends State<BranchSelectSheet> {
         ),
       ),
     );
-
-    if (result == null) return;
-
-    try {
-      final newBranch = await _common.createBranch(result);
-      final id = _readInt(newBranch['id']);
-      final name = (newBranch['name'] ?? 'Branch').toString();
-      await _fetch();
-      if (id != null) {
-        await _switchTo(id: id, name: name);
-      }
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(e.toString().replaceFirst('Exception: ', ''))),
-      );
-    }
+    nameController.dispose();
+    locController.dispose();
+    phoneController.dispose();
+    currencyController.dispose();
+    return result;
   }
 
   @override
@@ -229,6 +283,7 @@ class _BranchSelectSheetState extends State<BranchSelectSheet> {
                                   final id = _readInt(b['id']);
                                   if (id == null) return const SizedBox.shrink();
                                   final name = (b['name'] ?? 'Branch $id').toString();
+                                  final currency = (b['currency'] ?? 'KD').toString();
                                   final selected = bp.selectedBranchId == id;
                                   return Card(
                                     color: selected ? Colors.blueGrey.shade50 : null,
@@ -239,8 +294,19 @@ class _BranchSelectSheetState extends State<BranchSelectSheet> {
                                       subtitle: b['location'] != null && b['location'].toString().trim().isNotEmpty
                                           ? Text('Location: ${b['location']}')
                                           : null,
-                                      trailing: selected ? const Icon(Icons.check, color: Colors.green) : null,
-                                      onTap: _switching ? null : () => _switchTo(id: id, name: name),
+                                      trailing: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Text(currency, style: Theme.of(context).textTheme.labelMedium),
+                                          IconButton(
+                                            tooltip: 'Edit branch',
+                                            onPressed: _switching ? null : () => _editBranch(b),
+                                            icon: const Icon(Icons.edit_outlined),
+                                          ),
+                                          if (selected) const Icon(Icons.check, color: Colors.green),
+                                        ],
+                                      ),
+                                      onTap: _switching ? null : () => _switchTo(id: id, name: name, currency: currency),
                                     ),
                                   );
                                 },

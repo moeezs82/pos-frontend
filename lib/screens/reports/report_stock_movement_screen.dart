@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
+import 'package:enterprise_pos/services/app_currency.dart';
 
 class ReportStockMovementScreen extends StatefulWidget {
   const ReportStockMovementScreen({super.key});
@@ -645,7 +646,7 @@ class _ReportStockMovementScreenState extends State<ReportStockMovementScreen> {
 
   String _money(num? v) {
     if (v == null) return '—';
-    final n = NumberFormat.simpleCurrency(decimalDigits: 2, name: "");
+    final n = const AppMoneyFormatter();
     return n.format(v);
   }
 }
