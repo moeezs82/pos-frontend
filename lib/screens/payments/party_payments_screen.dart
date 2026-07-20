@@ -39,6 +39,7 @@ class _PartyPaymentsScreenState extends State<PartyPaymentsScreen> {
   bool _loadingParties = false;
   bool _loadingDetail = false;
   bool _posting = false;
+  int? _reversingPaymentId;
   // Monotonic token: a detail/ledger response is applied only if its party
   // selection is still the current one (discards stale responses when the user
   // switches party while a request is in flight).
@@ -458,6 +459,51 @@ class _PartyPaymentsScreenState extends State<PartyPaymentsScreen> {
       if (mounted) AppFeedback.error(context, 'Failed to save payment: $e');
     } finally {
       if (mounted) setState(() => _posting = false);
+    }
+  }
+
+  Future<void> _reverseLedgerPayment(Map<String, dynamic> row) async {
+    if (_kind == PartyPaymentKind.deliveryBoy || _selectedParty == null) return;
+    final partyId = _idOf(_selectedParty!);
+    final paymentId = _toInt(row['payment_id']);
+    if (partyId == null || paymentId == null || _reversingPaymentId != null) return;
+
+    final amount = _kind == PartyPaymentKind.customer
+        ? _toDouble(row['credit'])
+        : _toDouble(row['debit']);
+    final reason = await showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => _ReversePaymentDialog(
+        partyLabel: _partyName(_activeParty),
+        paymentLabel: _kind == PartyPaymentKind.customer ? 'customer receipt' : 'vendor payment',
+        amount: _money(amount),
+      ),
+    );
+    if (reason == null || !mounted) return;
+
+    setState(() => _reversingPaymentId = paymentId);
+    try {
+      if (_kind == PartyPaymentKind.customer) {
+        await _customerService.reverseReceipt(
+          customerId: partyId,
+          receiptId: paymentId,
+          reason: reason,
+        );
+      } else {
+        await _vendorService.reversePayment(
+          vendorId: partyId,
+          paymentId: paymentId,
+          reason: reason,
+        );
+      }
+      if (!mounted) return;
+      AppFeedback.success(context, 'Payment reversed. Enter the correct payment as a new transaction.');
+      await _reloadAll(keepSelection: true);
+    } catch (e) {
+      if (mounted) AppFeedback.error(context, 'Failed to reverse payment: $e');
+    } finally {
+      if (mounted) setState(() => _reversingPaymentId = null);
     }
   }
 
@@ -910,6 +956,9 @@ class _PartyPaymentsScreenState extends State<PartyPaymentsScreen> {
             rows: _ledger,
             loading: _loadingDetail,
             onDetails: _openDetails,
+            canReversePayments: context.read<AuthProvider>().hasPermission('reverse-party-payments'),
+            reversingPaymentId: _reversingPaymentId,
+            onReverse: _reverseLedgerPayment,
           ),
         ],
       ),
@@ -1291,6 +1340,9 @@ class _LedgerPanel extends StatelessWidget {
     required this.rows,
     required this.loading,
     required this.onDetails,
+    required this.canReversePayments,
+    required this.reversingPaymentId,
+    required this.onReverse,
   });
 
   final String title;
@@ -1300,11 +1352,20 @@ class _LedgerPanel extends StatelessWidget {
   final List<Map<String, dynamic>> rows;
   final bool loading;
   final VoidCallback onDetails;
+  final bool canReversePayments;
+  final int? reversingPaymentId;
+  final ValueChanged<Map<String, dynamic>> onReverse;
 
   double _toDouble(dynamic v) {
     if (v == null) return 0;
     if (v is num) return v.toDouble();
     return double.tryParse(v.toString().replaceAll(',', '').trim()) ?? 0;
+  }
+
+  int? _toInt(dynamic v) {
+    if (v is int) return v;
+    if (v is num) return v.toInt();
+    return int.tryParse(v?.toString() ?? '');
   }
 
   String _money(dynamic v) => AppCurrency.format(v);
@@ -1353,7 +1414,12 @@ class _LedgerPanel extends StatelessWidget {
               separatorBuilder: (_, __) => const Divider(height: 1),
               itemBuilder: (context, index) {
                 final row = rows[index];
-                return _LedgerRow(row: row);
+                return _LedgerRow(
+                  row: row,
+                  canReverse: canReversePayments && row['can_reverse'] == true,
+                  reversing: reversingPaymentId != null && reversingPaymentId == _toInt(row['payment_id']),
+                  onReverse: () => onReverse(row),
+                );
               },
             ),
         ],
@@ -1363,8 +1429,11 @@ class _LedgerPanel extends StatelessWidget {
 }
 
 class _LedgerRow extends StatelessWidget {
-  const _LedgerRow({required this.row});
+  const _LedgerRow({required this.row, required this.canReverse, required this.reversing, required this.onReverse});
   final Map<String, dynamic> row;
+  final bool canReverse;
+  final bool reversing;
+  final VoidCallback onReverse;
 
   double _toDouble(dynamic v) {
     if (v == null) return 0;
@@ -1379,6 +1448,7 @@ class _LedgerRow extends StatelessWidget {
     final title = (row['description'] ?? row['reference'] ?? row['type'] ?? row['source'] ?? 'Ledger Entry').toString();
     final date = (row['date'] ?? row['txn_date'] ?? row['created_at'] ?? '').toString();
     final account = (row['account_name'] ?? row['account'] ?? '').toString();
+    final status = (row['payment_status'] ?? '').toString();
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 10),
       child: Row(
@@ -1402,6 +1472,17 @@ class _LedgerRow extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(color: AppTheme.textMuted, fontSize: 12, fontWeight: FontWeight.w600),
                 ),
+                if (status == 'reversed' || status == 'reversal') ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    status == 'reversal'
+                        ? 'Reversal entry${row['reversal_reason'] == null ? '' : ' • ${row['reversal_reason']}'}'
+                        : 'Reversed${row['reversal_reason'] == null ? '' : ' • ${row['reversal_reason']}'}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: AppTheme.danger, fontSize: 11, fontWeight: FontWeight.w800),
+                  ),
+                ],
               ],
             ),
           ),
@@ -1411,8 +1492,100 @@ class _LedgerRow extends StatelessWidget {
           _AmountColumn(label: 'Cr', value: _money(row['credit']), color: AppTheme.success),
           const SizedBox(width: 14),
           _AmountColumn(label: 'Bal', value: _money(row['balance']), color: AppTheme.navy, bold: true),
+          if (canReverse) ...[
+            const SizedBox(width: 8),
+            reversing
+                ? const SizedBox(width: 30, height: 30, child: Padding(padding: EdgeInsets.all(6), child: CircularProgressIndicator(strokeWidth: 2)))
+                : IconButton(
+                    tooltip: 'Reverse mistaken payment',
+                    onPressed: onReverse,
+                    icon: const Icon(Icons.undo_rounded, color: AppTheme.danger),
+                  ),
+          ],
         ],
       ),
+    );
+  }
+}
+
+class _ReversePaymentDialog extends StatefulWidget {
+  const _ReversePaymentDialog({required this.partyLabel, required this.paymentLabel, required this.amount});
+
+  final String partyLabel;
+  final String paymentLabel;
+  final String amount;
+
+  @override
+  State<_ReversePaymentDialog> createState() => _ReversePaymentDialogState();
+}
+
+class _ReversePaymentDialogState extends State<_ReversePaymentDialog> {
+  final _reasonController = TextEditingController();
+  String? _error;
+
+  @override
+  void dispose() {
+    _reasonController.dispose();
+    super.dispose();
+  }
+
+  void _confirm() {
+    final reason = _reasonController.text.trim();
+    if (reason.length < 3) {
+      setState(() => _error = 'Enter a clear reason (at least 3 characters).');
+      return;
+    }
+    Navigator.of(context).pop(reason);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Reverse Payment'),
+      content: SizedBox(
+        width: 440,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'This will reverse the complete ${widget.paymentLabel} of ${widget.amount} for ${widget.partyLabel}.',
+              style: const TextStyle(fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'The original entry remains in the ledger and an opposite accounting entry is created. Enter the correct payment separately afterward.',
+              style: TextStyle(color: AppTheme.textMuted),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: _reasonController,
+              autofocus: true,
+              minLines: 2,
+              maxLines: 4,
+              maxLength: 1000,
+              decoration: InputDecoration(
+                labelText: 'Reversal reason',
+                hintText: 'Example: Entered 7,500 instead of 750',
+                errorText: _error,
+                border: const OutlineInputBorder(),
+              ),
+              onChanged: (_) {
+                if (_error != null) setState(() => _error = null);
+              },
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
+        FilledButton.icon(
+          style: FilledButton.styleFrom(backgroundColor: AppTheme.danger),
+          onPressed: _confirm,
+          icon: const Icon(Icons.undo_rounded),
+          label: const Text('Reverse Payment'),
+        ),
+      ],
     );
   }
 }

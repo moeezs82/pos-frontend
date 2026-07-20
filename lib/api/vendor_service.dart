@@ -125,6 +125,17 @@ class VendorService {
     return await _client.post('/vendors/$vendorId/payments', body: params);
   }
 
+  Future<Map<String, dynamic>> reversePayment({
+    required int vendorId,
+    required int paymentId,
+    required String reason,
+  }) async {
+    return await _client.post(
+      '/vendors/$vendorId/payments/$paymentId/reverse',
+      body: {'reason': reason},
+    );
+  }
+
 
 
   Future<Map<String, dynamic>> getVendorLedger({

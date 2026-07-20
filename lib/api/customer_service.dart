@@ -126,6 +126,17 @@ class CustomerService {
     return await _client.post('/customers/$customerId/receipts', body: params);
   }
 
+  Future<Map<String, dynamic>> reverseReceipt({
+    required int customerId,
+    required int receiptId,
+    required String reason,
+  }) async {
+    return await _client.post(
+      '/customers/$customerId/receipts/$receiptId/reverse',
+      body: {'reason': reason},
+    );
+  }
+
   Future<Map<String, dynamic>> getCustomerLedger({
     required int id,
     int page = 1,
