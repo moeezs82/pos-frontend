@@ -1053,7 +1053,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       final effectiveShopAddress = printerConfig.shopAddress.isNotEmpty ? printerConfig.shopAddress : null;
       final effectiveShopPhone = printerConfig.shopPhone.isNotEmpty ? printerConfig.shopPhone : null;
       final mainTemplate = printerConfig.mainInvoiceTemplate;
-      final kitchenTemplate = printerConfig.kitchenInvoiceTemplate;
+      final secondaryTemplate = printerConfig.secondaryInvoiceTemplate;
       final footerLines = printerConfig.footerLines;
 
       debugPrint('Active printer connection: ${printerConfig.activeConnection}, template: ${mainTemplate.value}');
@@ -1083,12 +1083,12 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
           );
           printedToHardware = true;
 
-          if (printerConfig.kitchenPrintEnabled && (printerConfig.kitchenNetworkIp ?? '').trim().isNotEmpty) {
+          if (printerConfig.secondaryPrintEnabled && (printerConfig.secondaryNetworkIp ?? '').trim().isNotEmpty) {
             await ThermalPrinterService.instance.printSaleReceiptNetwork(
-              printerIp: printerConfig.kitchenNetworkIp!.trim(),
-              port: printerConfig.kitchenNetworkPort,
-              shopName: '$effectiveShopName - KITCHEN COPY',
-              shopAddress: 'KITCHEN COPY',
+              printerIp: printerConfig.secondaryNetworkIp!.trim(),
+              port: printerConfig.secondaryNetworkPort,
+              shopName: '$effectiveShopName - SECONDARY COPY',
+              shopAddress: 'SECONDARY COPY',
               shopPhone: effectiveShopPhone,
               receiptNo: receiptNo,
               dateTime: DateTime.now(),
@@ -1100,8 +1100,8 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
               cashReceived: cashReceived,
               changeAmount: changeAmount,
               meta: meta,
-              sections: kitchenTemplate.sections,
-              paperWidth: kitchenTemplate.paperWidthCode,
+              sections: secondaryTemplate.sections,
+              paperWidth: secondaryTemplate.paperWidthCode,
               footerLines: footerLines,
             );
           }

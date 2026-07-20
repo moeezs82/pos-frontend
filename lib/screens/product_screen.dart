@@ -1,9 +1,11 @@
 import 'package:enterprise_pos/api/product_service.dart';
 import 'package:enterprise_pos/forms/product_form_screen.dart';
 import 'package:enterprise_pos/providers/branch_provider.dart';
+import 'package:enterprise_pos/providers/printer_config_provider.dart';
 import 'package:enterprise_pos/services/report_file_saver.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/app_feedback.dart';
+import 'package:enterprise_pos/widgets/barcode_print_dialog.dart';
 import 'package:enterprise_pos/widgets/branch_indicator.dart';
 import 'package:enterprise_pos/widgets/enterprise/enterprise_ui.dart';
 import 'package:file_picker/file_picker.dart';
@@ -146,6 +148,54 @@ class _ProductsScreenState extends State<ProductsScreen> {
     );
 
     if (confirm == true) await _deleteProduct(product['id']);
+  }
+
+  Future<void> _printBarcodeLabels(dynamic product) async {
+    final auth = context.read<AuthProvider>();
+    if (!auth.hasPermission('manage-products')) {
+      AppFeedback.error(context, 'You do not have permission to print product labels.');
+      return;
+    }
+
+    final barcode = (product['barcode'] ?? '').toString().trim();
+    if (barcode.isEmpty) {
+      AppFeedback.warning(context, 'Add a barcode to this product before printing labels.');
+      return;
+    }
+
+    final printerConfig = context.read<PrinterConfigProvider>();
+    try {
+      final token = auth.token;
+      if (token == null) throw Exception('Your session has expired. Please sign in again.');
+      // Refresh here so a recent branch switch cannot print with another
+      // branch's cached label size or printer destination.
+      await printerConfig.refresh(token);
+    } catch (e) {
+      if (mounted) AppFeedback.error(context, 'Could not load barcode printer settings: $e');
+      return;
+    }
+    if (!mounted) return;
+
+    final config = printerConfig.config;
+    if (!config.barcodePrintEnabled) {
+      AppFeedback.warning(
+        context,
+        'Barcode printing is not enabled. Ask a Master Admin to configure the Barcode Printer.',
+      );
+      return;
+    }
+
+    final copies = await showDialog<int>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => BarcodePrintDialog(
+        product: Map<String, dynamic>.from(product as Map),
+        config: config,
+      ),
+    );
+    if (mounted && copies != null) {
+      AppFeedback.success(context, '$copies barcode label${copies == 1 ? '' : 's'} sent to print.');
+    }
   }
 
   Future<void> _exportProducts(String format) async {
@@ -312,6 +362,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final canPrintBarcodes = context.watch<AuthProvider>().hasPermission('manage-products');
     return EnterprisePage(
       title: 'Products',
       subtitle: 'Manage SKU, pricing, brands, categories and available stock.',
@@ -485,6 +536,12 @@ class _ProductsScreenState extends State<ProductsScreen> {
                                 trailing: Wrap(
                                   spacing: 4,
                                   children: [
+                                    if (canPrintBarcodes)
+                                      IconButton(
+                                        tooltip: 'Print barcode labels',
+                                        onPressed: () => _printBarcodeLabels(p),
+                                        icon: const Icon(Icons.qr_code_2_rounded, color: AppTheme.primary),
+                                      ),
                                     IconButton(
                                       tooltip: 'Edit',
                                       onPressed: () => _openForm(p),

@@ -88,7 +88,7 @@ class HomeScreen extends StatelessWidget {
         _Tile(
           icon: Icons.print_rounded,
           title: 'Printer Settings',
-          subtitle: 'Configure and test the receipt printer',
+          subtitle: 'Configure and test receipt, secondary and barcode printers',
           color: AppTheme.navy,
           onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PrinterSettingsScreen())),
         ),

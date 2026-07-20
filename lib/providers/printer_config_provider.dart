@@ -29,7 +29,7 @@ class PrinterConfigProvider extends ChangeNotifier {
   bool get isLoading => _isLoading;
 
   String? get mainPrinterName => _config.mainPrinterName;
-  String? get kitchenPrinterName => _config.kitchenPrinterName;
+  String? get secondaryPrinterName => _config.secondaryPrinterName;
   String get shopName => _config.shopName ?? '';
   String get shopAddress => _config.shopAddress ?? '';
   String get shopPhone => _config.shopPhone ?? '';
@@ -41,13 +41,33 @@ class PrinterConfigProvider extends ChangeNotifier {
   String? get networkIp => _config.networkIp;
   int get networkPort => _config.networkPort;
   String? get localPrinterName => _config.localPrinterName;
-  bool get kitchenPrintEnabled => _config.kitchenPrintEnabled;
-  String? get kitchenNetworkIp => _config.kitchenNetworkIp;
-  int get kitchenNetworkPort => _config.kitchenNetworkPort;
-  String? get kitchenLocalPrinterName => _config.kitchenLocalPrinterName;
+  bool get secondaryPrintEnabled => _config.secondaryPrintEnabled;
+  String? get secondaryNetworkIp => _config.secondaryNetworkIp;
+  int get secondaryNetworkPort => _config.secondaryNetworkPort;
+  String? get secondaryLocalPrinterName => _config.secondaryLocalPrinterName;
   InvoiceTemplate get mainInvoiceTemplate => _config.mainInvoiceTemplate;
-  InvoiceTemplate get kitchenInvoiceTemplate => _config.kitchenInvoiceTemplate;
+  InvoiceTemplate get secondaryInvoiceTemplate => _config.secondaryInvoiceTemplate;
+  bool get barcodePrintEnabled => _config.barcodePrintEnabled;
+  String get barcodeConnection => _config.barcodeConnection;
+  String? get barcodeLocalPrinterName => _config.barcodeLocalPrinterName;
+  String? get barcodeNetworkIp => _config.barcodeNetworkIp;
+  int get barcodeNetworkPort => _config.barcodeNetworkPort;
+  String get barcodePrinterLanguage => _config.barcodePrinterLanguage;
+  double get barcodeLabelWidthMm => _config.barcodeLabelWidthMm;
+  double get barcodeLabelHeightMm => _config.barcodeLabelHeightMm;
+  double get barcodeLabelGapMm => _config.barcodeLabelGapMm;
+  int get barcodeDpi => _config.barcodeDpi;
+  String get barcodeOrientation => _config.barcodeOrientation;
+  String get barcodeCurrency => _config.barcodeCurrency;
   List<String> get footerLines => _config.footerLines;
+
+  // Compatibility getters for receipt code compiled during a rolling update.
+  String? get kitchenPrinterName => secondaryPrinterName;
+  bool get kitchenPrintEnabled => secondaryPrintEnabled;
+  String? get kitchenNetworkIp => secondaryNetworkIp;
+  int get kitchenNetworkPort => secondaryNetworkPort;
+  String? get kitchenLocalPrinterName => secondaryLocalPrinterName;
+  InvoiceTemplate get kitchenInvoiceTemplate => secondaryInvoiceTemplate;
 
   /// Load whatever was cached locally — safe to call before login, since it
   /// never touches the network. Call [refresh] with a real token afterwards
