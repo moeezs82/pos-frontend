@@ -34,6 +34,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:enterprise_pos/services/thermal_printer_service.dart';
 import 'package:enterprise_pos/services/receipt_preview_service.dart';
+import 'package:enterprise_pos/services/whatsapp_invoice_service.dart';
 
 // local widgets split into small files
 import 'package:enterprise_pos/screens/sales/parts/sale_party_section.dart';
@@ -80,7 +81,10 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
   final TextEditingController addressController = TextEditingController();
   final TextEditingController customerNameController = TextEditingController();
   final TextEditingController customerPhoneController = TextEditingController();
+  final TextEditingController whatsappPhoneController = TextEditingController();
   bool _customerLocked = false;
+  bool _sendInvoiceOnWhatsApp = false;
+  bool _whatsappPhoneEdited = false;
 
   // barcode (kept intact)
   final _barcodeController = TextEditingController();
@@ -164,6 +168,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       _selectedCustomerId = customer['id']?.toString();
       customerNameController.text = (customer['first_name'] ?? customer['name'] ?? '').toString();
       customerPhoneController.text = (customer['phone'] ?? '').toString();
+      whatsappPhoneController.text = customerPhoneController.text;
       addressController.text = (customer['address'] ?? '').toString();
       _customerLocked = _selectedCustomerId != null;
     }
@@ -212,6 +217,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     addressController.dispose();
     customerNameController.dispose();
     customerPhoneController.dispose();
+    whatsappPhoneController.dispose();
     _customerFocusNode.dispose();
     _salesmanFocusNode.dispose();
     _deliveryBoyFocusNode.dispose();
@@ -270,6 +276,8 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         // Option A: clear on unselect
         customerNameController.text = "";
         customerPhoneController.text = "";
+        whatsappPhoneController.text = "";
+        _whatsappPhoneEdited = false;
         addressController.text = "";
       });
     } else {
@@ -281,6 +289,8 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         _selectedCustomerId = customer['id'].toString();
         customerNameController.text = name;
         customerPhoneController.text = phone;
+        whatsappPhoneController.text = phone;
+        _whatsappPhoneEdited = false;
         addressController.text = address;
 
         _customerLocked = true; // lock editing when customer picked
@@ -301,6 +311,8 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       _customerLocked = false;
       customerNameController.text = "";
       customerPhoneController.text = "";
+      whatsappPhoneController.text = "";
+      _whatsappPhoneEdited = false;
       addressController.text = "";
     });
   }
@@ -825,6 +837,17 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       return;
     }
 
+    if (_sendInvoiceOnWhatsApp) {
+      try {
+        WhatsAppInvoiceService.instance.normalizePhone(
+          whatsappPhoneController.text,
+        );
+      } on FormatException catch (e) {
+        AppFeedback.warning(context, e.message.toString());
+        return;
+      }
+    }
+
     final auth = context.read<AuthProvider>();
     final globalBranchId = context.read<BranchProvider>().selectedBranchId;
     final effectiveBranchId = globalBranchId?.toString() ?? _selectedBranchId;
@@ -1167,12 +1190,64 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         );
       }
 
+      if (_sendInvoiceOnWhatsApp && !queuedOffline) {
+        try {
+          final whatsappMessage = <String>[
+            'Thank you for your purchase.',
+            '',
+            'Invoice: $receiptNo',
+            'Total: ${AppCurrency.format(total)}',
+            '',
+            'Your invoice PDF is attached.',
+          ].join('\n');
+          final pdfBytes = await ReceiptPreviewService.instance.buildReceiptPdf(
+            shopName: effectiveShopName,
+            shopAddress: effectiveShopAddress,
+            shopPhone: effectiveShopPhone,
+            receiptNo: receiptNo,
+            dateTime: DateTime.now(),
+            items: receiptItems,
+            subtotal: subtotal,
+            discount: discount,
+            tax: tax,
+            grandTotal: total,
+            meta: meta,
+            sections: mainTemplate.sections,
+            paperWidth: mainTemplate.paperWidthCode,
+            footerLines: footerLines,
+          );
+          final prepared =
+              await WhatsAppInvoiceService.instance.prepareAndOpen(
+            pdfBytes: pdfBytes,
+            receiptNo: receiptNo,
+            phone: whatsappPhoneController.text,
+            message: whatsappMessage,
+          );
+          if (mounted) {
+            await _showWhatsAppInvoiceReady(
+              prepared: prepared,
+              message: whatsappMessage,
+            );
+          }
+        } catch (e, s) {
+          debugPrint('WHATSAPP INVOICE ERROR: $e');
+          debugPrintStack(stackTrace: s);
+          if (mounted) {
+            AppFeedback.warning(
+              context,
+              'Sale created, but the WhatsApp invoice could not be prepared: $e',
+            );
+          }
+        }
+      }
+
       if (!mounted) return;
+      final whatsappWasRequested = _sendInvoiceOnWhatsApp;
       _resetForNextSale(keepInitialCustomer: widget.initialCustomer != null);
       if (queuedOffline) {
         AppFeedback.warning(
           context,
-          "Offline — Pending Sync. Receipt: $receiptNo. ${queueReason ?? ''} Official invoice number will be assigned when synced.",
+          "Offline — Pending Sync. Receipt: $receiptNo. ${queueReason ?? ''} Official invoice number will be assigned when synced.${whatsappWasRequested ? ' WhatsApp invoice was not prepared; send it after synchronization.' : ''}",
         );
       } else {
         AppFeedback.success(context, "Sale $receiptNo created successfully. Ready for next sale.");
@@ -1188,6 +1263,100 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     } finally {
       if (mounted) setState(() => _submitting = false);
     }
+  }
+
+  Future<void> _showWhatsAppInvoiceReady({
+    required WhatsAppInvoicePreparation prepared,
+    required String message,
+  }) async {
+    var clipboardStatus = prepared.copiedToClipboard
+        ? 'The PDF is copied. In WhatsApp, press Ctrl+V and then Send.'
+        : 'The PDF was saved, but Windows could not copy it automatically. Use Open Folder and attach it manually.';
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) => AlertDialog(
+          title: const Row(
+            children: [
+              Icon(Icons.check_circle_rounded, color: Color(0xFF128C7E)),
+              SizedBox(width: 8),
+              Text('WhatsApp invoice ready'),
+            ],
+          ),
+          content: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 520),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('WhatsApp: +${prepared.normalizedPhone}'),
+                const SizedBox(height: 8),
+                Text(
+                  clipboardStatus,
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: 12),
+                SelectableText(
+                  prepared.pdfPath,
+                  style: const TextStyle(fontSize: 11, color: AppTheme.textMuted),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton.icon(
+              onPressed: () async {
+                setDialogState(() => clipboardStatus = 'Copying invoice PDF...');
+                final copied = await WhatsAppInvoiceService.instance
+                    .copyPdfToClipboard(prepared.pdfPath);
+                if (!dialogContext.mounted) return;
+                setDialogState(() {
+                  clipboardStatus = copied
+                      ? 'PDF copied successfully. Press Ctrl+V in WhatsApp, then Send.'
+                      : 'Copy failed. Use Open Folder and attach the PDF manually.';
+                });
+              },
+              icon: const Icon(Icons.copy_rounded),
+              label: const Text('Copy PDF again'),
+            ),
+            TextButton.icon(
+              onPressed: () => WhatsAppInvoiceService.instance
+                  .openInvoiceFolder(prepared.pdfPath),
+              icon: const Icon(Icons.folder_open_rounded),
+              label: const Text('Open folder'),
+            ),
+            TextButton.icon(
+              onPressed: () async {
+                setDialogState(() => clipboardStatus = 'Opening WhatsApp...');
+                try {
+                  await WhatsAppInvoiceService.instance.openChat(
+                    phone: prepared.normalizedPhone,
+                    message: message,
+                  );
+                  if (!dialogContext.mounted) return;
+                  setDialogState(() {
+                    clipboardStatus =
+                        'WhatsApp opened. Press Ctrl+V to attach the copied PDF, then Send.';
+                  });
+                } catch (e) {
+                  if (!dialogContext.mounted) return;
+                  setDialogState(() {
+                    clipboardStatus = 'Could not open WhatsApp: $e';
+                  });
+                }
+              },
+              icon: const Icon(Icons.chat_rounded),
+              label: const Text('Open WhatsApp'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Done'),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   void _resetForNextSale({bool keepInitialCustomer = false}) {
@@ -1206,6 +1375,9 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       _selectedDeliveryBoy = null;
       _selectedDeliveryBoyId = null;
       _autoCashIfEmpty = true;
+      _sendInvoiceOnWhatsApp = false;
+      _whatsappPhoneEdited = false;
+      whatsappPhoneController.clear();
 
       if (!keepInitialCustomer) {
         _selectedCustomer = null;
@@ -1924,6 +2096,11 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
                     controller: customerPhoneController,
                     focusNode: _walkInPhoneFocusNode,
                     keyboardType: TextInputType.phone,
+                    onChanged: (value) {
+                      if (_sendInvoiceOnWhatsApp && !_whatsappPhoneEdited) {
+                        whatsappPhoneController.text = value;
+                      }
+                    },
                     decoration: inputDecoration.copyWith(hintText: 'Phone'),
                     style: const TextStyle(fontSize: 12),
                   ),
@@ -1944,25 +2121,92 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
             ],
           ),
           const SizedBox(height: 5),
-          // Row 2: address
-          Tooltip(
-            message: 'Focus: Ctrl+Shift+A',
-            child: SizedBox(
-              height: 40,
-              child: TextFormField(
-                controller: addressController,
-                focusNode: _walkInAddressFocusNode,
-                decoration: inputDecoration.copyWith(
-                  hintText: 'Address (optional)',
-                  prefixIcon: const Icon(
-                    Icons.location_on_outlined,
-                    size: 14,
-                    color: AppTheme.textMuted,
+          // Row 2: address + optional WhatsApp invoice destination
+          Row(
+            children: [
+              Expanded(
+                child: Tooltip(
+                  message: 'Focus: Ctrl+Shift+A',
+                  child: SizedBox(
+                    height: 40,
+                    child: TextFormField(
+                      controller: addressController,
+                      focusNode: _walkInAddressFocusNode,
+                      decoration: inputDecoration.copyWith(
+                        hintText: 'Address (optional)',
+                        prefixIcon: const Icon(
+                          Icons.location_on_outlined,
+                          size: 14,
+                          color: AppTheme.textMuted,
+                        ),
+                      ),
+                      style: const TextStyle(fontSize: 12),
+                    ),
                   ),
                 ),
-                style: const TextStyle(fontSize: 12),
               ),
-            ),
+              const SizedBox(width: 8),
+              Tooltip(
+                message: 'Prepare this receipt for WhatsApp after the sale is saved',
+                child: InkWell(
+                  onTap: _submitting
+                      ? null
+                      : () => setState(() {
+                            _sendInvoiceOnWhatsApp = !_sendInvoiceOnWhatsApp;
+                            if (_sendInvoiceOnWhatsApp) {
+                              whatsappPhoneController.text =
+                                  customerPhoneController.text.trim();
+                              _whatsappPhoneEdited = false;
+                            }
+                          }),
+                  borderRadius: BorderRadius.circular(6),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Checkbox(
+                        value: _sendInvoiceOnWhatsApp,
+                        onChanged: _submitting
+                            ? null
+                            : (value) => setState(() {
+                                  _sendInvoiceOnWhatsApp = value ?? false;
+                                  if (_sendInvoiceOnWhatsApp) {
+                                    whatsappPhoneController.text =
+                                        customerPhoneController.text.trim();
+                                    _whatsappPhoneEdited = false;
+                                  }
+                                }),
+                        visualDensity: VisualDensity.compact,
+                      ),
+                      const Text(
+                        'WhatsApp invoice',
+                        style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              if (_sendInvoiceOnWhatsApp) ...[
+                const SizedBox(width: 6),
+                SizedBox(
+                  width: 175,
+                  height: 40,
+                  child: TextFormField(
+                    controller: whatsappPhoneController,
+                    keyboardType: TextInputType.phone,
+                    onChanged: (_) => _whatsappPhoneEdited = true,
+                    decoration: inputDecoration.copyWith(
+                      hintText: '+965XXXXXXXX',
+                      prefixIcon: const Icon(
+                        Icons.chat_rounded,
+                        size: 14,
+                        color: Color(0xFF128C7E),
+                      ),
+                    ),
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                ),
+              ],
+            ],
           ),
         ],
       ),
