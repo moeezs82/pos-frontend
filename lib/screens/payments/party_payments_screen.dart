@@ -2,6 +2,7 @@ import 'package:enterprise_pos/api/customer_service.dart';
 import 'package:enterprise_pos/api/delivery_boy_service.dart';
 import 'package:enterprise_pos/api/vendor_service.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
+import 'package:enterprise_pos/providers/branch_feature_provider.dart';
 import 'package:enterprise_pos/providers/branch_provider.dart';
 import 'package:enterprise_pos/screens/customers/customers_edit_screen.dart';
 import 'package:enterprise_pos/screens/vendors/vendor_edit_screen.dart';
@@ -623,27 +624,47 @@ class _PartyPaymentsScreenState extends State<PartyPaymentsScreen> {
         children: [
           EnterpriseToolbar(
             children: [
-              SegmentedButton<PartyPaymentKind>(
-                segments: const [
-                  ButtonSegment(
-                    value: PartyPaymentKind.customer,
-                    icon: Icon(Icons.people_alt_rounded),
-                    label: Text('Customers'),
-                  ),
-                  ButtonSegment(
-                    value: PartyPaymentKind.vendor,
-                    icon: Icon(Icons.groups_2_rounded),
-                    label: Text('Vendors'),
-                  ),
-                  ButtonSegment(
-                    value: PartyPaymentKind.deliveryBoy,
-                    icon: Icon(Icons.delivery_dining_rounded),
-                    label: Text('Delivery Boys'),
-                  ),
-                ],
-                selected: {_kind},
-                onSelectionChanged: _posting ? null : (value) => _switchKind(value.first),
-              ),
+              Builder(builder: (context) {
+                final deliveryEnabled =
+                    context.watch<BranchFeatureProvider>().deliveryEnabled;
+
+                // If delivery has just been disabled and we're on that tab,
+                // switch back to Customers immediately (post-frame to avoid
+                // setState-in-build).
+                if (!deliveryEnabled && _kind == PartyPaymentKind.deliveryBoy) {
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    if (mounted) _switchKind(PartyPaymentKind.customer);
+                  });
+                }
+
+                return SegmentedButton<PartyPaymentKind>(
+                  segments: [
+                    const ButtonSegment(
+                      value: PartyPaymentKind.customer,
+                      icon: Icon(Icons.people_alt_rounded),
+                      label: Text('Customers'),
+                    ),
+                    const ButtonSegment(
+                      value: PartyPaymentKind.vendor,
+                      icon: Icon(Icons.groups_2_rounded),
+                      label: Text('Vendors'),
+                    ),
+                    if (deliveryEnabled)
+                      const ButtonSegment(
+                        value: PartyPaymentKind.deliveryBoy,
+                        icon: Icon(Icons.delivery_dining_rounded),
+                        label: Text('Delivery Boys'),
+                      ),
+                  ],
+                  selected: {
+                    (!deliveryEnabled && _kind == PartyPaymentKind.deliveryBoy)
+                        ? PartyPaymentKind.customer
+                        : _kind,
+                  },
+                  onSelectionChanged:
+                      _posting ? null : (value) => _switchKind(value.first),
+                );
+              }),
               SizedBox(
                 width: MediaQuery.of(context).size.width >= 720 ? 420 : double.infinity,
                 child: EnterpriseSearchField(

@@ -10,6 +10,7 @@ import 'providers/register_shift_provider.dart';
 import 'providers/printer_config_provider.dart';
 import 'providers/subscription_provider.dart';
 import 'providers/payment_method_provider.dart';
+import 'providers/branch_feature_provider.dart';
 import 'screens/login_screen.dart';
 import 'screens/home_screen.dart';
 import 'services/connectivity_auto_sync_service.dart';
@@ -45,6 +46,7 @@ class MyApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => RegisterShiftProvider()),
         ChangeNotifierProvider(create: (_) => SubscriptionProvider()),
         ChangeNotifierProvider(create: (_) => PaymentMethodProvider()),
+        ChangeNotifierProvider(create: (_) => BranchFeatureProvider()),
       ],
       child: MaterialApp(
         debugShowCheckedModeBanner: false,
@@ -179,9 +181,14 @@ class _AuthOrchestratorState extends State<_AuthOrchestrator> {
           token: token,
           branchId: branchId,
         );
+
+        // Load branch feature flags (delivery_enabled, sale_vendor_enabled).
+        // Non-blocking; failures fall back to the cached value or defaults.
+        context.read<BranchFeatureProvider>().load(branchId, token);
       }
     } else {
       context.read<BranchProvider>().reset();
+      context.read<BranchFeatureProvider>().reset();
       context.read<PrinterConfigProvider>().stopAutoRefresh();
       ConnectivityAutoSyncService.instance.stop();
       // clear() is also guarded — repeated calls when already cleared are no-ops.

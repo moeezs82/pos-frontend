@@ -1,6 +1,7 @@
 import 'dart:async' show Timer;
 import 'package:enterprise_pos/api/reports_service.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
+import 'package:enterprise_pos/providers/branch_feature_provider.dart';
 import 'package:enterprise_pos/services/report_file_saver.dart';
 import 'package:flutter/material.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
@@ -40,7 +41,12 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
   String? _error;
   _EnterpriseReportResponse? _result;
 
-  List<_EnterpriseReportMeta> get _reports => _enterpriseReports;
+  List<_EnterpriseReportMeta> get _allReports => _enterpriseReports;
+
+  List<_EnterpriseReportMeta> _effectiveReports(bool deliveryEnabled) {
+    if (deliveryEnabled) return _allReports;
+    return _allReports.where((r) => r.key != 'delivery-boy-cash').toList(growable: false);
+  }
 
   @override
   void initState() {
@@ -48,9 +54,9 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
     final now = DateTime.now();
     _from = DateTime(now.year, now.month, 1);
     _to = DateTime(now.year, now.month, now.day, 23, 59, 59);
-    _selectedReport = _reports.firstWhere(
+    _selectedReport = _allReports.firstWhere(
       (r) => r.key == widget.initialReportKey,
-      orElse: () => _reports.first,
+      orElse: () => _allReports.first,
     );
 
     _searchCtrl.addListener(_onSearchChanged);
@@ -186,6 +192,17 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
     final width = MediaQuery.of(context).size.width;
     final isWide = width >= 980;
 
+    final deliveryEnabled = context.watch<BranchFeatureProvider>().deliveryEnabled;
+    final reports = _effectiveReports(deliveryEnabled);
+
+    // If delivery was just disabled and the active report is delivery-only,
+    // switch to the first available report (post-frame to avoid setState-in-build).
+    if (!deliveryEnabled && _selectedReport.key == 'delivery-boy-cash') {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _selectReport(reports.first);
+      });
+    }
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Enterprise Reports'),
@@ -204,11 +221,11 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            if (isWide) _buildSideCatalog(),
+            if (isWide) _buildSideCatalog(reports),
             Expanded(
               child: CustomScrollView(
                 slivers: [
-                  _buildHero(isWide: isWide),
+                  _buildHero(isWide: isWide, reports: reports),
                   _buildFilterPanel(isWide: isWide),
                   if (_loading)
                     const SliverFillRemaining(hasScrollBody: false, child: Center(child: CircularProgressIndicator()))
@@ -228,8 +245,8 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
     );
   }
 
-  Widget _buildSideCatalog() {
-    final grouped = _groupReports(_reports);
+  Widget _buildSideCatalog(List<_EnterpriseReportMeta> reports) {
+    final grouped = _groupReports(reports);
     return Container(
       width: 310,
       decoration: BoxDecoration(
@@ -259,7 +276,7 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
     );
   }
 
-  SliverToBoxAdapter _buildHero({required bool isWide}) {
+  SliverToBoxAdapter _buildHero({required bool isWide, required List<_EnterpriseReportMeta> reports}) {
     return SliverToBoxAdapter(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
@@ -292,7 +309,7 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
                   ],
                 ),
               ),
-              if (!isWide) _buildReportDropdown(),
+              if (!isWide) _buildReportDropdown(reports),
             ],
           ),
         ),
@@ -300,12 +317,12 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
     );
   }
 
-  Widget _buildReportDropdown() {
+  Widget _buildReportDropdown(List<_EnterpriseReportMeta> reports) {
     return PopupMenuButton<_EnterpriseReportMeta>(
       tooltip: 'Change report',
       onSelected: _selectReport,
       icon: const Icon(Icons.dashboard_customize_rounded, color: Colors.white),
-      itemBuilder: (_) => _reports.map((r) => PopupMenuItem(value: r, child: Text('${r.group} • ${r.title}'))).toList(),
+      itemBuilder: (_) => reports.map((r) => PopupMenuItem(value: r, child: Text('${r.group} • ${r.title}'))).toList(),
     );
   }
 

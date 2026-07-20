@@ -4,6 +4,7 @@ import 'dart:ui' show FontFeature;
 import 'package:enterprise_pos/api/product_service.dart';
 import 'package:enterprise_pos/api/sale_service.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
+import 'package:enterprise_pos/providers/branch_feature_provider.dart';
 import 'package:enterprise_pos/providers/branch_provider.dart';
 import 'package:enterprise_pos/providers/offline_queue_provider.dart';
 import 'package:enterprise_pos/providers/printer_config_provider.dart';
@@ -126,7 +127,18 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     // time they actually open a picker a second or two later, it shows
     // cached data instantly instead of a blank spinner.
     final branchId = context.read<BranchProvider>().selectedBranchId?.toString();
-    PartyPrefetch.warmForSale(token, branchId: branchId);
+    final features = context.read<BranchFeatureProvider>();
+    PartyPrefetch.warmCustomers(token);
+    PartyPrefetch.warmSalesmen(token, branchId: branchId);
+    PartyPrefetch.warmProducts(token);
+    // Only prefetch delivery-boy cache when module is enabled for this branch.
+    if (features.deliveryEnabled) {
+      PartyPrefetch.warmDeliveryBoys(token, branchId: branchId);
+    }
+    // Vendor prefetch for sale is also feature-gated.
+    if (features.saleVendorEnabled) {
+      PartyPrefetch.warmVendors(token);
+    }
 
     // Offline composition (handover doc G1). Mirror the server catalog
     // (products + price/tax + customers) into local SQLite so a sale can be
@@ -312,6 +324,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
   }
 
   Future<void> _pickVendor() async {
+    if (!context.read<BranchFeatureProvider>().saleVendorEnabled) return;
     final vendor = await _openVendorSheet();
     _applyVendorSelection(vendor);
   }
@@ -370,6 +383,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
   }
 
   Future<void> _pickDeliveryBoy() async {
+    if (!context.read<BranchFeatureProvider>().deliveryEnabled) return;
     final user = await _openDeliveryBoySheet();
     _applyDeliveryBoySelection(user);
   }
@@ -1495,6 +1509,36 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     final isAll = context.watch<BranchProvider>().isAll;
     final token = Provider.of<AuthProvider>(context, listen: false).token!;
 
+    // Feature flags — watched so the UI reacts when settings change.
+    final featureProvider = context.watch<BranchFeatureProvider>();
+    final deliveryEnabled = featureProvider.deliveryEnabled;
+    final saleVendorEnabled = featureProvider.saleVendorEnabled;
+
+    // Clear forbidden state when a flag is turned off while screen is open.
+    // Runs in the build phase via post-frame to avoid calling setState mid-build.
+    if (!deliveryEnabled && (_selectedDeliveryBoyId != null || _selectedDeliveryBoy != null)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          setState(() {
+            _selectedDeliveryBoy = null;
+            _selectedDeliveryBoyId = null;
+          });
+        }
+      });
+    }
+    if (!saleVendorEnabled && (_selectedVendorId != null || _selectedVendor != null)) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          setState(() {
+            _selectedVendor = null;
+            _selectedVendorId = null;
+            // Do NOT clear items — vendor change only affects product filtering,
+            // not already-added items.
+          });
+        }
+      });
+    }
+
     double rowNum(v) => double.tryParse(v?.toString() ?? '') ?? 0.0;
     final subtotal = _items.fold<double>(0.0, (sum, i) {
       final price = rowNum(i['price']);
@@ -1548,9 +1592,16 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
             const SingleActivator(LogicalKeyboardKey.f3): () => _pickCustomer(),
             _ctrlShift(LogicalKeyboardKey.keyC): () => _pickCustomer(),
             _cmdShift(LogicalKeyboardKey.keyC): () => _pickCustomer(),
-            const SingleActivator(LogicalKeyboardKey.f4): () => _pickDeliveryBoy(),
-            _ctrlShift(LogicalKeyboardKey.keyD): () => _pickDeliveryBoy(),
-            _cmdShift(LogicalKeyboardKey.keyD): () => _pickDeliveryBoy(),
+            // Delivery shortcuts — only active when delivery module is enabled.
+            if (deliveryEnabled) ...{
+              const SingleActivator(LogicalKeyboardKey.f4): () => _pickDeliveryBoy(),
+              _ctrlShift(LogicalKeyboardKey.keyD): () => _pickDeliveryBoy(),
+              _cmdShift(LogicalKeyboardKey.keyD): () => _pickDeliveryBoy(),
+              _ctrlShift(LogicalKeyboardKey.keyB): () {
+                _deliveryBoyController.clear();
+                _deliveryBoyFocusNode.requestFocus();
+              },
+            },
             const SingleActivator(LogicalKeyboardKey.f9): _focusBarcodeScanner,
             _ctrl(LogicalKeyboardKey.enter): () => _submitSale(),
             _cmd(LogicalKeyboardKey.enter): () => _submitSale(),
@@ -1568,21 +1619,19 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
               _salesmanController.clear();
               _salesmanFocusNode.requestFocus();
             },
-            _ctrlShift(LogicalKeyboardKey.keyB): () {
-              _deliveryBoyController.clear();
-              _deliveryBoyFocusNode.requestFocus();
-            },
             _ctrlShift(LogicalKeyboardKey.keyP): () {
               _productSearchFocusNode.requestFocus();
             },
-            // ── New focus shortcuts ──────────────────────────────────────────
-            _ctrlShift(LogicalKeyboardKey.keyV): () {
-              _vendorController.clear();
-              _vendorFocusNode.requestFocus();
-            },
-            _cmdShift(LogicalKeyboardKey.keyV): () {
-              _vendorController.clear();
-              _vendorFocusNode.requestFocus();
+            // Vendor focus shortcuts — only when sale vendor is enabled.
+            if (saleVendorEnabled) ...{
+              _ctrlShift(LogicalKeyboardKey.keyV): () {
+                _vendorController.clear();
+                _vendorFocusNode.requestFocus();
+              },
+              _cmdShift(LogicalKeyboardKey.keyV): () {
+                _vendorController.clear();
+                _vendorFocusNode.requestFocus();
+              },
             },
             _ctrlShift(LogicalKeyboardKey.keyN): () {
               _walkInNameFocusNode.requestFocus();
@@ -1634,6 +1683,8 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
                                 token: token,
                                 isAll: isAll,
                                 subtotal: subtotal,
+                                deliveryEnabled: deliveryEnabled,
+                                saleVendorEnabled: saleVendorEnabled,
                               ),
                             ),
 
@@ -1693,6 +1744,8 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     required String token,
     required bool isAll,
     required double subtotal,
+    required bool deliveryEnabled,
+    required bool saleVendorEnabled,
   }) {
     return Container(
       color: Colors.white,
@@ -1709,6 +1762,8 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
             selectedVendor: _selectedVendor,
             branchId: _effectiveBranchIdStr(),
             token: token,
+            showDeliveryBoy: deliveryEnabled,
+            showVendor: saleVendorEnabled,
             onPickCustomer: _pickCustomer,
             onPickUser: _pickUser,
             onPickDeliveryBoy: _pickDeliveryBoy,

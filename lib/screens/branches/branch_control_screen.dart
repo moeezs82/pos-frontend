@@ -1,5 +1,6 @@
 import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/providers/branch_provider.dart';
+import 'package:enterprise_pos/screens/branches/branch_feature_settings_screen.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/branch_select_sheet.dart';
 import 'package:flutter/material.dart';
@@ -69,9 +70,84 @@ class BranchControlScreen extends StatelessWidget {
                     ),
                   ),
                 ),
+                // ── Master Admin tools ────────────────────────────────────
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                  child: _MasterAdminToolTile(
+                    icon: Icons.toggle_on_rounded,
+                    title: 'Module & Workflow Settings',
+                    subtitle: 'Enable or disable delivery and vendor features per branch.',
+                    onTap: () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const BranchFeatureSettingsScreen(),
+                      ),
+                    ),
+                  ),
+                ),
                 const Expanded(child: BranchSelectSheet()),
               ],
             ),
+    );
+  }
+}
+
+class _MasterAdminToolTile extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String subtitle;
+  final VoidCallback onTap;
+
+  const _MasterAdminToolTile({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: AppTheme.border),
+            boxShadow: AppTheme.softShadow,
+          ),
+          child: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(9),
+                decoration: BoxDecoration(
+                  color: AppTheme.primarySoft,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(icon, color: AppTheme.primary, size: 20),
+              ),
+              const SizedBox(width: 14),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(title,
+                        style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14, color: AppTheme.navy)),
+                    const SizedBox(height: 2),
+                    Text(subtitle,
+                        style: const TextStyle(color: AppTheme.textMuted, fontSize: 12, fontWeight: FontWeight.w500)),
+                  ],
+                ),
+              ),
+              const Icon(Icons.chevron_right_rounded, color: AppTheme.textMuted),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

@@ -67,6 +67,11 @@ class PartySectionCard extends StatelessWidget {
   final TextEditingController? deliveryBoyController;
   final TextEditingController? vendorController;
 
+  /// Feature flags: when false the corresponding field is hidden.
+  /// Both default to true so existing call sites are unaffected.
+  final bool showDeliveryBoy;
+  final bool showVendor;
+
   const PartySectionCard({
     super.key,
     required this.isAll,
@@ -98,6 +103,8 @@ class PartySectionCard extends StatelessWidget {
     this.salesmanController,
     this.deliveryBoyController,
     this.vendorController,
+    this.showDeliveryBoy = true,
+    this.showVendor = true,
   });
 
   String _customerLabel(PartyMap c) {
@@ -115,7 +122,10 @@ class PartySectionCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('Customer, staff & delivery', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
+          Text(
+            showDeliveryBoy ? 'Customer, staff & delivery' : 'Customer & staff',
+            style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
+          ),
           const SizedBox(height: 4),
           const Text(
             'Start typing to find someone instantly, or use the list icon to browse.',
@@ -133,7 +143,7 @@ class PartySectionCard extends StatelessWidget {
               final vendorService = VendorService(token: token);
               final userService = UsersService(token: token);
 
-              final fields = [
+              final allFields = [
                 PartyAutocompleteField<PartyMap>(
                   label: 'Customer',
                   hintText: 'Type customer name or phone…',
@@ -226,6 +236,15 @@ class PartySectionCard extends StatelessWidget {
                 ),
               ];
 
+              // Filter fields based on active feature flags.
+              // Index 0 = Customer, 1 = Salesman, 2 = Delivery Boy, 3 = Vendor.
+              final fields = [
+                allFields[0], // Customer — always shown
+                allFields[1], // Salesman — always shown
+                if (showDeliveryBoy) allFields[2],
+                if (showVendor) allFields[3],
+              ];
+
               if (!wide) {
                 return Column(
                   children: [
@@ -240,13 +259,10 @@ class PartySectionCard extends StatelessWidget {
               return Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Expanded(child: fields[0]),
-                  const SizedBox(width: 10),
-                  Expanded(child: fields[1]),
-                  const SizedBox(width: 10),
-                  Expanded(child: fields[2]),
-                  const SizedBox(width: 10),
-                  Expanded(child: fields[3]),
+                  for (int i = 0; i < fields.length; i++) ...[
+                    if (i > 0) const SizedBox(width: 10),
+                    Expanded(child: fields[i]),
+                  ],
                 ],
               );
             },
