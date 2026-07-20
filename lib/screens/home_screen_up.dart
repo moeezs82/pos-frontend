@@ -3,7 +3,9 @@ import 'package:enterprise_pos/screens/customers/customers_screen.dart';
 import 'package:enterprise_pos/screens/product_screen.dart';
 import 'package:enterprise_pos/screens/purchases/purchase_claim_screen.dart';
 import 'package:enterprise_pos/screens/purchases/purchases_screen.dart';
-import 'package:enterprise_pos/screens/sales/sale_returns_screen.dart';
+// Sale Return screens are intentionally retained in the project, but their
+// home navigation entry is disabled because returns are handled as -ve sales.
+// import 'package:enterprise_pos/screens/sales/sale_returns_screen.dart';
 import 'package:enterprise_pos/screens/sales/sale_screen.dart';
 import 'package:enterprise_pos/screens/stock_screen.dart';
 import 'package:enterprise_pos/screens/vendors/vendors_screen.dart';
@@ -130,12 +132,14 @@ class HomeScreen extends StatelessWidget {
                         color: Colors.lightBlueAccent,
                         onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const SalesScreen())),
                       ),
-                      _NavTile(
-                        icon: Icons.assignment_return_rounded,
-                        label: "Sale Returns",
-                        color: Colors.indigoAccent,
-                        onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const SaleReturnsScreen())),
-                      ),
+                      // Sale Returns intentionally hidden: returns are now
+                      // entered as -ve sales.
+                      // _NavTile(
+                      //   icon: Icons.assignment_return_rounded,
+                      //   label: "Sale Returns",
+                      //   color: Colors.indigoAccent,
+                      //   onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const SaleReturnsScreen())),
+                      // ),
                       _NavTile(
                         icon: Icons.shopping_cart_checkout_rounded,
                         label: "Purchases",

@@ -14,7 +14,9 @@ import 'package:enterprise_pos/screens/purchases/purchases_screen.dart';
 import 'package:enterprise_pos/screens/payments/party_payments_screen.dart';
 import 'package:enterprise_pos/screens/reports/report_hub_screen.dart';
 import 'package:enterprise_pos/screens/sales/sale_create.dart';
-import 'package:enterprise_pos/screens/sales/sale_returns_screen.dart';
+// Sale Return screens are intentionally retained in the project, but their
+// home navigation entry is disabled because returns are handled as -ve sales.
+// import 'package:enterprise_pos/screens/sales/sale_returns_screen.dart';
 import 'package:enterprise_pos/screens/sales/sale_screen.dart';
 import 'package:enterprise_pos/screens/settings/printer_settings_screen.dart';
 import 'package:enterprise_pos/screens/stock_screen.dart';
@@ -181,7 +183,8 @@ class HomeScreen extends StatelessWidget {
       _Tile(icon: Icons.warehouse_rounded, title: 'Stock', shortcut: 'Ctrl+I', subtitle: 'Inventory on hand', color: AppTheme.danger, onTap: () => PosNavigation.openSingleton(routeId: PosRouteIds.stock, builder: (_) => const StockScreen())),
       _Tile(icon: Icons.people_alt_rounded, title: 'Customers', shortcut: 'Ctrl+Shift+C', subtitle: 'Receivables and profiles', color: AppTheme.warning, onTap: () => PosNavigation.openSingleton(routeId: PosRouteIds.customers, builder: (_) => const CustomersScreen())),
       _Tile(icon: Icons.groups_2_rounded, title: 'Vendors', shortcut: 'Ctrl+Shift+V', subtitle: 'Suppliers and payables', color: AppTheme.purple, onTap: () => PosNavigation.openSingleton(routeId: PosRouteIds.vendors, builder: (_) => const VendorsScreen())),
-      _Tile(icon: Icons.assignment_return_rounded, title: 'Sale Returns', shortcut: 'Ctrl+T', subtitle: 'Refund workflow', color: AppTheme.info, onTap: () => PosNavigation.openSingleton(routeId: PosRouteIds.saleReturns, builder: (_) => const SaleReturnsScreen())),
+      // Sale Returns intentionally hidden: returns are now entered as -ve sales.
+      // _Tile(icon: Icons.assignment_return_rounded, title: 'Sale Returns', shortcut: 'Ctrl+T', subtitle: 'Refund workflow', color: AppTheme.info, onTap: () => PosNavigation.openSingleton(routeId: PosRouteIds.saleReturns, builder: (_) => const SaleReturnsScreen())),
       _Tile(icon: Icons.shopping_cart_rounded, title: 'Purchases', shortcut: 'Ctrl+Shift+O', subtitle: 'Bills and payments', color: AppTheme.primaryDark, onTap: () => PosNavigation.openSingleton(routeId: PosRouteIds.purchases, builder: (_) => const PurchasesScreen())),
       _Tile(icon: Icons.assignment_return_outlined, title: 'Purchase Claim', subtitle: 'Damage/shortage claims', color: AppTheme.warning, onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PurchaseClaimsScreen()))),
       _Tile(icon: Icons.manage_accounts_rounded, title: 'Users', shortcut: 'Ctrl+U', subtitle: 'Staff and role access', color: AppTheme.info, onTap: () => PosNavigation.openSingleton(routeId: PosRouteIds.users, builder: (_) => const UsersScreen())),

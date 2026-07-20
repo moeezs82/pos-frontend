@@ -98,8 +98,11 @@ class BranchLockScreen extends StatelessWidget {
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Icon(Icons.support_agent_rounded,
-                          color: AppTheme.primary, size: 22),
+                      const Icon(
+                        Icons.support_agent_rounded,
+                        color: AppTheme.primary,
+                        size: 22,
+                      ),
                       const SizedBox(width: 12),
                       Expanded(
                         child: Text(
@@ -107,7 +110,9 @@ class BranchLockScreen extends StatelessWidget {
                               ? status!.message
                               : 'Your access has been restricted. Please contact your platform administrator to restore access.',
                           style: const TextStyle(
-                              fontSize: 13, color: AppTheme.navy),
+                            fontSize: 13,
+                            color: AppTheme.navy,
+                          ),
                         ),
                       ),
                     ],
@@ -129,31 +134,31 @@ class BranchLockScreen extends StatelessWidget {
                   ),
                 const SizedBox(height: 10),
 
-                // ── Switch Branch (if another branch may be available) ──────
-                SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton.icon(
-                    icon: const Icon(Icons.swap_horiz_rounded),
-                    label: const Text('Switch Branch'),
-                    onPressed: () => _openBranchSheet(context),
-                  ),
-                ),
-                const SizedBox(height: 10),
-
                 // ── Owner management link ───────────────────────────────────
                 if (auth.isMasterAdmin) ...[
+                  // ── Switch Branch (if another branch may be available) ──────
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      icon: const Icon(Icons.swap_horiz_rounded),
+                      label: const Text('Switch Branch'),
+                      onPressed: () => _openBranchSheet(context),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
                   SizedBox(
                     width: double.infinity,
                     child: OutlinedButton.icon(
                       icon: const Icon(Icons.manage_accounts_rounded),
                       label: const Text('Manage Subscriptions'),
                       style: OutlinedButton.styleFrom(
-                          foregroundColor: AppTheme.primary),
+                        foregroundColor: AppTheme.primary,
+                      ),
                       onPressed: () => Navigator.push(
                         context,
                         MaterialPageRoute(
-                            builder: (_) =>
-                                const SubscriptionManagementScreen()),
+                          builder: (_) => const SubscriptionManagementScreen(),
+                        ),
                       ),
                     ),
                   ),
@@ -164,19 +169,28 @@ class BranchLockScreen extends StatelessWidget {
                 SizedBox(
                   width: double.infinity,
                   child: TextButton.icon(
-                    icon: const Icon(Icons.logout_rounded, color: AppTheme.danger),
-                    label: const Text('Logout',
-                        style: TextStyle(color: AppTheme.danger)),
+                    icon: const Icon(
+                      Icons.logout_rounded,
+                      color: AppTheme.danger,
+                    ),
+                    label: const Text(
+                      'Logout',
+                      style: TextStyle(color: AppTheme.danger),
+                    ),
                     onPressed: () => _logout(context, auth, sub),
                   ),
                 ),
 
                 if (sub.error != null) ...[
                   const SizedBox(height: 12),
-                  Text(sub.error!,
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(
-                          color: AppTheme.danger, fontSize: 12)),
+                  Text(
+                    sub.error!,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      color: AppTheme.danger,
+                      fontSize: 12,
+                    ),
+                  ),
                 ],
               ],
             ),
@@ -191,9 +205,7 @@ class BranchLockScreen extends StatelessWidget {
   String? _branchName(AuthProvider auth) {
     final branch = auth.user?['branch'] as Map?;
     return branch?['name']?.toString() ??
-        (auth.activeBranchId != null
-            ? 'Branch #${auth.activeBranchId}'
-            : null);
+        (auth.activeBranchId != null ? 'Branch #${auth.activeBranchId}' : null);
   }
 
   IconData _statusIcon(SubscriptionStatus? status) {
@@ -203,7 +215,8 @@ class BranchLockScreen extends StatelessWidget {
   }
 
   String _headline(SubscriptionStatus? status) {
-    if (status?.status == 'not_configured') return 'Subscription Not Configured';
+    if (status?.status == 'not_configured')
+      return 'Subscription Not Configured';
     if (status?.status == 'suspended') return 'Branch Suspended';
     return 'Subscription Expired';
   }
@@ -217,7 +230,10 @@ class BranchLockScreen extends StatelessWidget {
   }
 
   Future<void> _refresh(
-      BuildContext context, AuthProvider auth, SubscriptionProvider sub) async {
+    BuildContext context,
+    AuthProvider auth,
+    SubscriptionProvider sub,
+  ) async {
     final token = auth.token;
     final branchId = auth.activeBranchId;
     if (token == null || branchId == null) return;
@@ -225,7 +241,10 @@ class BranchLockScreen extends StatelessWidget {
   }
 
   Future<void> _logout(
-      BuildContext context, AuthProvider auth, SubscriptionProvider sub) async {
+    BuildContext context,
+    AuthProvider auth,
+    SubscriptionProvider sub,
+  ) async {
     await auth.logout();
     await sub.clear();
     if (!context.mounted) return;
@@ -280,38 +299,49 @@ class _StatusCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: rows
-            .map((r) => Padding(
-                  padding: const EdgeInsets.only(bottom: 6),
-                  child: Row(
-                    children: [
-                      SizedBox(
-                          width: 100,
-                          child: Text(r.label,
-                              style: const TextStyle(
-                                  color: AppTheme.textMuted, fontSize: 12))),
-                      Expanded(
-                          child: Text(r.value,
-                              style: const TextStyle(
-                                  fontWeight: FontWeight.w700,
-                                  fontSize: 13,
-                                  color: AppTheme.navy))),
-                    ],
-                  ),
-                ))
+            .map(
+              (r) => Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Row(
+                  children: [
+                    SizedBox(
+                      width: 100,
+                      child: Text(
+                        r.label,
+                        style: const TextStyle(
+                          color: AppTheme.textMuted,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+                    Expanded(
+                      child: Text(
+                        r.value,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 13,
+                          color: AppTheme.navy,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            )
             .toList(),
       ),
     );
   }
 
   String _statusLabel(String s) => switch (s) {
-        'trial' => 'Trial',
-        'active' => 'Active',
-        'grace_period' => 'Grace Period',
-        'expired' => 'Expired',
-        'suspended' => 'Suspended',
-        'not_configured' => 'Not Configured',
-        _ => s,
-      };
+    'trial' => 'Trial',
+    'active' => 'Active',
+    'grace_period' => 'Grace Period',
+    'expired' => 'Expired',
+    'suspended' => 'Suspended',
+    'not_configured' => 'Not Configured',
+    _ => s,
+  };
 
   String _fmtDate(DateTime dt) {
     final d = dt.toLocal();

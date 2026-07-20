@@ -12,7 +12,9 @@ import 'package:enterprise_pos/screens/purchases/purchases_screen.dart';
 import 'package:enterprise_pos/screens/reports/report_hub_screen.dart';
 import 'package:enterprise_pos/screens/register_shifts/register_shift_screen.dart';
 import 'package:enterprise_pos/screens/sales/sale_create.dart';
-import 'package:enterprise_pos/screens/sales/sale_returns_screen.dart';
+// Sale Return screens remain in the project, but direct navigation is disabled
+// because returns are now handled as -ve sales.
+// import 'package:enterprise_pos/screens/sales/sale_returns_screen.dart';
 import 'package:enterprise_pos/screens/sales/sale_screen.dart';
 import 'package:enterprise_pos/screens/stock_screen.dart';
 import 'package:enterprise_pos/screens/users_screen.dart';
@@ -60,7 +62,8 @@ class PosShortcutCatalog {
     PosShortcutInfo(keys: 'Ctrl + R', title: 'Reports', section: 'Reports', icon: Icons.analytics_rounded),
     PosShortcutInfo(keys: 'F6', title: 'Register Shift', section: 'Accounts', icon: Icons.point_of_sale_rounded),
     PosShortcutInfo(keys: 'Ctrl + U', title: 'Users', section: 'Administration', icon: Icons.manage_accounts_rounded),
-    PosShortcutInfo(keys: 'Ctrl + T', title: 'Sale Returns', section: 'Sales', icon: Icons.assignment_return_rounded),
+    // Sale Returns shortcut intentionally disabled; returns use -ve sales.
+    // PosShortcutInfo(keys: 'Ctrl + T', title: 'Sale Returns', section: 'Sales', icon: Icons.assignment_return_rounded),
     PosShortcutInfo(keys: 'Ctrl + Shift + B', title: 'Branch Control', section: 'Master Admin', icon: Icons.account_tree_rounded, masterOnly: true),
   ];
 
@@ -200,8 +203,9 @@ class AppKeyboardShortcuts extends StatelessWidget {
       _ctrl(LogicalKeyboardKey.keyU): () => open(PosRouteIds.users, (_) => const UsersScreen()),
       _cmd(LogicalKeyboardKey.keyU): () => open(PosRouteIds.users, (_) => const UsersScreen()),
 
-      _ctrl(LogicalKeyboardKey.keyT): () => open(PosRouteIds.saleReturns, (_) => const SaleReturnsScreen()),
-      _cmd(LogicalKeyboardKey.keyT): () => open(PosRouteIds.saleReturns, (_) => const SaleReturnsScreen()),
+      // Sale Returns navigation intentionally disabled; returns use -ve sales.
+      // _ctrl(LogicalKeyboardKey.keyT): () => open(PosRouteIds.saleReturns, (_) => const SaleReturnsScreen()),
+      // _cmd(LogicalKeyboardKey.keyT): () => open(PosRouteIds.saleReturns, (_) => const SaleReturnsScreen()),
 
       _ctrlShift(LogicalKeyboardKey.keyB): () => _openBranchControl(auth),
       _cmdShift(LogicalKeyboardKey.keyB): () => _openBranchControl(auth),
