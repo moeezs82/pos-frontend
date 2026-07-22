@@ -38,20 +38,6 @@ class ReportsHubScreen extends StatelessWidget {
             childAspectRatio: cols == 1 ? 2.7 : 1.28,
             children: [
               _CommandCard(
-                icon: Icons.people_alt_rounded,
-                title: 'Customer Balances',
-                subtitle: 'All receivables, tap customer for ledger, receive payment, create sale, edit customer.',
-                accent: Colors.orange,
-                onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PartyBalancesScreen(partyType: 'customer'))),
-              ),
-              _CommandCard(
-                icon: Icons.groups_2_rounded,
-                title: 'Vendor Balances',
-                subtitle: 'All payables, tap vendor for ledger, pay vendor, create purchase, edit vendor.',
-                accent: Colors.indigo,
-                onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PartyBalancesScreen(partyType: 'vendor'))),
-              ),
-              _CommandCard(
                 icon: Icons.receipt_long_rounded,
                 title: 'Record Expense',
                 subtitle: 'Record an expense via Cash Ledger: expense account, payment method, date and payee/reference.',
@@ -252,7 +238,7 @@ final _enterpriseShortcuts = <_ReportShortcut>[
   _ReportShortcut(title: 'Purchases', icon: Icons.shopping_cart_checkout_rounded, builder: (_) => const EnterpriseReportsWorkspaceScreen(initialReportKey: 'purchase-summary')),
   _ReportShortcut(title: 'Current Stock', icon: Icons.warehouse_rounded, builder: (_) => const EnterpriseReportsWorkspaceScreen(initialReportKey: 'current-stock')),
   _ReportShortcut(title: 'Stock Valuation', icon: Icons.price_check_rounded, builder: (_) => const EnterpriseReportsWorkspaceScreen(initialReportKey: 'stock-valuation')),
-  _ReportShortcut(title: 'Cashbook', icon: Icons.account_balance_wallet_rounded, builder: (_) => const EnterpriseReportsWorkspaceScreen(initialReportKey: 'cashbook')),
+  // _ReportShortcut(title: 'Cashbook', icon: Icons.account_balance_wallet_rounded, builder: (_) => const EnterpriseReportsWorkspaceScreen(initialReportKey: 'cashbook')),
   _ReportShortcut(title: 'P&L', icon: Icons.trending_up_rounded, builder: (_) => const EnterpriseReportsWorkspaceScreen(initialReportKey: 'profit-loss')),
   _ReportShortcut(title: 'Trial Balance', icon: Icons.balance_rounded, builder: (_) => const EnterpriseReportsWorkspaceScreen(initialReportKey: 'trial-balance')),
 ];
