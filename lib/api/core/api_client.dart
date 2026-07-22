@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 import 'package:http/http.dart' as http;
@@ -71,6 +72,11 @@ class ApiClient {
   /// Deliberately static (not per-instance) so every ApiClient instance —
   /// regardless of which service created it — fires the same interceptor.
   static void Function(Map<String, dynamic> body)? onSubscriptionExpired;
+
+  /// Notifies the auth layer when server-side authorization rejects a request.
+  /// This lets the app refresh permissions immediately after another admin
+  /// changes the current user's role instead of trusting stale local flags.
+  static Future<void> Function(Map<String, dynamic> body)? onForbidden;
 
   ApiClient({this.token});
 
@@ -220,6 +226,10 @@ class ApiClient {
           code == 'BRANCH_SUBSCRIPTION_NOT_CONFIGURED') {
         ApiClient.onSubscriptionExpired?.call(decoded);
       }
+    }
+
+    if (res.statusCode == 403 && decoded != null && ApiClient.onForbidden != null) {
+      unawaited(ApiClient.onForbidden!.call(decoded));
     }
 
     final message = decoded?['message']?.toString() ?? "API Error: ${res.statusCode}";

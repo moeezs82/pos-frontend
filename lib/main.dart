@@ -124,6 +124,16 @@ class _AuthOrchestratorState extends State<_AuthOrchestrator> {
       context.read<SubscriptionProvider>().markExpiredFromResponse(branchId, body);
     };
 
+    ApiClient.onForbidden = (body) async {
+      if (!mounted) return;
+      final auth = context.read<AuthProvider>();
+      if (body['code']?.toString() == 'ACCOUNT_INACTIVE') {
+        await auth.forceLogout();
+        return;
+      }
+      await auth.refreshPermissionsIfStale(force: true);
+    };
+
     // Handle the startup case where tryAutoLogin() completes before or right
     // after the first frame — the listener covers the "after" path; the
     // postFrameCallback covers the "already done by first build" path.
@@ -136,6 +146,7 @@ class _AuthOrchestratorState extends State<_AuthOrchestrator> {
   void dispose() {
     _auth.removeListener(_onAuthChanged);
     ApiClient.onSubscriptionExpired = null;
+    ApiClient.onForbidden = null;
     super.dispose();
   }
 

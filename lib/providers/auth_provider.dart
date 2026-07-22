@@ -1,13 +1,21 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:enterprise_pos/api/auth_service.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-class AuthProvider with ChangeNotifier {
+class AuthProvider with ChangeNotifier, WidgetsBindingObserver {
+  static const Duration _permissionCheckInterval = Duration(minutes: 5);
   String? _token;
   Map<String, dynamic>? _user;
   bool _rememberMe = false;
   final auth = AuthService();
+  Timer? _permissionVersionTimer;
+  bool _refreshingPermissions = false;
+
+  AuthProvider() {
+    WidgetsBinding.instance.addObserver(this);
+  }
 
   String? get token => _token;
   Map<String, dynamic>? get user => _user;
@@ -66,6 +74,7 @@ class AuthProvider with ChangeNotifier {
       }
 
       notifyListeners();
+      _startPermissionMonitoring();
       return true;
     } catch (e) {
       return false;
@@ -74,6 +83,7 @@ class AuthProvider with ChangeNotifier {
 
   /// Local-only, no server call. Use this for 401 auto sign-out.
   Future<void> forceLogout() async {
+    _stopPermissionMonitoring();
     _token = null;
     _user = null;
 
@@ -116,6 +126,7 @@ class AuthProvider with ChangeNotifier {
     // master-only branch UI from stale local cache.
     try {
       await refreshMe();
+      _startPermissionMonitoring();
       return;
     } catch (_) {
       _user = _normalizeUser({...?_user, 'is_master_admin': false});
@@ -159,6 +170,7 @@ class AuthProvider with ChangeNotifier {
     }
 
     notifyListeners();
+    _startPermissionMonitoring();
     return data;
   }
 
@@ -183,6 +195,44 @@ class AuthProvider with ChangeNotifier {
       await prefs.setString('user', jsonEncode(_user));
     }
     if (notify) notifyListeners();
+  }
+
+  Future<void> refreshPermissionsIfStale({bool force = false}) async {
+    if (_token == null || _refreshingPermissions) return;
+    _refreshingPermissions = true;
+    try {
+      final response = await AuthService(token: _token!).permissionVersion();
+      final data = _asMap(response['data']) ?? response;
+      final serverBranchId = _readInt(data['branch_id']);
+      final serverVersion = _readInt(data['permission_version']) ?? 1;
+      if (serverBranchId != null && activeBranchId != null && serverBranchId != activeBranchId) return;
+      if (force || serverVersion != _permissionVersionFrom(_user)) await refreshMe();
+    } finally {
+      _refreshingPermissions = false;
+    }
+  }
+
+  void _startPermissionMonitoring() {
+    _permissionVersionTimer?.cancel();
+    if (_token == null) return;
+    _permissionVersionTimer = Timer.periodic(_permissionCheckInterval, (_) => refreshPermissionsIfStale());
+  }
+
+  void _stopPermissionMonitoring() {
+    _permissionVersionTimer?.cancel();
+    _permissionVersionTimer = null;
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) refreshPermissionsIfStale();
+  }
+
+  @override
+  void dispose() {
+    _stopPermissionMonitoring();
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
   }
 
 
@@ -211,12 +261,14 @@ class AuthProvider with ChangeNotifier {
       'roles',
       'role_name',
       'role_names',
-      'permissions',
       'is_master_admin',
     ]) {
       if (!_hasMeaningfulValue(incoming?[key]) && _hasMeaningfulValue(current?[key])) {
         merged[key] = current![key];
       }
+    }
+    if (incoming != null && incoming.containsKey('permissions')) {
+      merged['permissions'] = incoming['permissions'];
     }
 
     if (forcedBranchId != null) {
@@ -249,6 +301,12 @@ class AuthProvider with ChangeNotifier {
     if (value is Iterable) return value.isNotEmpty;
     if (value is Map) return value.isNotEmpty;
     return true;
+  }
+
+  static int _permissionVersionFrom(Map<String, dynamic>? user) {
+    return _readInt(user?['permission_version']) ??
+        _readInt(_asMap(user?['branch'])?['permission_version']) ??
+        1;
   }
 
   String get roleLabel => displayRole(_user);

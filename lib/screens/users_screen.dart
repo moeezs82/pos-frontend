@@ -123,7 +123,9 @@ class _UsersScreenState extends State<UsersScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final currentUserId = _readInt(context.watch<AuthProvider>().user?['id']);
+    final auth = context.watch<AuthProvider>();
+    final currentUserId = _readInt(auth.user?['id']);
+    final canManageUsers = auth.hasPermission('manage-users');
     final activeCount = _users.where((u) => _readBool(u['is_active'])).length;
     final inactiveCount = _users.length - activeCount;
 
@@ -137,18 +139,22 @@ class _UsersScreenState extends State<UsersScreen> {
           child: BranchIndicator(tappable: false),
         ),
       ],
-      actions: [
-        FilledButton.icon(
-          onPressed: _loading ? null : () => _openForm(),
-          icon: const Icon(Icons.person_add_alt_1_rounded),
-          label: const Text('Add User'),
-        ),
-      ],
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: _loading ? null : () => _openForm(),
-        icon: const Icon(Icons.person_add_alt_1_rounded),
-        label: const Text('Add User'),
-      ),
+      actions: canManageUsers
+          ? [
+              FilledButton.icon(
+                onPressed: _loading ? null : () => _openForm(),
+                icon: const Icon(Icons.person_add_alt_1_rounded),
+                label: const Text('Add User'),
+              ),
+            ]
+          : const [],
+      floatingActionButton: canManageUsers
+          ? FloatingActionButton.extended(
+              onPressed: _loading ? null : () => _openForm(),
+              icon: const Icon(Icons.person_add_alt_1_rounded),
+              label: const Text('Add User'),
+            )
+          : null,
       bottomNavigationBar: EnterprisePaginationBar(
         page: _page,
         lastPage: _lastPage,
@@ -220,11 +226,13 @@ class _UsersScreenState extends State<UsersScreen> {
                               subtitle: _search.isEmpty
                                   ? 'Create the first staff account for this workspace. Roles are loaded automatically from backend access rules.'
                                   : 'Try another name, email, phone number, or role keyword.',
-                              action: FilledButton.icon(
-                                onPressed: () => _openForm(),
-                                icon: const Icon(Icons.person_add_alt_1_rounded),
-                                label: const Text('Add User'),
-                              ),
+                              action: canManageUsers
+                                  ? FilledButton.icon(
+                                      onPressed: () => _openForm(),
+                                      icon: const Icon(Icons.person_add_alt_1_rounded),
+                                      label: const Text('Add User'),
+                                    )
+                                  : const SizedBox.shrink(),
                             ),
                           ],
                         )
@@ -234,11 +242,16 @@ class _UsersScreenState extends State<UsersScreen> {
                           itemBuilder: (context, index) {
                             final user = _users[index];
                             final userId = _readInt(user['id']);
+                            final manageable =
+                                _readBoolWithFallback(user['is_manageable'], true);
+                            final canEdit = canManageUsers && manageable;
                             return _UserCard(
                               user: user,
                               isCurrentUser: userId != null && userId == currentUserId,
-                              onEdit: () => _openForm(user),
-                              onDelete: userId != null && userId != currentUserId
+                              managementBlockReason:
+                                  user['management_block_reason']?.toString(),
+                              onEdit: canEdit ? () => _openForm(user) : null,
+                              onDelete: canEdit && userId != null && userId != currentUserId
                                   ? () async {
                                       final ok = await _confirmDelete(context, user);
                                       if (ok == true) await _deleteUser(user);
@@ -278,12 +291,14 @@ class _UsersScreenState extends State<UsersScreen> {
 class _UserCard extends StatelessWidget {
   final Map<String, dynamic> user;
   final bool isCurrentUser;
-  final VoidCallback onEdit;
+  final String? managementBlockReason;
+  final VoidCallback? onEdit;
   final VoidCallback? onDelete;
 
   const _UserCard({
     required this.user,
     required this.isCurrentUser,
+    this.managementBlockReason,
     required this.onEdit,
     required this.onDelete,
   });
@@ -345,6 +360,17 @@ class _UserCard extends StatelessWidget {
                           icon: Icons.person_pin_circle_rounded,
                         ),
                       ],
+                      if (managementBlockReason != null) ...[
+                        const SizedBox(width: 8),
+                        Tooltip(
+                          message: managementBlockReason!,
+                          child: const EnterpriseStatusBadge(
+                            label: 'RESTRICTED',
+                            color: AppTheme.warning,
+                            icon: Icons.lock_outline_rounded,
+                          ),
+                        ),
+                      ],
                     ],
                   ),
                   const SizedBox(height: 7),
@@ -367,36 +393,43 @@ class _UserCard extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 12),
-            PopupMenuButton<String>(
-              tooltip: 'User actions',
-              onSelected: (value) {
-                if (value == 'edit') onEdit();
-                if (value == 'delete') onDelete?.call();
-              },
-              itemBuilder: (ctx) => [
-                const PopupMenuItem(
-                  value: 'edit',
-                  child: Row(
-                    children: [
-                      Icon(Icons.edit_rounded, size: 18),
-                      SizedBox(width: 8),
-                      Text('Edit'),
-                    ],
-                  ),
-                ),
-                if (onDelete != null)
-                  const PopupMenuItem(
-                    value: 'delete',
-                    child: Row(
-                      children: [
-                        Icon(Icons.delete_outline_rounded, size: 18, color: AppTheme.danger),
-                        SizedBox(width: 8),
-                        Text('Delete', style: TextStyle(color: AppTheme.danger)),
-                      ],
+            if (onEdit != null || onDelete != null)
+              PopupMenuButton<String>(
+                tooltip: 'User actions',
+                onSelected: (value) {
+                  if (value == 'edit') onEdit?.call();
+                  if (value == 'delete') onDelete?.call();
+                },
+                itemBuilder: (ctx) => [
+                  if (onEdit != null)
+                    const PopupMenuItem(
+                      value: 'edit',
+                      child: Row(
+                        children: [
+                          Icon(Icons.edit_rounded, size: 18),
+                          SizedBox(width: 8),
+                          Text('Edit'),
+                        ],
+                      ),
                     ),
-                  ),
-              ],
-            ),
+                  if (onDelete != null)
+                    const PopupMenuItem(
+                      value: 'delete',
+                      child: Row(
+                        children: [
+                          Icon(Icons.delete_outline_rounded, size: 18, color: AppTheme.danger),
+                          SizedBox(width: 8),
+                          Text('Delete', style: TextStyle(color: AppTheme.danger)),
+                        ],
+                      ),
+                    ),
+                ],
+              )
+            else if (managementBlockReason != null)
+              Tooltip(
+                message: managementBlockReason!,
+                child: const Icon(Icons.lock_outline_rounded, color: AppTheme.textMuted),
+              ),
           ],
         ),
       ),
@@ -462,6 +495,16 @@ bool _readBool(dynamic value) {
   if (value is num) return value != 0;
   final text = value?.toString().trim().toLowerCase();
   return text == '1' || text == 'true' || text == 'yes' || text == 'active';
+}
+
+bool _readBoolWithFallback(dynamic value, bool fallback) {
+  if (value == null) return fallback;
+  if (value is bool) return value;
+  if (value is num) return value != 0;
+  final text = value.toString().trim().toLowerCase();
+  if (text == '1' || text == 'true' || text == 'yes') return true;
+  if (text == '0' || text == 'false' || text == 'no') return false;
+  return fallback;
 }
 
 String? _clean(dynamic value) {

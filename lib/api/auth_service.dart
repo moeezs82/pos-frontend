@@ -18,6 +18,11 @@ class AuthService {
     await _client.post("/logout");
   }
 
+  /// Lightweight permission-version check used while a session is active.
+  Future<Map<String, dynamic>> permissionVersion() async {
+    return await _client.get('/permission-version');
+  }
+
   /// Master admin active-branch switch.
   /// Backend updates users.branch_id, then all branch-scoped endpoints use it.
   Future<Map<String, dynamic>> switchBranch(int? branchId) async {
