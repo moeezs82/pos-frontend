@@ -41,7 +41,7 @@ class AppCurrency {
     if (_isLeadingSymbol(_currency)) {
       return '$negative$_currency$number';
     }
-    return '$negative$number $_currency';
+    return '$_currency $negative$number';
   }
 
   static String formatSigned(dynamic value, {int decimalDigits = 2}) {
