@@ -88,7 +88,7 @@ class HomeScreen extends StatelessWidget {
         _Tile(
           icon: Icons.print_rounded,
           title: 'Printer Settings',
-          subtitle: 'Configure and test receipt, secondary and barcode printers',
+          subtitle: 'Configure and test the receipt printer',
           color: AppTheme.navy,
           onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PrinterSettingsScreen())),
         ),
@@ -100,7 +100,7 @@ class HomeScreen extends StatelessWidget {
           color: AppTheme.purple,
           onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const SubscriptionManagementScreen())),
         ),
-      _Tile(
+      if (auth.hasPermission('view-register-shifts')) _Tile(
         icon: Icons.point_of_sale_rounded,
         title: registerShift.hasActiveShift ? 'Active Shift' : 'Open Shift',
         shortcut: 'F6',
@@ -111,7 +111,7 @@ class HomeScreen extends StatelessWidget {
             routeId: PosRouteIds.registerShift,
             builder: (_) => const RegisterShiftScreen()),
       ),
-      _Tile(
+      if (auth.hasPermission('create-sales')) _Tile(
         icon: Icons.point_of_sale_rounded,
         title: 'Create Sale',
         shortcut: 'Ctrl+N / F2',
@@ -130,7 +130,7 @@ class HomeScreen extends StatelessWidget {
               builder: (_) => const CreateSaleScreen());
         },
       ),
-      _Tile(
+      if (auth.hasPermission('manage-cashbook')) _Tile(
         icon: Icons.receipt_long_rounded,
         title: 'Add Expense',
         shortcut: 'Ctrl+E',
@@ -141,7 +141,7 @@ class HomeScreen extends StatelessWidget {
             routeId: PosRouteIds.cashLedgerCreate,
             builder: (_) => const CashLedgerCreateScreen(initialCategory: 'OTHER_EXPENSE')),
       ),
-      _Tile(
+      if (auth.hasAnyPermission(const ['manage-receipts', 'manage-payments'])) _Tile(
         icon: Icons.account_balance_wallet_rounded,
         title: 'Party Payments',
         shortcut: 'Ctrl+M',
@@ -152,7 +152,7 @@ class HomeScreen extends StatelessWidget {
             routeId: PosRouteIds.partyPayments,
             builder: (_) => const PartyPaymentsScreen()),
       ),
-      _Tile(
+      if (auth.hasPermission('manage-purchases')) _Tile(
         icon: Icons.shopping_cart_checkout_rounded,
         title: 'New Purchase',
         shortcut: 'Ctrl+O',
@@ -163,7 +163,7 @@ class HomeScreen extends StatelessWidget {
             routeId: PosRouteIds.createPurchase,
             builder: (_) => const CreatePurchaseScreen()),
       ),
-      _Tile(
+      if (auth.hasPermission('view-reports')) _Tile(
         icon: Icons.analytics_rounded,
         title: 'Reports',
         shortcut: 'Ctrl+R',
@@ -177,17 +177,17 @@ class HomeScreen extends StatelessWidget {
     ];
 
     final management = <_Tile>[
-      _Tile(icon: Icons.shopping_bag_rounded, title: 'Sales', shortcut: 'Ctrl+L', subtitle: 'Invoices and payments', color: AppTheme.info, onTap: () => PosNavigation.openSingleton(routeId: PosRouteIds.sales, builder: (_) => const SalesScreen())),
-      _Tile(icon: Icons.account_balance_wallet_rounded, title: 'Cash Ledger', shortcut: 'Ctrl+B', subtitle: 'All cash in/out, plus daily Day Book', color: AppTheme.primary, onTap: () => PosNavigation.openSingleton(routeId: PosRouteIds.cashLedger, builder: (_) => const CashLedgerScreen())),
-      _Tile(icon: Icons.inventory_2_rounded, title: 'Products', shortcut: 'Ctrl+P', subtitle: 'Catalog and prices', color: AppTheme.success, onTap: () => PosNavigation.openSingleton(routeId: PosRouteIds.products, builder: (_) => const ProductsScreen())),
-      _Tile(icon: Icons.warehouse_rounded, title: 'Stock', shortcut: 'Ctrl+I', subtitle: 'Inventory on hand', color: AppTheme.danger, onTap: () => PosNavigation.openSingleton(routeId: PosRouteIds.stock, builder: (_) => const StockScreen())),
-      _Tile(icon: Icons.people_alt_rounded, title: 'Customers', shortcut: 'Ctrl+Shift+C', subtitle: 'Receivables and profiles', color: AppTheme.warning, onTap: () => PosNavigation.openSingleton(routeId: PosRouteIds.customers, builder: (_) => const CustomersScreen())),
-      _Tile(icon: Icons.groups_2_rounded, title: 'Vendors', shortcut: 'Ctrl+Shift+V', subtitle: 'Suppliers and payables', color: AppTheme.purple, onTap: () => PosNavigation.openSingleton(routeId: PosRouteIds.vendors, builder: (_) => const VendorsScreen())),
+      if (auth.hasPermission('view-sales')) _Tile(icon: Icons.shopping_bag_rounded, title: 'Sales', shortcut: 'Ctrl+L', subtitle: 'Invoices and payments', color: AppTheme.info, onTap: () => PosNavigation.openSingleton(routeId: PosRouteIds.sales, builder: (_) => const SalesScreen())),
+      if (auth.hasPermission('view-cashbook')) _Tile(icon: Icons.account_balance_wallet_rounded, title: 'Cash Ledger', shortcut: 'Ctrl+B', subtitle: 'All cash in/out, plus daily Day Book', color: AppTheme.primary, onTap: () => PosNavigation.openSingleton(routeId: PosRouteIds.cashLedger, builder: (_) => const CashLedgerScreen())),
+      if (auth.hasPermission('view-products')) _Tile(icon: Icons.inventory_2_rounded, title: 'Products', shortcut: 'Ctrl+P', subtitle: 'Catalog and prices', color: AppTheme.success, onTap: () => PosNavigation.openSingleton(routeId: PosRouteIds.products, builder: (_) => const ProductsScreen())),
+      if (auth.hasPermission('view-stock')) _Tile(icon: Icons.warehouse_rounded, title: 'Stock', shortcut: 'Ctrl+I', subtitle: 'Inventory on hand', color: AppTheme.danger, onTap: () => PosNavigation.openSingleton(routeId: PosRouteIds.stock, builder: (_) => const StockScreen())),
+      if (auth.hasPermission('view-customers')) _Tile(icon: Icons.people_alt_rounded, title: 'Customers', shortcut: 'Ctrl+Shift+C', subtitle: 'Receivables and profiles', color: AppTheme.warning, onTap: () => PosNavigation.openSingleton(routeId: PosRouteIds.customers, builder: (_) => const CustomersScreen())),
+      if (auth.hasPermission('view-vendors')) _Tile(icon: Icons.groups_2_rounded, title: 'Vendors', shortcut: 'Ctrl+Shift+V', subtitle: 'Suppliers and payables', color: AppTheme.purple, onTap: () => PosNavigation.openSingleton(routeId: PosRouteIds.vendors, builder: (_) => const VendorsScreen())),
       // Sale Returns intentionally hidden: returns are now entered as -ve sales.
       // _Tile(icon: Icons.assignment_return_rounded, title: 'Sale Returns', shortcut: 'Ctrl+T', subtitle: 'Refund workflow', color: AppTheme.info, onTap: () => PosNavigation.openSingleton(routeId: PosRouteIds.saleReturns, builder: (_) => const SaleReturnsScreen())),
-      _Tile(icon: Icons.shopping_cart_rounded, title: 'Purchases', shortcut: 'Ctrl+Shift+O', subtitle: 'Bills and payments', color: AppTheme.primaryDark, onTap: () => PosNavigation.openSingleton(routeId: PosRouteIds.purchases, builder: (_) => const PurchasesScreen())),
-      _Tile(icon: Icons.assignment_return_outlined, title: 'Purchase Claim', subtitle: 'Damage/shortage claims', color: AppTheme.warning, onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PurchaseClaimsScreen()))),
-      _Tile(icon: Icons.manage_accounts_rounded, title: 'Users', shortcut: 'Ctrl+U', subtitle: 'Staff and role access', color: AppTheme.info, onTap: () => PosNavigation.openSingleton(routeId: PosRouteIds.users, builder: (_) => const UsersScreen())),
+      if (auth.hasPermission('view-purchases')) _Tile(icon: Icons.shopping_cart_rounded, title: 'Purchases', shortcut: 'Ctrl+Shift+O', subtitle: 'Bills and payments', color: AppTheme.primaryDark, onTap: () => PosNavigation.openSingleton(routeId: PosRouteIds.purchases, builder: (_) => const PurchasesScreen())),
+      if (auth.hasPermission('manage-purchases')) _Tile(icon: Icons.assignment_return_outlined, title: 'Purchase Claim', subtitle: 'Damage/shortage claims', color: AppTheme.warning, onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PurchaseClaimsScreen()))),
+      if (auth.hasPermission('view-users')) _Tile(icon: Icons.manage_accounts_rounded, title: 'Users', shortcut: 'Ctrl+U', subtitle: 'Staff and role access', color: AppTheme.info, onTap: () => PosNavigation.openSingleton(routeId: PosRouteIds.users, builder: (_) => const UsersScreen())),
       // Chart of Accounts is Master-Admin only (backend enforces; this hides the
       // affordance so ordinary users never see or reach it).
       if (auth.isMasterAdmin)

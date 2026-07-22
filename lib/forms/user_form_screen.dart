@@ -15,6 +15,45 @@ class UserFormScreen extends StatefulWidget {
 }
 
 class _UserFormScreenState extends State<UserFormScreen> {
+  static const Map<String, String> _permissionLabels = {
+    'view-sales': 'View Sales',
+    'create-sales': 'Create Sales',
+    'manage-sales': 'Edit Sales & Payments',
+    'refund-sale': 'Process Returns & Refunds',
+    'view-products': 'View Products',
+    'manage-products': 'Manage Products',
+    'view-stock': 'View Stock',
+    'adjust-stock': 'Adjust & Transfer Stock',
+    'view-customers': 'View Customers',
+    'manage-customers': 'Manage Customers',
+    'manage-receipts': 'Receive Customer Payments',
+    'view-vendors': 'View Vendors',
+    'manage-vendors': 'Manage Vendors',
+    'view-purchases': 'View Purchases',
+    'manage-purchases': 'Manage Purchases & Claims',
+    'manage-payments': 'Pay Vendors',
+    'reverse-party-payments': 'Reverse Party Payments',
+    'view-cashbook': 'View Cash Ledger & Day Book',
+    'manage-cashbook': 'Record & Void Cash Entries',
+    'view-reports': 'View Reports',
+    'view-register-shifts': 'View Register Shifts',
+    'open-register-shift': 'Open Register Shift',
+    'close-own-register-shift': 'Close Own Register Shift',
+    'record-shift-cash-movement': 'Record Shift Cash In/Out',
+    'manage-register-shifts': 'Manage Registers & All Shifts',
+    'approve-shift-variance': 'Approve Closing Variance',
+    'approve-shift-cash-movement': 'Approve Cash Movement',
+    'view-delivery': 'View Delivery Operations',
+    'manage-delivery': 'Manage Delivery Assignments',
+    'receive-delivery-cash': 'Receive Delivery Cash',
+    'view-users': 'View Users',
+    'manage-users': 'Manage Users',
+    'view-roles': 'View Roles',
+    'manage-roles': 'Manage Roles & Permissions',
+  };
+
+  String _permissionLabel(String key) => _permissionLabels[key] ??
+      key.split('-').map((word) => word.isEmpty ? word : '${word[0].toUpperCase()}${word.substring(1)}').join(' ');
   final _formKey = GlobalKey<FormState>();
   final _name = TextEditingController();
   final _email = TextEditingController();
@@ -243,7 +282,7 @@ class _UserFormScreenState extends State<UserFormScreen> {
         return StatefulBuilder(
           builder: (ctx, setLocal) {
             final filtered = allPermissions
-                .where((p) => p.toLowerCase().contains(query.toLowerCase()))
+                .where((p) => p.toLowerCase().contains(query.toLowerCase()) || _permissionLabel(p).toLowerCase().contains(query.toLowerCase()))
                 .toList();
 
             return AlertDialog(
@@ -321,7 +360,7 @@ class _UserFormScreenState extends State<UserFormScreen> {
                                       );
                                       return FilterChip(
                                         label: Text(
-                                          permName,
+                                          _permissionLabel(permName),
                                           overflow: TextOverflow.ellipsis,
                                         ),
                                         selected: selected,
@@ -441,7 +480,7 @@ class _UserFormScreenState extends State<UserFormScreen> {
         return StatefulBuilder(
           builder: (ctx, setLocal) {
             final filtered = allPermissions
-                .where((p) => p.toLowerCase().contains(query.toLowerCase()))
+                .where((p) => p.toLowerCase().contains(query.toLowerCase()) || _permissionLabel(p).toLowerCase().contains(query.toLowerCase()))
                 .toList();
 
             return AlertDialog(
@@ -513,7 +552,7 @@ class _UserFormScreenState extends State<UserFormScreen> {
                                       );
                                       return FilterChip(
                                         label: Text(
-                                          permName,
+                                          _permissionLabel(permName),
                                           overflow: TextOverflow.ellipsis,
                                         ),
                                         selected: selected,

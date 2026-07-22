@@ -27,6 +27,9 @@ class AuthProvider with ChangeNotifier {
     });
   }
 
+  bool hasAnyPermission(Iterable<String> permissions) =>
+      isMasterAdmin || permissions.any(hasPermission);
+
   void setRememberMe(bool value) {
     _rememberMe = value;
     notifyListeners();

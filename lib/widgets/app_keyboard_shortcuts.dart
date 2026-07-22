@@ -31,6 +31,7 @@ class PosShortcutInfo {
   final String section;
   final IconData icon;
   final bool masterOnly;
+  final String? permission;
 
   const PosShortcutInfo({
     required this.keys,
@@ -38,6 +39,7 @@ class PosShortcutInfo {
     required this.section,
     required this.icon,
     this.masterOnly = false,
+    this.permission,
   });
 }
 
@@ -47,12 +49,12 @@ class PosShortcutCatalog {
   static const global = <PosShortcutInfo>[
     PosShortcutInfo(keys: 'Ctrl + /', title: 'Show shortcut guide', section: 'System', icon: Icons.keyboard_rounded),
     PosShortcutInfo(keys: 'Ctrl + H', title: 'Go to Home', section: 'Navigation', icon: Icons.home_rounded),
-    PosShortcutInfo(keys: 'Ctrl + N / F2', title: 'Create Sale', section: 'Sales', icon: Icons.point_of_sale_rounded),
-    PosShortcutInfo(keys: 'Ctrl + L', title: 'Sales List', section: 'Sales', icon: Icons.receipt_long_rounded),
-    PosShortcutInfo(keys: 'Ctrl + O', title: 'New Purchase', section: 'Purchases', icon: Icons.shopping_cart_checkout_rounded),
-    PosShortcutInfo(keys: 'Ctrl + Shift + O', title: 'Purchase List', section: 'Purchases', icon: Icons.shopping_cart_rounded),
-    PosShortcutInfo(keys: 'Ctrl + P', title: 'Products', section: 'Inventory', icon: Icons.inventory_2_rounded),
-    PosShortcutInfo(keys: 'Ctrl + I', title: 'Stock', section: 'Inventory', icon: Icons.warehouse_rounded),
+    PosShortcutInfo(keys: 'Ctrl + N / F2', title: 'Create Sale', section: 'Sales', icon: Icons.point_of_sale_rounded, permission: 'create-sales'),
+    PosShortcutInfo(keys: 'Ctrl + L', title: 'Sales List', section: 'Sales', icon: Icons.receipt_long_rounded, permission: 'view-sales'),
+    PosShortcutInfo(keys: 'Ctrl + O', title: 'New Purchase', section: 'Purchases', icon: Icons.shopping_cart_checkout_rounded, permission: 'manage-purchases'),
+    PosShortcutInfo(keys: 'Ctrl + Shift + O', title: 'Purchase List', section: 'Purchases', icon: Icons.shopping_cart_rounded, permission: 'view-purchases'),
+    PosShortcutInfo(keys: 'Ctrl + P', title: 'Products', section: 'Inventory', icon: Icons.inventory_2_rounded, permission: 'view-products'),
+    PosShortcutInfo(keys: 'Ctrl + I', title: 'Stock', section: 'Inventory', icon: Icons.warehouse_rounded, permission: 'view-stock'),
     PosShortcutInfo(keys: 'Ctrl + Shift + C', title: 'Customers', section: 'Parties', icon: Icons.people_alt_rounded),
     PosShortcutInfo(keys: 'Ctrl + Shift + V', title: 'Vendors', section: 'Parties', icon: Icons.groups_2_rounded),
     PosShortcutInfo(keys: 'Ctrl + M', title: 'Party Payments', section: 'Parties', icon: Icons.account_balance_wallet_rounded),
@@ -144,7 +146,10 @@ class AppKeyboardShortcuts extends StatelessWidget {
     // Each destination is an open-or-focus call with a stable route id and a
     // LAZY builder, so an already-open module is revealed (with its unfinished
     // state) instead of a duplicate being pushed.
-    void open(String id, WidgetBuilder b) => _openBusiness(auth, branch, id, b);
+    void open(String id, WidgetBuilder b, {String? permission}) {
+      if (permission != null && !auth.hasPermission(permission)) return;
+      _openBusiness(auth, branch, id, b);
+    }
 
     return <ShortcutActivator, VoidCallback>{
       _ctrl(LogicalKeyboardKey.slash): () => _showShortcutGuide(context, auth),
@@ -154,35 +159,35 @@ class AppKeyboardShortcuts extends StatelessWidget {
       _ctrl(LogicalKeyboardKey.keyH): () => _goHome(auth),
       _cmd(LogicalKeyboardKey.keyH): () => _goHome(auth),
 
-      _ctrl(LogicalKeyboardKey.keyN): () => open(PosRouteIds.createSale, (_) => const CreateSaleScreen()),
-      _cmd(LogicalKeyboardKey.keyN): () => open(PosRouteIds.createSale, (_) => const CreateSaleScreen()),
-      const SingleActivator(LogicalKeyboardKey.f2): () => open(PosRouteIds.createSale, (_) => const CreateSaleScreen()),
+      _ctrl(LogicalKeyboardKey.keyN): () => open(PosRouteIds.createSale, (_) => const CreateSaleScreen(), permission: 'create-sales'),
+      _cmd(LogicalKeyboardKey.keyN): () => open(PosRouteIds.createSale, (_) => const CreateSaleScreen(), permission: 'create-sales'),
+      const SingleActivator(LogicalKeyboardKey.f2): () => open(PosRouteIds.createSale, (_) => const CreateSaleScreen(), permission: 'create-sales'),
 
-      _ctrl(LogicalKeyboardKey.keyL): () => open(PosRouteIds.sales, (_) => const SalesScreen()),
-      _cmd(LogicalKeyboardKey.keyL): () => open(PosRouteIds.sales, (_) => const SalesScreen()),
+      _ctrl(LogicalKeyboardKey.keyL): () => open(PosRouteIds.sales, (_) => const SalesScreen(), permission: 'view-sales'),
+      _cmd(LogicalKeyboardKey.keyL): () => open(PosRouteIds.sales, (_) => const SalesScreen(), permission: 'view-sales'),
 
-      _ctrl(LogicalKeyboardKey.keyO): () => open(PosRouteIds.createPurchase, (_) => const CreatePurchaseScreen()),
-      _cmd(LogicalKeyboardKey.keyO): () => open(PosRouteIds.createPurchase, (_) => const CreatePurchaseScreen()),
-      _ctrlShift(LogicalKeyboardKey.keyO): () => open(PosRouteIds.purchases, (_) => const PurchasesScreen()),
-      _cmdShift(LogicalKeyboardKey.keyO): () => open(PosRouteIds.purchases, (_) => const PurchasesScreen()),
+      _ctrl(LogicalKeyboardKey.keyO): () => open(PosRouteIds.createPurchase, (_) => const CreatePurchaseScreen(), permission: 'manage-purchases'),
+      _cmd(LogicalKeyboardKey.keyO): () => open(PosRouteIds.createPurchase, (_) => const CreatePurchaseScreen(), permission: 'manage-purchases'),
+      _ctrlShift(LogicalKeyboardKey.keyO): () => open(PosRouteIds.purchases, (_) => const PurchasesScreen(), permission: 'view-purchases'),
+      _cmdShift(LogicalKeyboardKey.keyO): () => open(PosRouteIds.purchases, (_) => const PurchasesScreen(), permission: 'view-purchases'),
 
-      _ctrl(LogicalKeyboardKey.keyP): () => open(PosRouteIds.products, (_) => const ProductsScreen()),
-      _cmd(LogicalKeyboardKey.keyP): () => open(PosRouteIds.products, (_) => const ProductsScreen()),
+      _ctrl(LogicalKeyboardKey.keyP): () => open(PosRouteIds.products, (_) => const ProductsScreen(), permission: 'view-products'),
+      _cmd(LogicalKeyboardKey.keyP): () => open(PosRouteIds.products, (_) => const ProductsScreen(), permission: 'view-products'),
 
-      _ctrl(LogicalKeyboardKey.keyI): () => open(PosRouteIds.stock, (_) => const StockScreen()),
-      _cmd(LogicalKeyboardKey.keyI): () => open(PosRouteIds.stock, (_) => const StockScreen()),
+      _ctrl(LogicalKeyboardKey.keyI): () => open(PosRouteIds.stock, (_) => const StockScreen(), permission: 'view-stock'),
+      _cmd(LogicalKeyboardKey.keyI): () => open(PosRouteIds.stock, (_) => const StockScreen(), permission: 'view-stock'),
 
-      _ctrlShift(LogicalKeyboardKey.keyC): () => open(PosRouteIds.customers, (_) => const CustomersScreen()),
-      _cmdShift(LogicalKeyboardKey.keyC): () => open(PosRouteIds.customers, (_) => const CustomersScreen()),
+      _ctrlShift(LogicalKeyboardKey.keyC): () => open(PosRouteIds.customers, (_) => const CustomersScreen(), permission: 'view-customers'),
+      _cmdShift(LogicalKeyboardKey.keyC): () => open(PosRouteIds.customers, (_) => const CustomersScreen(), permission: 'view-customers'),
 
-      _ctrlShift(LogicalKeyboardKey.keyV): () => open(PosRouteIds.vendors, (_) => const VendorsScreen()),
-      _cmdShift(LogicalKeyboardKey.keyV): () => open(PosRouteIds.vendors, (_) => const VendorsScreen()),
+      _ctrlShift(LogicalKeyboardKey.keyV): () => open(PosRouteIds.vendors, (_) => const VendorsScreen(), permission: 'view-vendors'),
+      _cmdShift(LogicalKeyboardKey.keyV): () => open(PosRouteIds.vendors, (_) => const VendorsScreen(), permission: 'view-vendors'),
 
       _ctrl(LogicalKeyboardKey.keyM): () => open(PosRouteIds.partyPayments, (_) => const PartyPaymentsScreen()),
       _cmd(LogicalKeyboardKey.keyM): () => open(PosRouteIds.partyPayments, (_) => const PartyPaymentsScreen()),
 
-      _ctrl(LogicalKeyboardKey.keyB): () => open(PosRouteIds.cashLedger, (_) => const CashLedgerScreen()),
-      _cmd(LogicalKeyboardKey.keyB): () => open(PosRouteIds.cashLedger, (_) => const CashLedgerScreen()),
+      _ctrl(LogicalKeyboardKey.keyB): () => open(PosRouteIds.cashLedger, (_) => const CashLedgerScreen(), permission: 'view-cashbook'),
+      _cmd(LogicalKeyboardKey.keyB): () => open(PosRouteIds.cashLedger, (_) => const CashLedgerScreen(), permission: 'view-cashbook'),
 
       _ctrlShift(LogicalKeyboardKey.keyN): () => open(PosRouteIds.cashLedgerCreate, (_) => const CashLedgerCreateScreen()),
       _cmdShift(LogicalKeyboardKey.keyN): () => open(PosRouteIds.cashLedgerCreate, (_) => const CashLedgerCreateScreen()),
@@ -194,14 +199,14 @@ class AppKeyboardShortcuts extends StatelessWidget {
       _ctrl(LogicalKeyboardKey.keyE): () => open(PosRouteIds.cashLedgerCreate, (_) => const CashLedgerCreateScreen(initialCategory: 'OTHER_EXPENSE')),
       _cmd(LogicalKeyboardKey.keyE): () => open(PosRouteIds.cashLedgerCreate, (_) => const CashLedgerCreateScreen(initialCategory: 'OTHER_EXPENSE')),
 
-      _ctrl(LogicalKeyboardKey.keyR): () => open(PosRouteIds.reports, (_) => const ReportsHubScreen()),
-      _cmd(LogicalKeyboardKey.keyR): () => open(PosRouteIds.reports, (_) => const ReportsHubScreen()),
+      _ctrl(LogicalKeyboardKey.keyR): () => open(PosRouteIds.reports, (_) => const ReportsHubScreen(), permission: 'view-reports'),
+      _cmd(LogicalKeyboardKey.keyR): () => open(PosRouteIds.reports, (_) => const ReportsHubScreen(), permission: 'view-reports'),
 
       const SingleActivator(LogicalKeyboardKey.f6): () =>
-          open(PosRouteIds.registerShift, (_) => const RegisterShiftScreen()),
+          open(PosRouteIds.registerShift, (_) => const RegisterShiftScreen(), permission: 'view-register-shifts'),
 
-      _ctrl(LogicalKeyboardKey.keyU): () => open(PosRouteIds.users, (_) => const UsersScreen()),
-      _cmd(LogicalKeyboardKey.keyU): () => open(PosRouteIds.users, (_) => const UsersScreen()),
+      _ctrl(LogicalKeyboardKey.keyU): () => open(PosRouteIds.users, (_) => const UsersScreen(), permission: 'view-users'),
+      _cmd(LogicalKeyboardKey.keyU): () => open(PosRouteIds.users, (_) => const UsersScreen(), permission: 'view-users'),
 
       // Sale Returns navigation intentionally disabled; returns use -ve sales.
       // _ctrl(LogicalKeyboardKey.keyT): () => open(PosRouteIds.saleReturns, (_) => const SaleReturnsScreen()),
@@ -300,7 +305,9 @@ void _showShortcutGuide(
   List<PosShortcutInfo> extra = const [],
 }) {
   final globalRows =
-      PosShortcutCatalog.global.where((item) => !item.masterOnly || auth.isMasterAdmin).toList();
+      PosShortcutCatalog.global.where((item) =>
+          (!item.masterOnly || auth.isMasterAdmin) &&
+          (item.permission == null || auth.hasPermission(item.permission!))).toList();
 
   showDialog(
     context: appNavigatorKey.currentContext ?? context,
