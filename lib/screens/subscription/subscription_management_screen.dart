@@ -227,6 +227,7 @@ class _SummaryCards extends StatelessWidget {
       _SummaryCard('Expired',        _n('expired'),        AppTheme.danger),
       _SummaryCard('Suspended',      _n('suspended'),      AppTheme.danger),
       _SummaryCard('Locked',         _n('locked'),         AppTheme.danger),
+      _SummaryCard('Barcode',        _n('barcode_labels_addon'), AppTheme.purple),
     ];
 
     return SizedBox(
@@ -311,6 +312,8 @@ class _BranchSubscriptionTile extends StatelessWidget {
     final branchName = branch['name']?.toString() ?? 'Branch $branchId';
     final location = branch['location']?.toString();
     final message = branch['message']?.toString();
+    final addons = branch['addons'] as Map? ?? const {};
+    final barcodeAddonActive = addons['barcode_labels'] == true;
 
     Color borderColor;
     if (isNotConfigured) {
@@ -391,6 +394,18 @@ class _BranchSubscriptionTile extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
                       fontSize: 11.5, color: AppTheme.danger)),
+            if (barcodeAddonActive)
+              const Padding(
+                padding: EdgeInsets.only(top: 4),
+                child: Text(
+                  'Add-on: Barcode Label Printing',
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    color: AppTheme.purple,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
           ],
         ),
         trailing: OutlinedButton(
@@ -422,6 +437,7 @@ class _BranchSubscriptionTile extends StatelessWidget {
       final subProvider = context.read<SubscriptionProvider>();
       if (auth.activeBranchId == branchId && auth.token != null) {
         await subProvider.refresh(token: auth.token!, branchId: branchId);
+        await auth.refreshMe();
       }
     }
   }
@@ -508,6 +524,7 @@ class _SubscriptionEditDialogState extends State<_SubscriptionEditDialog> {
   String? _selectedStatus;
   DateTime? _expiresAt;
   DateTime? _graceUntil;
+  bool _barcodeLabelsAddon = false;
   final _reasonCtrl = TextEditingController();
   final _suspendReasonCtrl = TextEditingController();
   final _notesCtrl = TextEditingController();
@@ -539,6 +556,8 @@ class _SubscriptionEditDialogState extends State<_SubscriptionEditDialog> {
       final res = await widget.api.getBranchDetail(widget.branchId);
       final data = res['data'] as Map? ?? {};
       final sub = data['subscription'] as Map? ?? {};
+      final addons = data['addons'] as Map? ?? {};
+      final barcodeAddon = addons['barcode_labels'];
       setState(() {
         _detail = Map<String, dynamic>.from(data);
         _selectedStatus = sub['status']?.toString() ?? 'active';
@@ -550,6 +569,9 @@ class _SubscriptionEditDialogState extends State<_SubscriptionEditDialog> {
             : null;
         _notesCtrl.text = sub['notes']?.toString() ?? '';
         _suspendReasonCtrl.text = sub['suspended_reason']?.toString() ?? '';
+        _barcodeLabelsAddon = barcodeAddon is Map
+            ? barcodeAddon['active'] == true
+            : barcodeAddon == true;
         _loading = false;
       });
     } catch (e) {
@@ -582,6 +604,7 @@ class _SubscriptionEditDialogState extends State<_SubscriptionEditDialog> {
             _reasonCtrl.text.trim().isEmpty ? null : _reasonCtrl.text.trim(),
         if (_selectedStatus == 'suspended')
           'suspended_reason': _suspendReasonCtrl.text.trim(),
+        'addons': {'barcode_labels': _barcodeLabelsAddon},
       };
 
       await widget.api.updateSubscription(widget.branchId, payload);
@@ -678,6 +701,35 @@ class _SubscriptionEditDialogState extends State<_SubscriptionEditDialog> {
                       ),
                       const SizedBox(height: 14),
                     ],
+
+                    const Text('Add-on Modules',
+                        style: TextStyle(
+                            fontWeight: FontWeight.w700, fontSize: 13)),
+                    const SizedBox(height: 6),
+                    Container(
+                      decoration: BoxDecoration(
+                        color: AppTheme.purple.withOpacity(.05),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: AppTheme.purple.withOpacity(.2)),
+                      ),
+                      child: SwitchListTile(
+                        value: _barcodeLabelsAddon,
+                        onChanged: (value) =>
+                            setState(() => _barcodeLabelsAddon = value),
+                        secondary: const Icon(
+                          Icons.qr_code_2_rounded,
+                          color: AppTheme.purple,
+                        ),
+                        title: const Text(
+                          'Barcode Label Printing',
+                          style: TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                        subtitle: const Text(
+                          'Allows authorized branch users to print product barcode and price labels.',
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 14),
 
                     // Notes
                     const Text('Notes',

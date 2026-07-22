@@ -25,6 +25,9 @@ class PrinterConfig {
 
   /// Barcode label printer configuration.
   /// connection: 'dialog' | 'local' | 'network'.
+  final bool barcodeAddonActive;
+  final bool barcodePermissionGranted;
+  final bool barcodeAccessGranted;
   final bool barcodePrintEnabled;
   final String barcodeConnection;
   final String? barcodeLocalPrinterName;
@@ -62,6 +65,9 @@ class PrinterConfig {
     this.secondaryNetworkPort = 9100,
     this.secondaryLocalPrinterName,
     this.secondaryInvoiceTemplate = InvoiceTemplate.kitchen,
+    this.barcodeAddonActive = false,
+    this.barcodePermissionGranted = false,
+    this.barcodeAccessGranted = false,
     this.barcodePrintEnabled = false,
     this.barcodeConnection = 'dialog',
     this.barcodeLocalPrinterName,
@@ -82,7 +88,7 @@ class PrinterConfig {
   });
 
   bool get isConfigured => activeConnection != 'none';
-  bool get isBarcodeConfigured => barcodePrintEnabled;
+  bool get isBarcodeConfigured => barcodeAccessGranted && barcodePrintEnabled;
 
   // Source compatibility for receipt-printing code during rolling upgrades.
   bool get kitchenPrintEnabled => secondaryPrintEnabled;
@@ -146,6 +152,9 @@ class PrinterConfig {
         preferred('secondary_invoice_template', 'kitchen_invoice_template')?.toString() ??
             InvoiceTemplate.kitchen.value,
       ),
+      barcodeAddonActive: _bool(json['barcode_addon_active']),
+      barcodePermissionGranted: _bool(json['barcode_permission_granted']),
+      barcodeAccessGranted: _bool(json['barcode_access_granted']),
       barcodePrintEnabled: _bool(json['barcode_print_enabled']),
       barcodeConnection: (json['barcode_connection'] ?? 'dialog').toString(),
       barcodeLocalPrinterName: json['barcode_local_printer_name']?.toString(),
@@ -184,6 +193,9 @@ class PrinterConfig {
       'secondary_network_port': secondaryNetworkPort,
       'secondary_local_printer_name': secondaryLocalPrinterName,
       'secondary_invoice_template': secondaryInvoiceTemplate.value,
+      'barcode_addon_active': barcodeAddonActive,
+      'barcode_permission_granted': barcodePermissionGranted,
+      'barcode_access_granted': barcodeAccessGranted,
       'barcode_print_enabled': barcodePrintEnabled,
       'barcode_connection': barcodeConnection,
       'barcode_local_printer_name': barcodeLocalPrinterName,
@@ -219,6 +231,9 @@ class PrinterConfig {
     int? secondaryNetworkPort,
     String? secondaryLocalPrinterName,
     InvoiceTemplate? secondaryInvoiceTemplate,
+    bool? barcodeAddonActive,
+    bool? barcodePermissionGranted,
+    bool? barcodeAccessGranted,
     bool? barcodePrintEnabled,
     String? barcodeConnection,
     String? barcodeLocalPrinterName,
@@ -252,6 +267,9 @@ class PrinterConfig {
       secondaryNetworkPort: secondaryNetworkPort ?? this.secondaryNetworkPort,
       secondaryLocalPrinterName: secondaryLocalPrinterName ?? this.secondaryLocalPrinterName,
       secondaryInvoiceTemplate: secondaryInvoiceTemplate ?? this.secondaryInvoiceTemplate,
+      barcodeAddonActive: barcodeAddonActive ?? this.barcodeAddonActive,
+      barcodePermissionGranted: barcodePermissionGranted ?? this.barcodePermissionGranted,
+      barcodeAccessGranted: barcodeAccessGranted ?? this.barcodeAccessGranted,
       barcodePrintEnabled: barcodePrintEnabled ?? this.barcodePrintEnabled,
       barcodeConnection: barcodeConnection ?? this.barcodeConnection,
       barcodeLocalPrinterName: barcodeLocalPrinterName ?? this.barcodeLocalPrinterName,

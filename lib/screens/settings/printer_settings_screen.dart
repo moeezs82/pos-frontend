@@ -54,7 +54,7 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
 
   String _activeConnection = 'none';
   bool _secondaryEnabled = false;
-  bool _barcodeEnabled = false;
+  bool _barcodeAddonActive = false;
   String _barcodeConnection = 'dialog';
   String _barcodeLanguage = 'driver';
   int _barcodeDpi = 203;
@@ -152,13 +152,21 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
       final all = await _service.getAllPrinterSettings();
       final match = all.where((c) => c.branchId == branchId).toList();
       final config = match.isNotEmpty ? match.first : const PrinterConfig();
-      _applyToForm(config);
+      _applyToForm(config.copyWith(
+        barcodeAddonActive: _selectedBranchHasBarcodeAddon,
+        barcodePermissionGranted: true,
+        barcodeAccessGranted: _selectedBranchHasBarcodeAddon,
+      ));
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Could not load settings: ${e.toString().replaceFirst('Exception: ', '')}')),
       );
-      _applyToForm(const PrinterConfig());
+      _applyToForm(PrinterConfig(
+        barcodeAddonActive: _selectedBranchHasBarcodeAddon,
+        barcodePermissionGranted: true,
+        barcodeAccessGranted: _selectedBranchHasBarcodeAddon,
+      ));
     } finally {
       if (mounted) setState(() => _loadingConfig = false);
     }
@@ -189,7 +197,7 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
       _secondaryLocalPrinterCtrl.text = config.secondaryLocalPrinterName ?? '';
       _mainTemplate = config.mainInvoiceTemplate;
       _secondaryTemplate = config.secondaryInvoiceTemplate;
-      _barcodeEnabled = config.barcodePrintEnabled;
+      _barcodeAddonActive = config.barcodeAddonActive;
       _barcodeConnection = config.barcodeConnection;
       _barcodeLocalPrinterCtrl.text = config.barcodeLocalPrinterName ?? '';
       _barcodeNetworkIpCtrl.text = config.barcodeNetworkIp ?? '';
@@ -223,6 +231,21 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
     return 'KD';
   }
 
+  bool get _selectedBranchHasBarcodeAddon {
+    if (_selectedBranchId == null) return false;
+    for (final branch in _branches) {
+      if (branch['id'] == _selectedBranchId) {
+        final addons = branch['addons'];
+        if (addons is Map) {
+          final value = addons['barcode_labels'];
+          if (value is Map) return value['active'] == true || value['is_active'] == true;
+          return value == true;
+        }
+      }
+    }
+    return false;
+  }
+
   void _addFooterLine() {
     setState(() => _footerCtrls.add(TextEditingController()));
   }
@@ -248,11 +271,11 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
       _showMessage('Enter the local printer name.');
       return;
     }
-    if (_barcodeEnabled && _barcodeConnection == 'local' && _barcodeLocalPrinterCtrl.text.trim().isEmpty) {
+    if (_barcodeAddonActive && _barcodeConnection == 'local' && _barcodeLocalPrinterCtrl.text.trim().isEmpty) {
       _showMessage('Select an installed printer for barcode labels.');
       return;
     }
-    if (_barcodeEnabled && _barcodeConnection == 'network') {
+    if (_barcodeAddonActive && _barcodeConnection == 'network') {
       if (_barcodeNetworkIpCtrl.text.trim().isEmpty) {
         _showMessage('Enter the barcode printer network address.');
         return;
@@ -266,7 +289,7 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
         return;
       }
     }
-    if (_barcodeEnabled &&
+    if (_barcodeAddonActive &&
         (barcodeWidth == null || barcodeWidth < 15 || barcodeWidth > 200 ||
             barcodeHeight == null || barcodeHeight < 10 || barcodeHeight > 200 ||
             barcodeGap == null || barcodeGap < 0 || barcodeGap > 20)) {
@@ -292,7 +315,7 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
         secondaryNetworkPort: int.tryParse(_secondaryNetworkPortCtrl.text.trim()) ?? 9100,
         secondaryLocalPrinterName: _secondaryLocalPrinterCtrl.text.trim().isEmpty ? null : _secondaryLocalPrinterCtrl.text.trim(),
         secondaryInvoiceTemplate: _secondaryTemplate,
-        barcodePrintEnabled: _barcodeEnabled,
+        barcodePrintEnabled: _barcodeAddonActive,
         barcodeConnection: _barcodeConnection,
         barcodeLocalPrinterName: _barcodeLocalPrinterCtrl.text.trim().isEmpty ? null : _barcodeLocalPrinterCtrl.text.trim(),
         barcodeNetworkIp: _barcodeNetworkIpCtrl.text.trim().isEmpty ? null : _barcodeNetworkIpCtrl.text.trim(),
@@ -383,6 +406,9 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
 
   PrinterConfig _barcodeConfigFromForm() {
     return PrinterConfig(
+      barcodeAddonActive: true,
+      barcodePermissionGranted: true,
+      barcodeAccessGranted: true,
       barcodePrintEnabled: true,
       barcodeConnection: _barcodeConnection,
       barcodeLocalPrinterName: _barcodeLocalPrinterCtrl.text.trim().isEmpty
@@ -406,6 +432,10 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
   }
 
   Future<void> _testBarcodePrint() async {
+    if (!_barcodeAddonActive) {
+      _showMessage('Activate the Barcode Label Printing add-on for this branch first.');
+      return;
+    }
     if (_barcodeConnection == 'local' && _barcodeLocalPrinterCtrl.text.trim().isEmpty) {
       _showMessage('Select an installed barcode printer first.');
       return;
@@ -854,6 +884,50 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
   }
 
   Widget _buildBarcodePanel() {
+    if (_selectedBranchId == null || !_barcodeAddonActive) {
+      final hasBranch = _selectedBranchId != null;
+      return EnterprisePanel(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const EnterpriseSectionHeader(
+              title: 'Barcode Printer',
+              subtitle: 'Barcode Label Printing is a branch add-on.',
+              icon: Icons.qr_code_2_rounded,
+              color: AppTheme.purple,
+            ),
+            const SizedBox(height: 12),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: AppTheme.warning.withOpacity(.08),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: AppTheme.warning.withOpacity(.3)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.lock_outline_rounded, color: AppTheme.warning),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      hasBranch
+                          ? 'Activate Barcode Label Printing for this branch from Branch Subscriptions before configuring a barcode printer.'
+                          : 'Select a branch first. Barcode printer configuration is branch-specific and is not available on the global default.',
+                      style: const TextStyle(
+                        color: AppTheme.textMuted,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
     final printerNames = _installedPrinters
         .map((p) => p.name.trim())
         .where((name) => name.isNotEmpty)
@@ -876,15 +950,27 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
             color: AppTheme.purple,
           ),
           const SizedBox(height: 8),
-          SwitchListTile(
-            contentPadding: EdgeInsets.zero,
-            value: _barcodeEnabled,
-            onChanged: (v) => setState(() => _barcodeEnabled = v),
-            title: const Text('Enable barcode label printing', style: TextStyle(fontWeight: FontWeight.w800)),
-            subtitle: const Text('Product-management users can print labels for products that have a barcode.'),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+            decoration: BoxDecoration(
+              color: AppTheme.success.withOpacity(.08),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: AppTheme.success.withOpacity(.25)),
+            ),
+            child: const Row(
+              children: [
+                Icon(Icons.verified_rounded, color: AppTheme.success, size: 20),
+                SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Barcode Label Printing add-on is active. Saving this configuration makes it operational for users with Print Barcode Labels permission.',
+                    style: TextStyle(fontWeight: FontWeight.w600, color: AppTheme.textMuted),
+                  ),
+                ),
+              ],
+            ),
           ),
-          if (_barcodeEnabled) ...[
-            const SizedBox(height: 10),
+          const SizedBox(height: 14),
             const Text('Connection', style: TextStyle(fontWeight: FontWeight.w800)),
             const SizedBox(height: 8),
             SegmentedButton<String>(
@@ -1105,7 +1191,6 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
                 label: Text(_testingBarcode ? 'Sending test label...' : 'Print Test Barcode Label'),
               ),
             ),
-          ],
         ],
       ),
     );

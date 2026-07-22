@@ -35,6 +35,17 @@ class AuthProvider with ChangeNotifier, WidgetsBindingObserver {
     });
   }
 
+  /// Commercial branch entitlements never inherit the Master Admin bypass.
+  bool hasAddon(String addonKey) {
+    final addons = _asMap(_user?['addons']);
+    if (addons == null) return false;
+    final value = addons[addonKey];
+    if (value is Map) {
+      return _readBool(value['active'] ?? value['is_active']);
+    }
+    return _readBool(value);
+  }
+
   bool hasAnyPermission(Iterable<String> permissions) =>
       isMasterAdmin || permissions.any(hasPermission);
 

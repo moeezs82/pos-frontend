@@ -49,4 +49,23 @@ class SubscriptionApiService {
     return _client.get('/subscriptions/$branchId/audit',
         query: {'page': page.toString()});
   }
+
+  /// Master Admin commercial add-on controls and audit trail.
+  Future<Map<String, dynamic>> getBranchAddons(int branchId) async {
+    return _client.get('/branches/$branchId/addons');
+  }
+
+  Future<Map<String, dynamic>> updateBranchAddons(
+      int branchId, Map<String, bool> addons, {String? reason}) async {
+    return _client.put('/branches/$branchId/addons', body: {
+      'addons': addons,
+      if (reason != null && reason.trim().isNotEmpty) 'reason': reason.trim(),
+    });
+  }
+
+  Future<Map<String, dynamic>> getBranchAddonAudit(
+      int branchId, {int page = 1}) async {
+    return _client.get('/branches/$branchId/addons/audit',
+        query: {'page': page.toString()});
+  }
 }

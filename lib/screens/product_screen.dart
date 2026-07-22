@@ -153,8 +153,15 @@ class _ProductsScreenState extends State<ProductsScreen> {
 
   Future<void> _printBarcodeLabels(dynamic product) async {
     final auth = context.read<AuthProvider>();
-    if (!auth.hasPermission('manage-products')) {
+    if (!auth.hasPermission('print-barcode-labels')) {
       AppFeedback.error(context, 'You do not have permission to print product labels.');
+      return;
+    }
+    if (!auth.hasAddon('barcode_labels')) {
+      AppFeedback.warning(
+        context,
+        'Barcode Label Printing is not active for this branch.',
+      );
       return;
     }
 
@@ -180,10 +187,12 @@ class _ProductsScreenState extends State<ProductsScreen> {
     final config = printerConfig.config.copyWith(
       barcodeCurrency: context.read<BranchProvider>().currency,
     );
-    if (!config.barcodePrintEnabled) {
+    if (!config.isBarcodeConfigured) {
       AppFeedback.warning(
         context,
-        'Barcode printing is not enabled. Ask a Master Admin to configure the Barcode Printer.',
+        config.barcodeAddonActive
+            ? 'Ask a Master Admin to configure the Barcode Printer for this branch.'
+            : 'Barcode Label Printing is not active for this branch.',
       );
       return;
     }
@@ -365,7 +374,10 @@ class _ProductsScreenState extends State<ProductsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final canPrintBarcodes = context.watch<AuthProvider>().hasPermission('manage-products');
+    final auth = context.watch<AuthProvider>();
+    final canManageProducts = auth.hasPermission('manage-products');
+    final canPrintBarcodes = auth.hasPermission('print-barcode-labels')
+        && auth.hasAddon('barcode_labels');
     return EnterprisePage(
       title: 'Products',
       subtitle: 'Manage SKU, pricing, brands, categories and available stock.',
@@ -377,23 +389,25 @@ class _ProductsScreenState extends State<ProductsScreen> {
         ),
       ],
       actions: [
-        OutlinedButton.icon(
-          onPressed: _importExportBusy ? null : _showImportExportMenu,
-          icon: _importExportBusy
-              ? const SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : const Icon(Icons.import_export_rounded),
-          label: const Text('Import/Export'),
-        ),
-        const SizedBox(width: 8),
-        FilledButton.icon(
-          onPressed: () => _openForm(),
-          icon: const Icon(Icons.add_rounded),
-          label: const Text('Add Product'),
-        ),
+        if (canManageProducts) ...[
+          OutlinedButton.icon(
+            onPressed: _importExportBusy ? null : _showImportExportMenu,
+            icon: _importExportBusy
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.import_export_rounded),
+            label: const Text('Import/Export'),
+          ),
+          const SizedBox(width: 8),
+          FilledButton.icon(
+            onPressed: () => _openForm(),
+            icon: const Icon(Icons.add_rounded),
+            label: const Text('Add Product'),
+          ),
+        ],
       ],
       bottomNavigationBar: _products.isNotEmpty
           ? EnterprisePaginationBar(
@@ -451,11 +465,13 @@ class _ProductsScreenState extends State<ProductsScreen> {
                               subtitle: _search.isEmpty
                                   ? 'Add your first product to start selling and tracking stock.'
                                   : 'No product matched your search. Try SKU, barcode, product name or category.',
-                              action: FilledButton.icon(
-                                onPressed: () => _openForm(),
-                                icon: const Icon(Icons.add_rounded),
-                                label: const Text('Add Product'),
-                              ),
+                              action: canManageProducts
+                                  ? FilledButton.icon(
+                                      onPressed: () => _openForm(),
+                                      icon: const Icon(Icons.add_rounded),
+                                      label: const Text('Add Product'),
+                                    )
+                                  : null,
                             ),
                           ],
                         )
@@ -545,16 +561,18 @@ class _ProductsScreenState extends State<ProductsScreen> {
                                         onPressed: () => _printBarcodeLabels(p),
                                         icon: const Icon(Icons.qr_code_2_rounded, color: AppTheme.primary),
                                       ),
-                                    IconButton(
-                                      tooltip: 'Edit',
-                                      onPressed: () => _openForm(p),
-                                      icon: const Icon(Icons.edit_rounded),
-                                    ),
-                                    IconButton(
-                                      tooltip: 'Delete',
-                                      onPressed: () => _confirmDelete(p),
-                                      icon: const Icon(Icons.delete_outline_rounded, color: AppTheme.danger),
-                                    ),
+                                    if (canManageProducts) ...[
+                                      IconButton(
+                                        tooltip: 'Edit',
+                                        onPressed: () => _openForm(p),
+                                        icon: const Icon(Icons.edit_rounded),
+                                      ),
+                                      IconButton(
+                                        tooltip: 'Delete',
+                                        onPressed: () => _confirmDelete(p),
+                                        icon: const Icon(Icons.delete_outline_rounded, color: AppTheme.danger),
+                                      ),
+                                    ],
                                   ],
                                 ),
                               ),
