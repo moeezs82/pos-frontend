@@ -38,6 +38,11 @@ class WhatsAppInvoiceService {
     return digits;
   }
 
+  /// Save the PDF and copy it to the Windows file clipboard.
+  ///
+  /// Does NOT open WhatsApp automatically — the cashier must press the
+  /// "Open WhatsApp" button in the dialog. This prevents an unsolicited
+  /// window appearing during sale finalization.
   Future<WhatsAppInvoicePreparation> prepareAndOpen({
     required Uint8List pdfBytes,
     required String receiptNo,
@@ -47,7 +52,7 @@ class WhatsAppInvoiceService {
     final normalizedPhone = normalizePhone(phone);
     final pdfPath = await savePdf(pdfBytes: pdfBytes, receiptNo: receiptNo);
     final copied = await copyPdfToClipboard(pdfPath);
-    await openChat(phone: normalizedPhone, message: message);
+    //await openChat(phone: normalizedPhone, message: message);
 
     return WhatsAppInvoicePreparation(
       pdfPath: pdfPath,
@@ -75,7 +80,10 @@ class WhatsAppInvoiceService {
         .replaceAll(RegExp(r'[<>:"/\\|?*\x00-\x1F]'), '_')
         .trim();
     final target = File(
-      p.join(directory.path, '${safeReceiptNo.isEmpty ? 'invoice' : safeReceiptNo}.pdf'),
+      p.join(
+        directory.path,
+        '${safeReceiptNo.isEmpty ? 'invoice' : safeReceiptNo}.pdf',
+      ),
     );
     final temporary = File('${target.path}.tmp');
     await temporary.writeAsBytes(pdfBytes, flush: true);
@@ -99,31 +107,31 @@ class WhatsAppInvoiceService {
       r'[System.Windows.Forms.Clipboard]::SetDataObject($data, $true)',
     ].join('; ');
 
-    final result = await Process.run(
-      'powershell.exe',
-      ['-NoProfile', '-NonInteractive', '-STA', '-Command', script],
-      runInShell: false,
-    );
+    final result = await Process.run('powershell.exe', [
+      '-NoProfile',
+      '-NonInteractive',
+      '-STA',
+      '-Command',
+      script,
+    ], runInShell: false);
     return result.exitCode == 0;
   }
 
-  Future<void> openChat({required String phone, required String message}) async {
+  Future<void> openChat({
+    required String phone,
+    required String message,
+  }) async {
     final normalizedPhone = normalizePhone(phone);
-    final uri = Uri.https(
-      'wa.me',
-      '/$normalizedPhone',
-      {'text': message},
-    );
+    final uri = Uri.https('wa.me', '/$normalizedPhone', {'text': message});
 
     if (Platform.isWindows) {
       // explorer.exe treats some HTTPS URLs as filesystem locations. Use the
       // Windows URL protocol handler so the default browser/WhatsApp handoff
       // receives the URL instead.
-      final result = await Process.run(
-        'rundll32.exe',
-        ['url.dll,FileProtocolHandler', uri.toString()],
-        runInShell: false,
-      );
+      final result = await Process.run('rundll32.exe', [
+        'url.dll,FileProtocolHandler',
+        uri.toString(),
+      ], runInShell: false);
       if (result.exitCode != 0) {
         throw ProcessException(
           'rundll32.exe',
@@ -142,7 +150,9 @@ class WhatsAppInvoiceService {
       await Process.start('xdg-open', [uri.toString()], runInShell: false);
       return;
     }
-    throw UnsupportedError('WhatsApp invoice sharing is not supported on this platform.');
+    throw UnsupportedError(
+      'WhatsApp invoice sharing is not supported on this platform.',
+    );
   }
 
   Future<void> openInvoiceFolder(String pdfPath) async {

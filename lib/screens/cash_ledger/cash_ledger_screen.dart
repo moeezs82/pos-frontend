@@ -25,18 +25,49 @@ class CashLedgerScreen extends StatefulWidget {
 }
 
 class _CashLedgerScreenState extends State<CashLedgerScreen> with SingleTickerProviderStateMixin {
-  late final TabController _tabController;
+  TabController? _tabController;
   final GlobalKey<_LedgerViewState> _ledgerKey = GlobalKey<_LedgerViewState>();
+
+  // Track which optional tabs are visible so we can rebuild the controller
+  // when addon state changes (e.g., after a version-bump refresh mid-session).
+  bool _loansTabVisible  = false;
+  bool _qametiTabVisible = false;
 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 5, vsync: this);
+    _rebuildController();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Rebuild TabController if addon state changed (e.g., after a refresh).
+    final auth = context.read<AuthProvider>();
+    final loansNow  = auth.hasAddon('loan_module');
+    final qametiNow = auth.hasAddon('qameti_module');
+    if (loansNow != _loansTabVisible || qametiNow != _qametiTabVisible) {
+      _rebuildController(loansNow: loansNow, qametiNow: qametiNow);
+    }
+  }
+
+  void _rebuildController({bool? loansNow, bool? qametiNow}) {
+    final auth = context.read<AuthProvider>();
+    _loansTabVisible  = loansNow  ?? auth.hasAddon('loan_module');
+    _qametiTabVisible = qametiNow ?? auth.hasAddon('qameti_module');
+
+    final count = 3 // Ledger, Expenses, Day Book — always present
+        + (_loansTabVisible  ? 1 : 0)
+        + (_qametiTabVisible ? 1 : 0);
+
+    final old = _tabController;
+    _tabController = TabController(length: count, vsync: this);
+    old?.dispose();
   }
 
   @override
   void dispose() {
-    _tabController.dispose();
+    _tabController?.dispose();
     super.dispose();
   }
 
@@ -52,23 +83,42 @@ class _CashLedgerScreenState extends State<CashLedgerScreen> with SingleTickerPr
 
   @override
   Widget build(BuildContext context) {
+    // Watch auth so the tab bar reacts to live addon-state changes.
+    final auth = context.watch<AuthProvider>();
+    final showLoans  = auth.hasAddon('loan_module');
+    final showQameti = auth.hasAddon('qameti_module');
+
+    // Build dynamic tab + body lists. Order: Ledger, Loans?, Qameti?,
+    // Expenses, Day Book — keeping the two optional tabs together in the
+    // middle so their position is predictable for the cashier.
+    final tabs = <Tab>[
+      const Tab(text: 'Ledger',   icon: Icon(Icons.receipt_long_rounded,       size: 20)),
+      if (showLoans)
+        const Tab(text: 'Loans',  icon: Icon(Icons.request_quote_rounded,       size: 20)),
+      if (showQameti)
+        const Tab(text: 'Qameti', icon: Icon(Icons.savings_rounded,             size: 20)),
+      const Tab(text: 'Expenses', icon: Icon(Icons.receipt_rounded,             size: 20)),
+      const Tab(text: 'Day Book', icon: Icon(Icons.calendar_view_day_rounded,   size: 20)),
+    ];
+
+    final bodies = <Widget>[
+      _LedgerView(key: _ledgerKey),
+      if (showLoans)  const SubledgerView(kind: SubledgerKind.loans),
+      if (showQameti) const SubledgerView(kind: SubledgerKind.qameti),
+      const SubledgerView(kind: SubledgerKind.expenses),
+      const _DayBookView(),
+    ];
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Cash Ledger'),
-        // subtitle: const Text('Unified view of all cash movements'),
         actions: const [
           Padding(padding: EdgeInsets.only(right: 8), child: BranchIndicator(tappable: false)),
         ],
         bottom: TabBar(
           controller: _tabController,
           isScrollable: true,
-          tabs: const [
-            Tab(text: 'Ledger', icon: Icon(Icons.receipt_long_rounded, size: 20)),
-            Tab(text: 'Loans', icon: Icon(Icons.request_quote_rounded, size: 20)),
-            Tab(text: 'Qameti', icon: Icon(Icons.savings_rounded, size: 20)),
-            Tab(text: 'Expenses', icon: Icon(Icons.receipt_rounded, size: 20)),
-            Tab(text: 'Day Book', icon: Icon(Icons.calendar_view_day_rounded, size: 20)),
-          ],
+          tabs: tabs,
         ),
       ),
       floatingActionButton: FloatingActionButton.extended(
@@ -78,13 +128,7 @@ class _CashLedgerScreenState extends State<CashLedgerScreen> with SingleTickerPr
       ),
       body: TabBarView(
         controller: _tabController,
-        children: [
-          _LedgerView(key: _ledgerKey),
-          const SubledgerView(kind: SubledgerKind.loans),
-          const SubledgerView(kind: SubledgerKind.qameti),
-          const SubledgerView(kind: SubledgerKind.expenses),
-          const _DayBookView(),
-        ],
+        children: bodies,
       ),
     );
   }

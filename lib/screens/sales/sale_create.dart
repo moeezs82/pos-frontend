@@ -1270,8 +1270,8 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     required String message,
   }) async {
     var clipboardStatus = prepared.copiedToClipboard
-        ? 'The PDF is copied. In WhatsApp, press Ctrl+V and then Send.'
-        : 'The PDF was saved, but Windows could not copy it automatically. Use Open Folder and attach it manually.';
+        ? 'PDF copied to clipboard. Press "Open WhatsApp", then Ctrl+V and Send.'
+        : 'PDF saved. Windows could not copy it automatically — use Open Folder and attach it manually.';
     await showDialog<void>(
       context: context,
       barrierDismissible: false,
@@ -2145,6 +2145,11 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
                   ),
                 ),
               ),
+              // The WhatsApp invoice toggle is only shown when the branch has
+              // the whatsapp_invoice addon active. When the addon is off the
+              // toggle is hidden and _sendInvoiceOnWhatsApp stays false, so the
+              // normal thermal/PDF printing path is completely unaffected.
+              if (context.watch<AuthProvider>().hasAddon('whatsapp_invoice')) ...[
               const SizedBox(width: 8),
               Tooltip(
                 message: 'Prepare this receipt for WhatsApp after the sale is saved',
@@ -2185,6 +2190,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
                   ),
                 ),
               ),
+              ], // end whatsapp_invoice addon gate
               if (_sendInvoiceOnWhatsApp) ...[
                 const SizedBox(width: 6),
                 SizedBox(

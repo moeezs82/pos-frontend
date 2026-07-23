@@ -13,6 +13,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
+/// Addon keys used to gate loan and qameti categories. Kept as top-level
+/// constants so they match BranchAddonService values without importing backend.
+const _kAddonLoan    = 'loan_module';
+const _kAddonQameti  = 'qameti_module';
+
 /// Metadata for each cash-ledger category, kept in one place so the form and
 /// the list screen render them consistently.
 class CashLedgerCategoryMeta {
@@ -33,6 +38,13 @@ class CashLedgerCategoryMeta {
   });
 
   bool get isInflow => direction == 'in';
+
+  /// The addon key this category requires, or null if no addon is needed.
+  String? get requiredAddon => switch (value) {
+    'LOAN_GIVEN' || 'LOAN_RECOVERED' => _kAddonLoan,
+    'QAMETI_PAYMENT' || 'QAMETI_COLLECTION' => _kAddonQameti,
+    _ => null,
+  };
 
   static const all = <CashLedgerCategoryMeta>[
     CashLedgerCategoryMeta(
@@ -128,8 +140,15 @@ class _CashLedgerCreateScreenState extends State<CashLedgerCreateScreen> {
   @override
   void initState() {
     super.initState();
-    _category = widget.initialCategory ?? CashLedgerCategoryMeta.all.first.value;
-    final token = context.read<AuthProvider>().token!;
+    final auth = context.read<AuthProvider>();
+    final available = _availableCategories(auth);
+    // If the requested initialCategory is gated off, fall back to the first
+    // available category so the screen always opens in a valid state.
+    final requested = widget.initialCategory ?? CashLedgerCategoryMeta.all.first.value;
+    _category = available.any((c) => c.value == requested)
+        ? requested
+        : (available.isNotEmpty ? available.first.value : CashLedgerCategoryMeta.all.last.value);
+    final token = auth.token!;
     _service = CashLedgerService(token: token);
     _accountsApi = AccountService(token: token);
     if (_isExpense) _loadExpenseAccounts();
@@ -285,12 +304,24 @@ class _CashLedgerCreateScreenState extends State<CashLedgerCreateScreen> {
   String _fmtDate(DateTime d) =>
       "${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}";
 
+  /// Returns the subset of categories the current user is allowed to create,
+  /// based on which addons are active for their branch. OTHER_EXPENSE is always
+  /// included because it requires no addon.
+  List<CashLedgerCategoryMeta> _availableCategories(AuthProvider auth) {
+    return CashLedgerCategoryMeta.all.where((c) {
+      final addon = c.requiredAddon;
+      return addon == null || auth.hasAddon(addon);
+    }).toList();
+  }
+
   /// Ctrl+1..Ctrl+5 jump straight to a category by its position in the
-  /// chip list, mirroring the type-to-select pattern used elsewhere.
+  /// visible chip list. Index is relative to available categories only, so
+  /// gated categories do not shift the numbering of accessible ones.
   void _selectCategoryByIndex(int index) {
-    final all = CashLedgerCategoryMeta.all;
-    if (index < 0 || index >= all.length) return;
-    _applyCategory(all[index].value);
+    final auth = context.read<AuthProvider>();
+    final available = _availableCategories(auth);
+    if (index < 0 || index >= available.length) return;
+    _applyCategory(available[index].value);
   }
 
   static bool _isLoanValue(String v) => v == 'LOAN_GIVEN' || v == 'LOAN_RECOVERED';
@@ -563,19 +594,23 @@ class _CashLedgerCreateScreenState extends State<CashLedgerCreateScreen> {
             color: _meta.color,
           ),
           const SizedBox(height: 16),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: CashLedgerCategoryMeta.all.map((c) {
-              final selected = _category == c.value;
-              return ChoiceChip(
-                selected: selected,
-                avatar: Icon(c.icon, size: 18, color: selected ? c.color : AppTheme.textMuted),
-                label: Text(c.label),
-                onSelected: (_) => _applyCategory(c.value),
-              );
-            }).toList(),
-          ),
+          Builder(builder: (context) {
+            final auth = context.watch<AuthProvider>();
+            final available = _availableCategories(auth);
+            return Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: available.map((c) {
+                final selected = _category == c.value;
+                return ChoiceChip(
+                  selected: selected,
+                  avatar: Icon(c.icon, size: 18, color: selected ? c.color : AppTheme.textMuted),
+                  label: Text(c.label),
+                  onSelected: (_) => _applyCategory(c.value),
+                );
+              }).toList(),
+            );
+          }),
           const SizedBox(height: 10),
           _DirectionBanner(meta: _meta),
           const SizedBox(height: 18),

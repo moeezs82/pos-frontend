@@ -227,7 +227,10 @@ class _SummaryCards extends StatelessWidget {
       _SummaryCard('Expired',        _n('expired'),        AppTheme.danger),
       _SummaryCard('Suspended',      _n('suspended'),      AppTheme.danger),
       _SummaryCard('Locked',         _n('locked'),         AppTheme.danger),
-      _SummaryCard('Barcode',        _n('barcode_labels_addon'), AppTheme.purple),
+      _SummaryCard('Barcode',        _n('barcode_labels_addon'),   AppTheme.purple),
+      _SummaryCard('Loans',          _n('loan_module_addon'),      AppTheme.teal),
+      _SummaryCard('Qameti',         _n('qameti_module_addon'),    AppTheme.info),
+      _SummaryCard('WhatsApp',       _n('whatsapp_invoice_addon'), const Color(0xFF128C7E)),
     ];
 
     return SizedBox(
@@ -313,7 +316,22 @@ class _BranchSubscriptionTile extends StatelessWidget {
     final location = branch['location']?.toString();
     final message = branch['message']?.toString();
     final addons = branch['addons'] as Map? ?? const {};
-    final barcodeAddonActive = addons['barcode_labels'] == true;
+    // Collect labels for every active addon so the card shows all of them.
+    const _addonLabels = <String, String>{
+      'barcode_labels':  'Barcode Labels',
+      'loan_module':     'Loans',
+      'qameti_module':   'Qameti',
+      'whatsapp_invoice': 'WhatsApp',
+    };
+    const _addonColors = <String, Color>{
+      'barcode_labels':  AppTheme.purple,
+      'loan_module':     AppTheme.teal,
+      'qameti_module':   AppTheme.info,
+      'whatsapp_invoice': Color(0xFF128C7E),
+    };
+    final activeAddons = _addonLabels.keys
+        .where((k) => addons[k] == true)
+        .toList();
 
     Color borderColor;
     if (isNotConfigured) {
@@ -394,16 +412,31 @@ class _BranchSubscriptionTile extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
                       fontSize: 11.5, color: AppTheme.danger)),
-            if (barcodeAddonActive)
-              const Padding(
-                padding: EdgeInsets.only(top: 4),
-                child: Text(
-                  'Add-on: Barcode Label Printing',
-                  style: TextStyle(
-                    fontSize: 11.5,
-                    color: AppTheme.purple,
-                    fontWeight: FontWeight.w700,
-                  ),
+            if (activeAddons.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 5),
+                child: Wrap(
+                  spacing: 6,
+                  runSpacing: 4,
+                  children: activeAddons.map((key) {
+                    final color = _addonColors[key]!;
+                    return Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: color.withOpacity(.10),
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(color: color.withOpacity(.30)),
+                      ),
+                      child: Text(
+                        _addonLabels[key]!,
+                        style: TextStyle(
+                          fontSize: 10.5,
+                          color: color,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    );
+                  }).toList(),
                 ),
               ),
           ],
@@ -524,7 +557,10 @@ class _SubscriptionEditDialogState extends State<_SubscriptionEditDialog> {
   String? _selectedStatus;
   DateTime? _expiresAt;
   DateTime? _graceUntil;
-  bool _barcodeLabelsAddon = false;
+  bool _barcodeLabelsAddon  = false;
+  bool _loanModuleAddon     = false;
+  bool _qametiModuleAddon   = false;
+  bool _whatsappInvoiceAddon = false;
   final _reasonCtrl = TextEditingController();
   final _suspendReasonCtrl = TextEditingController();
   final _notesCtrl = TextEditingController();
@@ -557,7 +593,10 @@ class _SubscriptionEditDialogState extends State<_SubscriptionEditDialog> {
       final data = res['data'] as Map? ?? {};
       final sub = data['subscription'] as Map? ?? {};
       final addons = data['addons'] as Map? ?? {};
-      final barcodeAddon = addons['barcode_labels'];
+      bool _addonBool(String key) {
+        final v = addons[key];
+        return v is Map ? v['active'] == true : v == true;
+      }
       setState(() {
         _detail = Map<String, dynamic>.from(data);
         _selectedStatus = sub['status']?.toString() ?? 'active';
@@ -569,9 +608,10 @@ class _SubscriptionEditDialogState extends State<_SubscriptionEditDialog> {
             : null;
         _notesCtrl.text = sub['notes']?.toString() ?? '';
         _suspendReasonCtrl.text = sub['suspended_reason']?.toString() ?? '';
-        _barcodeLabelsAddon = barcodeAddon is Map
-            ? barcodeAddon['active'] == true
-            : barcodeAddon == true;
+        _barcodeLabelsAddon   = _addonBool('barcode_labels');
+        _loanModuleAddon      = _addonBool('loan_module');
+        _qametiModuleAddon    = _addonBool('qameti_module');
+        _whatsappInvoiceAddon = _addonBool('whatsapp_invoice');
         _loading = false;
       });
     } catch (e) {
@@ -604,7 +644,12 @@ class _SubscriptionEditDialogState extends State<_SubscriptionEditDialog> {
             _reasonCtrl.text.trim().isEmpty ? null : _reasonCtrl.text.trim(),
         if (_selectedStatus == 'suspended')
           'suspended_reason': _suspendReasonCtrl.text.trim(),
-        'addons': {'barcode_labels': _barcodeLabelsAddon},
+        'addons': {
+          'barcode_labels':  _barcodeLabelsAddon,
+          'loan_module':     _loanModuleAddon,
+          'qameti_module':   _qametiModuleAddon,
+          'whatsapp_invoice': _whatsappInvoiceAddon,
+        },
       };
 
       await widget.api.updateSubscription(widget.branchId, payload);
@@ -726,6 +771,78 @@ class _SubscriptionEditDialogState extends State<_SubscriptionEditDialog> {
                         ),
                         subtitle: const Text(
                           'Allows authorized branch users to print product barcode and price labels.',
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Container(
+                      decoration: BoxDecoration(
+                        color: AppTheme.teal.withOpacity(.05),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: AppTheme.teal.withOpacity(.2)),
+                      ),
+                      child: SwitchListTile(
+                        value: _loanModuleAddon,
+                        onChanged: (value) =>
+                            setState(() => _loanModuleAddon = value),
+                        secondary: const Icon(
+                          Icons.request_quote_rounded,
+                          color: AppTheme.teal,
+                        ),
+                        title: const Text(
+                          'Loan Management',
+                          style: TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                        subtitle: const Text(
+                          'Record and track cash loans given to and recovered from customers, vendors, or staff.',
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Container(
+                      decoration: BoxDecoration(
+                        color: AppTheme.info.withOpacity(.05),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: AppTheme.info.withOpacity(.2)),
+                      ),
+                      child: SwitchListTile(
+                        value: _qametiModuleAddon,
+                        onChanged: (value) =>
+                            setState(() => _qametiModuleAddon = value),
+                        secondary: const Icon(
+                          Icons.savings_rounded,
+                          color: AppTheme.info,
+                        ),
+                        title: const Text(
+                          'Qameti Management',
+                          style: TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                        subtitle: const Text(
+                          'Record committee/Qameti installment payments and collection payouts.',
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Container(
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF128C7E).withOpacity(.05),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: const Color(0xFF128C7E).withOpacity(.2)),
+                      ),
+                      child: SwitchListTile(
+                        value: _whatsappInvoiceAddon,
+                        onChanged: (value) =>
+                            setState(() => _whatsappInvoiceAddon = value),
+                        secondary: const Icon(
+                          Icons.chat_rounded,
+                          color: Color(0xFF128C7E),
+                        ),
+                        title: const Text(
+                          'WhatsApp Invoice Assistant',
+                          style: TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                        subtitle: const Text(
+                          'Prepares the sale PDF and opens WhatsApp so the cashier can send the invoice manually.',
                         ),
                       ),
                     ),
