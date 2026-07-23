@@ -171,6 +171,51 @@ class ApiClient {
     return _handleResponse(res);
   }
 
+  /// Sends a multipart/form-data request with form fields and an optional
+  /// file attachment.  Supports both POST (create) and PUT (update).
+  ///
+  /// PHP does not parse multipart bodies on PUT/PATCH requests, so when
+  /// [method] is 'PUT' or 'PATCH' this sends a POST with a `_method` spoof
+  /// field — Laravel's FormMethod middleware converts it transparently.
+  ///
+  /// Null values in [fields] are omitted from the request (the server treats
+  /// missing fields as "not provided", honouring its `sometimes` rules).
+  Future<Map<String, dynamic>> multipartWithFields(
+    String method,
+    String path, {
+    String? filePath,
+    String? filename,
+    String fieldName = 'image',
+    required Map<String, String?> fields,
+  }) async {
+    final uri = Uri.parse("$baseUrl$path");
+    // PHP only parses $_FILES on POST — use method spoofing for PUT/PATCH.
+    final httpMethod =
+        (method == 'PUT' || method == 'PATCH') ? 'POST' : method;
+    final request = http.MultipartRequest(httpMethod, uri);
+    request.headers['Accept'] = 'application/json';
+    if (token != null) request.headers['Authorization'] = 'Bearer $token';
+
+    if (method == 'PUT' || method == 'PATCH') {
+      request.fields['_method'] = method;
+    }
+
+    for (final entry in fields.entries) {
+      if (entry.value != null) request.fields[entry.key] = entry.value!;
+    }
+
+    if (filePath != null && filename != null) {
+      request.files.add(
+        await http.MultipartFile.fromPath(fieldName, filePath,
+            filename: filename),
+      );
+    }
+
+    final streamed = await request.send();
+    final res = await http.Response.fromStream(streamed);
+    return _handleResponse(res);
+  }
+
   /// Uploads a single file as multipart/form-data (used for CSV/XLSX
   /// imports). [fields] can carry extra form fields alongside the file.
   Future<Map<String, dynamic>> uploadFile(

@@ -1,3 +1,4 @@
+import 'package:path/path.dart' as p;
 import 'package:enterprise_pos/api/core/api_client.dart';
 
 class ProductImportReport {
@@ -67,21 +68,67 @@ class ProductService {
     return await _client.get("/products", query: queryParams);
   }
 
-  /// Create a new product
+  /// Converts a product payload map to multipart-friendly string fields.
+  /// Booleans become '1'/'0'. Nulls are kept as null (omitted by the client).
+  /// Collections (List/Map) are skipped — multipart can't encode them.
+  Map<String, String?> _toFields(Map<String, dynamic> product) {
+    final fields = <String, String?>{};
+    for (final entry in product.entries) {
+      final v = entry.value;
+      if (v == null) {
+        fields[entry.key] = null;
+      } else if (v is bool) {
+        fields[entry.key] = v ? '1' : '0';
+      } else if (v is List || v is Map) {
+        // Skip nested collections — the API doesn't need them via multipart.
+      } else {
+        fields[entry.key] = v.toString();
+      }
+    }
+    return fields;
+  }
+
+  /// Create a new product.
+  /// Pass [imagePath] to attach an image file (jpg/png/webp).
   Future<Map<String, dynamic>> createProduct(
-    Map<String, dynamic> product,
-  ) async {
-    final res = await _client.post("/products", body: product);
-    // API sometimes wraps inside "data"
+    Map<String, dynamic> product, {
+    String? imagePath,
+  }) async {
+    if (imagePath == null) {
+      final res = await _client.post("/products", body: product);
+      return res["data"] ?? res;
+    }
+    final res = await _client.multipartWithFields(
+      'POST',
+      '/products',
+      filePath: imagePath,
+      filename: p.basename(imagePath),
+      fields: _toFields(product),
+    );
     return res["data"] ?? res;
   }
 
-  /// Update existing product
+  /// Update existing product.
+  /// Pass [imagePath] to replace the image, or [removeImage]=true to clear it.
   Future<Map<String, dynamic>> updateProduct(
     int id,
-    Map<String, dynamic> product,
-  ) async {
-    return await _client.put("/products/$id", body: product);
+    Map<String, dynamic> product, {
+    String? imagePath,
+    bool removeImage = false,
+  }) async {
+    if (imagePath == null && !removeImage) {
+      return await _client.put("/products/$id", body: product);
+    }
+    final fields = _toFields(product);
+    if (removeImage) fields['remove_image'] = '1';
+    final res = await _client.multipartWithFields(
+      'PUT',
+      '/products/$id',
+      filePath: imagePath,
+      filename: imagePath != null ? p.basename(imagePath) : null,
+      fields: fields,
+    );
+    return res["data"] ?? res;
   }
 
   /// Get product by barcode
