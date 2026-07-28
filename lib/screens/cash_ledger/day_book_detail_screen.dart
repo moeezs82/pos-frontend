@@ -1,4 +1,7 @@
 import 'package:enterprise_pos/api/cash_ledger_service.dart';
+import 'package:enterprise_pos/api/vendor_service.dart';
+import 'package:enterprise_pos/api/customer_service.dart';
+import 'package:enterprise_pos/screens/cash_ledger/cash_void_action.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/providers/payment_method_provider.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
@@ -39,6 +42,9 @@ class _DayBookDetailScreenState extends State<DayBookDetailScreen> {
   String _kind = 'all'; // all|module|received|sent|expense
   String? _method; // null = all methods
 
+  /// cash_ledger_entry_id currently being voided (spinner on that row only).
+  String? _voidingId;
+
   @override
   void initState() {
     super.initState();
@@ -51,6 +57,73 @@ class _DayBookDetailScreenState extends State<DayBookDetailScreen> {
     if (v == null) return 0;
     if (v is num) return v;
     return num.tryParse(v.toString().replaceAll(',', '')) ?? 0;
+  }
+
+  /// Void & reverse one cash-ledger entry. The backend owns the rules — it
+  /// refuses to void twice and posts the reversing journal entry — so this only
+  /// confirms, calls, and refreshes.
+  /// Reverse a customer receipt / vendor payment shown in this feed. These rows
+  /// have no cash_ledger_entry behind them, so the cash-ledger void endpoint
+  /// cannot touch them — they go through the party-payment reversal endpoints,
+  /// exactly as the Party Payments screen does.
+  Future<void> _reversePayment(Map<String, dynamic> e) async {
+    final payId = CashVoid.paymentId(e);
+    final partyId = CashVoid.paymentPartyId(e);
+    final kind = CashVoid.paymentType(e);
+    if (payId == null || partyId == null || kind == null) return;
+    if (_voidingId != null) return;
+
+    final label = (e['party'] ?? 'this party').toString();
+    final reason = await CashVoid.askReversalReason(context, label);
+    if (reason == null || !mounted) return;
+
+    final busyKey = 'pay_$payId';
+    setState(() => _voidingId = busyKey);
+    try {
+      if (kind == 'customer_receipt') {
+        await CustomerService(token: context.read<AuthProvider>().token!)
+            .reverseReceipt(customerId: partyId, receiptId: payId, reason: reason);
+      } else {
+        await VendorService(token: context.read<AuthProvider>().token!)
+            .reversePayment(vendorId: partyId, paymentId: payId, reason: reason);
+      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Payment reversed.')),
+      );
+      await _fetch(page: _page);
+    } catch (err) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(err.toString().replaceFirst('Exception: ', ''))),
+      );
+    } finally {
+      if (mounted) setState(() => _voidingId = null);
+    }
+  }
+
+  Future<void> _voidEntry(Map<String, dynamic> e) async {
+    final id = CashVoid.entryId(e);
+    if (id == null || _voidingId != null) return;
+    if (!await CashVoid.confirm(context)) return;
+    if (!mounted) return;
+
+    setState(() => _voidingId = id);
+    try {
+      await _service.voidEntry(id);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Entry voided and reversed.')),
+      );
+      await _fetch(page: _page);
+    } catch (err) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(err.toString().replaceFirst('Exception: ', ''))),
+      );
+    } finally {
+      if (mounted) setState(() => _voidingId = null);
+    }
   }
 
   Future<void> _fetch({int page = 1}) async {
@@ -385,6 +458,7 @@ class _DayBookDetailScreenState extends State<DayBookDetailScreen> {
                 ),
               ),
             ],
+            CashVoidedBadge(row: e),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
               decoration: BoxDecoration(
@@ -414,9 +488,22 @@ class _DayBookDetailScreenState extends State<DayBookDetailScreen> {
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
         ),
-        trailing: Text(
-          '${direction == 'in' ? '+' : '-'} ${_money.format(amount)}',
-          style: TextStyle(fontWeight: FontWeight.w900, color: color, fontSize: 15),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              '${direction == 'in' ? '+' : '-'} ${_money.format(amount)}',
+              style: TextStyle(fontWeight: FontWeight.w900, color: color, fontSize: 15),
+            ),
+            CashVoidButton(
+              row: e,
+              busy: _voidingId != null &&
+                  (_voidingId == CashVoid.entryId(e) ||
+                      _voidingId == 'pay_${CashVoid.paymentId(e)}'),
+              onVoid: () => _voidEntry(e),
+              onReverse: () => _reversePayment(e),
+            ),
+          ],
         ),
       ),
     );

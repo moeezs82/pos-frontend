@@ -1,4 +1,7 @@
 import 'package:enterprise_pos/api/cash_ledger_service.dart';
+import 'package:enterprise_pos/api/vendor_service.dart';
+import 'package:enterprise_pos/api/customer_service.dart';
+import 'package:enterprise_pos/screens/cash_ledger/cash_void_action.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/screens/cash_ledger/cash_ledger_create_screen.dart';
 import 'package:enterprise_pos/screens/cash_ledger/day_book_detail_screen.dart';
@@ -159,6 +162,9 @@ class _LedgerViewState extends State<_LedgerView> {
   // Filters
   DateTime _dateFrom = DateTime.now().subtract(const Duration(days: 29));
   DateTime _dateTo = DateTime.now();
+  /// cash_ledger_entry_id currently being voided (spinner on that row only).
+  String? _voidingId;
+
   String _direction = 'all'; // in|out|all
   String _kind = 'all';      // all|module|received|sent|expense
 
@@ -326,6 +332,73 @@ class _LedgerViewState extends State<_LedgerView> {
         ),
       ),
     );
+  }
+
+  /// Row-level void, the same action the details sheet offers — just reachable
+  /// in one tap. Shares the confirm dialog and guards with the Day Book day
+  /// details screen via CashVoid.
+  /// Reverse a customer receipt / vendor payment shown in this feed. These rows
+  /// have no cash_ledger_entry behind them, so the cash-ledger void endpoint
+  /// cannot touch them — they go through the party-payment reversal endpoints,
+  /// exactly as the Party Payments screen does.
+  Future<void> _reversePayment(Map<String, dynamic> e) async {
+    final payId = CashVoid.paymentId(e);
+    final partyId = CashVoid.paymentPartyId(e);
+    final kind = CashVoid.paymentType(e);
+    if (payId == null || partyId == null || kind == null) return;
+    if (_voidingId != null) return;
+
+    final label = (e['party'] ?? 'this party').toString();
+    final reason = await CashVoid.askReversalReason(context, label);
+    if (reason == null || !mounted) return;
+
+    final busyKey = 'pay_$payId';
+    setState(() => _voidingId = busyKey);
+    try {
+      if (kind == 'customer_receipt') {
+        await CustomerService(token: context.read<AuthProvider>().token!)
+            .reverseReceipt(customerId: partyId, receiptId: payId, reason: reason);
+      } else {
+        await VendorService(token: context.read<AuthProvider>().token!)
+            .reversePayment(vendorId: partyId, paymentId: payId, reason: reason);
+      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Payment reversed.')),
+      );
+      refresh();
+    } catch (err) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(err.toString().replaceFirst('Exception: ', ''))),
+      );
+    } finally {
+      if (mounted) setState(() => _voidingId = null);
+    }
+  }
+
+  Future<void> _voidEntry(Map<String, dynamic> e) async {
+    final id = CashVoid.entryId(e);
+    if (id == null || _voidingId != null) return;
+    if (!await CashVoid.confirm(context)) return;
+    if (!mounted) return;
+
+    setState(() => _voidingId = id);
+    try {
+      await _service.voidEntry(id);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Entry voided and reversed.')),
+      );
+      refresh();
+    } catch (err) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(err.toString().replaceFirst('Exception: ', ''))),
+      );
+    } finally {
+      if (mounted) setState(() => _voidingId = null);
+    }
   }
 
   Future<void> _confirmVoid(Map<String, dynamic> e) async {
@@ -708,6 +781,7 @@ class _LedgerViewState extends State<_LedgerView> {
                 ),
               ),
             ],
+            CashVoidedBadge(row: e),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
               decoration: BoxDecoration(
@@ -737,9 +811,22 @@ class _LedgerViewState extends State<_LedgerView> {
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
         ),
-        trailing: Text(
-          '${direction == 'in' ? '+' : '-'} ${_money.format(amount)}',
-          style: TextStyle(fontWeight: FontWeight.w900, color: color, fontSize: 15),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              '${direction == 'in' ? '+' : '-'} ${_money.format(amount)}',
+              style: TextStyle(fontWeight: FontWeight.w900, color: color, fontSize: 15),
+            ),
+            CashVoidButton(
+              row: e,
+              busy: _voidingId != null &&
+                  (_voidingId == CashVoid.entryId(e) ||
+                      _voidingId == 'pay_${CashVoid.paymentId(e)}'),
+              onVoid: () => _voidEntry(e),
+              onReverse: () => _reversePayment(e),
+            ),
+          ],
         ),
       ),
     );
