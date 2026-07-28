@@ -21,8 +21,14 @@ class _CustomerFormScreenState extends State<CustomerFormScreen> {
   final _lastNameController = TextEditingController();
   final _emailController = TextEditingController();
   final _phoneController = TextEditingController();
-  final _passwordController = TextEditingController();
   final _addressController = TextEditingController();
+
+  /// Opening balance is entered as a positive magnitude; [_openingOwes]
+  /// carries the direction. Only offered on CREATE — changing it later would
+  /// mean amending a posted journal entry.
+  final _openingBalanceController = TextEditingController();
+  bool _openingOwes = true;
+
   String _status = 'active';
   bool _saving = false;
   late CustomerService _customerService;
@@ -49,23 +55,37 @@ class _CustomerFormScreenState extends State<CustomerFormScreen> {
     _lastNameController.dispose();
     _emailController.dispose();
     _phoneController.dispose();
-    _passwordController.dispose();
     _addressController.dispose();
+    _openingBalanceController.dispose();
     super.dispose();
   }
 
   Future<void> _saveCustomer() async {
     if (!_formKey.currentState!.validate() || _saving) return;
     setState(() => _saving = true);
-    final data = {
+    // Explicitly Map<String, dynamic>: without password the inferred type
+    // would be Map<String, String> and the numeric opening_balance below
+    // would not compile.
+    final Map<String, dynamic> data = {
       'first_name': _firstNameController.text.trim(),
       'last_name': _lastNameController.text.trim(),
       'email': _emailController.text.trim(),
       'phone': _phoneController.text.trim(),
       'address': _addressController.text.trim(),
-      'password': _passwordController.text.isNotEmpty ? _passwordController.text : null,
       'status': _status,
     };
+
+    // Opening balance is create-only and signed: positive means the customer
+    // owes us (posts DR Accounts Receivable / CR Retained Earnings), negative
+    // means they hold a credit with us. Omitted entirely when blank or zero so
+    // the backend posts no journal entry at all.
+    if (widget.customer == null) {
+      final opening = double.tryParse(_openingBalanceController.text.trim());
+      if (opening != null && opening.abs() >= 0.005) {
+        data['opening_balance'] = _openingOwes ? opening.abs() : -opening.abs();
+      }
+    }
+
     try {
       if (widget.customer == null) {
         final customer = await _customerService.createCustomer(data);
@@ -153,7 +173,41 @@ class _CustomerFormScreenState extends State<CustomerFormScreen> {
                         onChanged: (v) => setState(() => _status = v ?? 'active'),
                         decoration: const InputDecoration(labelText: 'Status', prefixIcon: Icon(Icons.verified_user_outlined)),
                       )),
-                      if (!isEdit) SizedBox(width: 360, child: _field(controller: _passwordController, label: 'Password', icon: Icons.lock_outline_rounded, obscure: true)),
+                      if (!isEdit) ...[
+                        SizedBox(
+                          width: 360,
+                          child: _field(
+                            controller: _openingBalanceController,
+                            label: 'Opening Balance',
+                            icon: Icons.account_balance_wallet_outlined,
+                            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                            validator: (v) {
+                              final s = (v ?? '').trim();
+                              if (s.isEmpty) return null;
+                              final parsed = double.tryParse(s);
+                              if (parsed == null) return 'Enter a valid amount';
+                              if (parsed < 0) return 'Use the toggle for credit balances';
+                              return null;
+                            },
+                          ),
+                        ),
+                        SizedBox(
+                          width: 360,
+                          child: DropdownButtonFormField<bool>(
+                            value: _openingOwes,
+                            items: const [
+                              DropdownMenuItem(value: true, child: Text('Customer owes us')),
+                              DropdownMenuItem(value: false, child: Text('Customer is in credit')),
+                            ],
+                            onChanged: (v) => setState(() => _openingOwes = v ?? true),
+                            decoration: const InputDecoration(
+                              labelText: 'Opening Balance Type',
+                              prefixIcon: Icon(Icons.swap_vert_rounded),
+                              helperText: 'Leave the amount blank if there is no opening balance',
+                            ),
+                          ),
+                        ),
+                      ],
                       SizedBox(width: 736, child: _field(controller: _addressController, label: 'Address', icon: Icons.location_on_outlined, maxLines: 2)),
                     ],
                   ),

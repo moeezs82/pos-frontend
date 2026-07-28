@@ -20,8 +20,14 @@ class _VendorFormScreenState extends State<VendorFormScreen> {
   final _lastNameController = TextEditingController();
   final _emailController = TextEditingController();
   final _phoneController = TextEditingController();
-  final _passwordController = TextEditingController();
   final _addressController = TextEditingController();
+
+  /// Opening balance is entered as a positive magnitude; [_openingOwed]
+  /// carries the direction. Only offered on CREATE — changing it later would
+  /// mean amending a posted journal entry.
+  final _openingBalanceController = TextEditingController();
+  bool _openingOwed = true;
+
   String _status = 'active';
   bool _saving = false;
   late VendorService _vendorService;
@@ -48,7 +54,7 @@ class _VendorFormScreenState extends State<VendorFormScreen> {
     _lastNameController.dispose();
     _emailController.dispose();
     _phoneController.dispose();
-    _passwordController.dispose();
+    _openingBalanceController.dispose();
     _addressController.dispose();
     super.dispose();
   }
@@ -56,15 +62,29 @@ class _VendorFormScreenState extends State<VendorFormScreen> {
   Future<void> _saveVendor() async {
     if (!_formKey.currentState!.validate() || _saving) return;
     setState(() => _saving = true);
-    final data = {
+    // Explicitly Map<String, dynamic>: without password the inferred type
+    // would be Map<String, String> and the numeric opening_balance below
+    // would not compile.
+    final Map<String, dynamic> data = {
       'first_name': _firstNameController.text.trim(),
       'last_name': _lastNameController.text.trim(),
       'email': _emailController.text.trim(),
       'phone': _phoneController.text.trim(),
       'address': _addressController.text.trim(),
-      'password': _passwordController.text.isNotEmpty ? _passwordController.text : null,
       'status': _status,
     };
+
+    // Opening balance is create-only and signed: positive means we owe the
+    // vendor (posts DR Retained Earnings / CR Accounts Payable), negative means
+    // we have prepaid them. Omitted entirely when blank or zero so the backend
+    // posts no journal entry at all.
+    if (widget.vendor == null) {
+      final opening = double.tryParse(_openingBalanceController.text.trim());
+      if (opening != null && opening.abs() >= 0.005) {
+        data['opening_balance'] = _openingOwed ? opening.abs() : -opening.abs();
+      }
+    }
+
     try {
       if (widget.vendor == null) {
         final vendor = await _vendorService.createVendor(data);
@@ -152,7 +172,41 @@ class _VendorFormScreenState extends State<VendorFormScreen> {
                         onChanged: (v) => setState(() => _status = v ?? 'active'),
                         decoration: const InputDecoration(labelText: 'Status', prefixIcon: Icon(Icons.verified_user_outlined)),
                       )),
-                      if (!isEdit) SizedBox(width: 360, child: _field(controller: _passwordController, label: 'Password', icon: Icons.lock_outline_rounded, obscure: true)),
+                      if (!isEdit) ...[
+                        SizedBox(
+                          width: 360,
+                          child: _field(
+                            controller: _openingBalanceController,
+                            label: 'Opening Balance',
+                            icon: Icons.account_balance_wallet_outlined,
+                            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                            validator: (v) {
+                              final s = (v ?? '').trim();
+                              if (s.isEmpty) return null;
+                              final parsed = double.tryParse(s);
+                              if (parsed == null) return 'Enter a valid amount';
+                              if (parsed < 0) return 'Use the toggle for prepaid balances';
+                              return null;
+                            },
+                          ),
+                        ),
+                        SizedBox(
+                          width: 360,
+                          child: DropdownButtonFormField<bool>(
+                            value: _openingOwed,
+                            items: const [
+                              DropdownMenuItem(value: true, child: Text('We owe the vendor')),
+                              DropdownMenuItem(value: false, child: Text('We have prepaid the vendor')),
+                            ],
+                            onChanged: (v) => setState(() => _openingOwed = v ?? true),
+                            decoration: const InputDecoration(
+                              labelText: 'Opening Balance Type',
+                              prefixIcon: Icon(Icons.swap_vert_rounded),
+                              helperText: 'Leave the amount blank if there is no opening balance',
+                            ),
+                          ),
+                        ),
+                      ],
                       SizedBox(width: 736, child: _field(controller: _addressController, label: 'Address', icon: Icons.location_on_outlined, maxLines: 2)),
                     ],
                   ),
