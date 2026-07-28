@@ -42,6 +42,9 @@ class _VendorEditScreenState extends State<VendorEditScreen>
   final List<Map<String, dynamic>> _purchases = [];
 
   bool _loadingLedger = false;
+
+  /// payment_id currently being reversed (spinner on that row only).
+  int? _reversingPaymentId;
   bool _loadedLedgerOnce = false;
   String? _errorLedger;
   int _ldgPage = 1, _ldgLastPage = 1, _ldgTotal = 0;
@@ -145,6 +148,75 @@ class _VendorEditScreenState extends State<VendorEditScreen>
     } finally {
       if (mounted) setState(() => _loadingPurchases = false);
     }
+  }
+
+  /// Reverse a customer receipt / vendor payment straight from the trade
+  /// ledger. The backend already decides eligibility (`can_reverse` is false
+  /// for reversals and already-reversed documents) and owns the posting; this
+  /// only collects a reason and refreshes.
+  Future<void> _reverseLedgerPayment(Map<String, dynamic> row) async {
+    final payId = _ledgerPaymentId(row);
+    if (payId == null || _reversingPaymentId != null) return;
+
+    final reason = await _askReversalReason();
+    if (reason == null || !mounted) return;
+
+    setState(() => _reversingPaymentId = payId);
+    try {
+      await _service.reversePayment(vendorId: widget.vendorId, paymentId: payId, reason: reason);
+      if (!mounted) return;
+      AppFeedback.success(context, 'Payment reversed.');
+      await _loadLedger(page: _ldgPage);
+    } catch (e) {
+      if (mounted) AppFeedback.error(context, 'Failed to reverse payment: $e');
+    } finally {
+      if (mounted) setState(() => _reversingPaymentId = null);
+    }
+  }
+
+  /// Reversal requires a reason (backend rule: required, 3-1000 chars).
+  Future<String?> _askReversalReason() {
+    final controller = TextEditingController();
+    final formKey = GlobalKey<FormState>();
+    return showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Reverse payment?'),
+        content: Form(
+          key: formKey,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'This posts a reversing entry. The original payment is kept for audit.',
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: controller,
+                autofocus: true,
+                maxLength: 1000,
+                decoration: const InputDecoration(labelText: 'Reason *'),
+                validator: (v) => (v ?? '').trim().length < 3
+                    ? 'Give a reason of at least 3 characters'
+                    : null,
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: AppTheme.danger),
+            onPressed: () {
+              if (formKey.currentState?.validate() != true) return;
+              Navigator.pop(ctx, controller.text.trim());
+            },
+            child: const Text('Reverse'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _loadLedger({required int page, bool latest = false}) async {
@@ -479,14 +551,14 @@ class _VendorEditScreenState extends State<VendorEditScreen>
                   child: Column(
                     children: [
                       Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+                        padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
                             _buildHero(busy),
-                            const SizedBox(height: 12),
+                            const SizedBox(height: 8),
                             _buildMetrics(),
-                            const SizedBox(height: 12),
+                            const SizedBox(height: 10),
                             _PartySegmentedTabBar(
                               controller: _tab,
                               tabs: const [
@@ -530,6 +602,11 @@ class _VendorEditScreenState extends State<VendorEditScreen>
                               onRefresh: () async => _loadLedger(page: _ldgPage),
                               money: _money,
                               toDouble: _toDouble,
+                              canReversePayments: context
+                                  .read<AuthProvider>()
+                                  .hasPermission('reverse-party-payments'),
+                              reversingPaymentId: _reversingPaymentId,
+                              onReversePayment: _reverseLedgerPayment,
                             ),
                             _LoanLedgerTab(
                               items: _loanRows,
@@ -725,7 +802,17 @@ class _LedgerTab extends StatelessWidget {
     required this.onRefresh,
     required this.money,
     required this.toDouble,
+    this.canReversePayments = false,
+    this.reversingPaymentId,
+    this.onReversePayment,
   });
+
+  /// Whether the signed-in user holds `reverse-party-payments`.
+  final bool canReversePayments;
+
+  /// payment_id currently being reversed (spinner on that row only).
+  final int? reversingPaymentId;
+  final ValueChanged<Map<String, dynamic>>? onReversePayment;
 
   final List<Map<String, dynamic>> items;
   final double opening;
@@ -767,10 +854,19 @@ class _LedgerTab extends StatelessWidget {
               subtitle: 'Payments and purchase ledger entries will appear here.',
             )
           else ...[
+            const _PartyLedgerHeader(),
             for (final r in items) ...[
-              _VendorLedgerCard(item: r, money: money, toDouble: toDouble),
-              if (r != items.last) const SizedBox(height: 10),
+              _VendorLedgerCard(
+                item: r,
+                money: money,
+                toDouble: toDouble,
+                canReverse: canReversePayments && r['can_reverse'] == true,
+                reversing: reversingPaymentId != null &&
+                    reversingPaymentId == _ledgerPaymentId(r),
+                onReverse: onReversePayment == null ? null : () => onReversePayment!(r),
+              ),
             ],
+            Container(height: .5, color: AppTheme.border),
           ],
           const SizedBox(height: 12),
           LedgerPager(
@@ -791,25 +887,60 @@ class _VendorLedgerCard extends StatelessWidget {
     required this.item,
     required this.money,
     required this.toDouble,
+    this.canReverse = false,
+    this.reversing = false,
+    this.onReverse,
   });
 
   final Map<String, dynamic> item;
   final String Function(dynamic value) money;
   final double Function(dynamic value) toDouble;
 
+  /// Backend-decided: already false for reversals and already-reversed rows.
+  final bool canReverse;
+  final bool reversing;
+  final VoidCallback? onReverse;
+
   @override
   Widget build(BuildContext context) {
     final debit = toDouble(item['debit']);
     final credit = toDouble(item['credit']);
+    final status = (item['payment_status'] ?? '').toString();
+    // `description` is the backend's readable label ("Customer receipt #172",
+    // "Reversal of customer receipt #172"); memo is the raw journal memo.
+    final title = (item['description'] ?? item['memo'] ?? '').toString();
     return _PartyLedgerRow(
-      date: (item['date'] ?? '').toString(),
-      memo: (item['memo'] ?? '').toString(),
-      account: (item['account_name'] ?? '').toString(),
-      debit: money(debit),
-      credit: money(credit),
+      date: _shortLedgerDate((item['date'] ?? '').toString()),
+      memo: title,
+      // The account is "Accounts Receivable"/"Accounts Payable" on every trade
+      // row, so showing it per row carried no information.
+      account: '',
+      debit: debit == 0 ? _dashAmount : money(debit),
+      credit: credit == 0 ? _dashAmount : money(credit),
       balance: money(item['balance']),
-      icon: credit > 0 ? Icons.north_east_rounded : Icons.south_west_rounded,
-      accentColor: credit > 0 ? AppTheme.warning : AppTheme.success,
+      icon: debit > 0 ? Icons.south_west_rounded : Icons.north_east_rounded,
+      accentColor: debit > 0 ? AppTheme.warning : AppTheme.success,
+      statusLabel: status == 'reversed'
+          ? 'Reversed'
+          : status == 'reversal'
+              ? 'Reversal'
+              : null,
+      trailing: reversing
+          ? const SizedBox(
+              width: 22,
+              height: 22,
+              child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.danger),
+            )
+          : (canReverse && onReverse != null)
+              ? IconButton(
+                  tooltip: 'Reverse this payment',
+                  onPressed: onReverse,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                  visualDensity: VisualDensity.compact,
+                  icon: const Icon(Icons.undo_rounded, color: AppTheme.danger, size: 18),
+                )
+              : null,
     );
   }
 }
@@ -1250,160 +1381,190 @@ class _PartyHeroCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       decoration: BoxDecoration(
-        gradient: AppTheme.enterpriseGradient,
-        borderRadius: BorderRadius.circular(22),
-        boxShadow: [
-          BoxShadow(
-            color: AppTheme.primaryDark.withOpacity(.18),
-            blurRadius: 28,
-            offset: const Offset(0, 16),
-          ),
-        ],
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppTheme.border),
       ),
-      child: Stack(
-        children: [
-          Positioned(
-            right: -38,
-            top: -48,
-            child: Container(
-              width: 160,
-              height: 160,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: Colors.white.withOpacity(.08),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final compact = constraints.maxWidth < 720;
+
+          final identity = Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: AppTheme.primarySoft,
+                  borderRadius: BorderRadius.circular(11),
+                ),
+                alignment: Alignment.center,
+                child: Text(
+                  initials,
+                  style: const TextStyle(
+                    color: AppTheme.primaryDark,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 13,
+                  ),
+                ),
               ),
-            ),
-          ),
-          Positioned(
-            right: 56,
-            bottom: -64,
-            child: Container(
-              width: 180,
-              height: 180,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                border: Border.all(color: Colors.white.withOpacity(.08), width: 22),
-              ),
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(18),
-            child: LayoutBuilder(
-              builder: (context, constraints) {
-                final compact = constraints.maxWidth < 720;
-                final content = Row(
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    Container(
-                      width: compact ? 54 : 64,
-                      height: compact ? 54 : 64,
-                      decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(.16),
-                        borderRadius: BorderRadius.circular(20),
-                        border: Border.all(color: Colors.white.withOpacity(.22)),
-                      ),
-                      alignment: Alignment.center,
-                      child: Text(
-                        initials,
-                        maxLines: 1,
-                        overflow: TextOverflow.clip,
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: compact ? 18 : 21,
-                          fontWeight: FontWeight.w900,
-                          letterSpacing: .2,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 14),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Wrap(
-                            spacing: 8,
-                            runSpacing: 8,
-                            crossAxisAlignment: WrapCrossAlignment.center,
-                            children: [
-                              _HeroBadge(
-                                icon: typeIcon,
-                                label: typeLabel,
-                                background: Colors.white.withOpacity(.14),
-                                foreground: Colors.white,
-                              ),
-                              _HeroStatusBadge(status: status),
-                            ],
-                          ),
-                          const SizedBox(height: 10),
-                          Text(
-                            title.trim().isEmpty ? '(No name)' : title.trim(),
-                            maxLines: compact ? 2 : 1,
+                    Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            title,
+                            maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: Colors.white,
-                              fontSize: compact ? 21 : 24,
+                            style: const TextStyle(
+                              fontSize: 16,
                               fontWeight: FontWeight.w900,
-                              letterSpacing: -.35,
-                              height: 1.05,
+                              color: AppTheme.navy,
                             ),
                           ),
-                          if (subtitle.trim().isNotEmpty) ...[
-                            const SizedBox(height: 6),
-                            Text(
-                              subtitle.trim(),
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color: Colors.white.withOpacity(.78),
-                                fontSize: 13,
-                                fontWeight: FontWeight.w700,
-                                height: 1.25,
-                              ),
-                            ),
-                          ],
-                          if (infoPills.isNotEmpty) ...[
-                            const SizedBox(height: 14),
-                            Wrap(spacing: 8, runSpacing: 8, children: infoPills),
-                          ],
-                        ],
+                        ),
+                        const SizedBox(width: 8),
+                        _PartyTag(
+                          label: status,
+                          background: AppTheme.success.withOpacity(.12),
+                          foreground: AppTheme.success,
+                        ),
+                        const SizedBox(width: 6),
+                        _PartyTag(
+                          label: typeLabel,
+                          background: AppTheme.surfaceSoft,
+                          foreground: AppTheme.textMuted,
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      infoPills.isEmpty
+                          ? subtitle
+                          : infoPills
+                              .map((p) => p.value.trim().isEmpty ? '—' : p.value.trim())
+                              .join(' · '),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: AppTheme.textMuted,
+                        fontWeight: FontWeight.w600,
                       ),
                     ),
                   ],
-                );
+                ),
+              ),
+            ],
+          );
 
-                final actions = _HeroActions(
-                  balanceLabel: balanceLabel,
-                  balanceValue: balanceValue,
-                  balanceTone: balanceTone,
-                  primaryActionLabel: primaryActionLabel,
-                  primaryActionIcon: primaryActionIcon,
-                  onPrimaryAction: onPrimaryAction,
-                  onEdit: onEdit,
-                );
+          final balance = Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                balanceLabel,
+                style: const TextStyle(
+                  fontSize: 11,
+                  color: AppTheme.textMuted,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              Text(
+                balanceValue,
+                style: TextStyle(
+                  fontSize: 19,
+                  fontWeight: FontWeight.w900,
+                  color: balanceTone,
+                  height: 1.2,
+                ),
+              ),
+            ],
+          );
 
-                if (compact) {
-                  return Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      content,
-                      const SizedBox(height: 16),
-                      actions,
-                    ],
-                  );
-                }
+          final actions = Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              FilledButton.icon(
+                onPressed: onPrimaryAction,
+                icon: Icon(primaryActionIcon, size: 17),
+                label: Text(primaryActionLabel),
+                style: FilledButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  padding: const EdgeInsets.symmetric(horizontal: 14),
+                ),
+              ),
+              const SizedBox(width: 8),
+              IconButton(
+                tooltip: 'Edit profile',
+                onPressed: onEdit,
+                visualDensity: VisualDensity.compact,
+                icon: const Icon(Icons.edit_outlined, size: 19),
+              ),
+            ],
+          );
 
-                return Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(child: content),
-                    const SizedBox(width: 18),
-                    SizedBox(width: 238, child: actions),
-                  ],
-                );
-              },
-            ),
-          ),
-        ],
+          if (compact) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                identity,
+                const SizedBox(height: 10),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [balance, actions],
+                ),
+              ],
+            );
+          }
+          return Row(
+            children: [
+              Expanded(child: identity),
+              const SizedBox(width: 16),
+              balance,
+              const SizedBox(width: 16),
+              actions,
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+/// Small status/type pill used in the party header.
+class _PartyTag extends StatelessWidget {
+  const _PartyTag({
+    required this.label,
+    required this.background,
+    required this.foreground,
+  });
+
+  final String label;
+  final Color background;
+  final Color foreground;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 10.5,
+          fontWeight: FontWeight.w800,
+          color: foreground,
+        ),
       ),
     );
   }
@@ -1587,25 +1748,22 @@ class _PartyMetricGrid extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final width = constraints.maxWidth;
-        final itemWidth = width >= 820
-            ? (width - 24) / 3
-            : width >= 560
-                ? (width - 12) / 2
-                : width;
-        return Wrap(
-          spacing: 12,
-          runSpacing: 12,
-          children: metrics
-              .map((metric) => SizedBox(
-                    width: itemWidth,
-                    child: _PartyMetricCard(metric: metric),
-                  ))
-              .toList(),
-        );
-      },
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppTheme.border),
+      ),
+      child: IntrinsicHeight(
+        child: Row(
+          children: [
+            for (var i = 0; i < metrics.length; i++) ...[
+              if (i > 0) Container(width: .5, color: AppTheme.border),
+              Expanded(child: _PartyMetricCard(metric: metrics[i])),
+            ],
+          ],
+        ),
+      ),
     );
   }
 }
@@ -1616,66 +1774,39 @@ class _PartyMetricCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: AppTheme.border),
-        boxShadow: AppTheme.softShadow,
-      ),
-      child: Row(
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Container(
-            height: 42,
-            width: 42,
-            decoration: BoxDecoration(
-              color: metric.color.withOpacity(.10),
-              borderRadius: BorderRadius.circular(14),
-            ),
-            child: Icon(metric.icon, color: metric.color, size: 22),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
+          Row(
+            children: [
+              Icon(metric.icon, size: 14, color: metric.color),
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text(
                   metric.label,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
                     color: AppTheme.textMuted,
-                    fontSize: 11.5,
-                    fontWeight: FontWeight.w800,
                   ),
                 ),
-                const SizedBox(height: 3),
-                Text(
-                  metric.value,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: metric.color,
-                    fontSize: 18,
-                    fontWeight: FontWeight.w900,
-                    letterSpacing: -.2,
-                  ),
-                ),
-                if (metric.helper != null && metric.helper!.trim().isNotEmpty) ...[
-                  const SizedBox(height: 2),
-                  Text(
-                    metric.helper!,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: AppTheme.textMuted,
-                      fontSize: 11,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ],
-              ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 2),
+          Text(
+            metric.value,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w900,
+              color: metric.color,
             ),
           ),
         ],
@@ -1697,29 +1828,24 @@ class _PartySegmentedTabBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      height: 48,
-      padding: const EdgeInsets.all(4),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppTheme.border),
-        boxShadow: AppTheme.softShadow,
+      height: 38,
+      decoration: const BoxDecoration(
+        border: Border(bottom: BorderSide(color: AppTheme.border, width: .5)),
       ),
       child: TabBar(
         controller: controller,
+        isScrollable: true,
+        tabAlignment: TabAlignment.start,
         dividerColor: Colors.transparent,
         overlayColor: WidgetStateProperty.all(Colors.transparent),
-        indicatorSize: TabBarIndicatorSize.tab,
-        labelPadding: const EdgeInsets.symmetric(horizontal: 8),
-        indicator: BoxDecoration(
-          color: AppTheme.primarySoft,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: AppTheme.primary.withOpacity(.25)),
-        ),
+        indicatorSize: TabBarIndicatorSize.label,
+        indicatorWeight: 2,
+        indicatorColor: AppTheme.primaryDark,
+        labelPadding: const EdgeInsets.symmetric(horizontal: 14),
         labelColor: AppTheme.primaryDark,
         unselectedLabelColor: AppTheme.textMuted,
-        labelStyle: const TextStyle(fontWeight: FontWeight.w900, fontSize: 13),
-        unselectedLabelStyle: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
+        labelStyle: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
+        unselectedLabelStyle: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
         tabs: tabs,
       ),
     );
@@ -1970,6 +2096,8 @@ class _PartyLedgerRow extends StatelessWidget {
     required this.balance,
     required this.icon,
     required this.accentColor,
+    this.statusLabel,
+    this.trailing,
   });
 
   final String date;
@@ -1981,86 +2109,206 @@ class _PartyLedgerRow extends StatelessWidget {
   final IconData icon;
   final Color accentColor;
 
+  /// "Reversed" / "Reversal entry" caption. Null renders nothing.
+  final String? statusLabel;
+
+  /// Optional row action (the reverse button). Null renders nothing.
+  final Widget? trailing;
+
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: AppTheme.border),
-      ),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final compact = constraints.maxWidth < 700;
-          final left = Row(
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // Below this width Dr and Cr are merged into one signed column;
+        // two money columns plus a balance simply do not fit legibly.
+        final narrow = constraints.maxWidth < partyLedgerNarrowWidth;
+        return Container(
+          decoration: const BoxDecoration(
+            border: Border(top: BorderSide(color: AppTheme.border, width: .5)),
+          ),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
+          child: Row(
             children: [
-              Container(
-                height: 42,
-                width: 42,
-                decoration: BoxDecoration(
-                  color: accentColor.withOpacity(.10),
-                  borderRadius: BorderRadius.circular(14),
+              SizedBox(
+                width: partyLedgerDateWidth,
+                child: Text(
+                  date,
+                  maxLines: 1,
+                  overflow: TextOverflow.clip,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: AppTheme.textMuted,
+                    fontWeight: FontWeight.w400,
+                  ),
                 ),
-                child: Icon(icon, color: accentColor, size: 22),
               ),
-              const SizedBox(width: 12),
               Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                child: Row(
                   children: [
-                    Text(
-                      memo.trim().isEmpty ? '(No memo)' : memo.trim(),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: AppTheme.navy,
-                        fontWeight: FontWeight.w900,
-                        fontSize: 14,
+                    Container(
+                      width: 6,
+                      height: 6,
+                      margin: const EdgeInsets.only(right: 8),
+                      decoration: BoxDecoration(color: accentColor, shape: BoxShape.circle),
+                    ),
+                    Expanded(
+                      child: Text(
+                        memo.trim().isEmpty ? '(No description)' : memo.trim(),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 13,
+                          color: AppTheme.navy,
+                          fontWeight: FontWeight.w500,
+                        ),
                       ),
                     ),
-                    const SizedBox(height: 5),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 5,
-                      children: [
-                        _MetaChip(icon: Icons.calendar_today_rounded, label: date.trim().isEmpty ? '—' : date),
-                        if (account.trim().isNotEmpty)
-                          _MetaChip(icon: Icons.account_tree_rounded, label: account),
-                      ],
-                    ),
+                    if (statusLabel != null) ...[
+                      const SizedBox(width: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                        decoration: BoxDecoration(
+                          color: AppTheme.danger.withOpacity(.10),
+                          borderRadius: BorderRadius.circular(5),
+                        ),
+                        child: Text(
+                          statusLabel!,
+                          style: const TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.w800,
+                            color: AppTheme.danger,
+                          ),
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ),
+              if (narrow)
+                _PartyLedgerAmount(
+                  width: partyLedgerBalanceWidth,
+                  value: debit != _dashAmount ? debit : credit,
+                  color: debit != _dashAmount ? AppTheme.danger : AppTheme.success,
+                )
+              else ...[
+                _PartyLedgerAmount(
+                  width: partyLedgerMoneyWidth,
+                  value: debit,
+                  color: AppTheme.danger,
+                ),
+                _PartyLedgerAmount(
+                  width: partyLedgerMoneyWidth,
+                  value: credit,
+                  color: AppTheme.success,
+                ),
+              ],
+              _PartyLedgerAmount(
+                width: partyLedgerBalanceWidth,
+                value: balance,
+                color: AppTheme.navy,
+                bold: true,
+              ),
+              SizedBox(
+                width: partyLedgerActionWidth,
+                child: trailing == null ? const SizedBox.shrink() : Center(child: trailing),
+              ),
             ],
-          );
+          ),
+        );
+      },
+    );
+  }
+}
 
-          final amountRow = Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            alignment: compact ? WrapAlignment.start : WrapAlignment.end,
-            children: [
-              _AmountBadge(label: 'Dr', value: debit, color: AppTheme.danger),
-              _AmountBadge(label: 'Cr', value: credit, color: AppTheme.success),
-              _AmountBadge(label: 'Bal', value: balance, color: AppTheme.navy, prominent: true),
-            ],
-          );
+/// Placeholder a caller passes for a zero amount so the eye lands on real
+/// numbers instead of a column of "Rs. 0.00".
+const String _dashAmount = '—';
 
-          if (compact) {
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [left, const SizedBox(height: 12), amountRow],
-            );
-          }
-          return Row(
-            children: [
-              Expanded(child: left),
-              const SizedBox(width: 14),
-              SizedBox(width: 300, child: amountRow),
-            ],
-          );
-        },
+const double partyLedgerDateWidth = 66;
+const double partyLedgerMoneyWidth = 84;
+const double partyLedgerBalanceWidth = 92;
+const double partyLedgerActionWidth = 30;
+const double partyLedgerNarrowWidth = 640;
+
+class _PartyLedgerAmount extends StatelessWidget {
+  const _PartyLedgerAmount({
+    required this.width,
+    required this.value,
+    required this.color,
+    this.bold = false,
+  });
+
+  final double width;
+  final String value;
+  final Color color;
+  final bool bold;
+
+  @override
+  Widget build(BuildContext context) {
+    final muted = value == _dashAmount;
+    return SizedBox(
+      width: width,
+      child: Text(
+        value,
+        textAlign: TextAlign.right,
+        maxLines: 1,
+        overflow: TextOverflow.clip,
+        style: TextStyle(
+          fontSize: 13,
+          fontWeight: bold ? FontWeight.w800 : FontWeight.w500,
+          color: muted ? AppTheme.textMuted : color,
+        ),
       ),
+    );
+  }
+}
+
+/// Column headings for the ledger table. Mirrors the row widths exactly.
+class _PartyLedgerHeader extends StatelessWidget {
+  const _PartyLedgerHeader({this.showAction = true});
+
+  final bool showAction;
+
+  @override
+  Widget build(BuildContext context) {
+    const style = TextStyle(
+      fontSize: 11,
+      fontWeight: FontWeight.w500,
+      color: AppTheme.textMuted,
+    );
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final narrow = constraints.maxWidth < partyLedgerNarrowWidth;
+        return Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          child: Row(
+            children: [
+              const SizedBox(width: partyLedgerDateWidth, child: Text('Date', style: style)),
+              const Expanded(child: Text('Description', style: style)),
+              if (narrow)
+                const SizedBox(
+                  width: partyLedgerBalanceWidth,
+                  child: Text('Amount', textAlign: TextAlign.right, style: style),
+                )
+              else ...[
+                const SizedBox(
+                  width: partyLedgerMoneyWidth,
+                  child: Text('Dr', textAlign: TextAlign.right, style: style),
+                ),
+                const SizedBox(
+                  width: partyLedgerMoneyWidth,
+                  child: Text('Cr', textAlign: TextAlign.right, style: style),
+                ),
+              ],
+              const SizedBox(
+                width: partyLedgerBalanceWidth,
+                child: Text('Balance', textAlign: TextAlign.right, style: style),
+              ),
+              SizedBox(width: showAction ? partyLedgerActionWidth : 0),
+            ],
+          ),
+        );
+      },
     );
   }
 }
@@ -2283,4 +2531,30 @@ class _PartyErrorView extends StatelessWidget {
       ),
     );
   }
+}
+
+/// payment_id of a trade-ledger row, or null for rows that are not party
+/// payments (sales, opening balances, journal adjustments…).
+int? _ledgerPaymentId(Map<String, dynamic> row) {
+  final v = row['payment_id'];
+  if (v == null) return null;
+  if (v is int) return v;
+  if (v is num) return v.toInt();
+  return int.tryParse(v.toString());
+}
+
+
+/// "2026-07-28" -> "28 Jul". Falls back to the raw value when it is not the
+/// expected ISO shape.
+String _shortLedgerDate(String raw) {
+  const months = [
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+  ];
+  final v = raw.trim();
+  if (v.length < 10) return v;
+  final month = int.tryParse(v.substring(5, 7));
+  final day = int.tryParse(v.substring(8, 10));
+  if (month == null || day == null || month < 1 || month > 12) return v;
+  return '$day ${months[month - 1]}';
 }
