@@ -5,6 +5,7 @@ import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/providers/branch_provider.dart';
 import 'package:enterprise_pos/providers/payment_method_provider.dart';
 import 'package:enterprise_pos/models/payment_method.dart';
+import 'package:enterprise_pos/models/product_unit.dart';
 import 'package:enterprise_pos/screens/sales/parts/create_sale_items_section.dart';
 import 'package:enterprise_pos/screens/sales/parts/sale_totals_card.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
@@ -280,6 +281,9 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
           'discount_pct': discountPct,
           'received_qty': _receiveNow ? qty : 0.0,
           'total': _lineTotal(price: price, qty: qty, discPct: discountPct),
+          // Carry the quantity contract on the line; the picker's product map
+          // is not retained.
+          ...QuantityRule.fromProduct(product).toRowFields(),
         });
       }
       _items = next;
@@ -302,6 +306,7 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
       _items[idx]['quantity'] = qty;
       _items[idx]['received_qty'] = _receiveNow ? qty : 0.0;
       _items[idx]['total'] = _lineTotal(price: price, qty: qty, discPct: discPct);
+      _items[idx].addAll(QuantityRule.fromProduct(product).toRowFields());
     } else {
       final unitCost = _purchaseUnitCost(product);
       _items.add({
@@ -314,6 +319,7 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
         'discount_pct': 0.0,
         'received_qty': _receiveNow ? qty : 0.0,
         'total': _lineTotal(price: unitCost, qty: qty, discPct: 0.0),
+        ...QuantityRule.fromProduct(product).toRowFields(),
       });
     }
   }
@@ -461,6 +467,7 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
           'discount_pct': 0.0,
           'received_qty': _receiveNow ? 1.0 : 0.0,
           'total': _lineTotal(price: unitCost, qty: 1.0, discPct: 0.0),
+          ...QuantityRule.fromProduct(product).toRowFields(),
         });
       }
     });
@@ -491,9 +498,39 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
     );
   }
 
+  /// The first line whose quantity (or received quantity) breaks its unit's
+  /// rule, or null. Mirrors the backend guard so the purchase is not sent to
+  /// be rejected — the backend checks `quantity` and `received_qty`
+  /// separately, and so does this.
+  String? _firstQuantityViolation() {
+    for (var i = 0; i < _items.length; i++) {
+      final item = _items[i];
+      final name = (item['name'] ?? 'item').toString();
+      final rule = QuantityRule.fromProduct(item);
+
+      final quantity = _toNum(item['quantity']);
+      if (!rule.allows(quantity)) {
+        return 'Line ${i + 1} — $name: ${rule.message}';
+      }
+      if (_receiveNow && item.containsKey('received_qty')) {
+        final received = _toNum(item['received_qty']);
+        if (!rule.allows(received)) {
+          return 'Line ${i + 1} — $name (received): ${rule.message}';
+        }
+      }
+    }
+    return null;
+  }
+
   Future<void> _submitPurchase() async {
     if (_items.isEmpty) {
       AppFeedback.warning(context, 'Add at least 1 purchase item.');
+      return;
+    }
+
+    final quantityViolation = _firstQuantityViolation();
+    if (quantityViolation != null) {
+      AppFeedback.warning(context, quantityViolation);
       return;
     }
 

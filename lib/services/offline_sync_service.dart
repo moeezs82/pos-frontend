@@ -2,6 +2,7 @@ import 'dart:math';
 
 import 'package:enterprise_pos/api/core/api_client.dart';
 import 'package:enterprise_pos/services/offline_sales_queue_service.dart';
+import 'package:enterprise_pos/utils/line_errors.dart';
 import 'package:enterprise_pos/utils/network_failure.dart';
 
 /// Result of trying to sync one queued sale.
@@ -250,6 +251,15 @@ class OfflineSyncService {
         }
         return 'This sale conflicts with a business rule on the server: ${e.message}';
       case 422:
+        // Append the field bag, one `key: message` per line. The dead-letter
+        // row is the only record of WHY this sale was refused — e.message is
+        // just the first sentence, and without the keys the review screen
+        // cannot tell which cart line the complaint is about.
+        // OfflineSaleDetailScreen parses this exact shape.
+        final bag = formatBagForStorage(e.body?['errors']);
+        if (bag.isNotEmpty) {
+          return 'The server rejected this sale: ${e.message}\n$bag';
+        }
         return 'The server rejected this sale: ${e.message}';
       case 403:
         return 'Not allowed to sync this sale (permission): ${e.message}';

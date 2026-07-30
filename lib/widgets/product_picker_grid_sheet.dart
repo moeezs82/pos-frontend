@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:enterprise_pos/api/product_service.dart';
 import 'package:enterprise_pos/forms/product_form_screen.dart';
+import 'package:enterprise_pos/models/product_unit.dart';
 import 'package:enterprise_pos/services/party_pick_caches.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/enterprise/enterprise_panel.dart';
@@ -366,10 +367,16 @@ class _ProductPickerGridSheetState extends State<ProductPickerGridSheet> {
     _selectDefault(p);
 
     final ctrl = TextEditingController(text: _qtyOf(id).toStringAsFixed(0));
+    // The unit decides whether this product may carry a fraction. Enforced
+    // here as well as in the cart because a quantity set from this sheet
+    // otherwise reaches the cart already invalid.
+    final rule = QuantityRule.fromProduct(p);
+    String? qtyError;
 
     final newQty = await showDialog<double>(
       context: context,
-      builder: (_) => AlertDialog(
+      builder: (_) => StatefulBuilder(
+        builder: (context, setLocal) => AlertDialog(
         title: Text(_name(p['name'])),
         content: Column(
           mainAxisSize: MainAxisSize.min,
@@ -380,10 +387,18 @@ class _ProductPickerGridSheetState extends State<ProductPickerGridSheet> {
             TextField(
               controller: ctrl,
               autofocus: true,
-              keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
-              decoration: const InputDecoration(
+              keyboardType: TextInputType.numberWithOptions(
+                decimal: rule.allowDecimal,
+                signed: true,
+              ),
+              onChanged: (v) => setLocal(() => qtyError = rule.validateText(v)),
+              decoration: InputDecoration(
                 hintText: "e.g. 3 or -1",
-                border: OutlineInputBorder(),
+                border: const OutlineInputBorder(),
+                errorText: qtyError,
+                helperText: rule.allowDecimal
+                    ? null
+                    : 'Whole numbers only${rule.unitName.isEmpty ? '' : ' (${rule.unitName})'}',
               ),
             ),
             const SizedBox(height: 8),
@@ -403,12 +418,19 @@ class _ProductPickerGridSheetState extends State<ProductPickerGridSheet> {
           ),
           FilledButton(
             onPressed: () {
+              final error = rule.validateText(ctrl.text);
+              if (error != null) {
+                // Block rather than round — see QuantityRule.
+                setLocal(() => qtyError = error);
+                return;
+              }
               final v = double.tryParse(ctrl.text.trim());
               Navigator.pop(context, v ?? _qtyOf(id));
             },
             child: const Text("Save"),
           ),
         ],
+        ),
       ),
     );
 

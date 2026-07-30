@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:enterprise_pos/api/catalog_service.dart';
+import 'package:enterprise_pos/models/product_unit.dart';
 import 'package:path/path.dart' as p;
 // Windows-desktop app → sqflite via FFI, same as offline_sales_queue_service.
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
@@ -60,7 +61,24 @@ class CatalogCacheService {
     final path = p.join(dbPath, 'catalog_cache.db');
     return openDatabase(
       path,
-      version: 1,
+      version: 2,
+      // v1 → v2 adds the unit columns. ADDITIVE ONLY, and deliberately not a
+      // table rebuild or a cache wipe: this database is a read replica, but a
+      // "just delete and re-download" upgrade would strand a till that is
+      // offline at the moment it updates, with no catalog and pending sales
+      // in the outbound queue it can no longer price or name.
+      //
+      // Rows that existed before the upgrade get NULL in the new columns,
+      // which parses as ProductUnit.defaultAllowDecimal (true) — the
+      // pre-units behaviour — until the next refresh fills them in.
+      onUpgrade: (db, oldVersion, newVersion) async {
+        if (oldVersion < 2) {
+          await db.execute('ALTER TABLE products ADD COLUMN unit_id INTEGER');
+          await db.execute('ALTER TABLE products ADD COLUMN unit_name TEXT');
+          await db.execute(
+              'ALTER TABLE products ADD COLUMN unit_allow_decimal INTEGER');
+        }
+      },
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE products (
@@ -78,6 +96,9 @@ class CatalogCacheService {
             discount REAL,
             vendor_id INTEGER,
             category_id INTEGER,
+            unit_id INTEGER,
+            unit_name TEXT,
+            unit_allow_decimal INTEGER,
             is_active INTEGER DEFAULT 1,
             updated_at TEXT,
             PRIMARY KEY (id)
@@ -363,6 +384,9 @@ class CatalogCacheService {
 
   Map<String, Object?> _productRow(Map raw, int? branchId) {
     final name = (raw['name'] ?? '').toString();
+    // /catalog emits the unit as a nested object (or null); QuantityRule
+    // flattens both that and an already-flat row into the three columns.
+    final rule = QuantityRule.fromProduct(Map<String, dynamic>.from(raw));
     return {
       'id': _asInt(raw['id']),
       'branch_id': raw['branch_id'] != null ? _asInt(raw['branch_id']) : branchId,
@@ -378,6 +402,9 @@ class CatalogCacheService {
       'discount': _asDouble(raw['discount']),
       'vendor_id': raw['vendor_id'] != null ? _asInt(raw['vendor_id']) : null,
       'category_id': raw['category_id'] != null ? _asInt(raw['category_id']) : null,
+      'unit_id': rule.unitId,
+      'unit_name': rule.unitName.isEmpty ? null : rule.unitName,
+      'unit_allow_decimal': rule.allowDecimal ? 1 : 0,
       'is_active': _asBoolInt(raw['is_active'], defaultTrue: true),
       'updated_at': raw['updated_at']?.toString(),
     };
@@ -419,6 +446,12 @@ class CatalogCacheService {
       'discount': row['discount'],
       'vendor_id': row['vendor_id'],
       'category_id': row['category_id'],
+      // Flat unit columns, read by QuantityRule.fromProduct. A row cached
+      // before v2 has NULL here, which parses as decimal-allowed rather than
+      // blocking quantities the cashier entered fine yesterday.
+      'unit_id': row['unit_id'],
+      'unit_name': row['unit_name'],
+      'unit_allow_decimal': row['unit_allow_decimal'],
       '_offline': true, // marker: sourced from local cache, not a live fetch
     };
   }

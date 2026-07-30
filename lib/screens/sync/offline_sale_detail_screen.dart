@@ -1,7 +1,9 @@
 import 'package:enterprise_pos/api/core/api_client.dart';
+import 'package:enterprise_pos/models/product_unit.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/services/offline_sales_queue_service.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
+import 'package:enterprise_pos/utils/line_errors.dart';
 import 'package:enterprise_pos/widgets/app_feedback.dart';
 import 'package:flutter/material.dart';
 import 'package:enterprise_pos/services/app_currency.dart';
@@ -35,6 +37,24 @@ class OfflineSaleDetailScreen extends StatefulWidget {
 class _OfflineSaleDetailScreenState extends State<OfflineSaleDetailScreen> {
   bool _replaying = false;
   bool _discarding = false;
+
+  // ── Field-level errors ───────────────────────────────────────────────────
+
+  /// Per-line errors parsed out of [OfflineSaleQueueItem.lastError].
+  ///
+  /// OfflineSyncService writes a 422's field bag into last_error as
+  /// `items.0.quantity: <message>` lines, because the queue row is the only
+  /// record of the rejection once the request is gone. Mapping them back to
+  /// the line index is what turns "the server rejected this sale" into a
+  /// specific, correctable complaint about one product.
+  ///
+  /// Keyed by line index; the value is the message.
+  Map<int, LineError> get _lineErrors {
+    return {
+      for (final le in parseStoredLineErrors(widget.item.lastError))
+        le.index: le,
+    };
+  }
 
   // ── Payload accessors ────────────────────────────────────────────────────
 
@@ -121,6 +141,154 @@ class _OfflineSaleDetailScreenState extends State<OfflineSaleDetailScreen> {
           : 'Could not reach the server. Check your connection and try again.';
       AppFeedback.error(context, msg);
     }
+  }
+
+  // ── Correction action ─────────────────────────────────────────────────────
+
+  /// Corrects one line's quantity and re-queues the sale.
+  ///
+  /// This is the counterpart to "Create as New Sale": that path re-sends the
+  /// sale unchanged and only helps when the server-side cause has gone away.
+  /// A quantity the unit forbids will be refused identically forever, so the
+  /// only way out is to change the payload.
+  Future<void> _correctQuantity(int index) async {
+    final items = _items;
+    if (index < 0 || index >= items.length) return;
+
+    final lineError = _lineErrors[index];
+    final error = lineError?.display ?? '';
+    final rule = lineError?.assertedRule ?? QuantityRule.permissive;
+    final current = _num(items[index]['quantity']);
+    // Pre-fill with the quantity AS CAPTURED, fraction and all, not with a
+    // rounded suggestion — the manager has to see what the cashier actually
+    // rang up before deciding what it should have been.
+    final initial = QuantityRule.permissive.format(current);
+    final controller = TextEditingController(text: initial);
+    String? fieldError = rule.validateText(initial);
+
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (_) => StatefulBuilder(
+        builder: (context, setLocal) => AlertDialog(
+          title: const Text('Correct Quantity',
+              style: TextStyle(fontWeight: FontWeight.w800, fontSize: 17)),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(error, style: const TextStyle(fontSize: 13)),
+              const SizedBox(height: 12),
+              TextField(
+                controller: controller,
+                autofocus: true,
+                keyboardType: TextInputType.numberWithOptions(
+                  decimal: rule.allowDecimal,
+                  signed: true,
+                ),
+                onChanged: (v) =>
+                    setLocal(() => fieldError = rule.validateText(v)),
+                decoration: InputDecoration(
+                  labelText: 'Quantity',
+                  errorText: fieldError,
+                ),
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                'The sale totals are recalculated from the corrected lines. '
+                'Recorded payments are left exactly as they were taken, so the '
+                'balance may change — check it before handing the receipt over.',
+                style: TextStyle(fontSize: 12, color: AppTheme.textMuted),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Cancel')),
+            FilledButton(
+              onPressed: () {
+                final text = controller.text.trim();
+                final parsed = double.tryParse(text);
+                final invalid = rule.validateText(text) ??
+                    (parsed == null || parsed == 0
+                        ? 'Enter a non-zero quantity.'
+                        : null);
+                if (invalid != null) {
+                  setLocal(() => fieldError = invalid);
+                  return;
+                }
+                Navigator.pop(context, true);
+              },
+              child: const Text('Save & Re-queue'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (saved != true || !mounted) return;
+
+    final newQty = double.tryParse(controller.text.trim());
+    if (newQty == null) return;
+
+    try {
+      await OfflineSalesQueueService.instance.updatePayloadAndReset(
+        widget.item.clientRef,
+        _payloadWithQuantity(index, newQty),
+      );
+      if (!mounted) return;
+      AppFeedback.success(
+          context, 'Quantity corrected. The sale is queued to sync again.');
+      Navigator.pop(context, true); // signal reload
+    } catch (e) {
+      if (!mounted) return;
+      AppFeedback.error(context, 'Could not save the correction: $e');
+    }
+  }
+
+  /// A deep-enough copy of the payload with line [index]'s quantity replaced
+  /// and the totals snapshot recomputed.
+  ///
+  /// The snapshot is what the receipt prints from, so leaving a stale subtotal
+  /// behind would put a number on paper that the posted sale never had. Paid
+  /// is untouched — money already taken is a fact, not a derivation — so the
+  /// balance absorbs the difference.
+  Map<String, dynamic> _payloadWithQuantity(int index, double quantity) {
+    final payload = Map<String, dynamic>.from(widget.item.payload);
+
+    final items = _items
+        .map((line) => Map<String, dynamic>.from(line))
+        .toList(growable: false);
+    items[index]['quantity'] = quantity;
+    payload['items'] = items;
+
+    // Same line formula the sale screen uses: qty x price, less the line's
+    // own percentage discount.
+    var subtotal = 0.0;
+    for (final line in items) {
+      final qty = _num(line['quantity']);
+      final price = _num(line['price']);
+      final discPct = _num(line['discount_pct']).clamp(0.0, 100.0);
+      subtotal += qty * price * (1 - discPct / 100);
+    }
+
+    final discount = _num(payload['discount']);
+    final tax = _num(payload['tax']);
+    final total = subtotal - discount + tax;
+
+    final meta = Map<String, dynamic>.from(
+        (payload['meta'] as Map?)?.cast<String, dynamic>() ?? {});
+    final totals = Map<String, dynamic>.from(
+        (meta['totals_snapshot'] as Map?)?.cast<String, dynamic>() ?? {});
+    final paid = _num(totals['paid']);
+
+    totals['subtotal'] = subtotal;
+    totals['total'] = total;
+    totals['balance'] = total - paid;
+    meta['totals_snapshot'] = totals;
+    payload['meta'] = meta;
+
+    return payload;
   }
 
   // ── Discard action ────────────────────────────────────────────────────────
@@ -260,7 +428,9 @@ class _OfflineSaleDetailScreenState extends State<OfflineSaleDetailScreen> {
                               ),
                               const Divider(height: 1),
                               const SizedBox(height: 4),
-                              ..._items.map(_buildItemRow),
+                              ..._items.asMap().entries.map(
+                                    (e) => _buildItemRow(e.value, e.key),
+                                  ),
                             ],
                           ),
                   ),
@@ -385,54 +555,104 @@ class _OfflineSaleDetailScreenState extends State<OfflineSaleDetailScreen> {
     );
   }
 
-  Widget _buildItemRow(Map<String, dynamic> item) {
+  Widget _buildItemRow(Map<String, dynamic> item, int index) {
     final productId = item['product_id']?.toString() ?? '?';
     final qty = _num(item['quantity']);
     final price = _num(item['price']);
     final discPct = _num(item['discount_pct']);
     final linePrice = discPct > 0 ? price * (1 - discPct / 100) : price;
     final subtotal = linePrice * qty;
+    final lineError = _lineErrors[index];
+    final correctable = lineError != null &&
+        widget.item.status == OfflineSaleStatus.failed &&
+        lineError.assertedRule != null;
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 5),
-      child: Row(
+      child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(
-            flex: 4,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('Product #$productId',
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                flex: 4,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Product #$productId',
+                        style: TextStyle(
+                            fontWeight: FontWeight.w700,
+                            fontSize: 13,
+                            color: lineError != null
+                                ? AppTheme.danger
+                                : AppTheme.navy)),
+                    if (discPct > 0)
+                      Text('${discPct.toStringAsFixed(0)}% off',
+                          style: const TextStyle(
+                              fontSize: 11.5, color: AppTheme.success)),
+                  ],
+                ),
+              ),
+              SizedBox(
+                width: 48,
+                child: Text('×${qty.toStringAsFixed(qty % 1 == 0 ? 0 : 2)}',
+                    textAlign: TextAlign.right,
+                    style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: lineError != null
+                            ? FontWeight.w800
+                            : FontWeight.normal,
+                        color: lineError != null
+                            ? AppTheme.danger
+                            : AppTheme.textMuted)),
+              ),
+              SizedBox(
+                width: 72,
+                child: Text(_fmtAmt(price),
+                    textAlign: TextAlign.right,
+                    style: const TextStyle(fontSize: 13)),
+              ),
+              SizedBox(
+                width: 80,
+                child: Text(_fmtAmt(subtotal),
+                    textAlign: TextAlign.right,
                     style: const TextStyle(
                         fontWeight: FontWeight.w700, fontSize: 13)),
-                if (discPct > 0)
-                  Text('${discPct.toStringAsFixed(0)}% off',
-                      style: const TextStyle(
-                          fontSize: 11.5, color: AppTheme.success)),
-              ],
+              ),
+            ],
+          ),
+          // The line the server actually complained about, said in full and
+          // attached to the line rather than buried in the banner above.
+          if (lineError != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Icon(Icons.error_outline_rounded,
+                      size: 14, color: AppTheme.danger),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(lineError.display,
+                        style: const TextStyle(
+                            fontSize: 11.5, color: AppTheme.danger)),
+                  ),
+                  if (correctable)
+                    TextButton(
+                      onPressed: _replaying || _discarding
+                          ? null
+                          : () => _correctQuantity(index),
+                      style: TextButton.styleFrom(
+                        visualDensity: VisualDensity.compact,
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                      ),
+                      child: const Text('Fix quantity',
+                          style: TextStyle(fontSize: 12)),
+                    ),
+                ],
+              ),
             ),
-          ),
-          SizedBox(
-            width: 48,
-            child: Text('×${qty.toStringAsFixed(qty % 1 == 0 ? 0 : 2)}',
-                textAlign: TextAlign.right,
-                style: const TextStyle(
-                    fontSize: 13, color: AppTheme.textMuted)),
-          ),
-          SizedBox(
-            width: 72,
-            child: Text(_fmtAmt(price),
-                textAlign: TextAlign.right,
-                style: const TextStyle(fontSize: 13)),
-          ),
-          SizedBox(
-            width: 80,
-            child: Text(_fmtAmt(subtotal),
-                textAlign: TextAlign.right,
-                style: const TextStyle(
-                    fontWeight: FontWeight.w700, fontSize: 13)),
-          ),
         ],
       ),
     );

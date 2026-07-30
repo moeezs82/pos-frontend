@@ -3,7 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:enterprise_pos/services/app_currency.dart';
 import 'dart:ui' show FontFeature;
 import 'package:flutter/services.dart';
+import 'package:enterprise_pos/models/product_unit.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
+import 'package:enterprise_pos/widgets/app_feedback.dart';
 import 'package:enterprise_pos/widgets/enterprise/enterprise_panel.dart';
 
 /// ======= Autocomplete product model =======
@@ -25,6 +27,14 @@ class ProductRef {
     this.stock,
     this.raw,
   });
+
+  /// The quantity contract for this product, read from [raw].
+  ///
+  /// [raw] is whatever the search returned — a live `/products` row (nested
+  /// `unit` object) or a local-cache row (flat `unit_*` columns).
+  /// [QuantityRule.fromProduct] handles both, and a product with no unit
+  /// information yields the permissive rule.
+  QuantityRule get quantityRule => QuantityRule.fromProduct(raw);
 }
 
 /// ======= Fast POS Items Table =======
@@ -64,6 +74,38 @@ class _ItemsTableState extends State<ItemsTable> {
   // NEW: anchor for the product cell
   final LayerLink _productSearchLink = LayerLink();
   final GlobalKey _productSearchKey = GlobalKey();
+
+  /// Per-row quantity rule violation, keyed by row index.
+  ///
+  /// The input formatter already refuses an illegal keystroke or paste, so
+  /// this is for the cases it cannot cover: a line whose product was added
+  /// before the rule was known, and a line whose quantity was set
+  /// programmatically (picker sheet, barcode increment).
+  final Map<int, String> _qtyErrors = {};
+
+  /// Rate-limits the "whole numbers only" toast. Holding the "." key would
+  /// otherwise fire one per keystroke.
+  DateTime? _lastRejectionToast;
+
+  /// The quantity contract for row [i], re-read from the line on every build
+  /// so replacing a line's product immediately replaces its rule.
+  QuantityRule _ruleFor(int i) {
+    if (i < 0 || i >= widget.items.length) return QuantityRule.permissive;
+    return QuantityRule.fromProduct(widget.items[i]);
+  }
+
+  /// Called when the formatter refuses an edit. The refusal is silent by
+  /// itself — nothing changes on screen — so say why.
+  void _onQtyRejected(int i) {
+    final message = _ruleFor(i).message;
+    setState(() => _qtyErrors[i] = message);
+    final now = DateTime.now();
+    final last = _lastRejectionToast;
+    if (last == null || now.difference(last) > const Duration(seconds: 2)) {
+      _lastRejectionToast = now;
+      AppFeedback.warning(context, message);
+    }
+  }
 
   @override
   void initState() {
@@ -168,6 +210,16 @@ class _ItemsTableState extends State<ItemsTable> {
     item['discount_pct'] = disc;
     item['total'] = _calcLineTotal(price: price, qty: qty, discountPct: disc);
 
+    // The quantity is committed as typed even when it breaks the rule — never
+    // silently rounded. The violation is recorded so the field shows it and
+    // the screen's pre-flight check can block the save.
+    final rule = QuantityRule.fromProduct(item);
+    if (rule.allows(qty)) {
+      _qtyErrors.remove(i);
+    } else {
+      _qtyErrors[i] = rule.message;
+    }
+
     final next = [...widget.items];
     next[i] = item;
     widget.onItemsChanged(next);
@@ -178,6 +230,12 @@ class _ItemsTableState extends State<ItemsTable> {
     if (i < 0 || i >= widget.items.length) return;
     final next = [...widget.items]..removeAt(i);
     widget.onItemsChanged(next);
+
+    // Errors are keyed by row index, and every index after i shifts down.
+    // Rather than re-map them, drop the lot — _commitRow re-derives an error
+    // for any row that still has one, and the screen's pre-flight check is
+    // the real guard.
+    _qtyErrors.clear();
 
     _rowCtrls.remove(i)?.dispose();
     final fixed = <int, _RowControllers>{};
@@ -203,6 +261,9 @@ class _ItemsTableState extends State<ItemsTable> {
       'discount_pct': 0.0,
       'quantity': 1.0,
       'total': _calcLineTotal(price: p.tp, qty: 1.0, discountPct: 0.0),
+      // Carry the quantity contract on the line: the search result that knew
+      // it is discarded as soon as this returns.
+      ...p.quantityRule.toRowFields(),
     });
     widget.onItemsChanged(next);
     _addController.clear();
@@ -444,8 +505,11 @@ class _ItemsTableState extends State<ItemsTable> {
                           child: _CellNumberField(
                             controller: ctrls.qty,
                             focusNode: ctrls.qtyFocus,
-                            isInteger: true,
                             allowNegative: true,
+                            rule: _ruleFor(i),
+                            errorText: _qtyErrors[i] ??
+                                _ruleFor(i).validateText(ctrls.qty.text),
+                            onRejected: () => _onQtyRejected(i),
                             onSubmitted: (_) {
                               _commitRow(i);
                               _focusNextFrom(i, _CellField.qty);
@@ -623,9 +687,12 @@ class _ItemsTableState extends State<ItemsTable> {
             child: _CellNumberField(
               controller: ctrls.qty,
               focusNode: ctrls.qtyFocus,
-              isInteger: true,
               allowNegative: true,
               compact: true,
+              rule: _ruleFor(i),
+              errorText:
+                  _qtyErrors[i] ?? _ruleFor(i).validateText(ctrls.qty.text),
+              onRejected: () => _onQtyRejected(i),
               onSubmitted: (_) {
                 _commitRow(i);
                 _focusNextFrom(i, _CellField.qty);
@@ -1075,34 +1142,89 @@ class _AddProductBoxState extends State<_AddProductBox> {
 }
 
 /// ======= Numeric cell editor =======
+/// Blocks any edit that would leave a fractional quantity in a field whose
+/// unit does not allow one.
+///
+/// Rejection means "keep the old value", never "round the new one" — a
+/// formatter that stripped the "." would turn a pasted 1.5 into 15, which is
+/// far worse than refusing it. The refusal is invisible on its own, so
+/// [onRejected] fires and the caller explains it.
+class _WholeQuantityFormatter extends TextInputFormatter {
+  final VoidCallback? onRejected;
+
+  const _WholeQuantityFormatter({this.onRejected});
+
+  /// Optional sign, digits only. An empty field and a lone "-" are allowed
+  /// through so the field can be cleared and a negative can be typed.
+  static final RegExp _allowed = RegExp(r'^-?\d*$');
+
+  @override
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    if (_allowed.hasMatch(newValue.text)) return newValue;
+    onRejected?.call();
+    return oldValue;
+  }
+}
+
 class _CellNumberField extends StatelessWidget {
   final TextEditingController controller;
   final FocusNode focusNode;
   final String suffix;
-  final bool isInteger;
   final bool allowNegative;
   final bool compact;
   final void Function(String)? onSubmitted;
   final void Function(String)? onChanged;
 
+  /// The quantity contract for this line, when the field is a quantity.
+  /// Null (the default) for price/discount, which are always decimal.
+  final QuantityRule? rule;
+
+  /// A rule violation to show. Kept separate from [rule] because a violation
+  /// can outlive the text that caused it (a rejected paste changes nothing).
+  final String? errorText;
+
+  /// Fires when an edit is refused for breaking [rule].
+  final VoidCallback? onRejected;
+
   const _CellNumberField({
     required this.controller,
     required this.focusNode,
     this.suffix = "",
-    this.isInteger = false,
     this.allowNegative = false,
     this.compact = false,
     this.onSubmitted,
     this.onChanged,
+    this.rule,
+    this.errorText,
+    this.onRejected,
   });
+
+  bool get _wholeOnly => rule != null && !rule!.allowDecimal;
 
   @override
   Widget build(BuildContext context) {
-    return TextField(
+    final hasError = errorText != null && errorText!.isNotEmpty;
+    final errorBorder = OutlineInputBorder(
+      borderRadius: BorderRadius.all(Radius.circular(compact ? 3 : 4)),
+      borderSide: const BorderSide(color: AppTheme.danger, width: 1.4),
+    );
+
+    final field = TextField(
       controller: controller,
       focusNode: focusNode,
       textAlign: TextAlign.right,
-      keyboardType: TextInputType.numberWithOptions(decimal: true, signed: allowNegative),
+      // decimal: false also asks a soft keyboard not to offer a decimal key.
+      // It is a hint, not a guarantee — the formatter is what enforces.
+      keyboardType: TextInputType.numberWithOptions(
+        decimal: !_wholeOnly,
+        signed: allowNegative,
+      ),
+      inputFormatters: _wholeOnly
+          ? [_WholeQuantityFormatter(onRejected: onRejected)]
+          : null,
       textInputAction: TextInputAction.next,
       onSubmitted: onSubmitted,
       onChanged: (v) {
@@ -1120,17 +1242,33 @@ class _CellNumberField extends StatelessWidget {
             ? const EdgeInsets.symmetric(horizontal: 4, vertical: 8)
             : const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
         suffixText: suffix.isEmpty ? null : suffix,
+        // The compact row has a fixed 58px height, so an errorText label under
+        // the field would overflow it. There the red border plus the tooltip
+        // carry the message instead.
+        errorText: (hasError && !compact) ? errorText : null,
+        errorMaxLines: 2,
+        errorStyle: const TextStyle(fontSize: 10, height: 1.1),
         border: compact
             ? const OutlineInputBorder(
                 borderRadius: BorderRadius.all(Radius.circular(3)),
               )
             : const OutlineInputBorder(),
+        enabledBorder: hasError ? errorBorder : null,
+        focusedBorder: hasError ? errorBorder : null,
       ),
       style: TextStyle(
         fontWeight: FontWeight.w600,
         fontSize: compact ? 12 : 14,
         fontFeatures: const [FontFeature.tabularFigures()],
       ),
+    );
+
+    if (!hasError && !_wholeOnly) return field;
+    return Tooltip(
+      message: hasError
+          ? errorText!
+          : 'Whole numbers only${rule!.unitName.isEmpty ? '' : ' — unit "${rule!.unitName}"'}.',
+      child: field,
     );
   }
 }

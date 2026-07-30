@@ -1,7 +1,9 @@
 import 'dart:async' show Timer;
 import 'dart:ui' show FontFeature;
 
+import 'package:enterprise_pos/api/core/api_client.dart' show ApiException;
 import 'package:enterprise_pos/api/product_service.dart';
+import 'package:enterprise_pos/models/product_unit.dart';
 import 'package:enterprise_pos/api/sale_service.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/providers/branch_feature_provider.dart';
@@ -12,6 +14,7 @@ import 'package:enterprise_pos/providers/register_shift_provider.dart';
 import 'package:enterprise_pos/providers/payment_method_provider.dart';
 import 'package:enterprise_pos/services/offline_invoice_seq_service.dart';
 import 'package:enterprise_pos/services/offline_sales_queue_service.dart';
+import 'package:enterprise_pos/utils/line_errors.dart';
 import 'package:enterprise_pos/utils/network_failure.dart';
 import 'package:uuid/uuid.dart';
 import 'package:enterprise_pos/screens/sales/parts/create_sale_items_section.dart';
@@ -450,6 +453,9 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         'price': price,
         'discount_pct': 0.0,
         'total': _lineTotal(price: price, qty: 1.0, discPct: 0.0),
+        // Stamp the quantity contract onto the line — the product map this
+        // came from (search hit, scan lookup, cache row) is not kept.
+        ...QuantityRule.fromProduct(product).toRowFields(),
       });
     }
   }
@@ -479,6 +485,9 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       final rowPrice =
           double.tryParse(_items[idx]["price"]?.toString() ?? '') ?? price;
       _items[idx]["total"] = _lineTotal(price: rowPrice, qty: qty, discPct: discPct);
+      // Refresh the rule too: the picker may know the unit for a line that was
+      // added before the unit was known (e.g. from a stale cache row).
+      _items[idx].addAll(QuantityRule.fromProduct(product).toRowFields());
     } else {
       _items.add({
         "product_id": productId,
@@ -489,6 +498,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         "price": price,
         "discount_pct": 0.0,
         "total": _lineTotal(price: price, qty: qty, discPct: 0.0),
+        ...QuantityRule.fromProduct(product).toRowFields(),
       });
     }
   }
@@ -554,8 +564,10 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
 
     final costPrice = item['cost_price'] ?? 0.0;
     final wholesalePrice = item['wholesale_price'] ?? 0.0;
+    final rule = QuantityRule.fromProduct(item);
 
     bool showHidden = false;
+    String? qtyError;
 
     showDialog(
       context: context,
@@ -568,8 +580,19 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
               children: [
                 TextField(
                   controller: qtyController,
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
-                  decoration: const InputDecoration(labelText: "Quantity"),
+                  keyboardType: TextInputType.numberWithOptions(
+                    decimal: rule.allowDecimal,
+                    signed: true,
+                  ),
+                  onChanged: (v) =>
+                      setLocal(() => qtyError = rule.validateText(v)),
+                  decoration: InputDecoration(
+                    labelText: "Quantity",
+                    helperText: rule.allowDecimal
+                        ? null
+                        : 'Whole numbers only${rule.unitName.isEmpty ? '' : ' (${rule.unitName})'}',
+                    errorText: qtyError,
+                  ),
                 ),
                 const SizedBox(height: 12),
                 TextField(
@@ -615,6 +638,13 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
               ),
               ElevatedButton(
                 onPressed: () {
+                  final error = rule.validateText(qtyController.text);
+                  if (error != null) {
+                    // Block rather than round: a rounded quantity would post
+                    // stock and money the cashier never agreed to.
+                    setLocal(() => qtyError = error);
+                    return;
+                  }
                   setState(() {
                     _items[index]['quantity'] =
                         double.tryParse(qtyController.text.trim()) ?? 1.0;
@@ -831,9 +861,82 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
   }
 
   // ---------------- Submit ----------------
+  /// The first cart line whose quantity breaks its unit's rule, described in
+  /// a way that points at the line — or null when every line is acceptable.
+  ///
+  /// This mirrors the backend's own pre-write guard (units.FirstViolation), so
+  /// a sale that could only come back as a 422 never leaves the device — which
+  /// matters most when the device is offline and the rejection would otherwise
+  /// not surface until sync.
+  String? _firstQuantityViolation() {
+    for (var i = 0; i < _items.length; i++) {
+      final row = _items[i];
+      final name = (row['name'] ?? 'item').toString();
+      final qty = double.tryParse(row['quantity']?.toString() ?? '');
+      if (qty == null) {
+        return 'Line ${i + 1} ($name) has no valid quantity.';
+      }
+      final rule = QuantityRule.fromProduct(row);
+      if (!rule.allows(qty)) {
+        return 'Line ${i + 1} — $name: ${rule.message}';
+      }
+    }
+    return null;
+  }
+
+  /// Reads a 422 bag and writes what it taught us back onto the cart.
+  ///
+  /// A `items.N.quantity` decimal rejection is the server stating that line
+  /// N's unit does not allow a fraction — authoritative, and newer than
+  /// whatever the line was carrying (a cache row from before the unit was
+  /// changed, or no unit information at all). Recording it turns the field
+  /// red and makes the client-side check catch the same mistake next time,
+  /// instead of another round trip.
+  void _applyServerLineErrors(ApiException e) {
+    for (final lineError in parseValidationBag(e.body?['errors'])) {
+      final rule = lineError.assertedRule;
+      if (rule == null) continue;
+      final index = lineError.index;
+      if (index < 0 || index >= _items.length) continue;
+      // Only what the server actually asserted: the rule, and the unit name
+      // when it named one. The unit id is not in the message, and blanking a
+      // known one would lose information.
+      _items[index]['unit_allow_decimal'] = false;
+      if (rule.unitName.isNotEmpty) _items[index]['unit_name'] = rule.unitName;
+    }
+  }
+
+  /// Cashier-readable text for a rejection that will never succeed on retry.
+  /// Field errors are listed with the cart line they belong to; anything else
+  /// falls back to the server's own message.
+  String _describeRejection(ApiException e) {
+    final lines = <String>[];
+    flattenBag(e.body?['errors']).forEach((key, message) {
+      final index =
+          key.startsWith('items.') ? int.tryParse(key.split('.')[1]) : null;
+      if (index != null && index >= 0 && index < _items.length) {
+        final name = (_items[index]['name'] ?? 'item').toString();
+        lines.add('Line ${index + 1} — $name: $message');
+      } else {
+        lines.add(message);
+      }
+    });
+    if (lines.isEmpty) return 'Sale not saved: ${e.message}';
+    return 'Sale not saved — please correct and try again.\n${lines.join('\n')}';
+  }
+
   Future<void> _submitSale() async {
     if (_items.isEmpty) {
       AppFeedback.warning(context, "Add at least 1 item before creating sale.");
+      return;
+    }
+
+    // Quantity rules are checked before anything is built or sent. Offline,
+    // this is the only defence — nothing will validate the sale until it
+    // syncs, potentially hours later.
+    final quantityViolation = _firstQuantityViolation();
+    if (quantityViolation != null) {
+      AppFeedback.warning(context, quantityViolation);
       return;
     }
 
@@ -1010,18 +1113,39 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
             .createSaleFromPayload(payload)
             .timeout(const Duration(seconds: 15));
       } catch (e) {
-        // Queue on ANY failed submit — not just a network-unreachable one —
-        // so the cashier can always keep working instead of getting stuck.
-        // The reason is stored alongside the queued sale purely for
+        // A DETERMINISTIC rejection must not be queued. The queue's premise is
+        // "this will work later"; re-POSTing an identical payload that the
+        // server already refused on its merits will be refused identically
+        // forever, so it would only travel to the dead-letter list and reach
+        // the cashier hours later, out of context, with the cart long gone.
+        // Block here instead: the cart is intact and correctable right now.
+        //
+        // Three kinds still queue, because none of them says the payload is
+        // wrong: retryable infra (5xx/429/408/425); an expired token, which
+        // the sync layer resolves by re-authenticating; and 402, the branch
+        // subscription lock — a condition of the branch that an administrator
+        // can lift, at which point this exact sale posts fine.
+        if (e is ApiException &&
+            !e.isRetryable &&
+            !e.isAuthFailure &&
+            e.statusCode != 402) {
+          _applyServerLineErrors(e);
+          if (!mounted) return;
+          setState(() {});
+          AppFeedback.error(context, _describeRejection(e));
+          return; // cart preserved; the outer finally clears _submitting
+        }
+
+        // Queue on any other failed submit — not just a network-unreachable
+        // one — so the cashier can always keep working instead of getting
+        // stuck. The reason is stored alongside the queued sale purely for
         // visibility on the sync screen; it doesn't change what happens
         // next. The actual Sync Now attempt (OfflineSyncService) still
         // correctly tells apart "still offline, keep retrying" from "real
-        // error, needs a human" — a genuinely broken item (e.g. a deleted
-        // product) will surface as failed on its first sync attempt rather
-        // than looping forever, so widening the net here is safe.
+        // error, needs a human".
         queueReason = isNetworkFailure(e)
             ? 'Offline: could not reach the server ($e).'
-            : 'Server responded with an error, queued for review on sync: $e';
+            : 'Server responded with a retryable error, queued for review on sync: $e';
 
         await OfflineSalesQueueService.instance.enqueue(
           clientRef: clientRef,

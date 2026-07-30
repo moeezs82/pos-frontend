@@ -176,6 +176,25 @@ class QuantityRule {
     );
   }
 
+  /// The flat fields to stamp onto a cart/line row so the rule survives
+  /// alongside the line instead of being re-fetched.
+  ///
+  /// Sale and purchase lines are plain maps built once at add-time from a
+  /// product map that may or may not still be in memory later (the search
+  /// result is discarded, the picker sheet is closed, the app may be offline
+  /// by the time Save is pressed). Copying the three fields onto the line is
+  /// what lets [fromProduct] re-read the rule from the line itself — and the
+  /// keys deliberately match the flattened cache shape so both sources parse
+  /// through the same branch.
+  ///
+  /// Safe to spread into a payload row: `buildSalePayload` and the purchase
+  /// payload builder both pick named keys, so these never reach the API.
+  Map<String, dynamic> toRowFields() => {
+        'unit_id': unitId,
+        'unit_name': unitName,
+        'unit_allow_decimal': allowDecimal,
+      };
+
   factory QuantityRule.fromUnit(ProductUnit? unit) {
     if (unit == null) return permissive;
     return QuantityRule(
