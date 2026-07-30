@@ -119,15 +119,14 @@ class _PartyAutocompleteFieldState<T> extends State<PartyAutocompleteField<T>> {
   final _layerLink = LayerLink();
   OverlayEntry? _overlayEntry;
 
-  /// Ties the text field and its suggestion overlay into ONE tap region.
+  /// Ties the text field and its suggestion overlay into ONE tap region, so a
+  /// tap on the panel does not count as a tap *outside* this widget and
+  /// therefore does not dismiss the overlay.
   ///
-  /// Without this, clicking a suggestion could never select it: the overlay
-  /// lives in the root Overlay, so it is "outside" the TextField as far as
-  /// Flutter is concerned, and EditableText's default onTapOutside unfocuses
-  /// the field on pointer-DOWN. The field blurred, the overlay was torn down,
-  /// and the tap was cancelled before pointer-up ever landed — which is why
-  /// only the keyboard (Enter) worked. Sharing a groupId makes taps on the
-  /// panel count as taps inside the field.
+  /// NOTE: this group alone is not enough to keep the field focused — see
+  /// [TextFieldTapRegion] on the overlay below. EditableText registers its own
+  /// TapRegion under the shared `EditableText` group and unfocuses on
+  /// pointer-DOWN for desktop targets; only joining *that* group stops it.
   final Object _tapGroup = Object();
   Timer? _debounce;
 
@@ -253,7 +252,15 @@ class _PartyAutocompleteFieldState<T> extends State<PartyAutocompleteField<T>> {
             link: _layerLink,
             showWhenUnlinked: false,
             offset: const Offset(0, 48),
-            child: TapRegion(
+            // TextFieldTapRegion == TapRegion(groupId: EditableText). It is the
+            // ONLY thing that stops EditableText's default onTapOutside from
+            // unfocusing this field on pointer-DOWN when the click lands on the
+            // panel. Without it the field blurs, _onFocusChanged tears the
+            // overlay down, and the tap is cancelled before pointer-UP ever
+            // reaches the InkWell — which is exactly why only Enter worked.
+            // The inner TapRegion keeps our own outside-tap dismissal correct.
+            child: TextFieldTapRegion(
+              child: TapRegion(
               groupId: _tapGroup,
               child: SizedBox(
               width: _fieldWidth,
@@ -280,6 +287,7 @@ class _PartyAutocompleteFieldState<T> extends State<PartyAutocompleteField<T>> {
                   }
                 },
               ),
+            ),
             ),
             ),
           ),

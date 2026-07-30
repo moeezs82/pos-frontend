@@ -922,7 +922,14 @@ class _AddProductBoxState extends State<_AddProductBox> {
 
     final theme = Theme.of(context);
 
-    return TapRegion(
+    // TextFieldTapRegion == TapRegion(groupId: EditableText). It is the ONLY
+    // thing that stops EditableText's default onTapOutside from unfocusing the
+    // search field on pointer-DOWN when the click lands on this panel. Without
+    // it the field blurs, the overlay is torn down, and the tap is cancelled
+    // before pointer-UP reaches the InkWell — which is why only Enter worked.
+    // The inner TapRegion keeps our own outside-tap dismissal correct.
+    return TextFieldTapRegion(
+      child: TapRegion(
       groupId: _tapGroup,
       child: CompositedTransformFollower(
       link: widget.link,
@@ -994,6 +1001,7 @@ class _AddProductBoxState extends State<_AddProductBox> {
                   ),
           ),
         ),
+      ),
       ),
       ),
     );

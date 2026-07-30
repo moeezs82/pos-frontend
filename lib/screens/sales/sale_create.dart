@@ -2849,6 +2849,11 @@ class _CartProductSearch extends StatefulWidget {
 
 class _CartProductSearchState extends State<_CartProductSearch> {
   final LayerLink _layerLink = LayerLink();
+
+  /// Binds the field and its dropdown into one tap region so a click on the
+  /// dropdown is not treated as a tap outside this widget. See the
+  /// TextFieldTapRegion note in _buildDropdown for the other half of the fix.
+  final Object _tapGroup = Object();
   Timer? _debounce;
   OverlayEntry? _overlayEntry;
   List<ProductRef> _suggestions = [];
@@ -2913,7 +2918,12 @@ class _CartProductSearchState extends State<_CartProductSearch> {
   }
 
   void _showOverlay() {
-    _removeOverlay();
+    // Refresh in place rather than tearing down and re-inserting: destroying
+    // the entry mid-gesture cancels a click that is already in progress.
+    if (_overlayEntry != null) {
+      _overlayEntry!.markNeedsBuild();
+      return;
+    }
     final overlay = Overlay.of(context);
     _overlayEntry = OverlayEntry(builder: (_) => _buildDropdown());
     overlay.insert(_overlayEntry!);
@@ -2946,7 +2956,18 @@ class _CartProductSearchState extends State<_CartProductSearch> {
   }
 
   Widget _buildDropdown() {
-    return CompositedTransformFollower(
+    // TextFieldTapRegion == TapRegion(groupId: EditableText). On desktop,
+    // EditableText's default onTapOutside unfocuses the field on pointer-DOWN
+    // for any tap outside its own group. This dropdown lives in the root
+    // Overlay, so it counted as "outside": the field blurred, _onFocusChanged
+    // tore the overlay down, and the tap died before pointer-UP reached the
+    // row — which is why only Enter could select. Joining the EditableText
+    // group is the only thing that prevents that blur. The inner TapRegion
+    // keeps our own outside-tap dismissal working.
+    return TextFieldTapRegion(
+      child: TapRegion(
+      groupId: _tapGroup,
+      child: CompositedTransformFollower(
       link: _layerLink,
       showWhenUnlinked: false,
       offset: const Offset(0, 38),
@@ -3051,12 +3072,17 @@ class _CartProductSearchState extends State<_CartProductSearch> {
         ),
       ),
     ),
+    ),
+    ),
   );
   }
 
   @override
   Widget build(BuildContext context) {
-    return CompositedTransformTarget(
+    return TapRegion(
+      groupId: _tapGroup,
+      onTapOutside: (_) => _removeOverlay(),
+      child: CompositedTransformTarget(
       link: _layerLink,
       // Focus wraps the TextField so onKeyEvent fires while the TextField has focus.
       child: Focus(
@@ -3141,6 +3167,7 @@ class _CartProductSearchState extends State<_CartProductSearch> {
             style: const TextStyle(fontSize: 13),
           ),
         ),
+      ),
       ),
     );
   }
