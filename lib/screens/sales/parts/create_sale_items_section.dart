@@ -797,6 +797,14 @@ class _AddProductBox extends StatefulWidget {
 
 class _AddProductBoxState extends State<_AddProductBox> {
   OverlayEntry? _entry;
+
+  /// Binds this field and its suggestion overlay into ONE tap region.
+  ///
+  /// The overlay lives in the ROOT overlay, so Flutter treats a click on it as
+  /// a tap OUTSIDE the TextField; EditableText's default onTapOutside then
+  /// unfocuses on pointer-DOWN, _onFocusChanged tore the overlay down, and the
+  /// tap died before pointer-up. That is why only Enter selected a product.
+  final Object _tapGroup = Object();
   List<ProductRef> _options = const [];
   bool _loading = false;
   int _highlightIndex = -1;
@@ -822,6 +830,9 @@ class _AddProductBoxState extends State<_AddProductBox> {
 
   void _onFocusChanged() {
     if (!widget.focusNode.hasFocus) {
+      // Only keyboard traversal / programmatic unfocus reach here now.
+      // Mouse dismissal is handled by TapRegion.onTapOutside, so a click on a
+      // suggestion no longer destroys the overlay before it can be selected.
       _removeOverlay();
     } else if (widget.controller.text.trim().isNotEmpty) {
       _showOrUpdateOverlay();
@@ -911,7 +922,9 @@ class _AddProductBoxState extends State<_AddProductBox> {
 
     final theme = Theme.of(context);
 
-    return CompositedTransformFollower(
+    return TapRegion(
+      groupId: _tapGroup,
+      child: CompositedTransformFollower(
       link: widget.link,
       showWhenUnlinked: false,
       targetAnchor: Alignment.bottomLeft, // align edges
@@ -950,6 +963,7 @@ class _AddProductBoxState extends State<_AddProductBox> {
                       final p = _options[i];
                       final isHi = i == _highlightIndex;
                       return InkWell(
+                        canRequestFocus: false,
                         onTap: () => _select(p),
                         child: Container(
                           color: isHi ? theme.focusColor.withOpacity(.2) : null,
@@ -981,12 +995,16 @@ class _AddProductBoxState extends State<_AddProductBox> {
           ),
         ),
       ),
+      ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    return Focus(
+    return TapRegion(
+      groupId: _tapGroup,
+      onTapOutside: (_) => _removeOverlay(),
+      child: Focus(
       focusNode: widget.focusNode,
       onKey: (node, RawKeyEvent event) {
         if (event is! RawKeyDownEvent) return KeyEventResult.ignored;
@@ -1042,6 +1060,7 @@ class _AddProductBoxState extends State<_AddProductBox> {
           textInputAction: TextInputAction.search,
           onSubmitted: (_) => _pickHighlighted(),
         ),
+      ),
       ),
     );
   }

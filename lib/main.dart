@@ -14,6 +14,7 @@ import 'providers/branch_feature_provider.dart';
 import 'screens/login_screen.dart';
 import 'screens/home_screen.dart';
 import 'services/connectivity_auto_sync_service.dart';
+import 'services/backend_startup_service.dart';
 import 'theme/app_theme.dart';
 import 'services/app_navigator.dart';
 import 'widgets/app_keyboard_shortcuts.dart';
@@ -29,7 +30,108 @@ void main() {
   sqfliteFfiInit();
   databaseFactory = databaseFactoryFfi;
 
-  runApp(const MyApp());
+  runApp(const CounterIQBootstrap());
+}
+
+class CounterIQBootstrap extends StatefulWidget {
+  const CounterIQBootstrap({super.key});
+
+  @override
+  State<CounterIQBootstrap> createState() => _CounterIQBootstrapState();
+}
+
+class _CounterIQBootstrapState extends State<CounterIQBootstrap> {
+  bool _ready = false;
+  bool _starting = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _startBackend();
+  }
+
+  Future<void> _startBackend() async {
+    if (mounted) {
+      setState(() {
+        _starting = true;
+        _error = null;
+      });
+    }
+
+    try {
+      await BackendStartupService.ensureReady();
+      if (!mounted) return;
+      setState(() {
+        _ready = true;
+        _starting = false;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _starting = false;
+        _error = error.toString();
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Do not build MyApp until the backend is healthy. AuthProvider's
+    // tryAutoLogin() is created inside MyApp, so no auth/API request can
+    // race the bundled backend startup.
+    if (_ready) return const MyApp();
+
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      title: 'CounterIQ',
+      theme: AppTheme.light,
+      home: Scaffold(
+        body: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 520),
+            child: Padding(
+              padding: const EdgeInsets.all(32),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.point_of_sale_rounded, size: 64),
+                  const SizedBox(height: 20),
+                  Text(
+                    _starting
+                        ? 'Starting CounterIQ...'
+                        : 'CounterIQ could not start',
+                    textAlign: TextAlign.center,
+                    style: Theme.of(context).textTheme.headlineSmall,
+                  ),
+                  const SizedBox(height: 16),
+                  if (_starting) ...[
+                    const CircularProgressIndicator(),
+                    const SizedBox(height: 16),
+                    const Text(
+                      'Preparing the local database and services...',
+                      textAlign: TextAlign.center,
+                    ),
+                  ] else ...[
+                    SelectableText(
+                      _error ?? 'Unknown startup error.',
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 20),
+                    FilledButton.icon(
+                      onPressed: _startBackend,
+                      icon: const Icon(Icons.refresh_rounded),
+                      label: const Text('Retry'),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class MyApp extends StatelessWidget {

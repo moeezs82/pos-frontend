@@ -47,6 +47,9 @@ dependencies:
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
   esc_pos_printer_plus: 0.1.1
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
   msix: ^3.16.12
   # sqflite's default plugin only talks to Android/iOS platform channels —
   # it has no Windows/Linux implementation. This is a Windows desktop app,
@@ -121,11 +124,10 @@ msix_config:
   display_name: CounterIQ
   publisher_display_name: Moeez Pvt Ltd
   identity_name: com.moeez.counteriq
-  msix_version: 1.0.0.0
+  msix_version: 1.0.0.1
   logo_path: windows/runner/resources/app_icon.ico
   architecture: x64
-  capabilities: internetClient
+  capabilities: internetClient, privateNetworkClientServer
 
   publisher: "CN=Moeez"
   certificate_path: "E:\\learning\\flutter\\enterprise_pos\\windows\\signing\\moeez_codesign.pfx"
-  certificate_password: "Moeez@123"

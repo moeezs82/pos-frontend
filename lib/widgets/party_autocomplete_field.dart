@@ -118,6 +118,17 @@ class _PartyAutocompleteFieldState<T> extends State<PartyAutocompleteField<T>> {
   bool _ownsFocusNode = false;
   final _layerLink = LayerLink();
   OverlayEntry? _overlayEntry;
+
+  /// Ties the text field and its suggestion overlay into ONE tap region.
+  ///
+  /// Without this, clicking a suggestion could never select it: the overlay
+  /// lives in the root Overlay, so it is "outside" the TextField as far as
+  /// Flutter is concerned, and EditableText's default onTapOutside unfocuses
+  /// the field on pointer-DOWN. The field blurred, the overlay was torn down,
+  /// and the tap was cancelled before pointer-up ever landed — which is why
+  /// only the keyboard (Enter) worked. Sharing a groupId makes taps on the
+  /// panel count as taps inside the field.
+  final Object _tapGroup = Object();
   Timer? _debounce;
 
   List<T> _suggestions = [];
@@ -155,13 +166,14 @@ class _PartyAutocompleteFieldState<T> extends State<PartyAutocompleteField<T>> {
   void _onFocusChanged() {
     if (_focusNode.hasFocus) {
       _runLocalFilter(_controller.text);
-    } else {
-      // Slight delay so a tap on a suggestion (which also briefly steals
-      // focus) isn't cancelled by the field losing focus first.
-      Future.delayed(const Duration(milliseconds: 120), () {
-        if (!mounted || !_focusNode.hasFocus) _removeOverlay();
-      });
+      return;
     }
+    // Dismissal is driven by TapRegion.onTapOutside, not by focus. This branch
+    // only covers keyboard traversal (Tab away) and programmatic unfocus; the
+    // previous 120ms race — which lost the click whenever the user held the
+    // mouse button longer than that, or a debounced search landed mid-click —
+    // is gone.
+    _removeOverlay();
   }
 
   void _runLocalFilter(String query) {
@@ -223,8 +235,13 @@ class _PartyAutocompleteFieldState<T> extends State<PartyAutocompleteField<T>> {
   }
 
   void _showOverlay() {
-    _removeOverlay();
     if (!_focusNode.hasFocus) return;
+    // Refresh in place. Removing and re-inserting the entry on every keystroke
+    // (and on every remote result) destroyed the gesture arena mid-click.
+    if (_overlayEntry != null) {
+      _overlayEntry!.markNeedsBuild();
+      return;
+    }
 
     final overlay = Overlay.of(context);
     _overlayEntry = OverlayEntry(
@@ -236,7 +253,9 @@ class _PartyAutocompleteFieldState<T> extends State<PartyAutocompleteField<T>> {
             link: _layerLink,
             showWhenUnlinked: false,
             offset: const Offset(0, 48),
-            child: SizedBox(
+            child: TapRegion(
+              groupId: _tapGroup,
+              child: SizedBox(
               width: _fieldWidth,
               child: _SuggestionsPanel<T>(
                 suggestions: _suggestions,
@@ -261,6 +280,7 @@ class _PartyAutocompleteFieldState<T> extends State<PartyAutocompleteField<T>> {
                   }
                 },
               ),
+            ),
             ),
           ),
         );
@@ -319,7 +339,10 @@ class _PartyAutocompleteFieldState<T> extends State<PartyAutocompleteField<T>> {
       );
     }
 
-    return CompositedTransformTarget(
+    return TapRegion(
+      groupId: _tapGroup,
+      onTapOutside: (_) => _removeOverlay(),
+      child: CompositedTransformTarget(
       link: _layerLink,
       child: Focus(
         onKeyEvent: (node, event) {
@@ -368,6 +391,7 @@ class _PartyAutocompleteFieldState<T> extends State<PartyAutocompleteField<T>> {
             contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
           ),
         ),
+      ),
       ),
     );
   }
@@ -430,6 +454,7 @@ class _SuggestionsPanel<T> extends StatelessWidget {
                     final item = suggestions[i];
                     final selected = i == highlightedIndex;
                     return InkWell(
+                      canRequestFocus: false,
                       onTap: () => onTap(item),
                       child: Container(
                         color: selected ? AppTheme.primarySoft : null,
@@ -467,6 +492,7 @@ class _SuggestionsPanel<T> extends StatelessWidget {
               ),
             const Divider(height: 1),
             InkWell(
+              canRequestFocus: false,
               onTap: onBrowseAll,
               child: const Padding(
                 padding: EdgeInsets.symmetric(vertical: 10, horizontal: 14),
