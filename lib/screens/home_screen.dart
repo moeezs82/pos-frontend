@@ -8,6 +8,7 @@ import 'package:enterprise_pos/screens/cash_ledger/cash_ledger_screen.dart';
 import 'package:enterprise_pos/screens/customers/customers_screen.dart';
 import 'package:enterprise_pos/screens/dashboard/today_snapshot_section.dart';
 import 'package:enterprise_pos/screens/product_screen.dart';
+import 'package:enterprise_pos/screens/units_screen.dart';
 import 'package:enterprise_pos/screens/purchases/purchase_claim_screen.dart';
 import 'package:enterprise_pos/screens/purchases/purchase_create.dart';
 import 'package:enterprise_pos/screens/purchases/purchases_screen.dart';
@@ -99,6 +100,22 @@ class HomeScreen extends StatelessWidget {
           subtitle: 'Manage subscription status for all branches',
           color: AppTheme.purple,
           onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const SubscriptionManagementScreen())),
+        ),
+      // Units of measure. Gated on view-units, not on Master Admin: a branch
+      // manager who maintains the catalogue needs this, and the backend
+      // enforces manage-units on the write endpoints anyway.
+      if (auth.hasPermission('view-units'))
+        _Tile(
+          icon: Icons.straighten_rounded,
+          title: 'Units',
+          subtitle: 'Manage units and decimal quantity rules',
+          color: AppTheme.navy,
+          onTap: () => Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => UnitsScreen(token: auth.token!),
+            ),
+          ),
         ),
       if (auth.hasPermission('view-register-shifts')) _Tile(
         icon: Icons.point_of_sale_rounded,

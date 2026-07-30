@@ -2,6 +2,9 @@ import 'dart:io';
 import 'dart:math';
 import 'package:enterprise_pos/api/common_service.dart';
 import 'package:enterprise_pos/api/product_service.dart';
+import 'package:enterprise_pos/api/unit_service.dart';
+import 'package:enterprise_pos/models/product_unit.dart';
+import 'package:enterprise_pos/screens/units_screen.dart';
 import 'package:enterprise_pos/widgets/vendor_picker_sheet.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -46,6 +49,13 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
   List<Map<String, dynamic>> _categories = [];
   List<Map<String, dynamic>> _brands     = [];
 
+  /// Unit of measure. Drives whether the till accepts a decimal quantity for
+  /// this product — see QuantityRule.
+  int?               _selectedUnitId;
+  List<ProductUnit>  _units = [];
+  late String        _token;
+  late UnitService   _unitService;
+
   // ── Image state ──────────────────────────────────────────────────────────────
   /// File picked from disk, not yet uploaded.
   File?   _pickedImageFile;
@@ -65,8 +75,10 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
   void initState() {
     super.initState();
     final token = Provider.of<AuthProvider>(context, listen: false).token!;
+    _token          = token;
     _productService = ProductService(token: token);
     _commonService  = CommonService(token: token);
+    _unitService    = UnitService(token: token);
 
     if (widget.product != null) {
       final p = widget.product!;
@@ -83,6 +95,11 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
       _taxInclusive = p['tax_inclusive'] == 1 || p['tax_inclusive'] == true;
       _selectedCategoryId = p['category_id'];
       _selectedBrandId    = p['brand_id'];
+      // unit_id is the flat column; fall back to the nested relation, which is
+      // what /products actually returns.
+      _selectedUnitId = p['unit_id'] is int
+          ? p['unit_id'] as int
+          : (p['unit'] is Map ? (p['unit']['id'] as num?)?.toInt() : null);
 
       // Existing server image
       _currentImageUrl = p['image_url']?.toString();
@@ -127,6 +144,29 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
       });
     } catch (e) {
       debugPrint('Error loading initial data: $e');
+    }
+    await _loadUnits();
+  }
+
+  /// Loads units separately from categories/brands so that a user WITHOUT the
+  /// view-units permission still gets a working product form — they simply
+  /// cannot change the unit. Folding this into _loadInitialData would let a
+  /// 403 on /units wipe the category and brand lists too.
+  Future<void> _loadUnits() async {
+    try {
+      final units = await _unitService.list();
+      if (!mounted) return;
+      setState(() {
+        _units = units.where((u) => u.isActive || u.id == _selectedUnitId).toList();
+        // Creating a product: default to the only unit, or to Piece, so the
+        // field is never silently empty.
+        if (_selectedUnitId == null && !_isEdit && _units.isNotEmpty) {
+          final piece = _units.where((u) => u.name.toLowerCase() == 'piece');
+          _selectedUnitId = piece.isNotEmpty ? piece.first.id : _units.first.id;
+        }
+      });
+    } catch (e) {
+      debugPrint('Error loading units: $e');
     }
   }
 
@@ -330,6 +370,7 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
       'discount':        double.tryParse(_discountController.text) ?? 0.0,
       'category_id':     _selectedCategoryId,
       'brand_id':        _selectedBrandId,
+      'unit_id':         _selectedUnitId,
       'vendor_id':       _selectedVendorId,
       'is_active':       _isActive,
       'branch_stocks':   <Map<String, dynamic>>[],
@@ -491,6 +532,54 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
                           _selectedBrandId = newBrand['id'];
                         });
                       }
+                    },
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+
+              // ── Unit ──────────────────────────────────────────────────────────
+              // Every product should have a unit: it decides whether the till
+              // will accept a fractional quantity for this product. Products
+              // migrated from before units exist carry the default "Piece".
+              Row(
+                children: [
+                  Expanded(
+                    child: DropdownButtonFormField<int>(
+                      value: (_selectedUnitId != null &&
+                              _units.any((u) => u.id == _selectedUnitId))
+                          ? _selectedUnitId
+                          : null,
+                      decoration: const InputDecoration(
+                        labelText: 'Unit',
+                        border: OutlineInputBorder(),
+                        helperText:
+                            'Controls whether this product can be sold in decimal quantities.',
+                      ),
+                      items: _units
+                          .map((u) => DropdownMenuItem<int>(
+                                value: u.id,
+                                child: Text(u.allowDecimal
+                                    ? '${u.name} (decimals allowed)'
+                                    : u.name),
+                              ))
+                          .toList(),
+                      onChanged: (val) => setState(() => _selectedUnitId = val),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'Manage units',
+                    icon: const Icon(Icons.settings, color: Colors.blueGrey),
+                    onPressed: () async {
+                      await Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => UnitsScreen(token: _token),
+                        ),
+                      );
+                      // A unit may have been renamed, added or deleted while we
+                      // were away, so reload rather than trusting the old list.
+                      await _loadUnits();
                     },
                   ),
                 ],
