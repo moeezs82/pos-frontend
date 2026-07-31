@@ -127,6 +127,13 @@ class OfflineInvoiceSeqService {
     required String registerCode,
     required DateTime occurredAt,
   }) async {
+    if (branchId <= 0) {
+      throw ArgumentError.value(
+        branchId,
+        'branchId',
+        'A valid branch is required for offline invoice generation.',
+      );
+    }
     final db = await _database;
     final deviceKey = await _getDeviceKey();
     final seqDate = _dateKey(occurredAt); // "YYYYMMDD"

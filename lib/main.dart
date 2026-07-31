@@ -263,7 +263,7 @@ class _AuthOrchestratorState extends State<_AuthOrchestrator> {
 
       context.read<BranchProvider>().syncFromAuthUser(auth.user);
       context.read<PrinterConfigProvider>().ensureLoadedFor(token);
-      context.read<OfflineQueueProvider>().refresh();
+      context.read<OfflineQueueProvider>().setBranch(branchId);
 
       // initialize() is guarded by _initializedToken == token, so repeated
       // calls for the same session (e.g. from a branch switch notifying
@@ -279,12 +279,17 @@ class _AuthOrchestratorState extends State<_AuthOrchestrator> {
           .read<PaymentMethodProvider>()
           .initialize(token, branchId: branchId);
 
-      ConnectivityAutoSyncService.instance.start(
-        token: token,
-        onSynced: () {
-          if (mounted) context.read<OfflineQueueProvider>().refresh();
-        },
-      );
+      if (branchId != null) {
+        ConnectivityAutoSyncService.instance.start(
+          token: token,
+          branchId: branchId,
+          onSynced: () {
+            if (mounted) context.read<OfflineQueueProvider>().refresh();
+          },
+        );
+      } else {
+        ConnectivityAutoSyncService.instance.stop();
+      }
 
       // Check subscription for the active branch on every auth change (login,
       // branch switch, session restore).  The provider's internal rate-limiter
@@ -301,6 +306,7 @@ class _AuthOrchestratorState extends State<_AuthOrchestrator> {
       }
     } else {
       context.read<BranchProvider>().reset();
+      context.read<OfflineQueueProvider>().clear();
       context.read<BranchFeatureProvider>().reset();
       context.read<PrinterConfigProvider>().stopAutoRefresh();
       ConnectivityAutoSyncService.instance.stop();

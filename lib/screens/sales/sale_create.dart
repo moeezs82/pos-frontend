@@ -959,6 +959,15 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       AppFeedback.warning(context, 'Please select a working branch from Branch Control before creating sale.');
       return;
     }
+    final originBranchId = int.tryParse(effectiveBranchId ?? '');
+    if (originBranchId == null || originBranchId <= 0) {
+      AppFeedback.warning(
+        context,
+        'A valid working branch is required before creating a sale.',
+      );
+      return;
+    }
+    final originUserId = int.tryParse(auth.user?['id']?.toString() ?? '');
     double _rowNum(v) => double.tryParse(v?.toString() ?? '') ?? 0.0;
     final subtotal = _items.fold<double>(0.0, (sum, i) {
       final price = _rowNum(i['price']);
@@ -1048,8 +1057,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     final shiftProvider = context.read<RegisterShiftProvider>();
     final registerCode =
         shiftProvider.shift?['register']?['code']?.toString() ?? 'REG';
-    final branchIdForSeq =
-        (globalBranchId ?? int.tryParse(_selectedBranchId ?? '0') ?? 0);
+    final branchIdForSeq = originBranchId;
 
     String? offlineInvoiceNo;
     try {
@@ -1102,6 +1110,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         tax: tax,
         meta: meta,
         clientRef: clientRef,
+        originBranchId: originBranchId,
         occurredAt: occurredAt,
         offlineInvoiceNo: offlineInvoiceNo,
       );
@@ -1149,6 +1158,8 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
 
         await OfflineSalesQueueService.instance.enqueue(
           clientRef: clientRef,
+          originBranchId: originBranchId,
+          originUserId: originUserId,
           payload: payload,
           occurredAt: occurredAt,
           offlineInvoiceNo: offlineInvoiceNo,

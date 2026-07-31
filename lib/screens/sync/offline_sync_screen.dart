@@ -28,16 +28,26 @@ class _OfflineSyncScreenState extends State<OfflineSyncScreen> {
   String? _loadError;
   final Set<String> _syncingRefs = {};
 
-  late final OfflineSyncService _syncService;
+  OfflineSyncService? _syncService;
+  int? _branchId;
 
   bool _authExpired = false;
 
   @override
   void initState() {
     super.initState();
-    final token = context.read<AuthProvider>().token!;
+    final auth = context.read<AuthProvider>();
+    final token = auth.token!;
+    final branchId = auth.activeBranchId;
+    _branchId = branchId;
+    if (branchId == null) {
+      _loading = false;
+      _loadError = 'Select a working branch before opening offline sales sync.';
+      return;
+    }
     _syncService = OfflineSyncService(
       token: token,
+      branchId: branchId,
       onAuthRequired: () {
         // Token rejected mid-sync (handover doc G4). The queued sales stay
         // safely pending; the cashier just needs to sign in again.
@@ -53,12 +63,14 @@ class _OfflineSyncScreenState extends State<OfflineSyncScreen> {
   }
 
   Future<void> _load() async {
+    final branchId = _branchId;
+    if (branchId == null) return;
     setState(() {
       _loading = true;
       _loadError = null;
     });
     try {
-      final all = await OfflineSalesQueueService.instance.all();
+      final all = await OfflineSalesQueueService.instance.all(branchId: branchId);
       if (!mounted) return;
       setState(() {
         _items = all.reversed.toList();
@@ -78,15 +90,25 @@ class _OfflineSyncScreenState extends State<OfflineSyncScreen> {
     await context.read<OfflineQueueProvider>().refresh();
   }
 
+  bool _hasCurrentBranchContext() {
+    final current = context.read<AuthProvider>().activeBranchId;
+    if (current == _branchId) return true;
+    AppFeedback.warning(
+      context,
+      'The working branch changed. Reopen Offline Sales Sync for the active business.',
+    );
+    return false;
+  }
+
   Future<void> _syncAll() async {
-    if (_syncing) return;
+    if (_syncing || !_hasCurrentBranchContext()) return;
     setState(() {
       _syncing = true;
       _authExpired = false;
     });
     try {
       var synced = 0, failed = 0, retrying = 0;
-      final results = await _syncService.syncAll(respectBackoff: false);
+      final results = await _syncService!.syncAll(respectBackoff: false);
       for (final r in results) {
         switch (r.outcome) {
           case SyncOutcome.synced:
@@ -100,6 +122,7 @@ class _OfflineSyncScreenState extends State<OfflineSyncScreen> {
             break;
           case SyncOutcome.stillOffline:
           case SyncOutcome.authRequired:
+          case SyncOutcome.contextChanged:
             break;
         }
       }
@@ -110,6 +133,11 @@ class _OfflineSyncScreenState extends State<OfflineSyncScreen> {
       final last = results.isNotEmpty ? results.last.outcome : null;
       if (_authExpired || last == SyncOutcome.authRequired) {
         // onAuthRequired callback already surfaced the re-auth message.
+      } else if (last == SyncOutcome.contextChanged) {
+        AppFeedback.warning(
+          context,
+          'The working branch changed. Remaining sales are safe in their original business queue.',
+        );
       } else if (last == SyncOutcome.stillOffline) {
         AppFeedback.warning(context, "Still offline — couldn't reach the backend. $synced synced before stopping.");
       } else if (failed > 0) {
@@ -148,9 +176,10 @@ class _OfflineSyncScreenState extends State<OfflineSyncScreen> {
   }
 
   Future<void> _retryOne(OfflineSaleQueueItem item) async {
+    if (!_hasCurrentBranchContext()) return;
     setState(() => _syncingRefs.add(item.clientRef));
     try {
-      final result = await _syncService.syncOne(item);
+      final result = await _syncService!.syncOne(item);
       await _load();
       await _refreshBadge();
       if (!mounted) return;
@@ -165,6 +194,12 @@ class _OfflineSyncScreenState extends State<OfflineSyncScreen> {
           AppFeedback.info(context, "Server busy — this sale will retry automatically shortly.");
           break;
         case SyncOutcome.authRequired:
+          break;
+        case SyncOutcome.contextChanged:
+          AppFeedback.warning(
+            context,
+            'The working branch changed. This sale remains queued for its original business.',
+          );
           break;
         case SyncOutcome.failed:
           AppFeedback.error(context, "Needs review: ${result.error}");

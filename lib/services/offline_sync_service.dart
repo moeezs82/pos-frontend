@@ -11,7 +11,7 @@ import 'package:enterprise_pos/utils/network_failure.dart';
 /// - retrying      a transient server error; item stays pending with backoff.
 /// - authRequired  the token was rejected (401/419); sync paused for re-auth.
 /// - failed        a terminal/business error; item is dead-lettered.
-enum SyncOutcome { synced, stillOffline, retrying, authRequired, failed }
+enum SyncOutcome { synced, stillOffline, retrying, authRequired, contextChanged, failed }
 
 class SyncResult {
   final String clientRef;
@@ -40,6 +40,7 @@ class SyncResult {
 /// and only genuinely un-processable sales are dead-lettered for a human.
 class OfflineSyncService {
   final String token;
+  final int branchId;
   final _queue = OfflineSalesQueueService.instance;
   late final ApiClient _client = ApiClient(token: token);
 
@@ -48,7 +49,15 @@ class OfflineSyncService {
   /// after a successful sign-in — they are never lost to an expired token.
   final void Function()? onAuthRequired;
 
-  OfflineSyncService({required this.token, this.onAuthRequired});
+  OfflineSyncService({
+    required this.token,
+    required this.branchId,
+    this.onAuthRequired,
+  }) {
+    if (branchId <= 0) {
+      throw ArgumentError.value(branchId, 'branchId', 'A valid branch is required for offline sync.');
+    }
+  }
 
   /// After this many *server-returned* retryable failures a sale is
   /// dead-lettered so it can't loop forever (handover doc G6). Note that a
@@ -86,7 +95,7 @@ class OfflineSyncService {
     // Use pending() — not pendingOrFailed() — so dead-lettered (failed) items
     // are never automatically retried. They require explicit manager review and
     // correction via updatePayloadAndReset() before they re-enter the queue.
-    final items = await _queue.pending();
+    final items = await _queue.pending(branchId: branchId);
     final results = <SyncResult>[];
     if (items.isEmpty) return results;
 
@@ -105,7 +114,8 @@ class OfflineSyncService {
       onEach?.call(result);
 
       if (result.outcome == SyncOutcome.stillOffline ||
-          result.outcome == SyncOutcome.authRequired) {
+          result.outcome == SyncOutcome.authRequired ||
+          result.outcome == SyncOutcome.contextChanged) {
         break;
       }
     }
@@ -118,10 +128,24 @@ class OfflineSyncService {
     OfflineSaleQueueItem item, {
     bool reconcileFirst = true,
   }) async {
+    if (item.originBranchId != branchId) {
+      const message =
+          'Business context changed. This sale remains queued for its original business.';
+      await _queue.markPending(item.clientRef, lastError: message);
+      return SyncResult(
+        clientRef: item.clientRef,
+        outcome: SyncOutcome.contextChanged,
+        error: message,
+      );
+    }
     await _queue.markSyncing(item.clientRef);
 
     try {
-      final res = await _client.post('/sales', body: item.payload).timeout(const Duration(seconds: 20));
+      final payload = Map<String, dynamic>.from(item.payload)
+        ..['origin_branch_id'] = branchId;
+      final res = await _client
+          .post('/sales', body: payload)
+          .timeout(const Duration(seconds: 20));
       // Covers both a fresh create AND the idempotent-replay response
       // (already_existed: true) — either way the sale is confirmed synced.
       final data = res['data'] as Map? ?? {};
@@ -152,6 +176,17 @@ class OfflineSyncService {
   }) async {
     // 1) The server answered, just not with 2xx — status tells us what to do.
     if (e is ApiException) {
+      final code = e.body?['code']?.toString() ?? '';
+      if (e.statusCode == 409 && code == 'TENANT_CONTEXT_MISMATCH') {
+        const message =
+            'Business context changed. This sale remains queued for its original business.';
+        await _queue.markPending(item.clientRef, lastError: message);
+        return SyncResult(
+          clientRef: item.clientRef,
+          outcome: SyncOutcome.contextChanged,
+          error: message,
+        );
+      }
       if (e.isAuthFailure) {
         // Token expired/rejected (handover doc G4). Keep the sale pending —
         // it is NOT broken — and signal for re-auth. It resumes after login.
@@ -249,6 +284,14 @@ class OfflineSyncService {
               'sequence was reset (reinstall / data clear). '
               'This sale must be manually reconciled — contact your administrator.';
         }
+        if (code == 'TENANT_CONTEXT_MISMATCH') {
+          return 'The active business changed while this sale was syncing. '
+              'Switch back to the original business before retrying it.';
+        }
+        if (code == 'TENANT_REFERENCE_MISMATCH') {
+          return 'This sale reference is already owned by another business context. '
+              'The sale was not posted and requires manual reconciliation.';
+        }
         return 'This sale conflicts with a business rule on the server: ${e.message}';
       case 422:
         // Append the field bag, one `key: message` per line. The dead-letter
@@ -277,7 +320,7 @@ class OfflineSyncService {
     if (refs.isEmpty) return <String>{};
     try {
       final res = await _client
-          .post('/sales/verify-batch', body: {'client_refs': refs}).timeout(const Duration(seconds: 20));
+          .post('/sales/verify-batch', body: {'client_refs': refs, 'origin_branch_id': branchId}).timeout(const Duration(seconds: 20));
       final found = (res['data']?['found'] as List?) ?? const [];
       final synced = <String>{};
       for (final raw in found) {
@@ -304,6 +347,7 @@ class OfflineSyncService {
     try {
       final res = await _client.post('/sales/verify-batch', body: {
         'client_refs': [item.clientRef],
+        'origin_branch_id': branchId,
       }).timeout(const Duration(seconds: 20));
 
       final found = (res['data']?['found'] as List?) ?? const [];

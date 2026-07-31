@@ -22,9 +22,21 @@ OfflineSaleStatus _statusFromString(String value) {
   );
 }
 
+int? _readPositiveInt(dynamic value) {
+  if (value is int) return value > 0 ? value : null;
+  if (value is num) {
+    final parsed = value.toInt();
+    return parsed > 0 ? parsed : null;
+  }
+  final parsed = int.tryParse(value?.toString() ?? '');
+  return parsed != null && parsed > 0 ? parsed : null;
+}
+
 class OfflineSaleQueueItem {
   final int id;
   final String clientRef;
+  final int? originBranchId;
+  final int? originUserId;
   final Map<String, dynamic> payload;
   final DateTime occurredAt;
   final OfflineSaleStatus status;
@@ -51,6 +63,8 @@ class OfflineSaleQueueItem {
   OfflineSaleQueueItem({
     required this.id,
     required this.clientRef,
+    required this.originBranchId,
+    required this.originUserId,
     required this.payload,
     required this.occurredAt,
     required this.status,
@@ -91,6 +105,8 @@ class OfflineSaleQueueItem {
     return OfflineSaleQueueItem(
       id: map['id'] as int,
       clientRef: map['client_ref'] as String,
+      originBranchId: _readPositiveInt(map['origin_branch_id']),
+      originUserId: _readPositiveInt(map['origin_user_id']),
       payload: jsonDecode(map['payload'] as String) as Map<String, dynamic>,
       occurredAt: DateTime.parse(map['occurred_at'] as String),
       status: _statusFromString(map['status'] as String),
@@ -126,12 +142,14 @@ class OfflineSalesQueueService {
     final path = p.join(dir.path, 'offline_sales_queue.db');
     return openDatabase(
       path,
-      version: 3,
+      version: 4,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE offline_sales_queue (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             client_ref TEXT UNIQUE NOT NULL,
+            origin_branch_id INTEGER,
+            origin_user_id INTEGER,
             payload TEXT NOT NULL,
             occurred_at TEXT NOT NULL,
             status TEXT NOT NULL DEFAULT 'pending',
@@ -142,6 +160,10 @@ class OfflineSalesQueueService {
             attempts INTEGER NOT NULL DEFAULT 0,
             next_retry_at TEXT
           )
+        ''');
+        await db.execute('''
+          CREATE INDEX offline_sales_queue_branch_status_idx
+          ON offline_sales_queue(origin_branch_id, status, occurred_at)
         ''');
       },
       onUpgrade: (db, oldVersion, newVersion) async {
@@ -156,6 +178,21 @@ class OfflineSalesQueueService {
         if (oldVersion < 3) {
           await db.execute(
               'ALTER TABLE offline_sales_queue ADD COLUMN offline_invoice_no TEXT');
+        }
+        // v3 → v4: bind every queued sale to the business/user that
+        // created it. Existing rows are recovered from the immutable branch
+        // snapshot stored in their payload; unrecoverable rows are quarantined
+        // for manual review and are never auto-assigned to the active branch.
+        if (oldVersion < 4) {
+          await db.execute(
+              'ALTER TABLE offline_sales_queue ADD COLUMN origin_branch_id INTEGER');
+          await db.execute(
+              'ALTER TABLE offline_sales_queue ADD COLUMN origin_user_id INTEGER');
+          await _backfillTenantOrigins(db);
+          await db.execute('''
+            CREATE INDEX IF NOT EXISTS offline_sales_queue_branch_status_idx
+            ON offline_sales_queue(origin_branch_id, status, occurred_at)
+          ''');
         }
       },
     );
@@ -172,17 +209,27 @@ class OfflineSalesQueueService {
   /// Now attempt rather than looping forever.
   Future<void> enqueue({
     required String clientRef,
+    required int originBranchId,
+    int? originUserId,
     required Map<String, dynamic> payload,
     required DateTime occurredAt,
     String? offlineInvoiceNo,
     String? initialError,
   }) async {
+    if (originBranchId <= 0) {
+      throw ArgumentError.value(
+          originBranchId, 'originBranchId', 'A valid branch is required for an offline sale.');
+    }
     final db = await _database;
+    final tenantPayload = Map<String, dynamic>.from(payload)
+      ..['origin_branch_id'] = originBranchId;
     await db.insert(
       'offline_sales_queue',
       {
         'client_ref':        clientRef,
-        'payload':           jsonEncode(payload),
+        'origin_branch_id':  originBranchId,
+        'origin_user_id':    originUserId,
+        'payload':           jsonEncode(tenantPayload),
         'occurred_at':       occurredAt.toIso8601String(),
         'status':            OfflineSaleStatus.pending.name,
         'offline_invoice_no': offlineInvoiceNo,
@@ -200,12 +247,12 @@ class OfflineSalesQueueService {
   /// [OfflineSyncService.syncAll] so that dead-lettered items never re-enter
   /// automatic retry — they require explicit manual review and correction via
   /// [updatePayloadAndReset] before they can sync again.
-  Future<List<OfflineSaleQueueItem>> pending() async {
+  Future<List<OfflineSaleQueueItem>> pending({required int branchId}) async {
     final db = await _database;
     final rows = await db.query(
       'offline_sales_queue',
-      where: 'status = ?',
-      whereArgs: [OfflineSaleStatus.pending.name],
+      where: 'status = ? AND origin_branch_id = ?',
+      whereArgs: [OfflineSaleStatus.pending.name, branchId],
       orderBy: 'occurred_at ASC',
     );
     return rows.map(OfflineSaleQueueItem.fromMap).toList();
@@ -214,27 +261,33 @@ class OfflineSalesQueueService {
   /// Includes both `pending` and `failed` items. Used only by the Offline
   /// Sync screen UI so managers can see dead-lettered items alongside pending
   /// ones. The sync engine uses [pending] instead.
-  Future<List<OfflineSaleQueueItem>> pendingOrFailed() async {
+  Future<List<OfflineSaleQueueItem>> pendingOrFailed({required int branchId}) async {
     final db = await _database;
     final rows = await db.query(
       'offline_sales_queue',
-      where: 'status IN (?, ?)',
-      whereArgs: [OfflineSaleStatus.pending.name, OfflineSaleStatus.failed.name],
+      where: 'status IN (?, ?) AND origin_branch_id = ?',
+      whereArgs: [OfflineSaleStatus.pending.name, OfflineSaleStatus.failed.name, branchId],
       orderBy: 'occurred_at ASC',
     );
     return rows.map(OfflineSaleQueueItem.fromMap).toList();
   }
 
-  Future<List<OfflineSaleQueueItem>> all() async {
+  Future<List<OfflineSaleQueueItem>> all({required int branchId}) async {
     final db = await _database;
-    final rows = await db.query('offline_sales_queue', orderBy: 'occurred_at ASC');
+    final rows = await db.query(
+      'offline_sales_queue',
+      where: 'origin_branch_id = ?',
+      whereArgs: [branchId],
+      orderBy: 'occurred_at ASC',
+    );
     return rows.map(OfflineSaleQueueItem.fromMap).toList();
   }
 
-  Future<int> pendingCount() async {
+  Future<int> pendingCount({required int branchId}) async {
     final db = await _database;
     final result = await db.rawQuery(
-      "SELECT COUNT(*) AS c FROM offline_sales_queue WHERE status IN ('pending', 'failed')",
+      "SELECT COUNT(*) AS c FROM offline_sales_queue WHERE status IN ('pending', 'failed') AND origin_branch_id = ?",
+      [branchId],
     );
     final value = result.isEmpty ? null : result.first['c'];
     return (value is int) ? value : (int.tryParse(value?.toString() ?? '') ?? 0);
@@ -340,10 +393,28 @@ class OfflineSalesQueueService {
     Map<String, dynamic> newPayload,
   ) async {
     final db = await _database;
+    final rows = await db.query(
+      'offline_sales_queue',
+      columns: ['origin_branch_id'],
+      where: 'client_ref = ?',
+      whereArgs: [clientRef],
+      limit: 1,
+    );
+    if (rows.isEmpty) return;
+    final originBranchId = _readPositiveInt(rows.first['origin_branch_id']);
+    if (originBranchId == null) {
+      await markFailed(
+        clientRef,
+        lastError: 'Legacy queue item has no recoverable business context. Manual data recovery is required.',
+      );
+      return;
+    }
+    final tenantPayload = Map<String, dynamic>.from(newPayload)
+      ..['origin_branch_id'] = originBranchId;
     await db.update(
       'offline_sales_queue',
       {
-        'payload': jsonEncode(newPayload),
+        'payload': jsonEncode(tenantPayload),
         'status': OfflineSaleStatus.pending.name,
         'attempts': 0,
         'next_retry_at': null,
@@ -375,8 +446,17 @@ class OfflineSalesQueueService {
     if (rows.isEmpty) return;
 
     final current = rows.first;
+    final originBranchId = _readPositiveInt(current['origin_branch_id']);
+    if (originBranchId == null) {
+      await markFailed(
+        clientRef,
+        lastError: 'Legacy queue item has no recoverable business context. Manual data recovery is required.',
+      );
+      return;
+    }
     final payload = jsonDecode(current['payload'] as String) as Map<String, dynamic>;
     final updatedPayload = Map<String, dynamic>.from(payload)
+      ..['origin_branch_id'] = originBranchId
       ..['offline_invoice_no'] = newOfflineInvoiceNo;
 
     await db.update(
@@ -392,6 +472,65 @@ class OfflineSalesQueueService {
       where: 'client_ref = ?',
       whereArgs: [clientRef],
     );
+  }
+
+  static Future<void> _backfillTenantOrigins(Database db) async {
+    final rows = await db.query(
+      'offline_sales_queue',
+      columns: ['id', 'payload', 'origin_branch_id', 'origin_user_id', 'status', 'last_error'],
+    );
+    for (final row in rows) {
+      final existingBranch = _readPositiveInt(row['origin_branch_id']);
+      if (existingBranch != null) continue;
+
+      Map<String, dynamic>? payload;
+      try {
+        payload = jsonDecode(row['payload'] as String) as Map<String, dynamic>;
+      } catch (_) {
+        payload = null;
+      }
+      final recoveredBranch = payload == null ? null : _originBranchFromPayload(payload);
+      final recoveredUser = payload == null ? null : _readPositiveInt(payload['origin_user_id']);
+
+      if (recoveredBranch == null) {
+        const message =
+            'Legacy queue item has no recoverable business context. Manual data recovery is required; automatic sync is blocked.';
+        await db.update(
+          'offline_sales_queue',
+          {
+            'status': OfflineSaleStatus.failed.name,
+            'last_error': message,
+            'next_retry_at': null,
+          },
+          where: 'id = ?',
+          whereArgs: [row['id']],
+        );
+        continue;
+      }
+
+      final tenantPayload = Map<String, dynamic>.from(payload!)
+        ..['origin_branch_id'] = recoveredBranch;
+      await db.update(
+        'offline_sales_queue',
+        {
+          'origin_branch_id': recoveredBranch,
+          'origin_user_id': recoveredUser,
+          'payload': jsonEncode(tenantPayload),
+        },
+        where: 'id = ?',
+        whereArgs: [row['id']],
+      );
+    }
+  }
+
+  static int? _originBranchFromPayload(Map<String, dynamic> payload) {
+    final direct = _readPositiveInt(payload['origin_branch_id']);
+    if (direct != null) return direct;
+    final meta = payload['meta'];
+    if (meta is! Map) return null;
+    final branchSnapshot = meta['branch_snapshot'];
+    if (branchSnapshot is! Map) return null;
+    return _readPositiveInt(branchSnapshot['id']);
   }
 
   /// Permanently removes a queue item by [clientRef].
