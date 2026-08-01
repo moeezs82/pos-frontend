@@ -23,7 +23,8 @@ class RegisterShiftProvider extends ChangeNotifier {
   bool _loading = false;
   String? _error;
   String? _token;
-  String? _initializedToken;
+  String? _initializedContext;
+  int? _branchId;
 
   // Incremented on every initialize() and clear() call.  Every async
   // operation captures the current generation before it goes async; on
@@ -53,41 +54,48 @@ class RegisterShiftProvider extends ChangeNotifier {
   String? get clientRef => _shift?['client_ref']?.toString();
   int? get id => int.tryParse(_shift?['id']?.toString() ?? '');
 
-  /// Cache key for SharedPreferences, namespaced by user ID.
+  /// Cache key for SharedPreferences, namespaced by user and branch.
   ///
-  /// Using a per-user key prevents User B from reading User A's cached shift
-  /// on startup and showing "open register" when the shift belongs to someone
-  /// else.  The key format is `register_shift_<userId>`; for backward
-  /// compatibility with the default-user flow (guest mode, if ever needed) it
-  /// falls back to `register_shift_default`.
-  String _cacheKey() => 'register_shift_${_userId ?? 'default'}';
+  /// Including the branch prevents the same Master Admin account from showing
+  /// Business A's cached open register after switching to Business B.
+  String _cacheKey() =>
+      'register_shift_${_userId ?? 'default'}_b${_branchId ?? 'none'}';
 
   /// Called by [_AuthOrchestrator] in `main.dart` whenever a new session
   /// starts (login, token refresh, auto-login restore).
   ///
   /// [token]  — the new Sanctum bearer token.
-  /// [userId] — string representation of `user.id`; used to namespace the
-  ///            SharedPreferences cache key.
+  /// [userId] — string representation of `user.id`.
+  /// [branchId] — selected independent business; part of both the in-memory
+  ///              context guard and the SharedPreferences cache key.
   ///
-  /// Idempotent: if [token] equals the already-initialized token the call is
+  /// Idempotent: if token and branch equal the initialized context the call is
   /// a no-op (safe to call from [_AuthOrchestrator]'s listener, which may
   /// fire on every [AuthProvider.notifyListeners]).
   ///
   /// Session-generation guard: the generation is bumped *before* any await so
   /// a stale refresh() or initialize() from the previous user is discarded as
   /// soon as it resumes.
-  Future<void> initialize(String? token, {String? userId}) async {
-    if (token == null) return clear();
-    if (_initializedToken == token) return; // already set up for this token
+  Future<void> initialize(
+    String? token, {
+    String? userId,
+    int? branchId,
+  }) async {
+    if (token == null || branchId == null || branchId <= 0) {
+      return clear(removeCachedShift: false);
+    }
+    final contextKey = '$token#$branchId';
+    if (_initializedContext == contextKey) return;
 
     // Bump the session generation so any in-flight async from the old session
     // (e.g. User A's refresh()) will see a generation mismatch on resume and
     // discard its result.
     final gen = ++_sessionGeneration;
 
-    _initializedToken = token;
+    _initializedContext = contextKey;
     _token = token;
     _userId = userId;
+    _branchId = branchId;
 
     // Immediately surface an empty slate — do NOT show the previous user's
     // shift while the network round-trip is in flight.
@@ -103,12 +111,17 @@ class RegisterShiftProvider extends ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     if (gen != _sessionGeneration) return; // superseded by a newer initialize/clear
 
-    final cached = prefs.getString(_cacheKey());
+    final cacheKey = _cacheKey();
+    final cached = prefs.getString(cacheKey);
     if (cached != null) {
-      final map = jsonDecode(cached);
-      if (map is Map) {
-        _shift = Map<String, dynamic>.from(map);
-        notifyListeners();
+      try {
+        final map = jsonDecode(cached);
+        if (map is Map) {
+          _shift = Map<String, dynamic>.from(map);
+          notifyListeners();
+        }
+      } catch (_) {
+        await prefs.remove(cacheKey);
       }
     }
 
@@ -230,13 +243,14 @@ class RegisterShiftProvider extends ChangeNotifier {
   /// Removes the per-user cache key (not a shared key) so the next login
   /// starts clean.  If the provider is already fully cleared the call is a
   /// fast no-op (safe to call repeatedly from the logout path).
-  Future<void> clear() async {
+  Future<void> clear({bool removeCachedShift = true}) async {
     final alreadyClear = _token == null &&
-        _initializedToken == null &&
+        _initializedContext == null &&
         _shift == null &&
         _summary.isEmpty &&
         _error == null &&
-        _userId == null;
+        _userId == null &&
+        _branchId == null;
     if (alreadyClear) return;
 
     // Capture the current key before wiping _userId so _persist() can remove
@@ -245,16 +259,19 @@ class RegisterShiftProvider extends ChangeNotifier {
 
     ++_sessionGeneration; // invalidate any pending async from this session
     _token = null;
-    _initializedToken = null;
+    _initializedContext = null;
     _userId = null;
+    _branchId = null;
     _shift = null;
     _summary = const {};
     _activity = const {};
     _occupiedShifts = const [];
     _error = null;
 
-    final p = await SharedPreferences.getInstance();
-    await p.remove(prevKey);
+    if (removeCachedShift) {
+      final p = await SharedPreferences.getInstance();
+      await p.remove(prevKey);
+    }
     notifyListeners();
   }
 

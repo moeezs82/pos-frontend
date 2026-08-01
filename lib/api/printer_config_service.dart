@@ -47,7 +47,7 @@ class PrinterConfigService {
   }
 
   Future<PrinterConfig> savePrinterConfig({
-    int? branchId,
+    required int branchId,
     String? shopName,
     String? shopAddress,
     String? shopPhone,

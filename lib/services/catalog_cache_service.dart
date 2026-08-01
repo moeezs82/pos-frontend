@@ -61,22 +61,39 @@ class CatalogCacheService {
     final path = p.join(dbPath, 'catalog_cache.db');
     return openDatabase(
       path,
-      version: 2,
+      version: 3,
       // v1 → v2 adds the unit columns. ADDITIVE ONLY, and deliberately not a
       // table rebuild or a cache wipe: this database is a read replica, but a
       // "just delete and re-download" upgrade would strand a till that is
       // offline at the moment it updates, with no catalog and pending sales
       // in the outbound queue it can no longer price or name.
       //
-      // Rows that existed before the upgrade get NULL in the new columns,
+      // Rows that existed before the v2 upgrade get NULL in the new columns,
       // which parses as ProductUnit.defaultAllowDecimal (true) — the
       // pre-units behaviour — until the next refresh fills them in.
+      //
+      // v2 → v3 retires legacy global catalog rows. Branches are independent
+      // businesses, so null-branch products/customers and their global cursors
+      // must never remain available as an offline fallback after an upgrade.
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) {
           await db.execute('ALTER TABLE products ADD COLUMN unit_id INTEGER');
           await db.execute('ALTER TABLE products ADD COLUMN unit_name TEXT');
           await db.execute(
               'ALTER TABLE products ADD COLUMN unit_allow_decimal INTEGER');
+        }
+        if (oldVersion < 3) {
+          await db.delete('products', where: 'branch_id IS NULL');
+          await db.delete('customers', where: 'branch_id IS NULL');
+          await db.delete(
+            'sync_meta',
+            where: 'key IN (?, ?, ?)',
+            whereArgs: const [
+              'catalog_version:all',
+              'last_synced_at:all',
+              'payment_methods:all',
+            ],
+          );
         }
       },
       onCreate: (db, version) async {
@@ -184,8 +201,11 @@ class CatalogCacheService {
         if (full) {
           await txn.delete('products', where: 'branch_id IS ?', whereArgs: [branchId]);
           if (branchId != null) {
-            await txn.delete('customers',
-                where: 'branch_id = ? OR branch_id IS NULL', whereArgs: [branchId]);
+            await txn.delete(
+              'customers',
+              where: 'branch_id = ?',
+              whereArgs: [branchId],
+            );
           } else {
             await txn.delete('customers');
           }
@@ -326,9 +346,9 @@ class CatalogCacheService {
     return (v is num) ? v.toDouble() : double.tryParse(v?.toString() ?? '');
   }
 
-  /// Customers matching [query] (name / phone / email), scoped to [branchId]
-  /// plus global (null-branch) customers. Returns maps shaped like the
-  /// customer picker expects.
+  /// Customers matching [query] (name / phone / email), scoped exactly to
+  /// [branchId]. Null-branch legacy rows are purged by the v3 cache migration
+  /// and are never treated as shared business data.
   Future<List<Map<String, dynamic>>> searchCustomers(
     String query, {
     int? branchId,
@@ -340,7 +360,7 @@ class CatalogCacheService {
     final where = <String>[];
     final args = <Object?>[];
     if (branchId != null) {
-      where.add('(branch_id = ? OR branch_id IS NULL)');
+      where.add('branch_id = ?');
       args.add(branchId);
     }
     if (q.isNotEmpty) {

@@ -15,6 +15,7 @@ import 'screens/login_screen.dart';
 import 'screens/home_screen.dart';
 import 'services/connectivity_auto_sync_service.dart';
 import 'services/backend_startup_service.dart';
+import 'services/party_pick_caches.dart';
 import 'theme/app_theme.dart';
 import 'services/app_navigator.dart';
 import 'widgets/app_keyboard_shortcuts.dart';
@@ -143,7 +144,7 @@ class MyApp extends StatelessWidget {
       providers: [
         ChangeNotifierProvider(create: (_) => AuthProvider()..tryAutoLogin()),
         ChangeNotifierProvider(create: (_) => BranchProvider()),
-        ChangeNotifierProvider(create: (_) => PrinterConfigProvider()..loadFromCache()),
+        ChangeNotifierProvider(create: (_) => PrinterConfigProvider()),
         ChangeNotifierProvider(create: (_) => OfflineQueueProvider()),
         ChangeNotifierProvider(create: (_) => RegisterShiftProvider()),
         ChangeNotifierProvider(create: (_) => SubscriptionProvider()),
@@ -195,9 +196,9 @@ class MyApp extends StatelessWidget {
 /// • [PrinterConfigProvider.ensureLoadedFor] / [PrinterConfigProvider.stopAutoRefresh]
 /// • [OfflineQueueProvider.refresh]
 ///
-/// The idempotent guards inside each of those services ensure that repeated
-/// calls with the same token (e.g. from a BranchProvider change triggering
-/// an auth rebuild) are cheap no-ops.
+/// The idempotent guards inside each service use the token plus active
+/// business, so normal auth notifications are cheap while a business switch
+/// reliably invalidates tenant-owned state.
 class _AuthOrchestrator extends StatefulWidget {
   final Widget child;
   const _AuthOrchestrator({required this.child});
@@ -208,6 +209,7 @@ class _AuthOrchestrator extends StatefulWidget {
 
 class _AuthOrchestratorState extends State<_AuthOrchestrator> {
   late final AuthProvider _auth;
+  String? _lastTenantContextKey;
 
   @override
   void initState() {
@@ -262,15 +264,23 @@ class _AuthOrchestratorState extends State<_AuthOrchestrator> {
       final branchId = auth.activeBranchId;
 
       context.read<BranchProvider>().syncFromAuthUser(auth.user);
-      context.read<PrinterConfigProvider>().ensureLoadedFor(token);
+
+      final tenantContextKey = '$token#${branchId ?? 'none'}';
+      if (_lastTenantContextKey != tenantContextKey) {
+        clearAllPartyPickCaches();
+        _lastTenantContextKey = tenantContextKey;
+      }
+
+      context
+          .read<PrinterConfigProvider>()
+          .ensureLoadedFor(token, branchId: branchId);
       context.read<OfflineQueueProvider>().setBranch(branchId);
 
-      // initialize() is guarded by _initializedToken == token, so repeated
-      // calls for the same session (e.g. from a branch switch notifying
-      // listeners) are instant no-ops.
+      // initialize() is guarded by token + business, so ordinary auth
+      // notifications are no-ops and a business switch reloads safely.
       context
           .read<RegisterShiftProvider>()
-          .initialize(token, userId: userId);
+          .initialize(token, userId: userId, branchId: branchId);
 
       // Load the branch's active payment methods (also cached for offline
       // sale creation). Guarded by token+branch so branch-switch notifications
@@ -305,6 +315,8 @@ class _AuthOrchestratorState extends State<_AuthOrchestrator> {
         context.read<BranchFeatureProvider>().load(branchId, token);
       }
     } else {
+      _lastTenantContextKey = null;
+      clearAllPartyPickCaches();
       context.read<BranchProvider>().reset();
       context.read<OfflineQueueProvider>().clear();
       context.read<BranchFeatureProvider>().reset();

@@ -341,3 +341,13 @@ class ProductPickCache {
     cache.put(key, PickCacheEntry<PartyMap>(items: items, fetchedAt: DateTime.now()));
   }
 }
+
+/// Clears every process-wide picker bucket when authentication or the active
+/// business changes. The backend token can stay the same during a Master Admin
+/// branch switch, so token-only cache lifetime is not a safe tenant boundary.
+void clearAllPartyPickCaches() {
+  CustomerPickCache.cache.clear();
+  VendorPickCache.cache.clear();
+  UserPickCache.cache.clear();
+  ProductPickCache.cache.clear();
+}

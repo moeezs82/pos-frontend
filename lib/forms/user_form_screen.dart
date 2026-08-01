@@ -37,7 +37,7 @@ class _UserFormScreenState extends State<UserFormScreen> {
     'view-products': 'View Products',
     'manage-products': 'Manage Products',
     'view-stock': 'View Stock',
-    'adjust-stock': 'Adjust & Transfer Stock',
+    'adjust-stock': 'Adjust Stock',
     'view-customers': 'View Customers',
     'manage-customers': 'Manage Customers',
     'manage-receipts': 'Receive Customer Payments',

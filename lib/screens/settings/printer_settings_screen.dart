@@ -122,14 +122,24 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
     try {
       final rows = await _common.getBranches();
       if (!mounted) return;
-      setState(() => _branches = rows);
+      final activeBranchId = context.read<AuthProvider>().activeBranchId;
+      final availableIds = rows.map((row) => row['id']).whereType<int>().toSet();
+      final selected = activeBranchId != null && availableIds.contains(activeBranchId)
+          ? activeBranchId
+          : (rows.isEmpty ? null : rows.first['id'] as int?);
+      setState(() {
+        _branches = rows;
+        _selectedBranchId = selected;
+      });
     } catch (_) {
       if (!mounted) return;
       setState(() => _branches = []);
     } finally {
       if (mounted) setState(() => _loadingBranches = false);
     }
-    await _loadConfigFor(_selectedBranchId);
+    if (_selectedBranchId != null) {
+      await _loadConfigFor(_selectedBranchId);
+    }
   }
 
   Future<void> _loadInstalledPrinters() async {
@@ -258,6 +268,11 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
   }
 
   Future<void> _save() async {
+    final selectedBranchId = _selectedBranchId;
+    if (selectedBranchId == null) {
+      _showMessage('Select a business before saving printer settings.');
+      return;
+    }
     final barcodeWidth = double.tryParse(_barcodeWidthCtrl.text.trim());
     final barcodeHeight = double.tryParse(_barcodeHeightCtrl.text.trim());
     final barcodeGap = double.tryParse(_barcodeGapCtrl.text.trim());
@@ -300,7 +315,7 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
     setState(() => _saving = true);
     try {
       await _service.savePrinterConfig(
-        branchId: _selectedBranchId,
+        branchId: selectedBranchId,
         shopName: _shopNameCtrl.text.trim(),
         shopAddress: _shopAddressCtrl.text.trim(),
         shopPhone: _shopPhoneCtrl.text.trim(),
@@ -336,7 +351,12 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
       _showMessage('Printer settings saved.');
 
       final token = context.read<AuthProvider>().token;
-      if (token != null) context.read<PrinterConfigProvider>().refresh(token);
+      if (token != null) {
+        await context.read<PrinterConfigProvider>().refresh(
+              token,
+              branchId: context.read<AuthProvider>().activeBranchId,
+            );
+      }
     } catch (e) {
       _showMessage(e.toString().replaceFirst('Exception: ', ''));
     } finally {
@@ -546,29 +566,29 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const EnterpriseSectionHeader(
-            title: 'Which branch is this for?',
-            subtitle: 'Each branch can have its own printer, or fall back to the global default.',
+            title: 'Which business is this for?',
+            subtitle: 'Printer and receipt settings are isolated for each business.',
             icon: Icons.store_rounded,
             color: AppTheme.primary,
           ),
           const SizedBox(height: 14),
-          DropdownButtonFormField<int?>(
+          DropdownButtonFormField<int>(
             value: _selectedBranchId,
             isExpanded: true,
             decoration: const InputDecoration(
-              labelText: 'Branch',
-              prefixIcon: Icon(Icons.account_tree_rounded),
+              labelText: 'Business',
+              prefixIcon: Icon(Icons.storefront_rounded),
             ),
-            items: [
-              const DropdownMenuItem<int?>(value: null, child: Text('Global default (used when a branch has no printer of its own)')),
-              ..._branches.map((b) => DropdownMenuItem<int?>(
-                    value: b['id'] as int?,
-                    child: Text((b['name'] ?? 'Branch #${b['id']}').toString()),
-                  )),
-            ],
-            onChanged: (v) {
-              setState(() => _selectedBranchId = v);
-              _loadConfigFor(v);
+            items: _branches
+                .map((business) => DropdownMenuItem<int>(
+                      value: business['id'] as int,
+                      child: Text((business['name'] ?? 'Business #${business['id']}').toString()),
+                    ))
+                .toList(),
+            onChanged: (value) {
+              if (value == null) return;
+              setState(() => _selectedBranchId = value);
+              _loadConfigFor(value);
             },
           ),
         ],
@@ -892,7 +912,7 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
           children: [
             const EnterpriseSectionHeader(
               title: 'Barcode Printer',
-              subtitle: 'Barcode Label Printing is a branch add-on.',
+              subtitle: 'Barcode Label Printing is a business add-on.',
               icon: Icons.qr_code_2_rounded,
               color: AppTheme.purple,
             ),
@@ -912,8 +932,8 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
                   Expanded(
                     child: Text(
                       hasBranch
-                          ? 'Activate Barcode Label Printing for this branch from Branch Subscriptions before configuring a barcode printer.'
-                          : 'Select a branch first. Barcode printer configuration is branch-specific and is not available on the global default.',
+                          ? 'Activate Barcode Label Printing for this business from Business Subscriptions before configuring a barcode printer.'
+                          : 'Select a business first. Barcode printer configuration is business-specific.',
                       style: const TextStyle(
                         color: AppTheme.textMuted,
                         fontWeight: FontWeight.w600,
