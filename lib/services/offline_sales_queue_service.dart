@@ -283,6 +283,81 @@ class OfflineSalesQueueService {
     return rows.map(OfflineSaleQueueItem.fromMap).toList();
   }
 
+  /// Conservative customer trade-ledger exposure represented by local sales
+  /// that have not been confirmed by the server yet. Failed rows are included
+  /// deliberately: until a manager discards or corrects one, assuming it will
+  /// never post could authorize more offline debt than the configured limit.
+  ///
+  /// This is NOT invoice allocation. Each queued payload contributes the same
+  /// customer-ledger delta the backend would post: sale total, less customer
+  /// receipts, plus an inline cash refund for a negative sale.
+  Future<double> pendingCustomerExposure({
+    required int branchId,
+    required int customerId,
+    String? excludingClientRef,
+  }) async {
+    final db = await _database;
+    final rows = await db.query(
+      'offline_sales_queue',
+      columns: ['client_ref', 'payload'],
+      where: 'origin_branch_id = ? AND status != ?',
+      whereArgs: [branchId, OfflineSaleStatus.synced.name],
+    );
+
+    var exposure = 0.0;
+    for (final row in rows) {
+      if (excludingClientRef != null &&
+          row['client_ref']?.toString() == excludingClientRef) {
+        continue;
+      }
+      try {
+        final payload =
+            jsonDecode(row['payload'] as String) as Map<String, dynamic>;
+        if (_readPositiveInt(payload['customer_id']) != customerId) continue;
+        final delta = _customerTradeDelta(payload);
+        // Never grant new offline credit on the strength of an unconfirmed
+        // return, overpayment, or other balance-reducing queued transaction.
+        // Positive deltas consume the facility immediately; negative deltas
+        // become available only after the backend has posted them and the
+        // refreshed trade balance includes them.
+        if (delta > 0.004) exposure += delta;
+      } catch (_) {
+        // A malformed row cannot be safely assigned to a customer here. It is
+        // already protected by the queue's manual-review path.
+      }
+    }
+    return exposure;
+  }
+
+  static double _customerTradeDelta(Map<String, dynamic> payload) {
+    final meta = payload['meta'] as Map?;
+    final totals = meta?['totals_snapshot'] as Map?;
+    final total = _finiteDouble(totals?['total'] ?? payload['total']);
+
+    var receipts = 0.0;
+    final rawPayments = payload['payments'];
+    if (rawPayments is List) {
+      for (final raw in rawPayments) {
+        if (raw is Map) receipts += _finiteDouble(raw['amount']);
+      }
+    }
+
+    // A negative inline return credits AR through the sale, then the full cash
+    // refund debits AR. Adding the refund reproduces that net party effect.
+    var refund = 0.0;
+    final rawRefund = payload['refund'];
+    if (rawRefund is Map) refund = _finiteDouble(rawRefund['amount']);
+
+    return total - receipts + refund;
+  }
+
+  static double _finiteDouble(dynamic value) {
+    final parsed = value is num
+        ? value.toDouble()
+        : double.tryParse(value?.toString() ?? '') ?? 0.0;
+    return parsed.isFinite ? parsed : 0.0;
+  }
+
   Future<int> pendingCount({required int branchId}) async {
     final db = await _database;
     final result = await db.rawQuery(

@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:math';
 
 import 'package:enterprise_pos/api/core/api_client.dart';
@@ -294,6 +295,22 @@ class OfflineSyncService {
         }
         return 'This sale conflicts with a business rule on the server: ${e.message}';
       case 422:
+        final code = e.body?['code']?.toString() ?? '';
+        if (code == 'PARTY_CREDIT_LIMIT_EXCEEDED') {
+          final data = e.body?['data'];
+          final map = data is Map
+              ? data.map((key, value) => MapEntry(key.toString(), value))
+              : <String, dynamic>{};
+          final party = map['party_type']?.toString() == 'vendor'
+              ? 'Vendor'
+              : 'Customer';
+          final projected = map['projected_balance']?.toString() ?? '?';
+          final limit = map['credit_limit']?.toString() ?? '?';
+          return 'PARTY_CREDIT_LIMIT_EXCEEDED\n'
+              'CREDIT_LIMIT_DATA:${jsonEncode(map)}\n'
+              '$party trade balance would become $projected, above the configured limit of $limit. '
+              'An authorized user must approve and re-queue this same sale; creating a new invoice is not required.';
+        }
         // Append the field bag, one `key: message` per line. The dead-letter
         // row is the only record of WHY this sale was refused — e.message is
         // just the first sentence, and without the keys the review screen

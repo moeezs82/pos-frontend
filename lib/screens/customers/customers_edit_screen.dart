@@ -3,6 +3,7 @@ import 'package:enterprise_pos/forms/customer_form_screen.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/providers/branch_provider.dart';
 import 'package:enterprise_pos/screens/sales/sale_detail.dart';
+import 'package:enterprise_pos/screens/reports/credit_control_screen.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/app_feedback.dart';
 import 'package:enterprise_pos/widgets/branch_indicator.dart';
@@ -24,6 +25,7 @@ class _CustomerEditScreenState extends State<CustomerEditScreen>
     with SingleTickerProviderStateMixin {
   late CustomerService _service;
   late TabController _tab;
+  late final bool _canViewCreditAudits;
 
   bool _postingReceipt = false;
   final _amountController = TextEditingController();
@@ -63,9 +65,11 @@ class _CustomerEditScreenState extends State<CustomerEditScreen>
   @override
   void initState() {
     super.initState();
-    final token = context.read<AuthProvider>().token!;
+    final auth = context.read<AuthProvider>();
+    final token = auth.token!;
+    _canViewCreditAudits = auth.hasPermission('view-party-credit-limit-audits');
     _service = CustomerService(token: token);
-    _tab = TabController(length: 3, vsync: this);
+    _tab = TabController(length: _canViewCreditAudits ? 4 : 3, vsync: this);
     _tab.addListener(_onTabChanged);
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -554,10 +558,11 @@ class _CustomerEditScreenState extends State<CustomerEditScreen>
                             const SizedBox(height: 10),
                             _PartySegmentedTabBar(
                               controller: _tab,
-                              tabs: const [
-                                Tab(text: 'Sales History'),
-                                Tab(text: 'Trade Ledger'),
-                                Tab(text: 'Loan Ledger'),
+                              tabs: [
+                                const Tab(text: 'Sales History'),
+                                const Tab(text: 'Trade Ledger'),
+                                const Tab(text: 'Loan Ledger'),
+                                if (_canViewCreditAudits) const Tab(text: 'Credit Control'),
                               ],
                             ),
                           ],
@@ -617,6 +622,11 @@ class _CustomerEditScreenState extends State<CustomerEditScreen>
                               money: _money,
                               toDouble: _toDouble,
                             ),
+                            if (_canViewCreditAudits)
+                              SingleChildScrollView(
+                                padding: const EdgeInsets.all(16),
+                                child: CreditAuditPanel(partyType: 'customer', partyId: widget.customerId, showHeader: true),
+                              ),
                           ],
                         ),
                       ),

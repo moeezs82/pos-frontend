@@ -1,3 +1,4 @@
+import 'package:enterprise_pos/api/core/api_client.dart' show ApiException;
 import 'package:enterprise_pos/api/product_service.dart';
 import 'package:enterprise_pos/api/purchase_service.dart';
 import 'package:enterprise_pos/api/vendor_service.dart';
@@ -12,6 +13,7 @@ import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/app_feedback.dart';
 import 'package:enterprise_pos/widgets/app_keyboard_shortcuts.dart';
 import 'package:enterprise_pos/widgets/branch_indicator.dart';
+import 'package:enterprise_pos/widgets/credit_limit_override_dialog.dart';
 import 'package:enterprise_pos/widgets/enterprise/enterprise_panel.dart';
 import 'package:enterprise_pos/widgets/product_picker_grid_sheet.dart';
 import 'package:enterprise_pos/widgets/vendor_picker_sheet.dart';
@@ -593,19 +595,64 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
         if (paymentsPayload.isNotEmpty) 'payments': paymentsPayload,
       };
 
-      final res = await _purchaseService.createPurchase(payload);
+      Map<String, dynamic> res;
+      try {
+        res = await _purchaseService.createPurchase(payload);
+      } catch (error) {
+        final issue = CreditLimitIssue.fromException(error);
+        if (issue == null) rethrow;
+        final mayOverride = issue.canOverride &&
+            auth.hasPermission('override-party-credit-limit');
+        if (!mayOverride) {
+          if (!mounted) return;
+          AppFeedback.error(context, issue.summary);
+          return;
+        }
+        final reason = await showCreditLimitOverrideDialog(context, issue);
+        if (!mounted) return;
+        if (reason == null) return;
+        payload['credit_limit_override'] = {'reason': reason};
+        res = await _purchaseService.createPurchase(payload);
+      }
       if (!mounted) return;
 
-      final purchaseNo = (res['purchase_no'] ?? res['invoice_no'] ?? res['id'] ?? 'purchase').toString();
+      final purchase = res['purchase'];
+      final purchaseNo = ((purchase is Map
+                  ? purchase['invoice_no'] ?? purchase['id']
+                  : null) ??
+              res['purchase_no'] ??
+              res['invoice_no'] ??
+              res['id'] ??
+              'purchase')
+          .toString();
+      final creditLimitNotice =
+          CreditLimitIssue.fromWarning(res['credit_limit_warning']);
       _resetForNextPurchase(keepInitialVendor: widget.initialVendor != null);
-      AppFeedback.success(context, 'Purchase $purchaseNo created. Ready for next purchase.');
+      if (creditLimitNotice != null) {
+        AppFeedback.warning(
+          context,
+          creditLimitNotice.overrideUsed
+              ? 'Purchase $purchaseNo created with an authorized credit-limit override. ${creditLimitNotice.summary}'
+              : 'Purchase $purchaseNo created with a credit-limit warning. ${creditLimitNotice.summary}',
+        );
+      } else {
+        AppFeedback.success(
+          context,
+          'Purchase $purchaseNo created. Ready for next purchase.',
+        );
+      }
 
       Future.delayed(const Duration(milliseconds: 450), () {
         if (mounted && _items.isEmpty) _addItemManual();
       });
     } catch (e) {
       if (!mounted) return;
-      AppFeedback.error(context, e.toString().replaceFirst('Exception: ', ''));
+      final issue = CreditLimitIssue.fromException(e);
+      final message = issue?.summary ??
+          (e is ApiException
+              ? e.message
+              : e.toString().replaceFirst('Exception: ', ''));
+      AppFeedback.error(context, message);
     } finally {
       if (mounted) setState(() => _submitting = false);
     }

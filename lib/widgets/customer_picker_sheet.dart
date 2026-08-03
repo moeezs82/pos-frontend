@@ -174,7 +174,7 @@ class _CustomerPickerSheetState extends State<CustomerPickerSheet> {
   }
 
   num _balanceOf(Map<String, dynamic> c) {
-    final raw = c['balance'];
+    final raw = c['balance'] ?? c['trade_balance'];
     if (raw is num) return raw;
     return num.tryParse(raw?.toString() ?? '0') ?? 0;
   }

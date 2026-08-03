@@ -21,6 +21,7 @@ import 'package:enterprise_pos/screens/sales/parts/create_sale_items_section.dar
 import 'package:enterprise_pos/screens/sales/parts/sale_product_panel.dart';
 import 'package:enterprise_pos/widgets/product_picker_grid_sheet.dart';
 import 'package:enterprise_pos/widgets/customer_picker_sheet.dart';
+import 'package:enterprise_pos/widgets/credit_limit_override_dialog.dart';
 import 'package:enterprise_pos/widgets/user_picker_sheet.dart';
 import 'package:enterprise_pos/widgets/vendor_picker_sheet.dart';
 import 'package:enterprise_pos/services/party_prefetch.dart';
@@ -41,6 +42,20 @@ import 'package:enterprise_pos/services/whatsapp_invoice_service.dart';
 
 // local widgets split into small files
 import 'package:enterprise_pos/screens/sales/parts/sale_party_section.dart';
+
+
+class _OfflineCreditDecision {
+  final bool allowed;
+  final String? message;
+
+  const _OfflineCreditDecision._(this.allowed, this.message);
+
+  const _OfflineCreditDecision.allow([String? message])
+      : this._(true, message);
+
+  const _OfflineCreditDecision.deny(String message)
+      : this._(false, message);
+}
 
 class CreateSaleScreen extends StatefulWidget {
   final Map<String, dynamic>? initialCustomer;
@@ -811,6 +826,16 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
           : customerNameController.text.trim(),
       'phone': customerPhoneController.text.trim(),
       'address': addressController.text.trim(),
+      if (_selectedCustomer != null &&
+          _selectedCustomer!.containsKey('credit_limit'))
+        'credit_limit': _selectedCustomer!['credit_limit'],
+      if (_selectedCustomer?['credit_limit_mode'] != null)
+        'credit_limit_mode': _selectedCustomer!['credit_limit_mode'],
+      if ((_selectedCustomer?['balance'] ??
+              _selectedCustomer?['trade_balance']) !=
+          null)
+        'trade_balance': _selectedCustomer?['balance'] ??
+            _selectedCustomer?['trade_balance'],
     };
 
     final meta = <String, dynamic>{
@@ -858,6 +883,153 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         (value is Map && value.isEmpty) ||
         (value is List && value.isEmpty));
     return meta;
+  }
+
+  double? _finiteCreditNumber(dynamic value) {
+    final parsed = value is num
+        ? value.toDouble()
+        : double.tryParse(value?.toString() ?? '');
+    return parsed != null && parsed.isFinite ? parsed : null;
+  }
+
+  /// Applies a conservative device-side check only when an online submission
+  /// could not be confirmed and the sale is about to enter the local queue.
+  /// The backend remains authoritative and rechecks the actual party trade
+  /// ledger during sync. No invoice allocation or paid/unpaid status is used.
+  Future<_OfflineCreditDecision> _prepareOfflineCreditQueue({
+    required Map<String, dynamic> payload,
+    required int branchId,
+    required double currentLedgerDelta,
+  }) async {
+    final customerId = int.tryParse(_selectedCustomerId ?? '');
+    if (customerId == null || customerId <= 0 || currentLedgerDelta <= 0.004) {
+      return const _OfflineCreditDecision.allow();
+    }
+
+    // A server-presented override may have been approved immediately before
+    // the retry lost connectivity. Preserve that reason and idempotency key.
+    final existingOverride = payload['credit_limit_override'];
+    if (existingOverride is Map &&
+        (existingOverride['reason']?.toString().trim().length ?? 0) >= 5) {
+      return const _OfflineCreditDecision.allow(
+        'This queued sale carries the authorized credit-limit override already approved online.',
+      );
+    }
+
+    final customer = _selectedCustomer;
+    final mode = (customer?['credit_limit_mode'] ?? 'block')
+        .toString()
+        .trim()
+        .toLowerCase();
+    final warningMode = mode == 'warning';
+    final auth = context.read<AuthProvider>();
+    final mayOverride =
+        auth.hasPermission('override-party-credit-limit');
+
+    Future<_OfflineCreditDecision> unknownDecision(String reason) async {
+      final message =
+          '$reason The authoritative customer trade balance will be checked when this sale synchronizes.';
+      if (warningMode) {
+        return _OfflineCreditDecision.allow('Credit warning: $message');
+      }
+      if (!mayOverride) {
+        return _OfflineCreditDecision.deny(
+          '$message An authorized credit-limit override is required before creating additional offline debt.',
+        );
+      }
+      final overrideReason = await showOfflineCreditDataOverrideDialog(
+        context,
+        message: message,
+      );
+      if (overrideReason == null) {
+        return const _OfflineCreditDecision.deny(
+          'Offline sale cancelled because credit approval was not completed.',
+        );
+      }
+      payload['credit_limit_override'] = {'reason': overrideReason};
+      return const _OfflineCreditDecision.allow(
+        'Queued with an authorized offline credit override. The server will validate it during synchronization.',
+      );
+    }
+
+    if (customer == null || !customer.containsKey('credit_limit')) {
+      return unknownDecision(
+        'This customer was selected from data that does not contain a verified credit-control configuration.',
+      );
+    }
+
+    // Explicit NULL is the production-compatible unlimited setting.
+    if (customer['credit_limit'] == null) {
+      return const _OfflineCreditDecision.allow();
+    }
+    final limit = _finiteCreditNumber(customer['credit_limit']);
+    if (limit == null || limit < 0) {
+      return unknownDecision(
+        'The cached customer credit limit is invalid or unavailable.',
+      );
+    }
+
+    final hasBalance = customer.containsKey('balance') ||
+        customer.containsKey('trade_balance');
+    final cachedBalance = _finiteCreditNumber(
+      customer['balance'] ?? customer['trade_balance'],
+    );
+    if (!hasBalance || cachedBalance == null) {
+      return unknownDecision(
+        'No reliable cached customer trade balance is available while offline.',
+      );
+    }
+
+    double pendingExposure;
+    try {
+      pendingExposure = await OfflineSalesQueueService.instance
+          .pendingCustomerExposure(
+        branchId: branchId,
+        customerId: customerId,
+      );
+    } catch (_) {
+      return unknownDecision(
+        "The device could not verify this customer's existing unsynced exposure.",
+      );
+    }
+
+    final balanceBefore = cachedBalance + pendingExposure;
+    final projected = balanceBefore + currentLedgerDelta;
+    if (projected <= limit + 0.004) {
+      return const _OfflineCreditDecision.allow();
+    }
+
+    final issue = CreditLimitIssue(
+      partyType: 'customer',
+      partyId: customerId,
+      limit: limit,
+      balanceBefore: balanceBefore,
+      projectedBalance: projected,
+      exceededBy: projected - limit,
+      mode: warningMode ? 'warning' : 'block',
+      canOverride: mayOverride,
+    );
+    if (warningMode) {
+      return _OfflineCreditDecision.allow(
+        'Credit warning: ${issue.summary} The server will recheck the current party ledger during synchronization.',
+      );
+    }
+    if (!mayOverride) {
+      return _OfflineCreditDecision.deny(
+        '${issue.summary} You do not have permission to approve this offline credit exposure.',
+      );
+    }
+
+    final reason = await showCreditLimitOverrideDialog(context, issue);
+    if (reason == null) {
+      return const _OfflineCreditDecision.deny(
+        'Offline sale cancelled because the credit-limit override was not approved.',
+      );
+    }
+    payload['credit_limit_override'] = {'reason': reason};
+    return _OfflineCreditDecision.allow(
+      'Queued with an authorized offline credit override. ${issue.summary}',
+    );
   }
 
   // ---------------- Submit ----------------
@@ -1117,23 +1289,55 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
 
       String? queueReason;
 
+      Object? submitError;
       try {
         res = await _saleService
             .createSaleFromPayload(payload)
             .timeout(const Duration(seconds: 15));
       } catch (e) {
+        submitError = e;
+      }
+
+      // Credit control is party-ledger based. The server has already posted
+      // the sale and any same-screen party receipt inside one transaction,
+      // measured the resulting AR balance, and rolled everything back before
+      // returning this 422. An authorized user may retry the SAME idempotency
+      // reference once with an audited reason; no invoice allocation/status is
+      // introduced by this flow.
+      final firstCreditIssue = submitError == null
+          ? null
+          : CreditLimitIssue.fromException(submitError!);
+      if (firstCreditIssue != null) {
+        final auth = context.read<AuthProvider>();
+        final mayOverride = firstCreditIssue.canOverride &&
+            auth.hasPermission('override-party-credit-limit');
+        if (!mayOverride) {
+          if (!mounted) return;
+          AppFeedback.error(context, firstCreditIssue.summary);
+          return;
+        }
+        final reason = await showCreditLimitOverrideDialog(
+          context,
+          firstCreditIssue,
+        );
+        if (!mounted) return;
+        if (reason == null) return;
+        payload['credit_limit_override'] = {'reason': reason};
+        try {
+          res = await _saleService
+              .createSaleFromPayload(payload)
+              .timeout(const Duration(seconds: 15));
+          submitError = null;
+        } catch (e) {
+          submitError = e;
+        }
+      }
+
+      if (submitError != null) {
+        final e = submitError!;
         // A DETERMINISTIC rejection must not be queued. The queue's premise is
         // "this will work later"; re-POSTing an identical payload that the
-        // server already refused on its merits will be refused identically
-        // forever, so it would only travel to the dead-letter list and reach
-        // the cashier hours later, out of context, with the cart long gone.
-        // Block here instead: the cart is intact and correctable right now.
-        //
-        // Three kinds still queue, because none of them says the payload is
-        // wrong: retryable infra (5xx/429/408/425); an expired token, which
-        // the sync layer resolves by re-authenticating; and 402, the branch
-        // subscription lock — a condition of the branch that an administrator
-        // can lift, at which point this exact sale posts fine.
+        // server already refused on its merits will be refused identically.
         if (e is ApiException &&
             !e.isRetryable &&
             !e.isAuthFailure &&
@@ -1141,20 +1345,43 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
           _applyServerLineErrors(e);
           if (!mounted) return;
           setState(() {});
-          AppFeedback.error(context, _describeRejection(e));
+          final issue = CreditLimitIssue.fromException(e);
+          AppFeedback.error(
+            context,
+            issue?.summary ?? _describeRejection(e),
+          );
           return; // cart preserved; the outer finally clears _submitting
         }
 
-        // Queue on any other failed submit — not just a network-unreachable
-        // one — so the cashier can always keep working instead of getting
-        // stuck. The reason is stored alongside the queued sale purely for
-        // visibility on the sync screen; it doesn't change what happens
-        // next. The actual Sync Now attempt (OfflineSyncService) still
-        // correctly tells apart "still offline, keep retrying" from "real
-        // error, needs a human".
+        // Queue only failures that can validly succeed later: no connection,
+        // retryable infrastructure, authentication expiry, or subscription
+        // state. A party credit-limit rejection is deterministic and never
+        // enters the background queue without an authorized override reason.
         queueReason = isNetworkFailure(e)
             ? 'Offline: could not reach the server ($e).'
             : 'Server responded with a retryable error, queued for review on sync: $e';
+
+        final refundAmount = refundToSend == null
+            ? 0.0
+            : _metaNum(refundToSend['amount']);
+        final offlineCredit = await _prepareOfflineCreditQueue(
+          payload: payload,
+          branchId: originBranchId,
+          currentLedgerDelta: total - paid + refundAmount,
+        );
+        if (!mounted) return;
+        if (!offlineCredit.allowed) {
+          AppFeedback.error(
+            context,
+            offlineCredit.message ??
+                'This offline credit sale was not approved.',
+          );
+          return;
+        }
+        if (offlineCredit.message != null &&
+            offlineCredit.message!.trim().isNotEmpty) {
+          queueReason = '$queueReason ${offlineCredit.message}';
+        }
 
         await OfflineSalesQueueService.instance.enqueue(
           clientRef: clientRef,
@@ -1171,6 +1398,12 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
           context.read<OfflineQueueProvider>().refresh();
         }
       }
+
+      final creditLimitNotice = queuedOffline
+          ? null
+          : CreditLimitIssue.fromWarning(
+              res?['data']?['credit_limit_warning'],
+            );
 
       // receiptNo: prefer the server-confirmed invoice number for online
       // sales; use the customer-friendly offline reference for queued sales.
@@ -1384,8 +1617,18 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
           context,
           "Offline — Pending Sync. Receipt: $receiptNo. ${queueReason ?? ''} Official invoice number will be assigned when synced.${whatsappWasRequested ? ' WhatsApp invoice was not prepared; send it after synchronization.' : ''}",
         );
+      } else if (creditLimitNotice != null) {
+        AppFeedback.warning(
+          context,
+          creditLimitNotice.overrideUsed
+              ? 'Sale $receiptNo created with an authorized credit-limit override. ${creditLimitNotice.summary}'
+              : 'Sale $receiptNo created with a credit-limit warning. ${creditLimitNotice.summary}',
+        );
       } else {
-        AppFeedback.success(context, "Sale $receiptNo created successfully. Ready for next sale.");
+        AppFeedback.success(
+          context,
+          "Sale $receiptNo created successfully. Ready for next sale.",
+        );
       }
       // Return focus to the product search panel so the cashier can start
       // the next sale immediately without touching the mouse.

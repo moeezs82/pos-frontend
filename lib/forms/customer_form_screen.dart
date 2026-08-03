@@ -22,12 +22,16 @@ class _CustomerFormScreenState extends State<CustomerFormScreen> {
   final _emailController = TextEditingController();
   final _phoneController = TextEditingController();
   final _addressController = TextEditingController();
+  final _creditLimitController = TextEditingController();
 
   /// Opening balance is entered as a positive magnitude; [_openingOwes]
   /// carries the direction. Only offered on CREATE — changing it later would
   /// mean amending a posted journal entry.
   final _openingBalanceController = TextEditingController();
   bool _openingOwes = true;
+
+  bool _unlimitedCredit = true;
+  String _creditLimitMode = 'block';
 
   String _status = 'active';
   bool _saving = false;
@@ -46,6 +50,13 @@ class _CustomerFormScreenState extends State<CustomerFormScreen> {
       _phoneController.text = (c['phone'] ?? '').toString();
       _addressController.text = (c['address'] ?? '').toString();
       _status = (c['status'] ?? 'active').toString();
+      final rawCreditLimit = c['credit_limit'];
+      if (rawCreditLimit != null && rawCreditLimit.toString().trim().isNotEmpty) {
+        _unlimitedCredit = false;
+        _creditLimitController.text = rawCreditLimit.toString();
+      }
+      final rawMode = (c['credit_limit_mode'] ?? 'block').toString().toLowerCase();
+      _creditLimitMode = rawMode == 'warning' ? 'warning' : 'block';
     }
   }
 
@@ -56,6 +67,7 @@ class _CustomerFormScreenState extends State<CustomerFormScreen> {
     _emailController.dispose();
     _phoneController.dispose();
     _addressController.dispose();
+    _creditLimitController.dispose();
     _openingBalanceController.dispose();
     super.dispose();
   }
@@ -73,6 +85,10 @@ class _CustomerFormScreenState extends State<CustomerFormScreen> {
       'phone': _phoneController.text.trim(),
       'address': _addressController.text.trim(),
       'status': _status,
+      'credit_limit': _unlimitedCredit
+          ? null
+          : double.tryParse(_creditLimitController.text.trim()),
+      'credit_limit_mode': _creditLimitMode,
     };
 
     // Opening balance is create-only and signed: positive means the customer
@@ -113,12 +129,14 @@ class _CustomerFormScreenState extends State<CustomerFormScreen> {
     String? Function(String?)? validator,
     bool obscure = false,
     int maxLines = 1,
+    bool enabled = true,
   }) {
     return TextFormField(
       controller: controller,
       keyboardType: keyboardType,
       obscureText: obscure,
       maxLines: maxLines,
+      enabled: enabled,
       decoration: InputDecoration(labelText: label, prefixIcon: icon == null ? null : Icon(icon)),
       validator: validator,
     );
@@ -209,6 +227,88 @@ class _CustomerFormScreenState extends State<CustomerFormScreen> {
                         ),
                       ],
                       SizedBox(width: 736, child: _field(controller: _addressController, label: 'Address', icon: Icons.location_on_outlined, maxLines: 2)),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            EnterprisePanel(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const EnterpriseSectionHeader(
+                    title: 'Credit control',
+                    subtitle: 'Limit the customer’s total trade receivable. Payments remain party-level transactions and are not allocated to individual invoices.',
+                    icon: Icons.credit_score_rounded,
+                  ),
+                  const SizedBox(height: 8),
+                  SwitchListTile.adaptive(
+                    contentPadding: EdgeInsets.zero,
+                    value: _unlimitedCredit,
+                    onChanged: (value) => setState(() {
+                      _unlimitedCredit = value;
+                      if (value) _creditLimitController.clear();
+                    }),
+                    title: const Text('Unlimited credit'),
+                    subtitle: const Text('Existing behaviour is preserved while this is enabled.'),
+                  ),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 12,
+                    runSpacing: 12,
+                    children: [
+                      SizedBox(
+                        width: 360,
+                        child: _field(
+                          controller: _creditLimitController,
+                          label: 'Customer Credit Limit',
+                          icon: Icons.account_balance_wallet_outlined,
+                          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                          enabled: !_unlimitedCredit,
+                          validator: (value) {
+                            if (_unlimitedCredit) return null;
+                            final amount = double.tryParse((value ?? '').trim());
+                            if (amount == null || !amount.isFinite) {
+                              return 'Enter a valid credit limit';
+                            }
+                            if (amount < 0) return 'Credit limit cannot be negative';
+                            if (amount > 99999999999999.99) {
+                              return 'Credit limit is too large';
+                            }
+                            return null;
+                          },
+                        ),
+                      ),
+                      SizedBox(
+                        width: 360,
+                        child: DropdownButtonFormField<String>(
+                          value: _creditLimitMode,
+                          items: const [
+                            DropdownMenuItem(value: 'block', child: Text('Block when exceeded')),
+                            DropdownMenuItem(value: 'warning', child: Text('Warn but allow')),
+                          ],
+                          onChanged: _unlimitedCredit
+                              ? null
+                              : (value) => setState(() => _creditLimitMode = value ?? 'block'),
+                          decoration: const InputDecoration(
+                            labelText: 'Limit Behaviour',
+                            prefixIcon: Icon(Icons.policy_outlined),
+                            helperText: 'Block mode can be overridden only with permission and a reason.',
+                          ),
+                        ),
+                      ),
+                      if ((widget.customer?['trade_balance'] ?? widget.customer?['balance']) != null)
+                        SizedBox(
+                          width: 360,
+                          child: InputDecorator(
+                            decoration: const InputDecoration(
+                              labelText: 'Current Trade Balance',
+                              prefixIcon: Icon(Icons.receipt_long_outlined),
+                            ),
+                            child: Text((widget.customer?['trade_balance'] ?? widget.customer?['balance']).toString()),
+                          ),
+                        ),
                     ],
                   ),
                 ],

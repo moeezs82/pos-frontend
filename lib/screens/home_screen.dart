@@ -14,6 +14,7 @@ import 'package:enterprise_pos/screens/purchases/purchase_create.dart';
 import 'package:enterprise_pos/screens/purchases/purchases_screen.dart';
 import 'package:enterprise_pos/screens/payments/party_payments_screen.dart';
 import 'package:enterprise_pos/screens/reports/report_hub_screen.dart';
+import 'package:enterprise_pos/screens/reports/credit_control_screen.dart';
 import 'package:enterprise_pos/screens/sales/sale_create.dart';
 // Sale Return screens are intentionally retained in the project, but their
 // home navigation entry is disabled because returns are handled as -ve sales.
@@ -200,6 +201,7 @@ class HomeScreen extends StatelessWidget {
       if (auth.hasPermission('view-stock')) _Tile(icon: Icons.warehouse_rounded, title: 'Stock', shortcut: 'Ctrl+I', subtitle: 'Inventory on hand', color: AppTheme.danger, onTap: () => PosNavigation.openSingleton(routeId: PosRouteIds.stock, builder: (_) => const StockScreen())),
       if (auth.hasPermission('view-customers')) _Tile(icon: Icons.people_alt_rounded, title: 'Customers', shortcut: 'Ctrl+Shift+C', subtitle: 'Receivables and profiles', color: AppTheme.warning, onTap: () => PosNavigation.openSingleton(routeId: PosRouteIds.customers, builder: (_) => const CustomersScreen())),
       if (auth.hasPermission('view-vendors')) _Tile(icon: Icons.groups_2_rounded, title: 'Vendors', shortcut: 'Ctrl+Shift+V', subtitle: 'Suppliers and payables', color: AppTheme.purple, onTap: () => PosNavigation.openSingleton(routeId: PosRouteIds.vendors, builder: (_) => const VendorsScreen())),
+      if (auth.hasPermission('view-party-credit-limit-audits')) _Tile(icon: Icons.policy_rounded, title: 'Credit Control', subtitle: 'Exposure, overrides and blocked attempts', color: AppTheme.warning, onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const CreditControlScreen()))),
       // Sale Returns intentionally hidden: returns are now entered as -ve sales.
       // _Tile(icon: Icons.assignment_return_rounded, title: 'Sale Returns', shortcut: 'Ctrl+T', subtitle: 'Refund workflow', color: AppTheme.info, onTap: () => PosNavigation.openSingleton(routeId: PosRouteIds.saleReturns, builder: (_) => const SaleReturnsScreen())),
       if (auth.hasPermission('view-purchases')) _Tile(icon: Icons.shopping_cart_rounded, title: 'Purchases', shortcut: 'Ctrl+Shift+O', subtitle: 'Bills and payments', color: AppTheme.primaryDark, onTap: () => PosNavigation.openSingleton(routeId: PosRouteIds.purchases, builder: (_) => const PurchasesScreen())),

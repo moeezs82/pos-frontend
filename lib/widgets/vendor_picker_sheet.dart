@@ -110,7 +110,7 @@ class _VendorPickerSheetState extends State<VendorPickerSheet> {
   }
 
   num _balanceOf(Map<String, dynamic> v) {
-    final raw = v['balance'];
+    final raw = v['balance'] ?? v['trade_balance'];
     if (raw is num) return raw;
     return num.tryParse(raw?.toString() ?? '0') ?? 0;
   }

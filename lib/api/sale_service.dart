@@ -36,6 +36,7 @@ class SaleService {
     String? registerShiftClientRef,
     String? offlineInvoiceNo,
     int? originBranchId,
+    String? creditLimitOverrideReason,
   }) async {
     final payload = buildSalePayload(
       customerId: customerId,
@@ -54,6 +55,7 @@ class SaleService {
       registerShiftClientRef: registerShiftClientRef,
       offlineInvoiceNo: offlineInvoiceNo,
       originBranchId: originBranchId,
+      creditLimitOverrideReason: creditLimitOverrideReason,
     );
 
     // Ensure your ApiClient sends JSON (sets Content-Type: application/json)
@@ -93,6 +95,7 @@ class SaleService {
     DateTime? occurredAt,
     String? registerShiftClientRef,
     int? originBranchId,
+    String? creditLimitOverrideReason,
     /// Customer-friendly offline receipt reference (e.g. "OFF-B1-MAIN-20260714-0001").
     /// Stored permanently on the sale for traceability. Never used as the official
     /// invoice number — that is always allocated by InvoiceSequenceService.
@@ -111,6 +114,8 @@ class SaleService {
       if (meta != null) "meta": meta,
       if (clientRef != null) "client_ref": clientRef,
       if (originBranchId != null) "origin_branch_id": originBranchId,
+      if (creditLimitOverrideReason != null && creditLimitOverrideReason.trim().isNotEmpty)
+        "credit_limit_override": {"reason": creditLimitOverrideReason.trim()},
       if (occurredAt != null) "occurred_at": occurredAt.toIso8601String(),
       if (registerShiftClientRef != null) "register_shift_client_ref": registerShiftClientRef,
       if (offlineInvoiceNo != null) "offline_invoice_no": offlineInvoiceNo,

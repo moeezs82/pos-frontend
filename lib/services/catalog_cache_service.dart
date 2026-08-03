@@ -61,7 +61,7 @@ class CatalogCacheService {
     final path = p.join(dbPath, 'catalog_cache.db');
     return openDatabase(
       path,
-      version: 3,
+      version: 4,
       // v1 → v2 adds the unit columns. ADDITIVE ONLY, and deliberately not a
       // table rebuild or a cache wipe: this database is a read replica, but a
       // "just delete and re-download" upgrade would strand a till that is
@@ -93,6 +93,24 @@ class CatalogCacheService {
               'last_synced_at:all',
               'payment_methods:all',
             ],
+          );
+        }
+        if (oldVersion < 4) {
+          await db.execute('ALTER TABLE customers ADD COLUMN credit_limit REAL');
+          await db.execute(
+              "ALTER TABLE customers ADD COLUMN credit_limit_mode TEXT NOT NULL DEFAULT 'block'");
+          await db.execute(
+              'ALTER TABLE customers ADD COLUMN trade_balance REAL NOT NULL DEFAULT 0');
+
+          // Existing rows pre-date credit-control fields. Treating the ALTER
+          // defaults as real balances would falsely authorize offline credit.
+          // Purge only the customer read replica and invalidate catalog cursors
+          // so the next online refresh is a full authoritative snapshot.
+          await db.delete('customers');
+          await db.delete(
+            'sync_meta',
+            where: 'key LIKE ? OR key LIKE ?',
+            whereArgs: const ['catalog_version:%', 'last_synced_at:%'],
           );
         }
       },
@@ -135,6 +153,9 @@ class CatalogCacheService {
             email TEXT,
             address TEXT,
             status TEXT,
+            credit_limit REAL,
+            credit_limit_mode TEXT NOT NULL DEFAULT 'block',
+            trade_balance REAL NOT NULL DEFAULT 0,
             search_blob TEXT,
             updated_at TEXT,
             PRIMARY KEY (id)
@@ -446,6 +467,9 @@ class CatalogCacheService {
       'email': raw['email']?.toString(),
       'address': raw['address']?.toString(),
       'status': raw['status']?.toString(),
+      'credit_limit': raw['credit_limit'] == null ? null : _asDouble(raw['credit_limit']),
+      'credit_limit_mode': (raw['credit_limit_mode'] ?? 'block').toString(),
+      'trade_balance': _asDouble(raw['trade_balance']),
       'search_blob': parts.toLowerCase(),
       'updated_at': raw['updated_at']?.toString(),
     };
@@ -489,6 +513,9 @@ class CatalogCacheService {
       'email': row['email'],
       'address': row['address'],
       'status': row['status'],
+      'credit_limit': row['credit_limit'],
+      'credit_limit_mode': row['credit_limit_mode'],
+      'trade_balance': row['trade_balance'],
       '_offline': true,
     };
   }

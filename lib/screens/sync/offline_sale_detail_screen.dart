@@ -5,6 +5,7 @@ import 'package:enterprise_pos/services/offline_sales_queue_service.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/utils/line_errors.dart';
 import 'package:enterprise_pos/widgets/app_feedback.dart';
+import 'package:enterprise_pos/widgets/credit_limit_override_dialog.dart';
 import 'package:flutter/material.dart';
 import 'package:enterprise_pos/services/app_currency.dart';
 import 'package:provider/provider.dart';
@@ -37,6 +38,7 @@ class OfflineSaleDetailScreen extends StatefulWidget {
 class _OfflineSaleDetailScreenState extends State<OfflineSaleDetailScreen> {
   bool _replaying = false;
   bool _discarding = false;
+  bool _approvingCredit = false;
 
   // ── Field-level errors ───────────────────────────────────────────────────
 
@@ -291,6 +293,47 @@ class _OfflineSaleDetailScreenState extends State<OfflineSaleDetailScreen> {
     return payload;
   }
 
+  CreditLimitIssue? get _creditLimitIssue =>
+      CreditLimitIssue.fromStoredError(widget.item.lastError);
+
+  /// Adds an audited override reason to the SAME queued sale and resets it to
+  /// pending. The original client_ref/offline reference are preserved, so the
+  /// normal idempotent sync path is used and no replacement invoice is made.
+  Future<void> _approveCreditOverride() async {
+    final issue = _creditLimitIssue;
+    if (issue == null) return;
+    final auth = context.read<AuthProvider>();
+    if (!auth.hasPermission('override-party-credit-limit')) {
+      AppFeedback.error(
+        context,
+        'You do not have permission to override a party credit limit.',
+      );
+      return;
+    }
+
+    final reason = await showCreditLimitOverrideDialog(context, issue);
+    if (reason == null || !mounted) return;
+    setState(() => _approvingCredit = true);
+    try {
+      final payload = Map<String, dynamic>.from(widget.item.payload)
+        ..['credit_limit_override'] = {'reason': reason};
+      await OfflineSalesQueueService.instance.updatePayloadAndReset(
+        widget.item.clientRef,
+        payload,
+      );
+      if (!mounted) return;
+      AppFeedback.success(
+        context,
+        'Credit override added. The original sale is queued to sync again.',
+      );
+      Navigator.pop(context, true);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _approvingCredit = false);
+      AppFeedback.error(context, 'Could not save the credit override: $e');
+    }
+  }
+
   // ── Discard action ────────────────────────────────────────────────────────
 
   Future<void> _discard() async {
@@ -335,7 +378,8 @@ class _OfflineSaleDetailScreenState extends State<OfflineSaleDetailScreen> {
   @override
   Widget build(BuildContext context) {
     final item = widget.item;
-    final isBusy = _replaying || _discarding;
+    final creditIssue = _creditLimitIssue;
+    final isBusy = _replaying || _discarding || _approvingCredit;
 
     return Scaffold(
       appBar: AppBar(
@@ -531,20 +575,34 @@ class _OfflineSaleDetailScreenState extends State<OfflineSaleDetailScreen> {
                     ),
                   ),
                   const SizedBox(width: 12),
-                  // Replay button
+                  // Credit-limit failures must retain the same sale and
+                  // idempotency reference. Other dead letters keep the legacy
+                  // manager replay action.
                   Expanded(
                     child: FilledButton.icon(
-                      onPressed: isBusy ? null : _replay,
-                      icon: _replaying
+                      onPressed: isBusy
+                          ? null
+                          : (creditIssue != null
+                              ? _approveCreditOverride
+                              : _replay),
+                      icon: (_replaying || _approvingCredit)
                           ? const SizedBox(
                               width: 16, height: 16,
                               child: CircularProgressIndicator(
                                   strokeWidth: 2, color: Colors.white))
-                          : const Icon(Icons.add_circle_outline_rounded,
-                              size: 18),
-                      label: Text(_replaying
-                          ? 'Creating…'
-                          : 'Create as New Sale'),
+                          : Icon(
+                              creditIssue != null
+                                  ? Icons.verified_user_rounded
+                                  : Icons.add_circle_outline_rounded,
+                              size: 18,
+                            ),
+                      label: Text(creditIssue != null
+                          ? (_approvingCredit
+                              ? 'Approving…'
+                              : 'Approve & Re-queue')
+                          : (_replaying
+                              ? 'Creating…'
+                              : 'Create as New Sale')),
                     ),
                   ),
                 ],

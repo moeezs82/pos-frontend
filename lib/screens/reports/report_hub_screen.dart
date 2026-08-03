@@ -1,6 +1,8 @@
 import 'package:enterprise_pos/screens/cash_ledger/cash_ledger_create_screen.dart';
 import 'package:enterprise_pos/services/app_navigator.dart';
 import 'package:enterprise_pos/screens/reports/enterprise_reports_workspace_screen.dart';
+import 'package:enterprise_pos/screens/reports/credit_control_screen.dart';
+import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/screens/reports/party_balances_screen.dart';
 import 'package:enterprise_pos/screens/reports/report_cashbook_screen.dart';
 import 'package:enterprise_pos/screens/reports/report_daily_summary_screen.dart';
@@ -11,6 +13,7 @@ import 'package:enterprise_pos/screens/reports/report_top_bottom_products_screen
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/branch_indicator.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
 class ReportsHubScreen extends StatelessWidget {
   const ReportsHubScreen({super.key});
@@ -19,6 +22,7 @@ class ReportsHubScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final width = MediaQuery.of(context).size.width;
     final cols = width >= 1200 ? 4 : width >= 900 ? 3 : width >= 620 ? 2 : 1;
+    final canViewCreditAudits = context.read<AuthProvider>().hasPermission('view-party-credit-limit-audits');
 
     return Scaffold(
       appBar: AppBar(title: const Text('Reports Command Center'), centerTitle: false, actions: const [Padding(padding: EdgeInsets.only(right: 8), child: BranchIndicator(tappable: false))]),
@@ -64,6 +68,14 @@ class ReportsHubScreen extends StatelessWidget {
                 accent: Colors.green,
                 onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const EnterpriseReportsWorkspaceScreen(initialReportKey: 'sales-summary'))),
               ),
+              if (canViewCreditAudits)
+                _CommandCard(
+                  icon: Icons.policy_rounded,
+                  title: 'Credit Control',
+                  subtitle: 'Review exposure, warnings, overrides, corrections, and blocked attempts.',
+                  accent: AppTheme.warning,
+                  onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const CreditControlScreen())),
+                ),
             ],
           ),
           const SizedBox(height: 22),

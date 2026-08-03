@@ -20,6 +20,7 @@ class _UserFormScreenState extends State<UserFormScreen> {
     'Products & Inventory',
     'Customers',
     'Party Payments',
+    'Party Credit Control',
     'Vendors & Purchases',
     'Cash & Accounting',
     'Reports',
@@ -47,6 +48,8 @@ class _UserFormScreenState extends State<UserFormScreen> {
     'manage-purchases': 'Manage Purchases & Claims',
     'manage-payments': 'Pay Vendors',
     'reverse-party-payments': 'Reverse Party Payments',
+    'override-party-credit-limit': 'Override Party Credit Limit',
+    'view-party-credit-limit-audits': 'View Credit Control Audits',
     'view-cashbook': 'View Cash Ledger & Day Book',
     'manage-cashbook': 'Record & Void Cash Entries',
     'view-reports': 'View Reports',
@@ -90,6 +93,9 @@ class _UserFormScreenState extends State<UserFormScreen> {
     }
     if ({'manage-receipts', 'manage-payments', 'reverse-party-payments'}.contains(key)) {
       return 'Party Payments';
+    }
+    if ({'override-party-credit-limit', 'view-party-credit-limit-audits'}.contains(key)) {
+      return 'Party Credit Control';
     }
     if ({
       'view-vendors',
