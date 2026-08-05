@@ -6,6 +6,7 @@ import '../../providers/auth_provider.dart';
 import '../../providers/offline_queue_provider.dart';
 import '../../providers/register_shift_provider.dart';
 import '../../theme/app_theme.dart';
+import 'register_shift_management_dialog.dart';
 
 class RegisterShiftScreen extends StatefulWidget {
   const RegisterShiftScreen({super.key});
@@ -35,25 +36,35 @@ class _RegisterShiftScreenState extends State<RegisterShiftScreen> {
   @override Widget build(BuildContext context) {
     final state = context.watch<RegisterShiftProvider>();
     final auth = context.watch<AuthProvider>();
-    final role = auth.roleLabel.toLowerCase();
-    final canManageRegisters = auth.hasPermission('manage-register-shifts') || role.contains('admin') || role.contains('manager');
+    final canManageRegisters = auth.hasPermission('manage-register-shifts');
+    final canViewHistory = auth.hasAnyPermission(const [
+      'view-register-shifts',
+      'manage-register-shifts',
+    ]);
     final availableRegisters = _availableRegisters(state);
     return Scaffold(
       appBar: AppBar(title: const Text('Register Shift'), actions: [
         if (canManageRegisters)
+          IconButton(tooltip: 'Manage open shifts', onPressed: _manageOpenShifts, icon: const Icon(Icons.pending_actions_rounded)),
+        if (canManageRegisters)
           IconButton(tooltip: 'Manage registers', onPressed: _manageRegisters, icon: const Icon(Icons.settings_rounded)),
-        IconButton(tooltip: 'Shift history', onPressed: _showHistory, icon: const Icon(Icons.history_rounded)),
+        if (canViewHistory)
+          IconButton(tooltip: 'Shift history', onPressed: _showHistory, icon: const Icon(Icons.history_rounded)),
         IconButton(onPressed: _load, icon: const Icon(Icons.refresh_rounded)),
       ]),
       body: state.loading && state.shift == null
           ? const Center(child: CircularProgressIndicator())
           : ListView(padding: const EdgeInsets.all(20), children: [
               if (!state.hasActiveShift && state.hasOccupiedRegisters && availableRegisters.isEmpty)
-                _occupiedCard(state)
+                _occupiedCard(state, canManageRegisters)
               else if (!state.hasActiveShift)
                 _openCard(state, availableRegisters)
               else ...[
                 _activeHeader(state),
+                if (state.closeRequest != null) ...[
+                  const SizedBox(height: 12),
+                  _closeRequestBanner(state.closeRequest!),
+                ],
                 const SizedBox(height: 16),
                 _summaryGrid(state),
                 const SizedBox(height: 16),
@@ -81,7 +92,7 @@ class _RegisterShiftScreenState extends State<RegisterShiftScreen> {
     ]))),
   ));
 
-  Widget _occupiedCard(RegisterShiftProvider state) {
+  Widget _occupiedCard(RegisterShiftProvider state, bool canManage) {
     final occupied = state.occupiedShifts.first;
     final register = occupied['register'] is Map ? occupied['register'] as Map : const {};
     final cashier = occupied['cashier'] is Map ? occupied['cashier'] as Map : const {};
@@ -103,10 +114,23 @@ class _RegisterShiftScreenState extends State<RegisterShiftScreen> {
                   style: const TextStyle(color: AppTheme.textMuted),
                 ),
                 const SizedBox(height: 16),
-                FilledButton.icon(
-                  onPressed: _load,
-                  icon: const Icon(Icons.refresh_rounded),
-                  label: const Text('Check Again'),
+                Wrap(
+                  spacing: 10,
+                  runSpacing: 8,
+                  alignment: WrapAlignment.center,
+                  children: [
+                    FilledButton.icon(
+                      onPressed: _load,
+                      icon: const Icon(Icons.refresh_rounded),
+                      label: const Text('Check Again'),
+                    ),
+                    if (canManage)
+                      OutlinedButton.icon(
+                        onPressed: _manageOpenShifts,
+                        icon: const Icon(Icons.admin_panel_settings_rounded),
+                        label: const Text('Manage Open Shifts'),
+                      ),
+                  ],
                 ),
               ],
             ),
@@ -123,6 +147,67 @@ class _RegisterShiftScreenState extends State<RegisterShiftScreen> {
       Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(register['name']?.toString() ?? 'Register', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800)), Text('Shift #${shift['id']} • Opened ${shift['opened_at'] ?? ''}', style: const TextStyle(color: AppTheme.textMuted))])),
       const Chip(avatar: Icon(Icons.circle, size: 10, color: AppTheme.success), label: Text('ACTIVE')),
     ]));
+  }
+
+
+  Widget _closeRequestBanner(Map<String, dynamic> request) {
+    final status = request['status']?.toString() ?? '';
+    final pending = status == 'pending';
+    final rejected = status == 'rejected';
+    final color = pending
+        ? AppTheme.warning
+        : (rejected ? AppTheme.danger : AppTheme.textMuted);
+    final decisionUser = request['decision_by_user'] is Map
+        ? request['decision_by_user'] as Map
+        : const {};
+    final variance = double.tryParse(request['variance']?.toString() ?? '0') ?? 0;
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: .07),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: color.withValues(alpha: .28)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            pending ? Icons.pending_actions_rounded : Icons.info_outline_rounded,
+            color: color,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  pending
+                      ? 'Manager approval required'
+                      : rejected
+                          ? 'Close request rejected for recount'
+                          : 'Previous close request: $status',
+                  style: TextStyle(
+                    color: color,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                const SizedBox(height: 5),
+                Text(
+                  pending
+                      ? 'Expected ${AppCurrency.format(request['expected_cash'])} • Counted ${AppCurrency.format(request['counted_cash'])} • Variance ${AppCurrency.formatSigned(variance)}'
+                      : '${request['decision_note'] ?? 'Please count the drawer again and submit a new request.'}${decisionUser['name'] == null ? '' : ' — ${decisionUser['name']}'}',
+                  style: const TextStyle(
+                    color: AppTheme.textMuted,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _summaryGrid(RegisterShiftProvider state) {
@@ -241,7 +326,13 @@ class _RegisterShiftScreenState extends State<RegisterShiftScreen> {
   Widget _actions(RegisterShiftProvider state) => Row(children: [
     OutlinedButton.icon(onPressed: () => _movementDialog('in'), icon: const Icon(Icons.add_rounded), label: const Text('Cash In')),
     const SizedBox(width: 10), OutlinedButton.icon(onPressed: () => _movementDialog('out'), icon: const Icon(Icons.remove_rounded), label: const Text('Cash Out')),
-    const Spacer(), FilledButton.icon(style: FilledButton.styleFrom(backgroundColor: AppTheme.danger), onPressed: _closeDialog, icon: const Icon(Icons.lock_rounded), label: const Text('Close Shift')),
+    const Spacer(),
+    FilledButton.icon(
+      style: FilledButton.styleFrom(backgroundColor: AppTheme.danger),
+      onPressed: _closeDialog,
+      icon: Icon(state.hasPendingCloseRequest ? Icons.edit_note_rounded : Icons.lock_rounded),
+      label: Text(state.hasPendingCloseRequest ? 'Update Close Request' : 'Close Shift'),
+    ),
   ]);
 
   static bool _asBool(dynamic v) =>
@@ -552,10 +643,50 @@ class _RegisterShiftScreenState extends State<RegisterShiftScreen> {
   }
 
   Future<void> _closeDialog() async {
-    final counted = TextEditingController(); final note = TextEditingController(); final pending = context.read<OfflineQueueProvider>().pendingCount;
-    final ok = await showDialog<bool>(context: context, builder: (d) => AlertDialog(title: const Text('Close Register Shift'), content: Column(mainAxisSize: MainAxisSize.min, children: [if (pending > 0) Text('$pending offline sale(s) must sync before closing.', style: const TextStyle(color: AppTheme.danger, fontWeight: FontWeight.w700)), TextField(controller: counted, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Counted cash')), const SizedBox(height: 12), TextField(controller: note, decoration: const InputDecoration(labelText: 'Closing notes'))]), actions: [TextButton(onPressed: () => Navigator.pop(d, false), child: const Text('Cancel')), FilledButton(onPressed: pending > 0 ? null : () => Navigator.pop(d, true), child: const Text('Close Shift'))]));
-    if (ok == true && mounted) { try { await context.read<RegisterShiftProvider>().close(countedCash: double.tryParse(counted.text) ?? 0, pendingSyncCount: pending, note: note.text); } catch (e) { _error(e); } }
+    final pending = context.read<OfflineQueueProvider>().pendingCount;
+    final existing = context.read<RegisterShiftProvider>().closeRequest;
+    final input = await showDialog<_CloseShiftInput>(
+      context: context,
+      builder: (_) => _CloseShiftDialog(
+        pendingSyncCount: pending,
+        initialCount: existing?['counted_cash'],
+        initialNote: existing?['closing_note']?.toString(),
+      ),
+    );
+    if (input == null || !mounted) return;
+    try {
+      final approvalRequired = await context.read<RegisterShiftProvider>().close(
+        countedCash: input.countedCash,
+        pendingSyncCount: pending,
+        note: input.note,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            approvalRequired
+                ? 'Close request submitted. A manager or owner must review the variance.'
+                : 'Register shift closed.',
+          ),
+          backgroundColor:
+              approvalRequired ? AppTheme.warning : AppTheme.success,
+        ),
+      );
+    } catch (e) {
+      _error(e);
+    }
   }
+
+  Future<void> _manageOpenShifts() async {
+    final token = context.read<AuthProvider>().token;
+    if (token == null) return;
+    await showRegisterShiftManagementDialog(
+      context: context,
+      token: token,
+      onChanged: _load,
+    );
+  }
+
   Future<void> _showHistory() async {
     final token = context.read<AuthProvider>().token;
     if (token == null) return;
@@ -620,4 +751,140 @@ class _RegisterShiftScreenState extends State<RegisterShiftScreen> {
     } catch (e) { _error(e); }
   }
   void _error(Object e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString()), backgroundColor: AppTheme.danger)); }
+}
+
+class _CloseShiftInput {
+  final double countedCash;
+  final String? note;
+
+  const _CloseShiftInput({required this.countedCash, this.note});
+}
+
+class _CloseShiftDialog extends StatefulWidget {
+  final int pendingSyncCount;
+  final dynamic initialCount;
+  final String? initialNote;
+
+  const _CloseShiftDialog({
+    required this.pendingSyncCount,
+    this.initialCount,
+    this.initialNote,
+  });
+
+  @override
+  State<_CloseShiftDialog> createState() => _CloseShiftDialogState();
+}
+
+class _CloseShiftDialogState extends State<_CloseShiftDialog> {
+  late final TextEditingController _counted;
+  late final TextEditingController _note;
+  String? _countError;
+  bool _closing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final initial = widget.initialCount == null
+        ? ''
+        : (double.tryParse(widget.initialCount.toString()) ?? 0).toStringAsFixed(2);
+    _counted = TextEditingController(text: initial);
+    _note = TextEditingController(text: widget.initialNote ?? '');
+  }
+
+  @override
+  void dispose() {
+    _counted.dispose();
+    _note.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    if (_closing) return;
+    final counted = double.tryParse(_counted.text.trim());
+    if (counted == null || counted < 0) {
+      setState(() => _countError = 'Enter a valid counted cash amount.');
+      return;
+    }
+    _closing = true;
+    FocusScope.of(context).unfocus();
+    Navigator.of(context).pop(
+      _CloseShiftInput(
+        countedCash: counted,
+        note: _note.text.trim().isEmpty ? null : _note.text.trim(),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Close Register Shift'),
+      content: SizedBox(
+        width: 470,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (widget.pendingSyncCount > 0) ...[
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: AppTheme.warning.withValues(alpha: .08),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: AppTheme.warning.withValues(alpha: .25),
+                  ),
+                ),
+                child: Text(
+                  '${widget.pendingSyncCount} offline sale(s) are still pending. '
+                  'The close request will require a manager to accept them or wait for synchronization.',
+                  style: const TextStyle(
+                    color: AppTheme.warning,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 14),
+            ],
+            TextField(
+              controller: _counted,
+              autofocus: true,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              decoration: InputDecoration(
+                labelText: 'Counted cash',
+                prefixText: AppCurrency.inputPrefix(),
+                suffixText: AppCurrency.inputSuffix,
+                errorText: _countError,
+                helperText:
+                    'Enter the physical amount actually present in the drawer.',
+              ),
+              onChanged: (_) {
+                if (_countError != null) setState(() => _countError = null);
+              },
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _note,
+              maxLines: 3,
+              maxLength: 500,
+              decoration: const InputDecoration(
+                labelText: 'Closing note (optional)',
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _closing ? null : () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton.icon(
+          onPressed: _closing ? null : _submit,
+          icon: const Icon(Icons.lock_rounded),
+          label: const Text('Submit Count'),
+        ),
+      ],
+    );
+  }
 }

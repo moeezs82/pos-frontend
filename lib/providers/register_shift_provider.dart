@@ -53,6 +53,12 @@ class RegisterShiftProvider extends ChangeNotifier {
   String? get error => _error;
   String? get clientRef => _shift?['client_ref']?.toString();
   int? get id => int.tryParse(_shift?['id']?.toString() ?? '');
+  Map<String, dynamic>? get closeRequest {
+    final raw = _shift?['close_request'];
+    return raw is Map ? Map<String, dynamic>.from(raw) : null;
+  }
+
+  bool get hasPendingCloseRequest => closeRequest?['status'] == 'pending';
 
   /// Cache key for SharedPreferences, namespaced by user and branch.
   ///
@@ -214,25 +220,44 @@ class RegisterShiftProvider extends ChangeNotifier {
     await refresh();
   }
 
-  Future<void> close({
+  Future<bool> close({
     required double countedCash,
     required int pendingSyncCount,
     String? note,
   }) async {
     if (_token == null || id == null) throw StateError('No active shift');
-    await _serviceFactory(_token!).close(id!, {
-      'client_ref': const Uuid().v4(),
-      'counted_cash': countedCash,
-      'pending_sync_count': pendingSyncCount,
-      'accept_pending_sync': false,
-      if (note?.trim().isNotEmpty == true) 'closing_note': note!.trim(),
-    });
-    _shift = null;
-    _summary = const {};
-    _activity = const {};
-    _occupiedShifts = const [];
-    await _persist();
-    notifyListeners();
+    _setLoading(true);
+    try {
+      final result = await _serviceFactory(_token!).close(id!, {
+        'client_ref': const Uuid().v4(),
+        'counted_cash': countedCash,
+        'pending_sync_count': pendingSyncCount,
+        'accept_pending_sync': false,
+        if (note?.trim().isNotEmpty == true) 'closing_note': note!.trim(),
+      });
+
+      if (result['approval_required'] == true) {
+        final shiftData = result['shift'];
+        _shift = shiftData is Map
+            ? Map<String, dynamic>.from(shiftData)
+            : _shift;
+        _error = null;
+        await _persist();
+        await refresh();
+        return true;
+      }
+
+      _shift = null;
+      _summary = const {};
+      _activity = const {};
+      _occupiedShifts = const [];
+      _error = null;
+      await _persist();
+      notifyListeners();
+      return false;
+    } finally {
+      _setLoading(false);
+    }
   }
 
   /// Clears all state and stops the current session.

@@ -118,7 +118,12 @@ class HomeScreen extends StatelessWidget {
             ),
           ),
         ),
-      if (auth.hasPermission('view-register-shifts')) _Tile(
+      if (auth.hasAnyPermission(const [
+        'view-register-shifts',
+        'open-register-shift',
+        'close-own-register-shift',
+        'manage-register-shifts',
+      ])) _Tile(
         icon: Icons.point_of_sale_rounded,
         title: registerShift.hasActiveShift ? 'Active Shift' : 'Open Shift',
         shortcut: 'F6',

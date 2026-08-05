@@ -202,8 +202,22 @@ class AppKeyboardShortcuts extends StatelessWidget {
       _ctrl(LogicalKeyboardKey.keyR): () => open(PosRouteIds.reports, (_) => const ReportsHubScreen(), permission: 'view-reports'),
       _cmd(LogicalKeyboardKey.keyR): () => open(PosRouteIds.reports, (_) => const ReportsHubScreen(), permission: 'view-reports'),
 
-      const SingleActivator(LogicalKeyboardKey.f6): () =>
-          open(PosRouteIds.registerShift, (_) => const RegisterShiftScreen(), permission: 'view-register-shifts'),
+      const SingleActivator(LogicalKeyboardKey.f6): () {
+        if (!auth.hasAnyPermission(const [
+          'view-register-shifts',
+          'open-register-shift',
+          'close-own-register-shift',
+          'manage-register-shifts',
+        ])) {
+          return;
+        }
+        _openBusiness(
+          auth,
+          branch,
+          PosRouteIds.registerShift,
+          (_) => const RegisterShiftScreen(),
+        );
+      },
 
       _ctrl(LogicalKeyboardKey.keyU): () => open(PosRouteIds.users, (_) => const UsersScreen(), permission: 'view-users'),
       _cmd(LogicalKeyboardKey.keyU): () => open(PosRouteIds.users, (_) => const UsersScreen(), permission: 'view-users'),
