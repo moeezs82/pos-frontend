@@ -31,11 +31,13 @@ class _ProductAutoSearchField extends StatefulWidget {
   final ProductService productService;
   final VoidCallback onSearch;
   final VoidCallback onClear;
+  final ValueChanged<Map<String, dynamic>> onQuickView;
   const _ProductAutoSearchField({
     required this.controller,
     required this.productService,
     required this.onSearch,
     required this.onClear,
+    required this.onQuickView,
   });
 
   @override
@@ -53,6 +55,12 @@ class _ProductAutoSearchFieldState extends State<_ProductAutoSearchField> {
   int _focusedIndex = -1;
   Timer? _debounce;
   bool _fetchingHints = false;
+
+  // Windows precision touchpads can keep the pointer gesture active longer
+  // than a physical mouse click. While the user is interacting with the
+  // autocomplete overlay, do not let the TextField focus-loss callback tear
+  // the overlay down before InkWell receives its onTap.
+  bool _overlayPointerDown = false;
 
   /// Cached absolute position for the dropdown (recomputed each open).
   Offset _dropdownOffset = Offset.zero;
@@ -125,9 +133,37 @@ class _ProductAutoSearchFieldState extends State<_ProductAutoSearchField> {
 
   void _onFocusChanged() {
     if (!_focusNode.hasFocus) {
-      // Small delay so a tap inside the overlay can register before it closes.
+      // A physical mouse click usually completes before this delay, but a
+      // precision-touchpad tap/click can take longer. Keep the overlay alive
+      // while a pointer interaction inside it is still in progress.
       Future.delayed(const Duration(milliseconds: 150), () {
-        if (mounted && !_focusNode.hasFocus) _removeOverlay();
+        if (mounted &&
+            !_focusNode.hasFocus &&
+            !_overlayPointerDown) {
+          _removeOverlay();
+        }
+      });
+    }
+  }
+
+  void _beginOverlayPointerInteraction() {
+    _overlayPointerDown = true;
+  }
+
+  void _endOverlayPointerInteraction() {
+    _overlayPointerDown = false;
+
+    // If the pointer interaction did not result in a row/icon tap, allow the
+    // overlay to close normally after the gesture has fully completed. The
+    // extra delay is intentionally longer than the same-event InkWell onTap.
+    if (!_focusNode.hasFocus) {
+      Future.delayed(const Duration(milliseconds: 200), () {
+        if (mounted &&
+            !_focusNode.hasFocus &&
+            !_overlayPointerDown &&
+            _overlayEntry != null) {
+          _removeOverlay();
+        }
       });
     }
   }
@@ -197,23 +233,15 @@ class _ProductAutoSearchFieldState extends State<_ProductAutoSearchField> {
     widget.onSearch();
   }
 
-  Future<void> _quickViewAtIndex(int index) async {
+  void _quickViewAtIndex(int index) {
     if (index < 0 || index >= _suggestions.length) return;
-    // Capture before clearing.
+
+    // Capture the product before the overlay state is cleared, then let the
+    // parent screen use the same _openForm navigation path as the normal Edit
+    // action. This avoids route pushes from a disappearing OverlayEntry.
     final p = Map<String, dynamic>.from(_suggestions[index]);
-    // Tear down the overlay silently — no setState to avoid any mid-frame rebuild.
-    _overlayEntry?.remove();
-    _overlayEntry = null;
-    _suggestions = [];
-    _focusedIndex = -1;
-    // Navigate directly, exactly like the Edit button on the list does.
-    final result = await Navigator.push(
-      context,
-      MaterialPageRoute(builder: (_) => ProductFormScreen(product: p)),
-    );
-    if (!mounted) return;
-    // If the form saved a change, refresh the search results.
-    if (result != null) widget.onSearch();
+    _removeOverlay();
+    widget.onQuickView(p);
   }
 
   // ── Overlay UI ────────────────────────────────────────────────────────────
@@ -225,8 +253,13 @@ class _ProductAutoSearchFieldState extends State<_ProductAutoSearchField> {
       left: _dropdownOffset.dx,
       top: _dropdownOffset.dy,
       width: _dropdownWidth,
-      child: Material(
-        elevation: 8,
+      child: Listener(
+        behavior: HitTestBehavior.translucent,
+        onPointerDown: (_) => _beginOverlayPointerInteraction(),
+        onPointerUp: (_) => _endOverlayPointerInteraction(),
+        onPointerCancel: (_) => _endOverlayPointerInteraction(),
+        child: Material(
+          elevation: 8,
         borderRadius: BorderRadius.circular(12),
         clipBehavior: Clip.antiAlias,
         child: Column(
@@ -248,6 +281,7 @@ class _ProductAutoSearchFieldState extends State<_ProductAutoSearchField> {
                         // ── Tappable left area (select & search) ──────────
                         Expanded(
                           child: InkWell(
+                            canRequestFocus: false,
                             onTap: () => _selectAtIndex(i),
                             child: Padding(
                               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -298,6 +332,7 @@ class _ProductAutoSearchFieldState extends State<_ProductAutoSearchField> {
                         Tooltip(
                           message: 'Quick view / edit',
                           child: InkWell(
+                            canRequestFocus: false,
                             onTap: () => _quickViewAtIndex(i),
                             borderRadius: BorderRadius.circular(6),
                             child: Padding(
@@ -317,9 +352,10 @@ class _ProductAutoSearchFieldState extends State<_ProductAutoSearchField> {
                     ),
                   );
                 }),
+              ),
             ),
           ),
-    );
+        );
   }
 
   @override
@@ -795,6 +831,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
                   productService: _productService,
                   onSearch: _onSearch,
                   onClear: _clearSearch,
+                  onQuickView: (product) => _openForm(product),
                 ),
               ),
               Tooltip(
