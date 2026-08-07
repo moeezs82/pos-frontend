@@ -63,7 +63,6 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
   bool _receiveNow = false;
   bool _autoCashIfEmpty = true;
   bool _submitting = false;
-  bool _didAutoOpenPicker = false;
 
   late ProductService _productService;
   late PurchaseService _purchaseService;
@@ -101,26 +100,6 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
     discountController.addListener(recalc);
     taxController.addListener(recalc);
 
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _openItemPickerOnFirstLoad();
-    });
-  }
-
-  Future<void> _openItemPickerOnFirstLoad() async {
-    if (_didAutoOpenPicker || !mounted) return;
-    _didAutoOpenPicker = true;
-    await Future.delayed(const Duration(milliseconds: 280));
-    if (!mounted || _items.isNotEmpty) return;
-    final auth = context.read<AuthProvider>();
-    final branch = context.read<BranchProvider>();
-    if (auth.isMasterAdmin && !branch.hasActiveBranch) return;
-    // Vendor picker opens first on purchase create — vendor is required before
-    // items make sense. Skip straight to product picker if vendor already set.
-    if (_selectedVendorId == null) {
-      await _pickVendor();
-    } else {
-      await _addItemManual();
-    }
   }
 
   @override
@@ -642,9 +621,6 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
         );
       }
 
-      Future.delayed(const Duration(milliseconds: 450), () {
-        if (mounted && _items.isEmpty) _addItemManual();
-      });
     } catch (e) {
       if (!mounted) return;
       final issue = CreditLimitIssue.fromException(e);

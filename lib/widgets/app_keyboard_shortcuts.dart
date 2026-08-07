@@ -48,6 +48,7 @@ class PosShortcutCatalog {
 
   static const global = <PosShortcutInfo>[
     PosShortcutInfo(keys: 'Ctrl + /', title: 'Show shortcut guide', section: 'System', icon: Icons.keyboard_rounded),
+    PosShortcutInfo(keys: 'Esc', title: 'Go back', section: 'Navigation', icon: Icons.arrow_back_rounded),
     PosShortcutInfo(keys: 'Ctrl + H', title: 'Go to Home', section: 'Navigation', icon: Icons.home_rounded),
     PosShortcutInfo(keys: 'Ctrl + N / F2', title: 'Create Sale', section: 'Sales', icon: Icons.point_of_sale_rounded, permission: 'create-sales'),
     PosShortcutInfo(keys: 'Ctrl + L', title: 'Sales List', section: 'Sales', icon: Icons.receipt_long_rounded, permission: 'view-sales'),
@@ -152,6 +153,8 @@ class AppKeyboardShortcuts extends StatelessWidget {
     }
 
     return <ShortcutActivator, VoidCallback>{
+      const SingleActivator(LogicalKeyboardKey.escape): () => appNavigatorKey.currentState?.maybePop(),
+
       _ctrl(LogicalKeyboardKey.slash): () => _showShortcutGuide(context, auth),
       _cmd(LogicalKeyboardKey.slash): () => _showShortcutGuide(context, auth),
       const SingleActivator(LogicalKeyboardKey.f1): () => _showShortcutGuide(context, auth),

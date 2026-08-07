@@ -19,8 +19,9 @@ import 'package:provider/provider.dart';
 ///                             other items, bottom border).
 class SaleStatusBar extends StatefulWidget {
   final bool light;
+  final bool showBackButton;
 
-  const SaleStatusBar({super.key, this.light = false});
+  const SaleStatusBar({super.key, this.light = false, this.showBackButton = false});
 
   @override
   State<SaleStatusBar> createState() => _SaleStatusBarState();
@@ -108,6 +109,17 @@ class _SaleStatusBarState extends State<SaleStatusBar> {
       ),
       child: Row(
         children: [
+          // Back button
+          if (widget.showBackButton && Navigator.canPop(context))
+            InkWell(
+              onTap: () => Navigator.pop(context),
+              borderRadius: BorderRadius.circular(6),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                child: Icon(Icons.arrow_back_rounded, size: 16, color: iconColor),
+              ),
+            ),
+
           // Branch chip (master admin only)
           const BranchIndicator(),
 

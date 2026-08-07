@@ -2220,7 +2220,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       // ── Light status bar (30 px) ──────────────────────
-                      const SaleStatusBar(light: true),
+                      const SaleStatusBar(light: true, showBackButton: true),
 
                       // ── 2-panel workspace ─────────────────────────────
                       Expanded(

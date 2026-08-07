@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:enterprise_pos/api/product_service.dart';
 import 'package:enterprise_pos/forms/product_form_screen.dart';
 import 'package:enterprise_pos/providers/branch_provider.dart';
@@ -10,6 +12,7 @@ import 'package:enterprise_pos/widgets/branch_indicator.dart';
 import 'package:enterprise_pos/widgets/enterprise/enterprise_ui.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:enterprise_pos/services/app_currency.dart';
 import 'package:provider/provider.dart';
 import '../providers/auth_provider.dart';
@@ -21,11 +24,364 @@ class ProductsScreen extends StatefulWidget {
   State<ProductsScreen> createState() => _ProductsScreenState();
 }
 
+// ─── Autocomplete search field ────────────────────────────────────────────────
+
+class _ProductAutoSearchField extends StatefulWidget {
+  final TextEditingController controller;
+  final ProductService productService;
+  final VoidCallback onSearch;
+  final VoidCallback onClear;
+  const _ProductAutoSearchField({
+    required this.controller,
+    required this.productService,
+    required this.onSearch,
+    required this.onClear,
+  });
+
+  @override
+  State<_ProductAutoSearchField> createState() => _ProductAutoSearchFieldState();
+}
+
+class _ProductAutoSearchFieldState extends State<_ProductAutoSearchField> {
+  /// Key on the search field container — used to locate it on screen so the
+  /// dropdown can be positioned without CompositedTransformFollower.
+  final _fieldKey = GlobalKey();
+
+  late final FocusNode _focusNode;
+  OverlayEntry? _overlayEntry;
+  List<Map<String, dynamic>> _suggestions = [];
+  int _focusedIndex = -1;
+  Timer? _debounce;
+  bool _fetchingHints = false;
+
+  /// Cached absolute position for the dropdown (recomputed each open).
+  Offset _dropdownOffset = Offset.zero;
+  double _dropdownWidth = 420;
+
+  @override
+  void initState() {
+    super.initState();
+    // Key events are intercepted at the FocusNode level so they run before
+    // TextField's own handlers (e.g. preventing cursor-move on ArrowDown).
+    _focusNode = FocusNode(onKeyEvent: _handleKeyEvent);
+    widget.controller.addListener(_onControllerChanged);
+    _focusNode.addListener(_onFocusChanged);
+  }
+
+  @override
+  void dispose() {
+    _debounce?.cancel();
+    _removeOverlay();
+    widget.controller.removeListener(_onControllerChanged);
+    _focusNode.removeListener(_onFocusChanged);
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  // ── Key navigation ────────────────────────────────────────────────────────
+
+  KeyEventResult _handleKeyEvent(FocusNode node, KeyEvent event) {
+    // Only act on down-events (and repeats for held arrow keys).
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+      return KeyEventResult.ignored;
+    }
+    // No dropdown → pass every key through to TextField as normal.
+    if (_suggestions.isEmpty || _overlayEntry == null) {
+      return KeyEventResult.ignored;
+    }
+
+    final key = event.logicalKey;
+
+    if (key == LogicalKeyboardKey.arrowDown) {
+      setState(() => _focusedIndex = (_focusedIndex + 1).clamp(0, _suggestions.length - 1));
+      _overlayEntry?.markNeedsBuild();
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.arrowUp) {
+      setState(() => _focusedIndex = (_focusedIndex - 1).clamp(-1, _suggestions.length - 1));
+      _overlayEntry?.markNeedsBuild();
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.enter || key == LogicalKeyboardKey.numpadEnter) {
+      if (_focusedIndex >= 0) {
+        _selectAtIndex(_focusedIndex);
+        return KeyEventResult.handled;
+      }
+      // No item highlighted → let TextField fire onSubmitted normally.
+      return KeyEventResult.ignored;
+    }
+    if (key == LogicalKeyboardKey.escape) {
+      // Consume Escape so the global "go back" shortcut doesn't also fire.
+      _removeOverlay();
+      return KeyEventResult.handled;
+    }
+
+    return KeyEventResult.ignored;
+  }
+
+  // ── Overlay lifecycle ─────────────────────────────────────────────────────
+
+  void _onControllerChanged() => setState(() {});
+
+  void _onFocusChanged() {
+    if (!_focusNode.hasFocus) {
+      // Small delay so a tap inside the overlay can register before it closes.
+      Future.delayed(const Duration(milliseconds: 150), () {
+        if (mounted && !_focusNode.hasFocus) _removeOverlay();
+      });
+    }
+  }
+
+  void _removeOverlay() {
+    _overlayEntry?.remove();
+    _overlayEntry = null;
+    if (mounted) setState(() { _suggestions = []; _focusedIndex = -1; });
+  }
+
+  void _onChanged(String value) {
+    _debounce?.cancel();
+    final query = value.trim();
+    if (query.length < 2) { _removeOverlay(); return; }
+    _debounce = Timer(const Duration(milliseconds: 350), () => _fetchSuggestions(query));
+  }
+
+  Future<void> _fetchSuggestions(String query) async {
+    if (!mounted) return;
+    setState(() => _fetchingHints = true);
+    try {
+      final data = await widget.productService.getProducts(page: 1, search: query);
+      final wrapper = (data['data'] as List).first;
+      final items = (wrapper['products'] as List<dynamic>)
+          .take(8)
+          .map((e) => Map<String, dynamic>.from(e as Map))
+          .toList();
+      if (!mounted) return;
+      _suggestions = items;
+      _focusedIndex = -1; // reset keyboard selection on each new result set
+      if (items.isNotEmpty && _focusNode.hasFocus) {
+        _showOrUpdateOverlay();
+      } else {
+        _removeOverlay();
+      }
+    } catch (_) {
+      if (mounted) _removeOverlay();
+    } finally {
+      if (mounted) setState(() => _fetchingHints = false);
+    }
+  }
+
+  void _showOrUpdateOverlay() {
+    if (_overlayEntry != null) {
+      _overlayEntry!.markNeedsBuild();
+      return;
+    }
+    // Compute absolute screen position once, when the overlay is first created.
+    // This avoids CompositedTransformFollower / RenderFollowerLayer entirely.
+    final renderBox = _fieldKey.currentContext?.findRenderObject() as RenderBox?;
+    if (renderBox != null) {
+      final globalOffset = renderBox.localToGlobal(Offset.zero);
+      _dropdownOffset = Offset(globalOffset.dx, globalOffset.dy + renderBox.size.height);
+      _dropdownWidth = renderBox.size.width.clamp(320.0, 520.0);
+    }
+    _overlayEntry = OverlayEntry(builder: _buildOverlayContent);
+    Overlay.of(context).insert(_overlayEntry!);
+  }
+
+  // ── Actions ───────────────────────────────────────────────────────────────
+
+  void _selectAtIndex(int index) {
+    if (index < 0 || index >= _suggestions.length) return;
+    final p = _suggestions[index];
+    widget.controller.text = (p['name'] ?? '').toString();
+    _removeOverlay();
+    widget.onSearch();
+  }
+
+  Future<void> _quickViewAtIndex(int index) async {
+    if (index < 0 || index >= _suggestions.length) return;
+    // Capture before clearing.
+    final p = Map<String, dynamic>.from(_suggestions[index]);
+    // Tear down the overlay silently — no setState to avoid any mid-frame rebuild.
+    _overlayEntry?.remove();
+    _overlayEntry = null;
+    _suggestions = [];
+    _focusedIndex = -1;
+    // Navigate directly, exactly like the Edit button on the list does.
+    final result = await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => ProductFormScreen(product: p)),
+    );
+    if (!mounted) return;
+    // If the form saved a change, refresh the search results.
+    if (result != null) widget.onSearch();
+  }
+
+  // ── Overlay UI ────────────────────────────────────────────────────────────
+
+  Widget _buildOverlayContent(BuildContext ctx) {
+    // Plain Positioned at the precomputed absolute screen offset.
+    // No CompositedTransformFollower — avoids all RenderFollowerLayer errors.
+    return Positioned(
+      left: _dropdownOffset.dx,
+      top: _dropdownOffset.dy,
+      width: _dropdownWidth,
+      child: Material(
+        elevation: 8,
+        borderRadius: BorderRadius.circular(12),
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: List.generate(_suggestions.length, (i) {
+                  final p = _suggestions[i];
+                  final isFocused = i == _focusedIndex;
+                  final name = (p['name'] ?? '').toString();
+                  final sku = (p['sku'] ?? '—').toString();
+                  final price = AppCurrency.format(p['price']);
+                  // The row tap (select/search) and the quick-view icon are in
+                  // separate, non-overlapping widgets so their gestures never
+                  // compete. Using nested InkWells previously caused both onTap
+                  // callbacks to fire on a single tap.
+                  return ColoredBox(
+                    color: isFocused ? AppTheme.primarySoft : Colors.transparent,
+                    child: Row(
+                      children: [
+                        // ── Tappable left area (select & search) ──────────
+                        Expanded(
+                          child: InkWell(
+                            onTap: () => _selectAtIndex(i),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    Icons.inventory_2_rounded,
+                                    size: 16,
+                                    color: isFocused
+                                        ? AppTheme.primary
+                                        : AppTheme.primary.withOpacity(0.55),
+                                  ),
+                                  const SizedBox(width: 10),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          name,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: TextStyle(
+                                            fontWeight: FontWeight.w700,
+                                            fontSize: 13,
+                                            color: isFocused
+                                                ? AppTheme.primary
+                                                : AppTheme.navy,
+                                          ),
+                                        ),
+                                        const SizedBox(height: 2),
+                                        Text(
+                                          'SKU: $sku · $price',
+                                          style: const TextStyle(
+                                            fontSize: 11,
+                                            color: AppTheme.textMuted,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+
+                        // ── Quick-view icon (separate tap area) ───────────
+                        Tooltip(
+                          message: 'Quick view / edit',
+                          child: InkWell(
+                            onTap: () => _quickViewAtIndex(i),
+                            borderRadius: BorderRadius.circular(6),
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 12, vertical: 10),
+                              child: Icon(
+                                Icons.open_in_new_rounded,
+                                size: 16,
+                                color: isFocused
+                                    ? AppTheme.primary
+                                    : AppTheme.textMuted,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                }),
+            ),
+          ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      key: _fieldKey,
+      child: TextField(
+        controller: widget.controller,
+        focusNode: _focusNode,
+        onChanged: _onChanged,
+        onSubmitted: (_) {
+          _removeOverlay();
+          widget.onSearch();
+        },
+        decoration: InputDecoration(
+          hintText: 'Search product, SKU, barcode...',
+          prefixIcon: const Icon(Icons.search_rounded),
+          suffixIcon: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (_fetchingHints)
+                const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 8),
+                  child: SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                )
+              else if (widget.controller.text.isNotEmpty)
+                IconButton(
+                  tooltip: 'Clear',
+                  onPressed: () {
+                    _removeOverlay();
+                    widget.onClear();
+                  },
+                  icon: const Icon(Icons.close_rounded),
+                ),
+              IconButton(
+                tooltip: 'Search',
+                onPressed: () {
+                  _removeOverlay();
+                  widget.onSearch();
+                },
+                icon: const Icon(Icons.arrow_forward_rounded),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 class _ProductsScreenState extends State<ProductsScreen> {
   int _page = 1;
   int _lastPage = 1;
   bool _loading = false;
   bool _importExportBusy = false;
+  bool _showCost = false;
   String _search = '';
   final List<dynamic> _products = [];
   final _searchController = TextEditingController();
@@ -434,12 +790,18 @@ class _ProductsScreenState extends State<ProductsScreen> {
             children: [
               SizedBox(
                 width: MediaQuery.of(context).size.width >= 720 ? 420 : double.infinity,
-                child: EnterpriseSearchField(
+                child: _ProductAutoSearchField(
                   controller: _searchController,
-                  hintText: 'Search product, SKU, barcode...',
-                  onSubmitted: (_) => _onSearch(),
+                  productService: _productService,
                   onSearch: _onSearch,
                   onClear: _clearSearch,
+                ),
+              ),
+              Tooltip(
+                message: _showCost ? 'Hide cost price' : 'Show cost price',
+                child: IconButton(
+                  icon: Icon(_showCost ? Icons.visibility_off_rounded : Icons.visibility_rounded),
+                  onPressed: () => setState(() => _showCost = !_showCost),
                 ),
               ),
               OutlinedButton.icon(
@@ -539,6 +901,13 @@ class _ProductsScreenState extends State<ProductsScreen> {
                                         color: AppTheme.primary,
                                         icon: Icons.sell_rounded,
                                       ),
+                                      if (_showCost)
+                                        EnterpriseMetricChip(
+                                          label: 'Cost',
+                                          value: AppCurrency.format(p['cost_price'] ?? 0),
+                                          color: AppTheme.warning,
+                                          icon: Icons.price_change_rounded,
+                                        ),
                                       EnterpriseMetricChip(
                                         label: 'Brand',
                                         value: brand,
