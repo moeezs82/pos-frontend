@@ -144,15 +144,25 @@ class BarcodeLabelPrinterService {
       }
 
       final selected = await LocalPrinterService.instance.requirePrinter(printerName);
+
+      // Use the selected Windows queue/driver exactly like CounterIQ's local
+      // receipt printing path. The driver knows the real printable origin,
+      // media mapping and USB/device settings. Without this flag, some thermal
+      // printers accept the job but output a blank label even though the same
+      // PDF prints correctly through the Windows print dialog.
       final printed = await Printing.directPrintPdf(
         printer: selected,
         name: 'Barcode - ${_singleLine(productName, maxLength: 40)}',
         format: pageFormat(config),
         dynamicLayout: false,
+        usePrinterSettings: true,
         onLayout: (_) async => bytes,
       );
       if (!printed) {
-        throw Exception('Windows did not accept the barcode print job for "${selected.name}".');
+        throw Exception(
+          'Windows did not accept the barcode print job for "${selected.name}". '
+          'Check that the printer driver is installed and the printer is online.',
+        );
       }
       return;
     }
