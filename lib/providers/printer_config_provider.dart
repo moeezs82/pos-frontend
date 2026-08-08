@@ -48,6 +48,7 @@ class PrinterConfigProvider extends ChangeNotifier {
   InvoiceTemplate get mainInvoiceTemplate => _config.mainInvoiceTemplate;
   InvoiceTemplate get secondaryInvoiceTemplate =>
       _config.secondaryInvoiceTemplate;
+  String get secondaryReceiptHeader => _config.secondaryReceiptHeader;
   bool get barcodePrintEnabled => _config.barcodePrintEnabled;
   String get barcodeConnection => _config.barcodeConnection;
   String? get barcodeLocalPrinterName => _config.barcodeLocalPrinterName;

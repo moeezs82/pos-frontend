@@ -6,6 +6,7 @@ import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/providers/printer_config_provider.dart';
 import 'package:enterprise_pos/screens/settings/invoice_template_preview_screen.dart';
 import 'package:enterprise_pos/services/barcode_label_printer_service.dart';
+import 'package:enterprise_pos/services/local_printer_service.dart';
 import 'package:enterprise_pos/services/thermal_printer_service.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/enterprise/enterprise_panel.dart';
@@ -45,6 +46,7 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
   final _secondaryNetworkIpCtrl = TextEditingController();
   final _secondaryNetworkPortCtrl = TextEditingController(text: '9100');
   final _secondaryLocalPrinterCtrl = TextEditingController();
+  final _secondaryHeaderCtrl = TextEditingController(text: 'KITCHEN COPY');
   final _barcodeLocalPrinterCtrl = TextEditingController();
   final _barcodeNetworkIpCtrl = TextEditingController();
   final _barcodeNetworkPortCtrl = TextEditingController(text: '9100');
@@ -105,6 +107,7 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
     _secondaryNetworkIpCtrl.dispose();
     _secondaryNetworkPortCtrl.dispose();
     _secondaryLocalPrinterCtrl.dispose();
+    _secondaryHeaderCtrl.dispose();
     _barcodeLocalPrinterCtrl.dispose();
     _barcodeNetworkIpCtrl.dispose();
     _barcodeNetworkPortCtrl.dispose();
@@ -146,7 +149,7 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
     if (_loadingPrinters) return;
     setState(() => _loadingPrinters = true);
     try {
-      final printers = await Printing.listPrinters();
+      final printers = await LocalPrinterService.instance.listInstalledPrinters();
       if (!mounted) return;
       setState(() => _installedPrinters = printers);
     } catch (_) {
@@ -205,6 +208,9 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
       _secondaryNetworkIpCtrl.text = config.secondaryNetworkIp ?? '';
       _secondaryNetworkPortCtrl.text = config.secondaryNetworkPort.toString();
       _secondaryLocalPrinterCtrl.text = config.secondaryLocalPrinterName ?? '';
+      _secondaryHeaderCtrl.text = config.secondaryReceiptHeader.trim().isEmpty
+          ? 'KITCHEN COPY'
+          : config.secondaryReceiptHeader;
       _mainTemplate = config.mainInvoiceTemplate;
       _secondaryTemplate = config.secondaryInvoiceTemplate;
       _barcodeAddonActive = config.barcodeAddonActive;
@@ -226,6 +232,92 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
 
   String _numberText(double value) =>
       value == value.roundToDouble() ? value.toInt().toString() : value.toStringAsFixed(2);
+
+  List<String> get _installedPrinterNames {
+    final names = _installedPrinters
+        .map((p) => p.name.trim())
+        .where((name) => name.isNotEmpty)
+        .toSet()
+        .toList()
+      ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    return names;
+  }
+
+  List<String> _printerNamesIncluding(String configuredName) {
+    final names = [..._installedPrinterNames];
+    final configured = configuredName.trim();
+    if (configured.isNotEmpty && !names.any((name) => name.toLowerCase() == configured.toLowerCase())) {
+      names.add(configured);
+    }
+    return names;
+  }
+
+  bool _isPrinterCurrentlyInstalled(String printerName) {
+    final wanted = printerName.trim().toLowerCase();
+    if (wanted.isEmpty) return false;
+    return _installedPrinters.any((printer) => printer.name.trim().toLowerCase() == wanted);
+  }
+
+  String? _printerDropdownValue(String configuredName, List<String> names) {
+    final configured = configuredName.trim();
+    if (configured.isEmpty) return null;
+    for (final name in names) {
+      if (name.toLowerCase() == configured.toLowerCase()) return name;
+    }
+    return configured;
+  }
+
+  Widget _buildLocalPrinterSelector({
+    required TextEditingController controller,
+    required String label,
+  }) {
+    final configured = controller.text.trim();
+    final names = _printerNamesIncluding(configured);
+    final value = _printerDropdownValue(configured, names);
+    final available = configured.isNotEmpty && _isPrinterCurrentlyInstalled(configured);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        DropdownButtonFormField<String>(
+          value: value,
+          isExpanded: true,
+          decoration: InputDecoration(
+            labelText: label,
+            hintText: _loadingPrinters ? 'Loading installed printers...' : 'Select a printer installed in Windows',
+            prefixIcon: const Icon(Icons.print_rounded),
+            suffixIcon: IconButton(
+              tooltip: 'Refresh installed printers',
+              onPressed: _loadingPrinters ? null : _loadInstalledPrinters,
+              icon: _loadingPrinters
+                  ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.refresh_rounded),
+            ),
+          ),
+          items: names.map((name) => DropdownMenuItem(value: name, child: Text(name))).toList(),
+          onChanged: _installedPrinters.isEmpty
+              ? null
+              : (selected) => setState(() => controller.text = selected ?? ''),
+        ),
+        const SizedBox(height: 8),
+        if (!_loadingPrinters && _installedPrinters.isEmpty)
+          const Text(
+            'No installed Windows printers were found. Install the printer driver, make sure the printer appears in Windows Printers & scanners, then refresh.',
+            style: TextStyle(color: AppTheme.warning, fontSize: 12, fontWeight: FontWeight.w600),
+          )
+        else if (configured.isNotEmpty && !available)
+          Text(
+            'The saved printer "$configured" is not currently available on this computer. Select an available printer before printing.',
+            style: const TextStyle(color: AppTheme.warning, fontSize: 12, fontWeight: FontWeight.w600),
+          )
+        else
+          const Text(
+            'Uses the Windows printer queue. USB, LAN, Wi-Fi and Bluetooth printers work when their Windows driver is installed.',
+            style: TextStyle(color: AppTheme.textMuted, fontSize: 12, fontWeight: FontWeight.w600),
+          ),
+      ],
+    );
+  }
 
   List<String> get _currentFooterLines =>
       _footerCtrls.map((c) => c.text.trim()).where((s) => s.isNotEmpty).toList();
@@ -283,7 +375,19 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
       return;
     }
     if (_activeConnection == 'local' && _localPrinterCtrl.text.trim().isEmpty) {
-      _showMessage('Enter the local printer name.');
+      _showMessage('Select an installed receipt printer.');
+      return;
+    }
+    if (_secondaryEnabled && _activeConnection == 'local' && _secondaryLocalPrinterCtrl.text.trim().isEmpty) {
+      _showMessage('Select an installed secondary printer.');
+      return;
+    }
+    if (_secondaryEnabled && _activeConnection == 'network' && _secondaryNetworkIpCtrl.text.trim().isEmpty) {
+      _showMessage("Enter the secondary printer's network address.");
+      return;
+    }
+    if (_secondaryEnabled && _secondaryHeaderCtrl.text.trim().isEmpty) {
+      _showMessage('Enter a header for the secondary receipt.');
       return;
     }
     if (_barcodeAddonActive && _barcodeConnection == 'local' && _barcodeLocalPrinterCtrl.text.trim().isEmpty) {
@@ -330,6 +434,7 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
         secondaryNetworkPort: int.tryParse(_secondaryNetworkPortCtrl.text.trim()) ?? 9100,
         secondaryLocalPrinterName: _secondaryLocalPrinterCtrl.text.trim().isEmpty ? null : _secondaryLocalPrinterCtrl.text.trim(),
         secondaryInvoiceTemplate: _secondaryTemplate,
+        secondaryReceiptHeader: _secondaryHeaderCtrl.text.trim(),
         barcodePrintEnabled: _barcodeAddonActive,
         barcodeConnection: _barcodeConnection,
         barcodeLocalPrinterName: _barcodeLocalPrinterCtrl.text.trim().isEmpty ? null : _barcodeLocalPrinterCtrl.text.trim(),
@@ -365,29 +470,46 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
   }
 
   Future<void> _testPrint() async {
-    if (_activeConnection != 'network') {
-      _showMessage('Test print currently supports network printers.');
+    if (_activeConnection == 'none') {
+      _showMessage('Choose Network or This computer before sending a test print.');
       return;
     }
-    final ip = _networkIpCtrl.text.trim();
-    if (ip.isEmpty) {
-      _showMessage('Enter the printer\'s network address first.');
-      return;
-    }
-    final port = int.tryParse(_networkPortCtrl.text.trim()) ?? 9100;
 
     setState(() => _testing = true);
     try {
-      await _service.validateTestDestination(
-        activeConnection: 'network',
-        networkIp: ip,
-        networkPort: port,
-      );
-      await ThermalPrinterService.instance.testPrintNetwork(
-        printerIp: ip,
-        port: port,
-        shopName: _shopNameCtrl.text.trim().isNotEmpty ? _shopNameCtrl.text.trim() : 'Test Print',
-      );
+      if (_activeConnection == 'network') {
+        final ip = _networkIpCtrl.text.trim();
+        if (ip.isEmpty) {
+          throw Exception("Enter the printer's network address first.");
+        }
+        final port = int.tryParse(_networkPortCtrl.text.trim()) ?? 9100;
+        await _service.validateTestDestination(
+          activeConnection: 'network',
+          networkIp: ip,
+          networkPort: port,
+        );
+        await ThermalPrinterService.instance.testPrintNetwork(
+          printerIp: ip,
+          port: port,
+          shopName: _shopNameCtrl.text.trim().isNotEmpty ? _shopNameCtrl.text.trim() : 'Test Print',
+          paperWidth: _mainTemplate.paperWidthCode,
+        );
+      } else {
+        final printerName = _localPrinterCtrl.text.trim();
+        if (printerName.isEmpty) {
+          throw Exception('Select an installed receipt printer first.');
+        }
+        await LocalPrinterService.instance.testReceipt(
+          printerName: printerName,
+          shopName: _shopNameCtrl.text.trim().isNotEmpty ? _shopNameCtrl.text.trim() : 'CounterIQ',
+          shopAddress: _shopAddressCtrl.text.trim().isEmpty ? null : _shopAddressCtrl.text.trim(),
+          shopPhone: _shopPhoneCtrl.text.trim().isEmpty ? null : _shopPhoneCtrl.text.trim(),
+          sections: _mainTemplate.sections,
+          paperWidth: _mainTemplate.paperWidthCode,
+          footerLines: _currentFooterLines,
+          copyLabel: 'RECEIPT PRINTER TEST',
+        );
+      }
       _showMessage('Test ticket sent — check the printer.');
     } catch (e) {
       _showMessage('Test print failed: ${e.toString().replaceFirst('Exception: ', '')}');
@@ -397,25 +519,58 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
   }
 
   Future<void> _testSecondaryPrint() async {
-    final ip = _secondaryNetworkIpCtrl.text.trim();
-    if (ip.isEmpty) {
-      _showMessage('Enter the secondary printer\'s network address first.');
+    if (_activeConnection == 'none') {
+      _showMessage('Choose Network or This computer for the main printer first.');
       return;
     }
-    final port = int.tryParse(_secondaryNetworkPortCtrl.text.trim()) ?? 9100;
 
     setState(() => _testingSecondary = true);
     try {
-      await _service.validateTestDestination(
-        activeConnection: 'network',
-        networkIp: ip,
-        networkPort: port,
-      );
-      await ThermalPrinterService.instance.testPrintNetwork(
-        printerIp: ip,
-        port: port,
-        shopName: 'Secondary Printer Test',
-      );
+      if (_activeConnection == 'network') {
+        final ip = _secondaryNetworkIpCtrl.text.trim();
+        if (ip.isEmpty) {
+          throw Exception("Enter the secondary printer's network address first.");
+        }
+        final port = int.tryParse(_secondaryNetworkPortCtrl.text.trim()) ?? 9100;
+        await _service.validateTestDestination(
+          activeConnection: 'network',
+          networkIp: ip,
+          networkPort: port,
+        );
+        await ThermalPrinterService.instance.testPrintNetwork(
+          printerIp: ip,
+          port: port,
+          shopName: _shopNameCtrl.text.trim().isNotEmpty
+              ? _shopNameCtrl.text.trim()
+              : 'CounterIQ',
+          paperWidth: _secondaryTemplate.paperWidthCode,
+          receiptHeader: _secondaryHeaderCtrl.text.trim().isEmpty
+              ? 'KITCHEN COPY'
+              : _secondaryHeaderCtrl.text.trim(),
+        );
+      } else {
+        final printerName = _secondaryLocalPrinterCtrl.text.trim();
+        if (printerName.isEmpty) {
+          throw Exception('Select an installed secondary printer first.');
+        }
+        await LocalPrinterService.instance.testReceipt(
+          printerName: printerName,
+          shopName: _shopNameCtrl.text.trim().isNotEmpty
+              ? _shopNameCtrl.text.trim()
+              : 'CounterIQ',
+          shopAddress: _shopAddressCtrl.text.trim().isEmpty
+              ? null
+              : _shopAddressCtrl.text.trim(),
+          shopPhone: _shopPhoneCtrl.text.trim().isEmpty ? null : _shopPhoneCtrl.text.trim(),
+          sections: _secondaryTemplate.sections,
+          paperWidth: _secondaryTemplate.paperWidthCode,
+          footerLines: _currentFooterLines,
+          receiptHeader: _secondaryHeaderCtrl.text.trim().isEmpty
+              ? 'KITCHEN COPY'
+              : _secondaryHeaderCtrl.text.trim(),
+          copyLabel: 'SECONDARY PRINTER TEST',
+        );
+      }
       _showMessage('Secondary printer test ticket sent.');
     } catch (e) {
       _showMessage('Secondary printer test failed: ${e.toString().replaceFirst('Exception: ', '')}');
@@ -480,7 +635,7 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
   }
 
-  void _openPreview(InvoiceTemplate template) {
+  void _openPreview(InvoiceTemplate template, {String? receiptHeader}) {
     Navigator.push(
       context,
       MaterialPageRoute(
@@ -491,6 +646,7 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
           shopAddress: _shopAddressCtrl.text.trim().isEmpty ? null : _shopAddressCtrl.text.trim(),
           shopPhone: _shopPhoneCtrl.text.trim().isEmpty ? null : _shopPhoneCtrl.text.trim(),
           footerLines: _currentFooterLines,
+          receiptHeader: receiptHeader,
         ),
       ),
     );
@@ -697,35 +853,19 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
             ),
           ],
           if (_activeConnection == 'local') ...[
-            TextFormField(
+            _buildLocalPrinterSelector(
               controller: _localPrinterCtrl,
-              decoration: const InputDecoration(
-                labelText: 'Local printer name',
-                hintText: 'Exact name as it appears in this computer\'s printer list',
-                prefixIcon: Icon(Icons.dvr_rounded),
-              ),
+              label: 'Installed receipt printer',
             ),
-            const SizedBox(height: 10),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: AppTheme.warning.withOpacity(.08),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: AppTheme.warning.withOpacity(.3)),
-              ),
-              child: const Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Icon(Icons.info_outline_rounded, size: 18, color: AppTheme.warning),
-                  SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'Local printer support is not wired up yet — sales fall back to PDF preview. '
-                      'A network printer works today.',
-                      style: TextStyle(color: AppTheme.textMuted, fontWeight: FontWeight.w600, fontSize: 12.5),
-                    ),
-                  ),
-                ],
+            const SizedBox(height: 14),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: _testing ? null : _testPrint,
+                icon: _testing
+                    ? const SizedBox(height: 16, width: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Icon(Icons.receipt_long_rounded),
+                label: Text(_testing ? 'Sending test ticket...' : 'Send Test Print'),
               ),
             ),
           ],
@@ -850,9 +990,26 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
                   template: t,
                   selected: _secondaryTemplate == t,
                   onSelected: () => setState(() => _secondaryTemplate = t),
-                  onPreview: () => _openPreview(t),
+                  onPreview: () => _openPreview(
+                    t,
+                    receiptHeader: _secondaryHeaderCtrl.text.trim().isEmpty
+                        ? 'KITCHEN COPY'
+                        : _secondaryHeaderCtrl.text.trim(),
+                  ),
                   dense: true,
                 )),
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: _secondaryHeaderCtrl,
+              maxLength: 80,
+              decoration: const InputDecoration(
+                labelText: 'Secondary receipt header',
+                hintText: 'e.g. KITCHEN COPY, PACKING COPY, BAR COPY',
+                prefixIcon: Icon(Icons.title_rounded),
+                helperText: 'Printed prominently at the top of every secondary receipt.',
+                counterText: '',
+              ),
+            ),
             const SizedBox(height: 8),
             if (_activeConnection == 'network') ...[
               Row(
@@ -887,11 +1044,23 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
                   label: Text(_testingSecondary ? 'Sending...' : 'Send Test Print to Secondary Printer'),
                 ),
               ),
-            ] else if (_activeConnection == 'local')
-              TextFormField(
+            ] else if (_activeConnection == 'local') ...[
+              _buildLocalPrinterSelector(
                 controller: _secondaryLocalPrinterCtrl,
-                decoration: const InputDecoration(labelText: 'Secondary printer name', prefixIcon: Icon(Icons.dvr_rounded)),
-              )
+                label: 'Installed secondary printer',
+              ),
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: _testingSecondary ? null : _testSecondaryPrint,
+                  icon: _testingSecondary
+                      ? const SizedBox(height: 16, width: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                      : const Icon(Icons.receipt_long_rounded),
+                  label: Text(_testingSecondary ? 'Sending...' : 'Send Test Print to Secondary Printer'),
+                ),
+              ),
+            ]
             else
               const Text(
                 'Choose a network or local main printer above first.',
@@ -946,17 +1115,6 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
           ],
         ),
       );
-    }
-
-    final printerNames = _installedPrinters
-        .map((p) => p.name.trim())
-        .where((name) => name.isNotEmpty)
-        .toSet()
-        .toList()
-      ..sort();
-    final currentPrinter = _barcodeLocalPrinterCtrl.text.trim();
-    if (currentPrinter.isNotEmpty && !printerNames.contains(currentPrinter)) {
-      printerNames.add(currentPrinter);
     }
 
     return EnterprisePanel(
@@ -1015,45 +1173,9 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
                 style: TextStyle(color: AppTheme.textMuted, fontWeight: FontWeight.w600),
               ),
             if (_barcodeConnection == 'local') ...[
-              if (printerNames.isNotEmpty)
-                DropdownButtonFormField<String>(
-                  value: currentPrinter.isEmpty ? null : currentPrinter,
-                  isExpanded: true,
-                  decoration: InputDecoration(
-                    labelText: 'Installed printer',
-                    prefixIcon: const Icon(Icons.print_rounded),
-                    suffixIcon: IconButton(
-                      tooltip: 'Refresh installed printers',
-                      onPressed: _loadingPrinters ? null : _loadInstalledPrinters,
-                      icon: _loadingPrinters
-                          ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
-                          : const Icon(Icons.refresh_rounded),
-                    ),
-                  ),
-                  items: printerNames.map((name) => DropdownMenuItem(value: name, child: Text(name))).toList(),
-                  onChanged: (value) => setState(() => _barcodeLocalPrinterCtrl.text = value ?? ''),
-                )
-              else
-                TextFormField(
-                  controller: _barcodeLocalPrinterCtrl,
-                  decoration: InputDecoration(
-                    labelText: 'Installed printer name',
-                    hintText: 'Install the manufacturer driver, then refresh',
-                    prefixIcon: const Icon(Icons.print_rounded),
-                    suffixIcon: IconButton(
-                      tooltip: 'Refresh installed printers',
-                      onPressed: _loadingPrinters ? null : _loadInstalledPrinters,
-                      icon: _loadingPrinters
-                          ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
-                          : const Icon(Icons.refresh_rounded),
-                    ),
-                  ),
-                ),
-              const SizedBox(height: 8),
-              const Text(
-                'Works with USB, LAN, Wi-Fi, and Bluetooth printers exposed through an installed Windows driver. '
-                'If this queue is unavailable at print time, the system dialog opens automatically.',
-                style: TextStyle(color: AppTheme.textMuted, fontSize: 12, fontWeight: FontWeight.w600),
+              _buildLocalPrinterSelector(
+                controller: _barcodeLocalPrinterCtrl,
+                label: 'Installed barcode printer',
               ),
             ],
             if (_barcodeConnection == 'network') ...[

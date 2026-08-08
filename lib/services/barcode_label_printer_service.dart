@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:enterprise_pos/models/printer_config.dart';
+import 'package:enterprise_pos/services/local_printer_service.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
@@ -136,37 +137,28 @@ class BarcodeLabelPrinterService {
       copies: copies,
     );
 
-    if (config.barcodeConnection == 'local' &&
-        (config.barcodeLocalPrinterName ?? '').trim().isNotEmpty) {
-      try {
-        final wanted = config.barcodeLocalPrinterName!.trim().toLowerCase();
-        final printers = await Printing.listPrinters();
-        Printer? selected;
-        for (final printer in printers) {
-          if (printer.name.trim().toLowerCase() == wanted) {
-            selected = printer;
-            break;
-          }
-        }
-
-        if (selected != null) {
-          final printed = await Printing.directPrintPdf(
-            printer: selected,
-            name: 'Barcode - ${_singleLine(productName, maxLength: 40)}',
-            format: pageFormat(config),
-            dynamicLayout: false,
-            onLayout: (_) async => bytes,
-          );
-          if (printed) return;
-        }
-      } catch (_) {
-        // Driver enumeration/direct-print support varies by platform. The
-        // system dialog below is the universal recovery path.
+    if (config.barcodeConnection == 'local') {
+      final printerName = (config.barcodeLocalPrinterName ?? '').trim();
+      if (printerName.isEmpty) {
+        throw Exception('Select an installed barcode printer first.');
       }
+
+      final selected = await LocalPrinterService.instance.requirePrinter(printerName);
+      final printed = await Printing.directPrintPdf(
+        printer: selected,
+        name: 'Barcode - ${_singleLine(productName, maxLength: 40)}',
+        format: pageFormat(config),
+        dynamicLayout: false,
+        onLayout: (_) async => bytes,
+      );
+      if (!printed) {
+        throw Exception('Windows did not accept the barcode print job for "${selected.name}".');
+      }
+      return;
     }
 
-    // Universal fallback: let the operating system/installed driver select
-    // and calibrate the physical printer while preserving the label page size.
+    // Explicit "System dialog" mode: let the operating system/installed
+    // driver select and calibrate the physical printer.
     await Printing.layoutPdf(
       name: 'Barcode - ${_singleLine(productName, maxLength: 40)}',
       format: pageFormat(config),

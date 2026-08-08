@@ -1,5 +1,3 @@
-import 'dart:typed_data';
-
 import 'package:enterprise_pos/models/invoice_template.dart';
 import 'package:esc_pos_printer_plus/esc_pos_printer_plus.dart';
 import 'package:esc_pos_utils_plus/esc_pos_utils_plus.dart';
@@ -14,33 +12,6 @@ class ThermalPrinterService {
     totalsBreakdown: true,
     footer: true,
   );
-
-  /// Printing to a printer installed on this computer's OS print spooler.
-  /// Not wired up yet — callers catch this and fall back to PDF preview.
-  Future<void> printSaleReceiptWindows({
-    required String printerName,
-    required String shopName,
-    String? shopAddress,
-    String? shopPhone,
-    required String receiptNo,
-    required DateTime dateTime,
-    required List<SaleReceiptItem> items,
-    required double subtotal,
-    required double discount,
-    required double tax,
-    required double grandTotal,
-    required double cashReceived,
-    required double changeAmount,
-    Map<String, dynamic>? meta,
-    InvoiceSections sections = _defaultSections,
-    String paperWidth = 'mm80',
-    List<String> footerLines = const [],
-  }) async {
-    throw UnsupportedError(
-      'Local/USB printer support is not wired up yet for "$printerName". '
-      'Use a network printer in Printer Settings, or print to PDF for now.',
-    );
-  }
 
   /// Printing to an ESC/POS thermal printer over the network (WiFi/Ethernet).
   Future<void> printSaleReceiptNetwork({
@@ -62,6 +33,7 @@ class ThermalPrinterService {
     InvoiceSections sections = _defaultSections,
     String paperWidth = 'mm80',
     List<String> footerLines = const [],
+    String? receiptHeader,
   }) async {
     final profile = await CapabilityProfile.load();
     final paper = paperWidth == 'mm58' ? PaperSize.mm58 : PaperSize.mm80;
@@ -95,6 +67,7 @@ class ThermalPrinterService {
         meta: meta,
         sections: sections,
         footerLines: footerLines,
+        receiptHeader: receiptHeader,
       );
     } finally {
       printer.disconnect();
@@ -107,6 +80,7 @@ class ThermalPrinterService {
     int port = 9100,
     String shopName = 'Test Print',
     String paperWidth = 'mm80',
+    String? receiptHeader,
   }) async {
     final profile = await CapabilityProfile.load();
     final paper = paperWidth == 'mm58' ? PaperSize.mm58 : PaperSize.mm80;
@@ -123,6 +97,18 @@ class ThermalPrinterService {
     }
 
     try {
+      final header = (receiptHeader ?? '').trim();
+      if (header.isNotEmpty) {
+        printer.text(
+          header,
+          styles: const PosStyles(
+            align: PosAlign.center,
+            bold: true,
+            height: PosTextSize.size2,
+            width: PosTextSize.size2,
+          ),
+        );
+      }
       printer.text(
         shopName,
         styles: const PosStyles(align: PosAlign.center, bold: true, height: PosTextSize.size2, width: PosTextSize.size2),
@@ -155,6 +141,7 @@ class ThermalPrinterService {
     Map<String, dynamic>? meta,
     required InvoiceSections sections,
     List<String> footerLines = const [],
+    String? receiptHeader,
   }) {
     final snapRaw = meta?['customer_snapshot'];
     final snap = (snapRaw is Map) ? snapRaw.cast<String, dynamic>() : <String, dynamic>{};
@@ -164,6 +151,19 @@ class ThermalPrinterService {
     final delivery = (meta?['delivery'] is num)
         ? (meta!['delivery'] as num).toDouble()
         : double.tryParse((meta?['delivery'] ?? '').toString()) ?? 0.0;
+
+    final secondaryHeader = (receiptHeader ?? '').trim();
+    if (secondaryHeader.isNotEmpty) {
+      printer.text(
+        secondaryHeader,
+        styles: const PosStyles(
+          align: PosAlign.center,
+          bold: true,
+          height: PosTextSize.size2,
+          width: PosTextSize.size2,
+        ),
+      );
+    }
 
     if (sections.header) {
       printer.text(shopName, styles: const PosStyles(align: PosAlign.center, bold: true, height: PosTextSize.size2, width: PosTextSize.size2));
@@ -176,6 +176,9 @@ class ThermalPrinterService {
       printer.hr();
     } else {
       printer.text(shopName, styles: const PosStyles(align: PosAlign.center, bold: true));
+      if (secondaryHeader.isNotEmpty) {
+        printer.hr();
+      }
     }
 
     printer.text('Receipt# $receiptNo', styles: const PosStyles(align: PosAlign.center, bold: true));
@@ -192,31 +195,31 @@ class ThermalPrinterService {
       printer.hr();
     }
 
-    if (sections.totalsBreakdown) {
+    if (sections.itemPrices) {
+      // Reserve the last ESC/POS column as a safety gutter. This prevents
+      // printers with a slightly narrower physical print head from clipping
+      // the final digits on the right side.
       printer.row([
-        PosColumn(text: 'Item', width: 6, styles: const PosStyles(bold: true)),
-        PosColumn(text: 'Qty', width: 2, styles: const PosStyles(bold: true, align: PosAlign.right)),
-        PosColumn(text: 'Total', width: 4, styles: const PosStyles(bold: true, align: PosAlign.right)),
+        PosColumn(text: 'ITEM', width: 8, styles: const PosStyles(bold: true)),
+        PosColumn(text: 'TOTAL', width: 3, styles: const PosStyles(bold: true, align: PosAlign.right)),
+        PosColumn(text: '', width: 1),
       ]);
-    } else {
-      printer.row([
-        PosColumn(text: 'Item', width: 9, styles: const PosStyles(bold: true)),
-        PosColumn(text: 'Qty', width: 3, styles: const PosStyles(bold: true, align: PosAlign.right)),
-      ]);
-    }
 
-    for (final it in items) {
-      if (sections.totalsBreakdown) {
+      for (final it in items) {
+        printer.text(it.name);
         printer.row([
-          PosColumn(text: it.name, width: 6),
-          PosColumn(text: _q(it.qty), width: 2, styles: const PosStyles(align: PosAlign.right)),
-          PosColumn(text: _m(it.total), width: 4, styles: const PosStyles(align: PosAlign.right)),
+          PosColumn(text: ' ${_q(it.qty)} x ${_m(it.price)}', width: 8),
+          PosColumn(text: _m(it.total), width: 3, styles: const PosStyles(align: PosAlign.right)),
+          PosColumn(text: '', width: 1),
         ]);
-      } else {
-        printer.row([
-          PosColumn(text: it.name, width: 9),
-          PosColumn(text: _q(it.qty), width: 3, styles: const PosStyles(align: PosAlign.right)),
-        ]);
+      }
+    } else {
+      printer.text('ITEMS', styles: const PosStyles(bold: true));
+      for (final it in items) {
+        printer.text(
+          '${_q(it.qty)} x ${it.name}',
+          styles: const PosStyles(bold: true),
+        );
       }
     }
     printer.hr();
@@ -224,24 +227,28 @@ class ThermalPrinterService {
     if (sections.totalsBreakdown) {
       printer.row([
         PosColumn(text: 'Subtotal', width: 8, styles: const PosStyles(bold: true)),
-        PosColumn(text: _m(subtotal), width: 4, styles: const PosStyles(bold: true, align: PosAlign.right)),
+        PosColumn(text: _m(subtotal), width: 3, styles: const PosStyles(bold: true, align: PosAlign.right)),
+        PosColumn(text: '', width: 1),
       ]);
       if (discount > 0) {
         printer.row([
           PosColumn(text: 'Discount', width: 8, styles: const PosStyles(bold: true)),
-          PosColumn(text: '-${_m(discount)}', width: 4, styles: const PosStyles(bold: true, align: PosAlign.right)),
+          PosColumn(text: '-${_m(discount)}', width: 3, styles: const PosStyles(bold: true, align: PosAlign.right)),
+          PosColumn(text: '', width: 1),
         ]);
       }
       if (tax > 0) {
         printer.row([
           PosColumn(text: 'Tax', width: 8, styles: const PosStyles(bold: true)),
-          PosColumn(text: _m(tax), width: 4, styles: const PosStyles(bold: true, align: PosAlign.right)),
+          PosColumn(text: _m(tax), width: 3, styles: const PosStyles(bold: true, align: PosAlign.right)),
+          PosColumn(text: '', width: 1),
         ]);
       }
       if (delivery > 0) {
         printer.row([
           PosColumn(text: 'Delivery', width: 8, styles: const PosStyles(bold: true)),
-          PosColumn(text: _m(delivery), width: 4, styles: const PosStyles(bold: true, align: PosAlign.right)),
+          PosColumn(text: _m(delivery), width: 3, styles: const PosStyles(bold: true, align: PosAlign.right)),
+          PosColumn(text: '', width: 1),
         ]);
       }
       printer.hr();
@@ -249,7 +256,8 @@ class ThermalPrinterService {
 
     printer.row([
       PosColumn(text: 'Grand Total', width: 8, styles: const PosStyles(bold: true, height: PosTextSize.size2)),
-      PosColumn(text: _m(grandTotal), width: 4, styles: const PosStyles(bold: true, height: PosTextSize.size2, align: PosAlign.right)),
+      PosColumn(text: _m(grandTotal), width: 3, styles: const PosStyles(bold: true, height: PosTextSize.size2, align: PosAlign.right)),
+      PosColumn(text: '', width: 1),
     ]);
 
     // Payment method breakdown (split tender / non-cash tenders).
@@ -270,7 +278,8 @@ class ThermalPrinterService {
         final ref = (map['reference'] ?? '').toString().trim();
         printer.row([
           PosColumn(text: ref.isEmpty ? label : '$label ($ref)', width: 8),
-          PosColumn(text: _m(amt), width: 4, styles: const PosStyles(align: PosAlign.right)),
+          PosColumn(text: _m(amt), width: 3, styles: const PosStyles(align: PosAlign.right)),
+          PosColumn(text: '', width: 1),
         ]);
       }
     }
@@ -278,13 +287,15 @@ class ThermalPrinterService {
     if (cashReceived > 0) {
       printer.row([
         PosColumn(text: 'Cash Received', width: 8, styles: const PosStyles(bold: true)),
-        PosColumn(text: _m(cashReceived), width: 4, styles: const PosStyles(bold: true, align: PosAlign.right)),
+        PosColumn(text: _m(cashReceived), width: 3, styles: const PosStyles(bold: true, align: PosAlign.right)),
+        PosColumn(text: '', width: 1),
       ]);
     }
     if (changeAmount > 0) {
       printer.row([
         PosColumn(text: 'Change', width: 8, styles: const PosStyles(bold: true)),
-        PosColumn(text: _m(changeAmount), width: 4, styles: const PosStyles(bold: true, align: PosAlign.right)),
+        PosColumn(text: _m(changeAmount), width: 3, styles: const PosStyles(bold: true, align: PosAlign.right)),
+        PosColumn(text: '', width: 1),
       ]);
     }
     printer.hr();

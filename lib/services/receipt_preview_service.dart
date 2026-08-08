@@ -11,6 +11,21 @@ class ReceiptPreviewService {
   ReceiptPreviewService._();
   static final instance = ReceiptPreviewService._();
 
+  /// Thermal roll page format used by PDF preview and local Windows printing.
+  ///
+  /// PdfPageFormat.roll57/roll80 include a built-in 5 mm margin. The receipt
+  /// renderer already owns its content margins, so keeping those format
+  /// margins can make native printer layouts add unwanted whitespace.
+  PdfPageFormat pageFormatForPaperWidth(String paperWidth) {
+    final base = paperWidth == 'mm58' ? PdfPageFormat.roll57 : PdfPageFormat.roll80;
+    return base.copyWith(
+      marginTop: 0,
+      marginBottom: 0,
+      marginLeft: 0,
+      marginRight: 0,
+    );
+  }
+
   /// Renders exactly what [sections] says to show — same section toggles
   /// the real ESC/POS print uses, so a PDF preview never shows something
   /// that wouldn't actually print.
@@ -34,6 +49,7 @@ class ReceiptPreviewService {
     ),
     String paperWidth = 'mm80',
     List<String> footerLines = const [],
+    String? receiptHeader,
     bool layoutForPrinting = true,
   }) async {
     final bytes = await buildReceiptPdf(
@@ -51,10 +67,16 @@ class ReceiptPreviewService {
       sections: sections,
       paperWidth: paperWidth,
       footerLines: footerLines,
+      receiptHeader: receiptHeader,
     );
 
     if (layoutForPrinting) {
-      await Printing.layoutPdf(onLayout: (_) async => bytes);
+      await Printing.layoutPdf(
+        name: 'Receipt $receiptNo',
+        format: pageFormatForPaperWidth(paperWidth),
+        dynamicLayout: false,
+        onLayout: (_) async => bytes,
+      );
     }
   }
 
@@ -76,6 +98,7 @@ class ReceiptPreviewService {
     required InvoiceSections sections,
     String paperWidth = 'mm80',
     List<String> footerLines = const [],
+    String? receiptHeader,
   }) async {
     // --- extract meta safely ---
     final snapRaw = meta?["customer_snapshot"];
@@ -102,12 +125,23 @@ class ReceiptPreviewService {
         : const [];
 
     final doc = pw.Document();
-    final pageFormat = paperWidth == 'mm58' ? PdfPageFormat.roll57 : PdfPageFormat.roll80;
+    final pageFormat = pageFormatForPaperWidth(paperWidth);
+    final is58mm = paperWidth == 'mm58';
+
+    // Windows thermal drivers often reserve a small non-printable area on the
+    // physical left edge. Keep CounterIQ's own left inset almost zero and
+    // reserve a little more room on the right instead. This shifts the receipt
+    // content left without letting the Total column run into the right edge.
+    // Top is intentionally zero: any remaining leading paper on a real printer
+    // is then the printer/driver's own feed area rather than template padding.
+    final receiptMargin = is58mm
+        ? const pw.EdgeInsets.fromLTRB(1, 0, 12, 6)
+        : const pw.EdgeInsets.fromLTRB(1, 0, 14, 8);
 
     doc.addPage(
       pw.Page(
         pageFormat: pageFormat,
-        margin: const pw.EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+        margin: receiptMargin,
         build: (_) {
           pw.Widget divider() => pw.Container(
             margin: const pw.EdgeInsets.symmetric(vertical: 5),
@@ -139,8 +173,14 @@ class ReceiptPreviewService {
             fontSize: 9,
             fontWeight: pw.FontWeight.bold,
           );
+          final pw.TextStyle columnHeader = pw.TextStyle(
+            fontSize: is58mm ? 8 : 8.5,
+            fontWeight: pw.FontWeight.bold,
+          );
           const pw.TextStyle normal = pw.TextStyle(fontSize: 9);
           const pw.TextStyle small = pw.TextStyle(fontSize: 8);
+
+          final secondaryHeader = (receiptHeader ?? '').trim();
 
           final String dt =
               "${dateTime.day.toString().padLeft(2, '0')}/"
@@ -148,11 +188,28 @@ class ReceiptPreviewService {
               "${dateTime.hour.toString().padLeft(2, '0')}:"
               "${dateTime.minute.toString().padLeft(2, '0')}";
 
+          // Keep right-aligned money slightly inside the printable edge. Some
+          // Windows thermal drivers clip the last few dots even when the page
+          // width is correct. We keep the physical page margins unchanged and
+          // pull only monetary values inward.
+          // Keep the entire money/Total column farther away from the physical
+          // right edge. On some 80 mm thermal heads the final few millimetres
+          // print noticeably lighter even though they are technically inside
+          // the driver's printable area. This moves only the right-aligned
+          // monetary column left; product names, calculation indentation, and
+          // the page's balanced physical margins stay exactly as they are.
+          final double moneyRightInset = is58mm ? 10 : 17;
+          final double detailLeftInset = is58mm ? 3 : 4;
+
+          pw.Widget rightMoney(String value, pw.TextStyle style) => pw.Padding(
+            padding: pw.EdgeInsets.only(right: moneyRightInset),
+            child: pw.Text(value, style: style, textAlign: pw.TextAlign.right),
+          );
+
           pw.Widget kv(String k, String v, {bool bold2 = false}) => pw.Row(
-            mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
             children: [
-              pw.Text(k, style: bold2 ? bold : normal),
-              pw.Text(v, style: bold2 ? bold : normal),
+              pw.Expanded(child: pw.Text(k, style: bold2 ? bold : normal)),
+              rightMoney(v, bold2 ? bold : normal),
             ],
           );
 
@@ -167,6 +224,13 @@ class ReceiptPreviewService {
             crossAxisAlignment: pw.CrossAxisAlignment.stretch,
             children: [
               // ── HEADER ────────────────────────────────────────────────────
+              // Secondary copies get their own explicit operational heading
+              // (KITCHEN COPY / PACKING COPY / BAR COPY / etc.) instead of
+              // mutating the business name.
+              if (secondaryHeader.isNotEmpty) ...[
+                pw.Center(child: pw.Text(secondaryHeader, style: shopStyle)),
+                pw.SizedBox(height: 2),
+              ],
               if (sections.header) ...[
                 pw.Center(child: pw.Text(shopName, style: shopStyle)),
                 if (shopAddress != null && shopAddress.trim().isNotEmpty)
@@ -174,8 +238,10 @@ class ReceiptPreviewService {
                 if (shopPhone != null && shopPhone.trim().isNotEmpty)
                   pw.Center(child: pw.Text(shopPhone, style: small)),
                 divider(),
-              ] else
+              ] else ...[
                 pw.Center(child: pw.Text(shopName, style: bold)),
+                if (secondaryHeader.isNotEmpty) divider(),
+              ],
 
               // ── RECEIPT META ───────────────────────────────────────────────
               pw.Center(child: pw.Text("Receipt# $receiptNo", style: bold)),
@@ -199,69 +265,63 @@ class ReceiptPreviewService {
                 divider(),
               ],
 
-              // ── ITEMS HEADER ───────────────────────────────────────────────
-              pw.Row(
-                children: [
-                  pw.Expanded(flex: 5, child: pw.Text("Item", style: bold)),
-                  if (sections.totalsBreakdown)
-                    pw.Expanded(
-                      flex: 2,
-                      child: pw.Align(
-                        alignment: pw.Alignment.centerRight,
-                        child: pw.Text("Price", style: bold),
-                      ),
-                    ),
-                  pw.Expanded(
-                    flex: 1,
-                    child: pw.Align(
-                      alignment: pw.Alignment.centerRight,
-                      child: pw.Text("Qty", style: bold),
-                    ),
-                  ),
-                  if (sections.totalsBreakdown)
-                    pw.Expanded(
-                      flex: 2,
-                      child: pw.Align(
-                        alignment: pw.Alignment.centerRight,
-                        child: pw.Text("Total", style: bold),
-                      ),
-                    ),
-                ],
-              ),
-              pw.SizedBox(height: 3),
-
               // ── ITEMS ──────────────────────────────────────────────────────
-              ...items.map((it) => pw.Padding(
-                padding: const pw.EdgeInsets.only(bottom: 3),
-                child: pw.Row(
+              // Thermal receipts read better when the product gets the full
+              // paper width. Financial detail lives on an indented second row
+              // instead of squeezing Item / Price / Qty / Total into four
+              // narrow columns.
+              if (sections.itemPrices) ...[
+                pw.Row(
                   children: [
-                    pw.Expanded(flex: 5, child: pw.Text(it.name, style: normal)),
-                    if (sections.totalsBreakdown)
-                      pw.Expanded(
-                        flex: 2,
-                        child: pw.Align(
-                          alignment: pw.Alignment.centerRight,
-                          child: pw.Text(_m(it.price), style: normal),
-                        ),
-                      ),
-                    pw.Expanded(
-                      flex: 1,
-                      child: pw.Align(
-                        alignment: pw.Alignment.centerRight,
-                        child: pw.Text(_q(it.qty), style: normal),
-                      ),
+                    pw.Expanded(child: pw.Text('ITEM', style: columnHeader)),
+                    pw.Padding(
+                      padding: pw.EdgeInsets.only(right: moneyRightInset),
+                      child: pw.Text('TOTAL', style: columnHeader),
                     ),
-                    if (sections.totalsBreakdown)
-                      pw.Expanded(
-                        flex: 2,
-                        child: pw.Align(
-                          alignment: pw.Alignment.centerRight,
-                          child: pw.Text(_m(it.total), style: normal),
-                        ),
-                      ),
                   ],
                 ),
-              )),
+                pw.SizedBox(height: 4),
+                ...items.map(
+                  (it) => pw.Padding(
+                    padding: const pw.EdgeInsets.only(bottom: 5),
+                    child: pw.Column(
+                      crossAxisAlignment: pw.CrossAxisAlignment.stretch,
+                      children: [
+                        pw.Text(it.name, style: normal),
+                        pw.SizedBox(height: 1),
+                        pw.Padding(
+                          padding: pw.EdgeInsets.only(left: detailLeftInset),
+                          child: pw.Row(
+                            crossAxisAlignment: pw.CrossAxisAlignment.start,
+                            children: [
+                              pw.Expanded(
+                                child: pw.Text(
+                                  '${_q(it.qty)} x ${_m(it.price)}',
+                                  style: small,
+                                ),
+                              ),
+                              pw.SizedBox(width: is58mm ? 3 : 4),
+                              rightMoney(_m(it.total), normal),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ] else ...[
+                pw.Text('ITEMS', style: columnHeader),
+                pw.SizedBox(height: 4),
+                ...items.map(
+                  (it) => pw.Padding(
+                    padding: const pw.EdgeInsets.only(bottom: 5),
+                    child: pw.Text(
+                      '${_q(it.qty)} x ${it.name}',
+                      style: bold,
+                    ),
+                  ),
+                ),
+              ],
 
               dashedDivider(),
 

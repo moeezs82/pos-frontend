@@ -37,6 +37,7 @@ import 'package:enterprise_pos/services/app_currency.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:enterprise_pos/services/thermal_printer_service.dart';
+import 'package:enterprise_pos/services/local_printer_service.dart';
 import 'package:enterprise_pos/services/receipt_preview_service.dart';
 import 'package:enterprise_pos/services/whatsapp_invoice_service.dart';
 
@@ -1445,7 +1446,10 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       final effectiveShopAddress = printerConfig.shopAddress.isNotEmpty ? printerConfig.shopAddress : null;
       final effectiveShopPhone = printerConfig.shopPhone.isNotEmpty ? printerConfig.shopPhone : null;
       final mainTemplate = printerConfig.mainInvoiceTemplate;
-      final kitchenTemplate = printerConfig.kitchenInvoiceTemplate;
+      final secondaryTemplate = printerConfig.secondaryInvoiceTemplate;
+      final secondaryHeader = printerConfig.secondaryReceiptHeader.trim().isEmpty
+          ? 'KITCHEN COPY'
+          : printerConfig.secondaryReceiptHeader.trim();
       final footerLines = printerConfig.footerLines;
 
       debugPrint('Active printer connection: ${printerConfig.activeConnection}, template: ${mainTemplate.value}');
@@ -1475,12 +1479,12 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
           );
           printedToHardware = true;
 
-          if (printerConfig.kitchenPrintEnabled && (printerConfig.kitchenNetworkIp ?? '').trim().isNotEmpty) {
+          if (printerConfig.secondaryPrintEnabled && (printerConfig.secondaryNetworkIp ?? '').trim().isNotEmpty) {
             await ThermalPrinterService.instance.printSaleReceiptNetwork(
-              printerIp: printerConfig.kitchenNetworkIp!.trim(),
-              port: printerConfig.kitchenNetworkPort,
-              shopName: '$effectiveShopName - KITCHEN COPY',
-              shopAddress: 'KITCHEN COPY',
+              printerIp: printerConfig.secondaryNetworkIp!.trim(),
+              port: printerConfig.secondaryNetworkPort,
+              shopName: effectiveShopName,
+              shopAddress: effectiveShopAddress,
               shopPhone: effectiveShopPhone,
               receiptNo: receiptNo,
               dateTime: DateTime.now(),
@@ -1492,9 +1496,10 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
               cashReceived: cashReceived,
               changeAmount: changeAmount,
               meta: meta,
-              sections: kitchenTemplate.sections,
-              paperWidth: kitchenTemplate.paperWidthCode,
+              sections: secondaryTemplate.sections,
+              paperWidth: secondaryTemplate.paperWidthCode,
               footerLines: footerLines,
+              receiptHeader: secondaryHeader,
             );
           }
         } catch (e, s) {
@@ -1508,7 +1513,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         }
       } else if (printerConfig.isLocalPrinter && (printerConfig.localPrinterName ?? '').trim().isNotEmpty) {
         try {
-          await ThermalPrinterService.instance.printSaleReceiptWindows(
+          await LocalPrinterService.instance.printSaleReceipt(
             printerName: printerConfig.localPrinterName!.trim(),
             shopName: effectiveShopName,
             shopAddress: effectiveShopAddress,
@@ -1528,6 +1533,31 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
             footerLines: footerLines,
           );
           printedToHardware = true;
+
+          if (printerConfig.secondaryPrintEnabled &&
+              (printerConfig.secondaryLocalPrinterName ?? '').trim().isNotEmpty) {
+            await LocalPrinterService.instance.printSaleReceipt(
+              printerName: printerConfig.secondaryLocalPrinterName!.trim(),
+              shopName: effectiveShopName,
+              shopAddress: effectiveShopAddress,
+              shopPhone: effectiveShopPhone,
+              receiptNo: receiptNo,
+              dateTime: DateTime.now(),
+              items: receiptItems,
+              subtotal: subtotal,
+              discount: discount,
+              tax: tax,
+              grandTotal: total,
+              cashReceived: cashReceived,
+              changeAmount: changeAmount,
+              meta: meta,
+              sections: secondaryTemplate.sections,
+              paperWidth: secondaryTemplate.paperWidthCode,
+              footerLines: footerLines,
+              receiptHeader: secondaryHeader,
+              jobName: 'Secondary Copy $receiptNo',
+            );
+          }
         } catch (e, s) {
           debugPrint('PRINT ERROR (local): $e');
           debugPrintStack(stackTrace: s);

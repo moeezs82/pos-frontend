@@ -18,6 +18,7 @@ class InvoiceTemplatePreviewScreen extends StatefulWidget {
   final String? shopAddress;
   final String? shopPhone;
   final List<String> footerLines;
+  final String? receiptHeader;
 
   const InvoiceTemplatePreviewScreen({
     super.key,
@@ -27,6 +28,7 @@ class InvoiceTemplatePreviewScreen extends StatefulWidget {
     this.shopAddress,
     this.shopPhone,
     this.footerLines = const ['Thank you, visit again!', 'Follow us on Instagram @myshop'],
+    this.receiptHeader,
   });
 
   @override
@@ -68,6 +70,7 @@ class _InvoiceTemplatePreviewScreenState extends State<InvoiceTemplatePreviewScr
       sections: _selected.sections,
       paperWidth: _selected.paperWidthCode,
       footerLines: widget.footerLines,
+      receiptHeader: widget.receiptHeader,
     );
   }
 
@@ -151,8 +154,8 @@ class _InvoiceTemplatePreviewScreenState extends State<InvoiceTemplatePreviewScr
                       child: PdfPreview(
                         key: ValueKey(_selected),
                         build: _buildPdf,
-                        initialPageFormat:
-                            _selected.paperWidthCode == 'mm58' ? PdfPageFormat.roll57 : PdfPageFormat.roll80,
+                        initialPageFormat: ReceiptPreviewService.instance
+                            .pageFormatForPaperWidth(_selected.paperWidthCode),
                         canChangePageFormat: false,
                         canChangeOrientation: false,
                         allowPrinting: false,

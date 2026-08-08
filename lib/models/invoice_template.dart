@@ -29,7 +29,7 @@ enum InvoiceTemplate {
         InvoiceTemplate.compact =>
           'Narrow 58mm layout for small printers: shop name and items only, no customer details.',
         InvoiceTemplate.kitchen =>
-          'Item list for the kitchen: who it is for and what to make, no prices, no shop header.',
+          'Operational secondary ticket: customer and item details with prices, without the full shop header or totals breakdown.',
       };
 
   /// 'mm58' | 'mm80'
@@ -51,6 +51,7 @@ enum InvoiceTemplate {
         InvoiceTemplate.kitchen => const InvoiceSections(
             header: false,
             customer: true,
+            itemPrices: true,
             totalsBreakdown: false,
             footer: false,
           ),
@@ -64,19 +65,21 @@ enum InvoiceTemplate {
   }
 }
 
-/// Which sections of the receipt actually render. Four toggles (logo removed
+/// Which sections of the receipt actually render. Five toggles (logo removed
 /// per product spec — no logo on any print): header (shop name/address/
 /// phone), customer info, the totals breakdown (subtotal/discount/tax/
 /// delivery — grand total always shows regardless), and the footer.
 class InvoiceSections {
   final bool header;
   final bool customer;
+  final bool itemPrices;
   final bool totalsBreakdown;
   final bool footer;
 
   const InvoiceSections({
     required this.header,
     required this.customer,
+    this.itemPrices = true,
     required this.totalsBreakdown,
     required this.footer,
   });
@@ -87,6 +90,7 @@ class InvoiceSections {
     return InvoiceSections(
       header: flag('header', fallback.header),
       customer: flag('customer', fallback.customer),
+      itemPrices: flag('item_prices', fallback.itemPrices),
       totalsBreakdown: flag('totals_breakdown', fallback.totalsBreakdown),
       footer: flag('footer', fallback.footer),
     );

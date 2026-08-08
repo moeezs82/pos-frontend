@@ -22,6 +22,7 @@ class PrinterConfig {
   final int secondaryNetworkPort;
   final String? secondaryLocalPrinterName;
   final InvoiceTemplate secondaryInvoiceTemplate;
+  final String secondaryReceiptHeader;
 
   /// Barcode label printer configuration.
   /// connection: 'dialog' | 'local' | 'network'.
@@ -65,6 +66,7 @@ class PrinterConfig {
     this.secondaryNetworkPort = 9100,
     this.secondaryLocalPrinterName,
     this.secondaryInvoiceTemplate = InvoiceTemplate.kitchen,
+    this.secondaryReceiptHeader = 'KITCHEN COPY',
     this.barcodeAddonActive = false,
     this.barcodePermissionGranted = false,
     this.barcodeAccessGranted = false,
@@ -152,6 +154,8 @@ class PrinterConfig {
         preferred('secondary_invoice_template', 'kitchen_invoice_template')?.toString() ??
             InvoiceTemplate.kitchen.value,
       ),
+      secondaryReceiptHeader:
+          (json['secondary_receipt_header'] ?? 'KITCHEN COPY').toString(),
       barcodeAddonActive: _bool(json['barcode_addon_active']),
       barcodePermissionGranted: _bool(json['barcode_permission_granted']),
       barcodeAccessGranted: _bool(json['barcode_access_granted']),
@@ -193,6 +197,7 @@ class PrinterConfig {
       'secondary_network_port': secondaryNetworkPort,
       'secondary_local_printer_name': secondaryLocalPrinterName,
       'secondary_invoice_template': secondaryInvoiceTemplate.value,
+      'secondary_receipt_header': secondaryReceiptHeader,
       'barcode_addon_active': barcodeAddonActive,
       'barcode_permission_granted': barcodePermissionGranted,
       'barcode_access_granted': barcodeAccessGranted,
@@ -231,6 +236,7 @@ class PrinterConfig {
     int? secondaryNetworkPort,
     String? secondaryLocalPrinterName,
     InvoiceTemplate? secondaryInvoiceTemplate,
+    String? secondaryReceiptHeader,
     bool? barcodeAddonActive,
     bool? barcodePermissionGranted,
     bool? barcodeAccessGranted,
@@ -267,6 +273,7 @@ class PrinterConfig {
       secondaryNetworkPort: secondaryNetworkPort ?? this.secondaryNetworkPort,
       secondaryLocalPrinterName: secondaryLocalPrinterName ?? this.secondaryLocalPrinterName,
       secondaryInvoiceTemplate: secondaryInvoiceTemplate ?? this.secondaryInvoiceTemplate,
+      secondaryReceiptHeader: secondaryReceiptHeader ?? this.secondaryReceiptHeader,
       barcodeAddonActive: barcodeAddonActive ?? this.barcodeAddonActive,
       barcodePermissionGranted: barcodePermissionGranted ?? this.barcodePermissionGranted,
       barcodeAccessGranted: barcodeAccessGranted ?? this.barcodeAccessGranted,
