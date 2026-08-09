@@ -36,9 +36,10 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
   final _taxRateController        = TextEditingController();
   final _discountController       = TextEditingController();
 
-  bool _isActive     = true;
-  bool _taxInclusive = false;
-  bool _loading      = false;
+  bool _isActive      = true;
+  bool _taxInclusive  = false;
+  bool _loading       = false;
+  String _discountType = 'percentage'; // 'percentage' | 'fixed'
 
   int? _selectedCategoryId;
   int? _selectedBrandId;
@@ -91,6 +92,7 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
       _wholesalePriceController.text = p['wholesale_price']?.toString() ?? '';
       _taxRateController.text        = p['tax_rate']?.toString()        ?? '';
       _discountController.text       = p['discount']?.toString()        ?? '';
+      _discountType = (p['discount_type'] ?? 'percentage').toString();
       _isActive     = p['is_active']    == 1 || p['is_active']    == true;
       _taxInclusive = p['tax_inclusive'] == 1 || p['tax_inclusive'] == true;
       _selectedCategoryId = p['category_id'];
@@ -368,6 +370,7 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
       'tax_rate':        double.tryParse(_taxRateController.text) ?? 0.0,
       'tax_inclusive':   _taxInclusive,
       'discount':        double.tryParse(_discountController.text) ?? 0.0,
+      'discount_type':   _discountType,
       'category_id':     _selectedCategoryId,
       'brand_id':        _selectedBrandId,
       'unit_id':         _selectedUnitId,
@@ -658,10 +661,46 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
                 value: _taxInclusive,
                 onChanged: (v) => setState(() => _taxInclusive = v),
               ),
-              TextFormField(
-                controller: _discountController,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(labelText: 'Discount (%)', border: OutlineInputBorder()),
+              // Discount value + type toggle
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: TextFormField(
+                      controller: _discountController,
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      decoration: InputDecoration(
+                        labelText: _discountType == 'fixed'
+                            ? 'Discount (Fixed Amount)'
+                            : 'Discount (%)',
+                        border: const OutlineInputBorder(),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  // Type toggle: % | Fixed
+                  Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const SizedBox(height: 4),
+                      ToggleButtons(
+                        isSelected: [
+                          _discountType == 'percentage',
+                          _discountType == 'fixed',
+                        ],
+                        onPressed: (idx) => setState(
+                          () => _discountType = idx == 0 ? 'percentage' : 'fixed',
+                        ),
+                        borderRadius: BorderRadius.circular(8),
+                        constraints: const BoxConstraints(minWidth: 48, minHeight: 48),
+                        children: const [
+                          Tooltip(message: 'Percentage discount', child: Text('%', style: TextStyle(fontWeight: FontWeight.w700))),
+                          Tooltip(message: 'Fixed amount discount', child: Text('Fx', style: TextStyle(fontWeight: FontWeight.w700))),
+                        ],
+                      ),
+                    ],
+                  ),
+                ],
               ),
               const SizedBox(height: 12),
 

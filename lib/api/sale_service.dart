@@ -122,10 +122,11 @@ class SaleService {
       "items": items
           .map(
             (it) => {
-              "product_id": it["product_id"],
-              "quantity": it["quantity"],
-              "discount_pct": it["discount_pct"],
-              "price": it["price"],
+              "product_id":    it["product_id"],
+              "quantity":      it["quantity"],
+              "price":         it["price"],
+              "discount_pct":  it["discount_pct"],
+              "discount_type": it["discount_type"] ?? "percentage",
             },
           )
           .toList(),

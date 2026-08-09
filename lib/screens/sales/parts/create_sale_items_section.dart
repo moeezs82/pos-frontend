@@ -183,10 +183,16 @@ class _ItemsTableState extends State<ItemsTable> {
     required double price,
     required double qty,
     required double discountPct,
+    String discountType = 'percentage',
   }) {
-    final d = (discountPct / 100.0).clamp(0.0, 100.0);
-    final total = qty * price * (1.0 - d);
-    return total.isFinite ? total : 0.0;
+    final double total;
+    if (discountType == 'fixed') {
+      total = qty * (price - discountPct);
+    } else {
+      final d = (discountPct / 100.0).clamp(0.0, 100.0);
+      total = qty * price * (1.0 - d);
+    }
+    return (total.isFinite && total >= 0) ? total : 0.0;
   }
 
   void _scheduleCommitRow(int i) {
@@ -201,14 +207,15 @@ class _ItemsTableState extends State<ItemsTable> {
     final ctrls = _rowCtrls[i]!;
     final item = Map<String, dynamic>.from(widget.items[i]);
 
-    final price = _num(ctrls.price.text);
-    final qty = double.tryParse(ctrls.qty.text.trim()) ?? 0.0;
-    final disc = _num(ctrls.discount.text);
+    final price       = _num(ctrls.price.text);
+    final qty         = double.tryParse(ctrls.qty.text.trim()) ?? 0.0;
+    final disc        = _num(ctrls.discount.text);
+    final discountType = (item['discount_type'] ?? 'percentage').toString();
 
     item['price'] = price;
     item['quantity'] = qty;
     item['discount_pct'] = disc;
-    item['total'] = _calcLineTotal(price: price, qty: qty, discountPct: disc);
+    item['total'] = _calcLineTotal(price: price, qty: qty, discountPct: disc, discountType: discountType);
 
     // The quantity is committed as typed even when it breaks the rule — never
     // silently rounded. The violation is recorded so the field shows it and
@@ -224,6 +231,29 @@ class _ItemsTableState extends State<ItemsTable> {
     next[i] = item;
     widget.onItemsChanged(next);
     setState(() {}); // update displayed totals immediately
+  }
+
+  /// Toggles the discount type for row [i] between 'percentage' and 'fixed',
+  /// then recomputes the line total immediately with the new type.
+  void _toggleDiscountType(int i) {
+    if (i < 0 || i >= widget.items.length) return;
+    final next = [...widget.items];
+    final item = Map<String, dynamic>.from(next[i]);
+    final current = (item['discount_type'] ?? 'percentage').toString();
+    item['discount_type'] = current == 'percentage' ? 'fixed' : 'percentage';
+    final ctrls = _rowCtrls[i]!;
+    final price = _num(ctrls.price.text);
+    final qty   = double.tryParse(ctrls.qty.text.trim()) ?? 0.0;
+    final disc  = _num(ctrls.discount.text);
+    item['total'] = _calcLineTotal(
+      price: price,
+      qty: qty,
+      discountPct: disc,
+      discountType: item['discount_type'].toString(),
+    );
+    next[i] = item;
+    widget.onItemsChanged(next);
+    setState(() {});
   }
 
   void _removeRow(int i) {
@@ -253,14 +283,17 @@ class _ItemsTableState extends State<ItemsTable> {
   }
 
   Future<void> _addProduct(ProductRef p) async {
+    final discPct  = double.tryParse(p.raw?['discount']?.toString() ?? '') ?? 0.0;
+    final discType = (p.raw?['discount_type'] ?? 'percentage').toString();
     final next = [...widget.items];
     next.add({
       'product_id': p.id,
       'name': p.name,
       'price': p.tp,
-      'discount_pct': 0.0,
+      'discount_pct': discPct,
+      'discount_type': discType,
       'quantity': 1.0,
-      'total': _calcLineTotal(price: p.tp, qty: 1.0, discountPct: 0.0),
+      'total': _calcLineTotal(price: p.tp, qty: 1.0, discountPct: discPct, discountType: discType),
       // Carry the quantity contract on the line: the search result that knew
       // it is discarded as soon as this returns.
       ...p.quantityRule.toRowFields(),
@@ -330,6 +363,7 @@ class _ItemsTableState extends State<ItemsTable> {
             price: _num(it['price']),
             qty: _num(it['quantity']),
             discountPct: _num(it['discount_pct'] ?? 0),
+            discountType: (it['discount_type'] ?? 'percentage').toString(),
           ),
     );
 
@@ -423,10 +457,12 @@ class _ItemsTableState extends State<ItemsTable> {
                 children: List.generate(widget.items.length, (i) {
                   final item = widget.items[i];
                   final ctrls = _rowCtrls[i]!;
+                  final rowDiscType = (item['discount_type'] ?? 'percentage').toString();
                   final lineTotal = _calcLineTotal(
                     price: _num(ctrls.price.text),
                     qty: _num(ctrls.qty.text),
                     discountPct: _num(ctrls.discount.text),
+                    discountType: rowDiscType,
                   );
 
                   return Container(
@@ -484,19 +520,30 @@ class _ItemsTableState extends State<ItemsTable> {
                         ),
                         const SizedBox(width: 8),
                         Expanded(
-                          flex: 2,
-                          child: _CellNumberField(
-                            controller: ctrls.discount,
-                            focusNode: ctrls.discountFocus,
-                            suffix: '%',
-                            onSubmitted: (_) {
-                              _commitRow(i);
-                              _focusNextFrom(i, _CellField.discount);
-                            },
-                            onChanged: (_) {
-                              setState(() {});
-                              _scheduleCommitRow(i);
-                            },
+                          flex: 3,
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.center,
+                            children: [
+                              Expanded(
+                                child: _CellNumberField(
+                                  controller: ctrls.discount,
+                                  focusNode: ctrls.discountFocus,
+                                  onSubmitted: (_) {
+                                    _commitRow(i);
+                                    _focusNextFrom(i, _CellField.discount);
+                                  },
+                                  onChanged: (_) {
+                                    setState(() {});
+                                    _scheduleCommitRow(i);
+                                  },
+                                ),
+                              ),
+                              const SizedBox(width: 5),
+                              _DiscTypeBadge(
+                                isFixed: rowDiscType == 'fixed',
+                                onTap: () => _toggleDiscountType(i),
+                              ),
+                            ],
                           ),
                         ),
                         const SizedBox(width: 8),
@@ -611,10 +658,12 @@ class _ItemsTableState extends State<ItemsTable> {
   Widget _buildCompactRow(int i) {
     final item = widget.items[i];
     final ctrls = _rowCtrls[i]!;
+    final compactDiscType = (item['discount_type'] ?? 'percentage').toString();
     final lineTotal = _calcLineTotal(
       price: _num(ctrls.price.text),
       qty: _num(ctrls.qty.text),
       discountPct: _num(ctrls.discount.text),
+      discountType: compactDiscType,
     );
 
     return Container(
@@ -665,19 +714,31 @@ class _ItemsTableState extends State<ItemsTable> {
           // Discount
           Expanded(
             flex: 2,
-            child: _CellNumberField(
-              controller: ctrls.discount,
-              focusNode: ctrls.discountFocus,
-              suffix: '%',
-              compact: true,
-              onSubmitted: (_) {
-                _commitRow(i);
-                _focusNextFrom(i, _CellField.discount);
-              },
-              onChanged: (_) {
-                setState(() {});
-                _scheduleCommitRow(i);
-              },
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Expanded(
+                  child: _CellNumberField(
+                    controller: ctrls.discount,
+                    focusNode: ctrls.discountFocus,
+                    compact: true,
+                    onSubmitted: (_) {
+                      _commitRow(i);
+                      _focusNextFrom(i, _CellField.discount);
+                    },
+                    onChanged: (_) {
+                      setState(() {});
+                      _scheduleCommitRow(i);
+                    },
+                  ),
+                ),
+                const SizedBox(width: 3),
+                _DiscTypeBadge(
+                  isFixed: compactDiscType == 'fixed',
+                  compact: true,
+                  onTap: () => _toggleDiscountType(i),
+                ),
+              ],
             ),
           ),
           const SizedBox(width: 4),
@@ -788,7 +849,7 @@ class _InlineSearchRow extends StatelessWidget {
             ),
           ),
           const Expanded(flex: 2, child: SizedBox()), // T.P
-          const Expanded(flex: 2, child: SizedBox()), // Discount
+          const Expanded(flex: 3, child: SizedBox()), // Discount
           const Expanded(flex: 2, child: SizedBox()), // Qty
           const Expanded(flex: 2, child: SizedBox()), // Total
           const SizedBox(width: 44), // Remove
@@ -816,12 +877,8 @@ class _TableHeader extends StatelessWidget {
             child: Text("T.P", style: style, textAlign: TextAlign.right),
           ),
           Expanded(
-            flex: 2,
-            child: Text(
-              "Discount (%)",
-              style: style,
-              textAlign: TextAlign.right,
-            ),
+            flex: 3,
+            child: Text("Discount", style: style, textAlign: TextAlign.right),
           ),
           Expanded(
             flex: 2,
@@ -1178,6 +1235,10 @@ class _CellNumberField extends StatelessWidget {
   final void Function(String)? onSubmitted;
   final void Function(String)? onChanged;
 
+  /// When set, the suffix label becomes a tappable chip (used for the
+  /// discount type toggle — cashier taps '%' or 'fx' to switch type).
+  final VoidCallback? onSuffixTap;
+
   /// The quantity contract for this line, when the field is a quantity.
   /// Null (the default) for price/discount, which are always decimal.
   final QuantityRule? rule;
@@ -1197,10 +1258,14 @@ class _CellNumberField extends StatelessWidget {
     this.compact = false,
     this.onSubmitted,
     this.onChanged,
+    this.onSuffixTap,
     this.rule,
     this.errorText,
     this.onRejected,
   });
+
+  // ignore: unused_element — suffix/onSuffixTap kept for API compat but
+  // the discount badge is now rendered externally via _DiscTypeBadge.
 
   bool get _wholeOnly => rule != null && !rule!.allowDecimal;
 
@@ -1241,6 +1306,7 @@ class _CellNumberField extends StatelessWidget {
         contentPadding: compact
             ? const EdgeInsets.symmetric(horizontal: 4, vertical: 8)
             : const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+        // Badge is rendered externally as _DiscTypeBadge; no suffix chrome here.
         suffixText: suffix.isEmpty ? null : suffix,
         // The compact row has a fixed 58px height, so an errorText label under
         // the field would overflow it. There the red border plus the tooltip
@@ -1269,6 +1335,63 @@ class _CellNumberField extends StatelessWidget {
           ? errorText!
           : 'Whole numbers only${rule!.unitName.isEmpty ? '' : ' — unit "${rule!.unitName}"'}.',
       child: field,
+    );
+  }
+}
+
+/// ======= Discount type toggle badge =======
+/// Rendered next to the discount TextField (not inside it as a suffixIcon),
+/// giving a clean InkWell ripple and an AnimatedContainer colour transition.
+class _DiscTypeBadge extends StatelessWidget {
+  final bool isFixed;
+  final bool compact;
+  final VoidCallback onTap;
+
+  const _DiscTypeBadge({
+    required this.isFixed,
+    required this.onTap,
+    this.compact = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final double w = compact ? 26 : 30;
+    final double h = compact ? 30 : 36;
+    final label = isFixed ? 'Fx' : '%';
+    final bg    = isFixed ? AppTheme.primary.withOpacity(.13) : Colors.grey.shade100;
+    final border = isFixed ? AppTheme.primary.withOpacity(.45) : Colors.grey.shade300;
+    final fg    = isFixed ? AppTheme.primary : Colors.grey.shade500;
+
+    return Tooltip(
+      message: isFixed
+          ? 'Fixed amount — tap to switch to %'
+          : 'Percentage — tap to switch to fixed',
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(7),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          curve: Curves.easeInOut,
+          width: w,
+          height: h,
+          decoration: BoxDecoration(
+            color: bg,
+            borderRadius: BorderRadius.circular(7),
+            border: Border.all(color: border),
+          ),
+          child: Center(
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: compact ? 10 : 11,
+                fontWeight: FontWeight.w900,
+                color: fg,
+                letterSpacing: 0.2,
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

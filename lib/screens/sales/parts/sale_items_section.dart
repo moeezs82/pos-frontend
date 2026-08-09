@@ -25,10 +25,15 @@ class SaleItemsSection extends StatelessWidget {
   String _money(num v) => AppCurrency.format(v);
 
   double _lineTotal(Map i) {
-    final price = _num(i['price']);
-    final qty = _num(i['quantity']);
-    final pct = _num(i['discount_pct'] ?? i['discount'] ?? 0);
-    final d = (pct / 100.0).clamp(0, 1);
+    final price        = _num(i['price']);
+    final qty          = _num(i['quantity']);
+    final discountVal  = _num(i['discount_pct'] ?? i['discount'] ?? 0);
+    final discountType = (i['discount_type'] ?? 'percentage').toString();
+
+    if (discountType == 'fixed') {
+      return max(0.0, qty * (price - discountVal));
+    }
+    final d = (discountVal / 100.0).clamp(0.0, 1.0);
     return max(0.0, qty * price * (1 - d));
   }
 
@@ -95,10 +100,11 @@ class SaleItemsSection extends StatelessWidget {
               )
             else
               ...items.map((i) {
-                final productName = i['product']?['name'] ?? i['name'] ?? 'Product Deleted';
-                final tp = _num(i['price']);
-                final pct = _num(i['discount_pct'] ?? i['discount'] ?? 0);
-                final qty = _num(i['quantity']);
+                final productName  = i['product']?['name'] ?? i['name'] ?? 'Product Deleted';
+                final tp           = _num(i['price']);
+                final discountVal  = _num(i['discount_pct'] ?? i['discount'] ?? 0);
+                final discountType = (i['discount_type'] ?? 'percentage').toString();
+                final qty          = _num(i['quantity']);
                 final total = _lineTotal(i);
 
                 return InkWell(
@@ -136,13 +142,15 @@ class SaleItemsSection extends StatelessWidget {
                                 ),
                               ),
                             ),
-                            // Discount (%)
+                            // Discount
                             Expanded(
                               flex: 2,
                               child: Align(
                                 alignment: Alignment.centerRight,
                                 child: Text(
-                                  _money(pct),
+                                  discountType == 'fixed'
+                                      ? '${_money(discountVal)} fx'
+                                      : '${discountVal.toStringAsFixed(discountVal % 1 == 0 ? 0 : 2)}%',
                                   style: const TextStyle(
                                     fontWeight: FontWeight.w600,
                                     fontFeatures: [FontFeature.tabularFigures()],
@@ -223,7 +231,7 @@ class _TableHeader extends StatelessWidget {
         children: [
           const Expanded(flex: 6, child: Text("Product")),
           Expanded(flex: 2, child: Text("T.P", style: style, textAlign: TextAlign.right)),
-          Expanded(flex: 2, child: Text("Discount (%)", style: style, textAlign: TextAlign.right)),
+          Expanded(flex: 2, child: Text("Discount", style: style, textAlign: TextAlign.right)),
           Expanded(flex: 2, child: Text("Qty", style: style, textAlign: TextAlign.right)),
           Expanded(flex: 2, child: Text("Total", style: style, textAlign: TextAlign.right)),
           const SizedBox(width: 44),

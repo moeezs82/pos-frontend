@@ -183,11 +183,22 @@ class OfflineSalesQueueService {
         // created it. Existing rows are recovered from the immutable branch
         // snapshot stored in their payload; unrecoverable rows are quarantined
         // for manual review and are never auto-assigned to the active branch.
+        //
+        // NOTE: these ALTER TABLEs are guarded with try-catch because
+        // onCreate was updated to include origin_branch_id/origin_user_id
+        // before the version was bumped to 4. Users who did a fresh install
+        // in that window already have the columns, so the ALTER would throw
+        // "duplicate column name". The catch swallows only that case; the
+        // backfill and index creation are safe to run regardless.
         if (oldVersion < 4) {
-          await db.execute(
-              'ALTER TABLE offline_sales_queue ADD COLUMN origin_branch_id INTEGER');
-          await db.execute(
-              'ALTER TABLE offline_sales_queue ADD COLUMN origin_user_id INTEGER');
+          try {
+            await db.execute(
+                'ALTER TABLE offline_sales_queue ADD COLUMN origin_branch_id INTEGER');
+          } catch (_) {}
+          try {
+            await db.execute(
+                'ALTER TABLE offline_sales_queue ADD COLUMN origin_user_id INTEGER');
+          } catch (_) {}
           await _backfillTenantOrigins(db);
           await db.execute('''
             CREATE INDEX IF NOT EXISTS offline_sales_queue_branch_status_idx

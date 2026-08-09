@@ -448,18 +448,22 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     });
 
     if (idx != -1) {
-      // Increment quantity while preserving edited price and discount.
+      // Increment quantity while preserving edited price, discount, and type.
       final existingQty =
           double.tryParse(_items[idx]['quantity']?.toString() ?? '') ?? 0.0;
       final newQty = existingQty + 1.0;
       final discPct =
           double.tryParse(_items[idx]['discount_pct']?.toString() ?? '') ?? 0.0;
+      final rowDiscType =
+          (_items[idx]['discount_type'] ?? 'percentage').toString();
       final rowPrice =
           double.tryParse(_items[idx]['price']?.toString() ?? '') ?? price;
       _items[idx]['quantity'] = newQty;
       _items[idx]['total'] =
-          _lineTotal(price: rowPrice, qty: newQty, discPct: discPct);
+          _lineTotal(price: rowPrice, qty: newQty, discPct: discPct, discountType: rowDiscType);
     } else {
+      final scanDiscPct  = double.tryParse(product['discount']?.toString() ?? '') ?? 0.0;
+      final scanDiscType = (product['discount_type'] ?? 'percentage').toString();
       _items.add({
         'product_id': productId,
         'name': product['name'],
@@ -467,8 +471,9 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         'wholesale_price': product['wholesale_price'],
         'quantity': 1.0,
         'price': price,
-        'discount_pct': 0.0,
-        'total': _lineTotal(price: price, qty: 1.0, discPct: 0.0),
+        'discount_pct': scanDiscPct,
+        'discount_type': scanDiscType,
+        'total': _lineTotal(price: price, qty: 1.0, discPct: scanDiscPct, discountType: scanDiscType),
         // Stamp the quantity contract onto the line — the product map this
         // came from (search hit, scan lookup, cache row) is not kept.
         ...QuantityRule.fromProduct(product).toRowFields(),
@@ -498,13 +503,17 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       _items[idx]["quantity"] = qty;
       final discPct =
           double.tryParse(_items[idx]["discount_pct"]?.toString() ?? '') ?? 0.0;
+      final existingDiscType =
+          (_items[idx]["discount_type"] ?? 'percentage').toString();
       final rowPrice =
           double.tryParse(_items[idx]["price"]?.toString() ?? '') ?? price;
-      _items[idx]["total"] = _lineTotal(price: rowPrice, qty: qty, discPct: discPct);
+      _items[idx]["total"] = _lineTotal(price: rowPrice, qty: qty, discPct: discPct, discountType: existingDiscType);
       // Refresh the rule too: the picker may know the unit for a line that was
       // added before the unit was known (e.g. from a stale cache row).
       _items[idx].addAll(QuantityRule.fromProduct(product).toRowFields());
     } else {
+      final pickDiscPct  = double.tryParse(product['discount']?.toString() ?? '') ?? 0.0;
+      final pickDiscType = (product['discount_type'] ?? 'percentage').toString();
       _items.add({
         "product_id": productId,
         "name": product['name'],
@@ -512,8 +521,9 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         "wholesale_price": product['wholesale_price'],
         "quantity": qty,
         "price": price,
-        "discount_pct": 0.0,
-        "total": _lineTotal(price: price, qty: qty, discPct: 0.0),
+        "discount_pct": pickDiscPct,
+        "discount_type": pickDiscType,
+        "total": _lineTotal(price: price, qty: qty, discPct: pickDiscPct, discountType: pickDiscType),
         ...QuantityRule.fromProduct(product).toRowFields(),
       });
     }
@@ -722,10 +732,17 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     required double price,
     required double qty,
     required double discPct,
+    String discountType = 'percentage',
   }) {
-    final d = (discPct / 100.0).clamp(0.0, 100.0);
-    final t = qty * price * (1.0 - d);
-    return t.isFinite ? t : 0.0;
+    final double t;
+    if (discountType == 'fixed') {
+      // discPct holds the fixed amount off per unit
+      t = qty * (price - discPct);
+    } else {
+      final d = (discPct / 100.0).clamp(0.0, 100.0);
+      t = qty * price * (1.0 - d);
+    }
+    return (t.isFinite && t >= 0) ? t : 0.0;
   }
 
   Widget _hiddenBarcodeField() {
@@ -1143,10 +1160,11 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     final originUserId = int.tryParse(auth.user?['id']?.toString() ?? '');
     double _rowNum(v) => double.tryParse(v?.toString() ?? '') ?? 0.0;
     final subtotal = _items.fold<double>(0.0, (sum, i) {
-      final price = _rowNum(i['price']);
-      final qty = _rowNum(i['quantity']);
-      final disc = _rowNum(i['discount_pct']); // may be null -> 0
-      return sum + _lineTotal(price: price, qty: qty, discPct: disc);
+      final price      = _rowNum(i['price']);
+      final qty        = _rowNum(i['quantity']);
+      final disc       = _rowNum(i['discount_pct']); // may be null -> 0
+      final discType   = (i['discount_type'] ?? 'percentage').toString();
+      return sum + _lineTotal(price: price, qty: qty, discPct: disc, discountType: discType);
     });
     double discount = double.tryParse(discountController.text.trim()) ?? 0.0;
     double tax = double.tryParse(taxController.text.trim()) ?? 0.0;
@@ -2122,10 +2140,11 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
 
     double rowNum(v) => double.tryParse(v?.toString() ?? '') ?? 0.0;
     final subtotal = _items.fold<double>(0.0, (sum, i) {
-      final price = rowNum(i['price']);
-      final qty = rowNum(i['quantity']);
-      final disc = rowNum(i['discount_pct']);
-      return sum + _lineTotal(price: price, qty: qty, discPct: disc);
+      final price    = rowNum(i['price']);
+      final qty      = rowNum(i['quantity']);
+      final disc     = rowNum(i['discount_pct']);
+      final discType = (i['discount_type'] ?? 'percentage').toString();
+      return sum + _lineTotal(price: price, qty: qty, discPct: disc, discountType: discType);
     });
     final discount = _toDouble(discountController);
     final tax = _toDouble(taxController);

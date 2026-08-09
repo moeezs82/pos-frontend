@@ -342,7 +342,12 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
     final priceCtl = TextEditingController(
       text: _money(_num(product['price'] ?? 0)),
     );
-    final discCtl = TextEditingController(text: "0");
+    // Pre-fill discount from product defaults
+    final productDisc     = _num(product['discount'] ?? 0);
+    String dialogDiscType = (product['discount_type'] ?? 'percentage').toString();
+    final discCtl = TextEditingController(
+      text: productDisc > 0 ? productDisc.toStringAsFixed(2) : "0",
+    );
     final qtyCtl = TextEditingController(text: "1");
 
     final priceFn = FocusNode();
@@ -354,9 +359,12 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setLocal) {
           final price = _num(priceCtl.text);
-          final qty = _num(qtyCtl.text); // allow decimals if you want; or round
+          final qty = _num(qtyCtl.text);
           final disc = _num(discCtl.text);
-          final total = _calcTotal(price, qty, disc);
+          // Recalculate total respecting discount type
+          final total = dialogDiscType == 'fixed'
+              ? _num(qtyCtl.text) * (_num(priceCtl.text) - _num(discCtl.text)).clamp(0, double.infinity)
+              : _calcTotal(price, qty, disc);
 
           InputDecoration _cellDec({String? label, String? suffix}) =>
               InputDecoration(
@@ -426,15 +434,15 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
                   SizedBox(
                     height: 28,
                     child: Row(
-                      children: const [
-                        Expanded(
+                      children: [
+                        const Expanded(
                           flex: 6,
                           child: Text(
                             "Product",
                             style: TextStyle(fontWeight: FontWeight.w700),
                           ),
                         ),
-                        Expanded(
+                        const Expanded(
                           flex: 2,
                           child: Align(
                             alignment: Alignment.centerRight,
@@ -445,17 +453,17 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
                           flex: 2,
                           child: Align(
                             alignment: Alignment.centerRight,
-                            child: Text("Discount (%)"),
+                            child: Text(dialogDiscType == 'fixed' ? 'Disc (Fx)' : 'Disc (%)'),
                           ),
                         ),
-                        Expanded(
+                        const Expanded(
                           flex: 2,
                           child: Align(
                             alignment: Alignment.centerRight,
                             child: Text("Qty"),
                           ),
                         ),
-                        Expanded(
+                        const Expanded(
                           flex: 2,
                           child: Align(
                             alignment: Alignment.centerRight,
@@ -501,17 +509,50 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
                             ),
                           ),
                         ),
-                        // Discount %
+                        // Discount — value field + type toggle
                         Expanded(
                           flex: 2,
                           child: Padding(
                             padding: const EdgeInsets.only(left: 6),
-                            child: _numberField(
-                              c: discCtl,
-                              fn: discFn,
-                              label: "Discount",
-                              suffix: "%",
-                              onNext: () => qtyFn.requestFocus(),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                _numberField(
+                                  c: discCtl,
+                                  fn: discFn,
+                                  label: "Discount",
+                                  suffix: dialogDiscType == 'fixed' ? 'fx' : '%',
+                                  onNext: () => qtyFn.requestFocus(),
+                                ),
+                                const SizedBox(height: 4),
+                                GestureDetector(
+                                  onTap: () => setLocal(() {
+                                    dialogDiscType = dialogDiscType == 'percentage' ? 'fixed' : 'percentage';
+                                  }),
+                                  child: Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                    decoration: BoxDecoration(
+                                      color: dialogDiscType == 'fixed'
+                                          ? Colors.blue.withOpacity(.1)
+                                          : Colors.grey.withOpacity(.1),
+                                      borderRadius: BorderRadius.circular(4),
+                                      border: Border.all(
+                                        color: dialogDiscType == 'fixed'
+                                            ? Colors.blue.withOpacity(.4)
+                                            : Colors.grey.withOpacity(.3),
+                                      ),
+                                    ),
+                                    child: Text(
+                                      dialogDiscType == 'fixed' ? 'Fixed ▸ tap for %' : '% ▸ tap for Fixed',
+                                      style: TextStyle(
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.w700,
+                                        color: dialogDiscType == 'fixed' ? Colors.blue[700] : Colors.grey[600],
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
                         ),
@@ -560,10 +601,11 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
                     await _api.post(
                       "/sales/${widget.saleId}/items",
                       body: {
-                        "product_id": product['id'],
-                        "quantity": double.tryParse(qtyCtl.text) ?? 1.0,
-                        "price": _num(priceCtl.text),
-                        "discount_pct": _num(discCtl.text),
+                        "product_id":    product['id'],
+                        "quantity":      double.tryParse(qtyCtl.text) ?? 1.0,
+                        "price":         _num(priceCtl.text),
+                        "discount_pct":  _num(discCtl.text),
+                        "discount_type": dialogDiscType,
                       },
                     );
                     if (!mounted) return;

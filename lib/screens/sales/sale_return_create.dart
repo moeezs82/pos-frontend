@@ -25,7 +25,8 @@ class _CreateSaleReturnScreenState extends State<CreateSaleReturnScreen> {
   /// Controllers + cached numbers per line
   final Map<int, TextEditingController> _qtyControllers = {};
   final Map<int, double> _unitPrice = {};
-  final Map<int, double> _discountPct = {}; // <- your DB column: discount (percentage)
+  final Map<int, double> _discountPct  = {};
+  final Map<int, String> _discountType = {}; // 'percentage' | 'fixed'
 
   final TextEditingController _reasonController = TextEditingController();
   bool _submitting = false;
@@ -52,13 +53,20 @@ class _CreateSaleReturnScreenState extends State<CreateSaleReturnScreen> {
     return int.tryParse(v?.toString() ?? '') ?? 0;
   }
 
-  /// qty * price * (1 - discount/100)
+  /// Computes the return line amount respecting the original discount type.
   double _lineAmount({
     required int itemId,
     required double qty,
   }) {
-    final price = _unitPrice[itemId] ?? 0.0;
-    final disc = (_discountPct[itemId] ?? 0.0).clamp(0.0, 100.0);
+    final price       = _unitPrice[itemId] ?? 0.0;
+    final discVal     = _discountPct[itemId] ?? 0.0;
+    final discType    = _discountType[itemId] ?? 'percentage';
+
+    if (discType == 'fixed') {
+      final net = price - discVal;
+      return qty * (net < 0 ? 0 : net);
+    }
+    final disc = discVal.clamp(0.0, 100.0);
     final net = price * (1 - disc / 100.0);
     return qty * (net < 0 ? 0 : net);
   }
@@ -138,13 +146,15 @@ class _CreateSaleReturnScreenState extends State<CreateSaleReturnScreen> {
                       _qtyControllers.clear();
                       _unitPrice.clear();
                       _discountPct.clear();
+                      _discountType.clear();
 
                       for (var item in _saleItems) {
                         final id = _toInt(item['id']);
 
-                        // cache unit TP and discount (%) from your columns
-                        _unitPrice[id] = _toDouble(item['price']);      // TP
-                        _discountPct[id] = _toDouble(item['discount']); // <-- your column name
+                        // cache unit TP, discount value and discount type
+                        _unitPrice[id]    = _toDouble(item['price']);
+                        _discountPct[id]  = _toDouble(item['discount']);
+                        _discountType[id] = (item['discount_type'] ?? 'percentage').toString();
 
                         // start at 0 return qty
                         _qtyControllers[id] = TextEditingController(text: "0")

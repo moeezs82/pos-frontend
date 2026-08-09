@@ -61,7 +61,7 @@ class CatalogCacheService {
     final path = p.join(dbPath, 'catalog_cache.db');
     return openDatabase(
       path,
-      version: 4,
+      version: 5,
       // v1 → v2 adds the unit columns. ADDITIVE ONLY, and deliberately not a
       // table rebuild or a cache wipe: this database is a read replica, but a
       // "just delete and re-download" upgrade would strand a till that is
@@ -97,6 +97,7 @@ class CatalogCacheService {
         }
         if (oldVersion < 4) {
           await db.execute('ALTER TABLE customers ADD COLUMN credit_limit REAL');
+
           await db.execute(
               "ALTER TABLE customers ADD COLUMN credit_limit_mode TEXT NOT NULL DEFAULT 'block'");
           await db.execute(
@@ -112,6 +113,13 @@ class CatalogCacheService {
             where: 'key LIKE ? OR key LIKE ?',
             whereArgs: const ['catalog_version:%', 'last_synced_at:%'],
           );
+        }
+        // v4 → v5: product discount_type column.
+        // NULL is safe here — the read helper defaults to 'percentage', so
+        // existing cached rows behave exactly as before until next sync.
+        if (oldVersion < 5) {
+          await db.execute(
+              'ALTER TABLE products ADD COLUMN discount_type TEXT');
         }
       },
       onCreate: (db, version) async {
@@ -129,6 +137,7 @@ class CatalogCacheService {
             tax_rate REAL,
             tax_inclusive INTEGER,
             discount REAL,
+            discount_type TEXT,
             vendor_id INTEGER,
             category_id INTEGER,
             unit_id INTEGER,
@@ -441,6 +450,7 @@ class CatalogCacheService {
       'tax_rate': _asDouble(raw['tax_rate']),
       'tax_inclusive': _asBoolInt(raw['tax_inclusive']),
       'discount': _asDouble(raw['discount']),
+      'discount_type': raw['discount_type']?.toString() ?? 'percentage',
       'vendor_id': raw['vendor_id'] != null ? _asInt(raw['vendor_id']) : null,
       'category_id': raw['category_id'] != null ? _asInt(raw['category_id']) : null,
       'unit_id': rule.unitId,
@@ -488,6 +498,7 @@ class CatalogCacheService {
       'tax_rate': row['tax_rate'],
       'tax_inclusive': (row['tax_inclusive'] == 1),
       'discount': row['discount'],
+      'discount_type': row['discount_type'] ?? 'percentage',
       'vendor_id': row['vendor_id'],
       'category_id': row['category_id'],
       // Flat unit columns, read by QuantityRule.fromProduct. A row cached
