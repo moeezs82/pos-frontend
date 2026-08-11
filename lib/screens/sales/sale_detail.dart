@@ -40,6 +40,7 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
   // controllers for inline edit (filled from _sale on fetch)
   final discountCtl = TextEditingController();
   final taxCtl = TextEditingController();
+  final deliveryCtl = TextEditingController();
 
   ApiClient get _api =>
       ApiClient(token: Provider.of<AuthProvider>(context, listen: false).token);
@@ -60,6 +61,7 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
   void dispose() {
     discountCtl.dispose();
     taxCtl.dispose();
+    deliveryCtl.dispose();
     super.dispose();
   }
 
@@ -76,6 +78,7 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
         // seed controllers
         discountCtl.text = (_sale?['discount'] ?? 0).toString();
         taxCtl.text = (_sale?['tax'] ?? 0).toString();
+        deliveryCtl.text = (_sale?['delivery'] ?? 0).toString();
         _loading = false;
       });
     } catch (e) {
@@ -88,13 +91,14 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
   }
 
   Future<void> _updateDiscountTax() async {
-    // push only discount & tax
+    // push discount, tax, and shipping charges
     try {
       await _api.put(
         "/sales/${widget.saleId}",
         body: {
           "discount": double.tryParse(discountCtl.text.trim()) ?? 0.0,
           "tax": double.tryParse(taxCtl.text.trim()) ?? 0.0,
+          "delivery": double.tryParse(deliveryCtl.text.trim()) ?? 0.0,
         },
       );
       if (!mounted) return;
@@ -1167,11 +1171,12 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
                     // ),
                     const SizedBox(height: 12),
 
-                    // Summary with inline editable discount/tax
+                    // Summary with inline editable discount/tax/shipping
                     SaleTotalsEditable(
                       sale: _sale!,
                       discountController: discountCtl,
                       taxController: taxCtl,
+                      deliveryController: deliveryCtl,
                       paid: paid,
                       balanceColor: balanceColor,
                       onSave: _updateDiscountTax,

@@ -92,9 +92,10 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
   String? _saleMethod;
   final saleReferenceController = TextEditingController();
 
-  // discount/tax live controllers (now edited inline in totals)
+  // discount/tax/shipping live controllers (edited inline in totals)
   final discountController = TextEditingController(text: "0");
   final taxController = TextEditingController(text: "0");
+  final shippingController = TextEditingController(text: "0");
   final cashReceivedController = TextEditingController();
 
   final TextEditingController addressController = TextEditingController();
@@ -130,6 +131,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
   // Summary / bottom-bar numeric fields (select-all on focus)
   final _discountFocusNode = FocusNode();
   final _taxFocusNode = FocusNode();
+  final _shippingFocusNode = FocusNode();
   final _cashReceivedFocusNode = FocusNode();
 
   bool _submitting = false;
@@ -195,6 +197,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     void _recalc() => setState(() {});
     discountController.addListener(_recalc);
     taxController.addListener(_recalc);
+    shippingController.addListener(_recalc);
     cashReceivedController.addListener(_recalc);
 
     // In the 3-panel layout the product grid is always visible — no need to
@@ -228,6 +231,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
   void dispose() {
     discountController.dispose();
     taxController.dispose();
+    shippingController.dispose();
     cashReceivedController.dispose();
     saleReferenceController.dispose();
     _barcodeController.dispose();
@@ -252,6 +256,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     _walkInAddressFocusNode.dispose();
     _discountFocusNode.dispose();
     _taxFocusNode.dispose();
+    _shippingFocusNode.dispose();
     _cashReceivedFocusNode.dispose();
     super.dispose();
   }
@@ -812,6 +817,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     required double subtotal,
     required double discount,
     required double tax,
+    required double shipping,
     required double total,
     required double paid,
     required double balance,
@@ -884,7 +890,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         'subtotal': subtotal,
         'discount': discount,
         'tax': tax,
-        'delivery': 0.0,
+        'delivery': shipping,
         'total': total,
         'paid': paid,
         'balance': balance,
@@ -892,7 +898,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       'payments_snapshot': typedPayments,
       'cash_received': cashReceived,
       'change_amount': changeAmount,
-      'delivery': 0.0,
+      'delivery': shipping,
       'sale_type': _selectedDeliveryBoyId != null ? 'delivery' : 'counter',
     };
 
@@ -1115,7 +1121,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     return 'Sale not saved — please correct and try again.\n${lines.join('\n')}';
   }
 
-  Future<void> _submitSale() async {
+  Future<void> _submitSale({bool print = true}) async {
     if (_items.isEmpty) {
       AppFeedback.warning(context, "Add at least 1 item before creating sale.");
       return;
@@ -1168,7 +1174,8 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     });
     double discount = double.tryParse(discountController.text.trim()) ?? 0.0;
     double tax = double.tryParse(taxController.text.trim()) ?? 0.0;
-    double total = subtotal - discount + tax;
+    double shipping = double.tryParse(shippingController.text.trim()) ?? 0.0;
+    double total = subtotal - discount + tax + shipping;
 
     // Resolve the selected tender (falls back to the branch default drawer
     // method). Reference only applies to non-drawer methods (KNET/card/bank…).
@@ -1272,6 +1279,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         subtotal: subtotal,
         discount: discount,
         tax: tax,
+        shipping: shipping,
         total: total,
         paid: paid,
         balance: balance,
@@ -1299,6 +1307,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         refund: refundToSend,
         discount: discount,
         tax: tax,
+        delivery: shipping,
         meta: meta,
         clientRef: clientRef,
         originBranchId: originBranchId,
@@ -1435,6 +1444,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
                   'N/A')
               .toString();
 
+      if (print) {
       final receiptItems = _items.map((i) {
         final name = (i['name'] ?? '').toString();
         final price = double.tryParse(i['price']?.toString() ?? '') ?? 0.0;
@@ -1656,9 +1666,10 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
           }
         }
       }
+      } // if (print)
 
       if (!mounted) return;
-      final whatsappWasRequested = _sendInvoiceOnWhatsApp;
+      final whatsappWasRequested = _sendInvoiceOnWhatsApp && print;
       _resetForNextSale(keepInitialCustomer: widget.initialCustomer != null);
       if (queuedOffline) {
         AppFeedback.warning(
@@ -1791,6 +1802,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       _payments = [];
       discountController.text = '0';
       taxController.text = '0';
+      shippingController.text = '0';
       cashReceivedController.clear();
       saleReferenceController.clear();
       _saleMethod = null;
@@ -2148,7 +2160,8 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     });
     final discount = _toDouble(discountController);
     final tax = _toDouble(taxController);
-    final total = subtotal - discount + tax;
+    final shipping = _toDouble(shippingController);
+    final total = subtotal - discount + tax + shipping;
 
     // Change is computed against the CASH (drawer) portion only — a split of
     // 1000 cash + 500 bank on a 1500 bill has no change; 2000 cash on a 1500
@@ -2253,6 +2266,9 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
             },
             _ctrlShift(LogicalKeyboardKey.keyT): () {
               _focusAndSelectAll(_taxFocusNode, taxController);
+            },
+            _ctrlShift(LogicalKeyboardKey.keyS): () {
+              _focusAndSelectAll(_shippingFocusNode, shippingController);
             },
           },
           child: Focus(
@@ -2834,6 +2850,43 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
               ),
             ),
           ),
+          const SizedBox(width: 10),
+
+          // Shipping Charges (editable inline)
+          const Text(
+            'Ship(+):',
+            style: TextStyle(
+              fontSize: 11,
+              color: AppTheme.textMuted,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(width: 4),
+          Tooltip(
+            message: 'Shipping Charges — Focus: Ctrl+Shift+S',
+            child: SizedBox(
+              width: 70,
+              height: 36,
+              child: TextField(
+                controller: shippingController,
+                focusNode: _shippingFocusNode,
+                keyboardType:
+                    const TextInputType.numberWithOptions(decimal: true),
+                textAlign: TextAlign.right,
+                decoration: const InputDecoration(
+                  isDense: true,
+                  contentPadding:
+                      EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+                  border: OutlineInputBorder(),
+                ),
+                style: const TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w800,
+                  fontFeatures: [FontFeature.tabularFigures()],
+                ),
+              ),
+            ),
+          ),
         ],
       ),
     );
@@ -3096,11 +3149,39 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
           ),
           const SizedBox(width: 8),
 
-          // Save Sale (Ctrl+↵)
+          // Save without print
+          SizedBox(
+            height: 38,
+            child: OutlinedButton.icon(
+              onPressed: _submitting
+                  ? null
+                  : () => _submitSale(print: false),
+              icon: const Icon(Icons.save_outlined, size: 15),
+              label: const Text(
+                'Save',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              style: OutlinedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                minimumSize: const Size(0, 38),
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                side: BorderSide(color: AppTheme.primary.withOpacity(.5)),
+                foregroundColor: AppTheme.primary,
+              ),
+            ),
+          ),
+          const SizedBox(width: 6),
+
+          // Save + Print (Ctrl+↵)
           SizedBox(
             height: 38,
             child: FilledButton.icon(
-              onPressed: _submitting ? null : _submitSale,
+              onPressed: _submitting
+                  ? null
+                  : () => _submitSale(print: true),
               icon: _submitting
                   ? const SizedBox(
                       width: 14,
@@ -3110,11 +3191,11 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
                         color: Colors.white,
                       ),
                     )
-                  : const Icon(Icons.check_circle_rounded, size: 16),
+                  : const Icon(Icons.print_rounded, size: 15),
               label: Text(
-                _submitting ? 'Saving…' : 'Save Sale  Ctrl+↵',
+                _submitting ? 'Saving…' : 'Create & Print  Ctrl+↵',
                 style: const TextStyle(
-                  fontSize: 13,
+                  fontSize: 12,
                   fontWeight: FontWeight.w800,
                 ),
               ),

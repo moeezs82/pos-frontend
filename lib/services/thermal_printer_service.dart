@@ -246,7 +246,7 @@ class ThermalPrinterService {
       }
       if (delivery > 0) {
         printer.row([
-          PosColumn(text: 'Delivery', width: 8, styles: const PosStyles(bold: true)),
+          PosColumn(text: 'Shipping Charges', width: 8, styles: const PosStyles(bold: true)),
           PosColumn(text: _m(delivery), width: 3, styles: const PosStyles(bold: true, align: PosAlign.right)),
           PosColumn(text: '', width: 1),
         ]);

@@ -6,6 +6,7 @@ class SaleTotalsEditable extends StatefulWidget {
   final Map<String, dynamic> sale;
   final TextEditingController discountController;
   final TextEditingController taxController;
+  final TextEditingController deliveryController;
   final double paid;
   final Color balanceColor;
   final VoidCallback onSave;
@@ -15,6 +16,7 @@ class SaleTotalsEditable extends StatefulWidget {
     required this.sale,
     required this.discountController,
     required this.taxController,
+    required this.deliveryController,
     required this.paid,
     required this.balanceColor,
     required this.onSave,
@@ -27,28 +29,33 @@ class SaleTotalsEditable extends StatefulWidget {
 class _SaleTotalsEditableState extends State<SaleTotalsEditable> {
   late String _initialDiscount;
   late String _initialTax;
+  late String _initialDelivery;
 
   @override
   void initState() {
     super.initState();
     _initialDiscount = (widget.sale['discount'] ?? 0).toString();
     _initialTax = (widget.sale['tax'] ?? 0).toString();
+    _initialDelivery = (widget.sale['delivery'] ?? 0).toString();
 
     widget.discountController.addListener(_onChanged);
     widget.taxController.addListener(_onChanged);
+    widget.deliveryController.addListener(_onChanged);
   }
 
   @override
   void dispose() {
     widget.discountController.removeListener(_onChanged);
     widget.taxController.removeListener(_onChanged);
+    widget.deliveryController.removeListener(_onChanged);
     super.dispose();
   }
 
   void _onChanged() => setState(() {});
   bool get _dirty =>
       widget.discountController.text.trim() != _initialDiscount.trim() ||
-      widget.taxController.text.trim() != _initialTax.trim();
+      widget.taxController.text.trim() != _initialTax.trim() ||
+      widget.deliveryController.text.trim() != _initialDelivery.trim();
 
   // -------- Helpers --------
   String _money(num v) => AppCurrency.format(v);
@@ -189,7 +196,9 @@ class _SaleTotalsEditableState extends State<SaleTotalsEditable> {
     final discount =
         double.tryParse(widget.discountController.text.trim()) ?? 0.0;
     final tax = double.tryParse(widget.taxController.text.trim()) ?? 0.0;
-    final total = (subtotal - discount + tax).clamp(0, double.infinity);
+    final delivery =
+        double.tryParse(widget.deliveryController.text.trim()) ?? 0.0;
+    final total = (subtotal - discount + tax + delivery).clamp(0, double.infinity);
     final paid = widget.paid;
     final outstanding = (total - paid).clamp(0, double.infinity);
 
@@ -277,6 +286,12 @@ class _SaleTotalsEditableState extends State<SaleTotalsEditable> {
               label: "Tax",
               controller: widget.taxController,
               textColor: Colors.orange[800],
+            ),
+            _rowEditable(
+              context,
+              label: "Shipping Charges",
+              controller: widget.deliveryController,
+              textColor: Colors.blueGrey[700],
             ),
             const Divider(height: 12),
             _rowStatic(
@@ -379,6 +394,7 @@ class _SaleTotalsEditableState extends State<SaleTotalsEditable> {
                         ? () {
                             widget.discountController.text = _initialDiscount;
                             widget.taxController.text = _initialTax;
+                            widget.deliveryController.text = _initialDelivery;
                           }
                         : null,
                     child: const Text("Reset"),

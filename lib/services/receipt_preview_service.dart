@@ -330,7 +330,7 @@ class ReceiptPreviewService {
                 kv("Subtotal", _m(subtotal), bold2: false),
                 if (discount > 0) kv("Discount", "-${_m(discount)}"),
                 if (tax > 0) kv("Tax", _m(tax)),
-                if (delivery > 0) kv("Delivery", _m(delivery)),
+                if (delivery > 0) kv("Shipping Charges", _m(delivery)),
                 divider(),
               ],
 

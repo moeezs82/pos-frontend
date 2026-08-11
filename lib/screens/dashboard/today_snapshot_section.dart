@@ -1,3 +1,5 @@
+import 'dart:ui';
+
 import 'package:enterprise_pos/api/reports_service.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/screens/dashboard/low_stock_screen.dart';
@@ -25,6 +27,7 @@ class _TodaySnapshotSectionState extends State<TodaySnapshotSection> {
 
   bool _loading = true;
   String? _error;
+  bool _obscured = true;
 
   double _netSales = 0;
   int _invoices = 0;
@@ -157,6 +160,49 @@ class _TodaySnapshotSectionState extends State<TodaySnapshotSection> {
             const Expanded(
               child: Text('Today at a glance', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
             ),
+            // Privacy toggle — eye icon
+            Tooltip(
+              message: _obscured ? 'Show figures' : 'Hide figures',
+              child: InkWell(
+                onTap: () => setState(() => _obscured = !_obscured),
+                borderRadius: BorderRadius.circular(8),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 200),
+                  curve: Curves.easeInOut,
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: _obscured ? Colors.grey.shade100 : AppTheme.primary.withOpacity(.08),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: _obscured ? AppTheme.border : AppTheme.primary.withOpacity(.25),
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        _obscured ? Icons.visibility_off_rounded : Icons.visibility_rounded,
+                        size: 16,
+                        color: _obscured ? AppTheme.textMuted : AppTheme.primary,
+                      ),
+                      const SizedBox(width: 5),
+                      AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 180),
+                        child: Text(
+                          _obscured ? 'Hidden' : 'Visible',
+                          key: ValueKey(_obscured),
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                            color: _obscured ? AppTheme.textMuted : AppTheme.primary,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
             IconButton(
               tooltip: 'Refresh',
               onPressed: _loading ? null : _load,
@@ -187,24 +233,28 @@ class _TodaySnapshotSectionState extends State<TodaySnapshotSection> {
           color: AppTheme.primary,
           label: "Today's Net Sales",
           value: _moneyFmt.format(_netSales),
+          obscured: _obscured,
         ),
         _StatCard(
           icon: Icons.receipt_long_rounded,
           color: AppTheme.info,
           label: 'Invoices Today',
           value: '$_invoices',
+          obscured: _obscured,
         ),
         _StatCard(
           icon: Icons.trending_up_rounded,
           color: AppTheme.success,
           label: 'Gross Profit',
           value: _moneyFmt.format(_grossProfit),
+          obscured: _obscured,
         ),
         _StatCard(
           icon: Icons.percent_rounded,
           color: AppTheme.warning,
           label: 'Discounts Given',
           value: _moneyFmt.format(_discounts),
+          obscured: _obscured,
         ),
         _StatCard(
           icon: Icons.star_rounded,
@@ -212,10 +262,12 @@ class _TodaySnapshotSectionState extends State<TodaySnapshotSection> {
           label: 'Top Product Today',
           value: _topProductName ?? '—',
           subtitle: _topProductName != null ? _moneyFmt.format(_topProductRevenue) : 'No sales yet',
+          obscured: _obscured,
         ),
         _LowStockCard(
           count: _lowStockCount,
           preview: _lowStockPreview,
+          obscured: _obscured,
           onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const LowStockScreen())),
         ),
       ],
@@ -229,12 +281,14 @@ class _StatCard extends StatelessWidget {
   final String label;
   final String value;
   final String? subtitle;
+  final bool obscured;
 
   const _StatCard({
     required this.icon,
     required this.color,
     required this.label,
     required this.value,
+    required this.obscured,
     this.subtitle,
   });
 
@@ -259,12 +313,18 @@ class _StatCard extends StatelessWidget {
             child: Icon(icon, color: color, size: 20),
           ),
           const SizedBox(height: 10),
-          Text(value, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900, color: AppTheme.navy)),
+          _BlurShield(
+            obscured: obscured,
+            child: Text(value, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900, color: AppTheme.navy)),
+          ),
           const SizedBox(height: 2),
           Text(label, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: AppTheme.textMuted, fontWeight: FontWeight.w700, fontSize: 12)),
           if (subtitle != null) ...[
             const SizedBox(height: 2),
-            Text(subtitle!, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: AppTheme.textMuted, fontWeight: FontWeight.w600, fontSize: 11)),
+            _BlurShield(
+              obscured: obscured,
+              child: Text(subtitle!, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: AppTheme.textMuted, fontWeight: FontWeight.w600, fontSize: 11)),
+            ),
           ],
         ],
       ),
@@ -275,9 +335,10 @@ class _StatCard extends StatelessWidget {
 class _LowStockCard extends StatelessWidget {
   final int count;
   final List<Map<String, dynamic>> preview;
+  final bool obscured;
   final VoidCallback onTap;
 
-  const _LowStockCard({required this.count, required this.preview, required this.onTap});
+  const _LowStockCard({required this.count, required this.preview, required this.obscured, required this.onTap});
 
   @override
   Widget build(BuildContext context) {
@@ -314,7 +375,10 @@ class _LowStockCard extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 10),
-              Text('$count', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900, color: AppTheme.navy)),
+              _BlurShield(
+                obscured: obscured,
+                child: Text('$count', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900, color: AppTheme.navy)),
+              ),
               const SizedBox(height: 2),
               const Text('Low Stock Items', style: TextStyle(color: AppTheme.textMuted, fontWeight: FontWeight.w700, fontSize: 12)),
               if (hasAlerts && preview.isNotEmpty) ...[
@@ -330,6 +394,42 @@ class _LowStockCard extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Smoothly blurs its child when [obscured] is true.
+/// Uses [TweenAnimationBuilder] so the blur sigma animates in and out
+/// without requiring a StatefulWidget or an AnimationController.
+class _BlurShield extends StatelessWidget {
+  final Widget child;
+  final bool obscured;
+
+  const _BlurShield({required this.child, required this.obscured});
+
+  @override
+  Widget build(BuildContext context) {
+    return TweenAnimationBuilder<double>(
+      tween: Tween(end: obscured ? 9.0 : 0.0),
+      duration: const Duration(milliseconds: 280),
+      curve: Curves.easeInOut,
+      child: child,
+      builder: (_, sigma, innerChild) {
+        if (sigma < 0.05) return innerChild!;
+        return ClipRect(
+          child: Stack(
+            children: [
+              innerChild!,
+              Positioned.fill(
+                child: BackdropFilter(
+                  filter: ImageFilter.blur(sigmaX: sigma, sigmaY: sigma),
+                  child: const ColoredBox(color: Colors.transparent),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 }
