@@ -1,39 +1,49 @@
-/// The predefined invoice/receipt layouts a printer destination can use.
-/// Mirrors the backend's `App\Enums\InvoiceTemplate` exactly — same values,
-/// same section defaults — so picking "Kitchen" here means the same thing
-/// it means when the backend reports it back.
+/// Predefined customer receipt/invoice layouts.
 ///
-/// Both the PDF preview (ReceiptPreviewService) and the real ESC/POS print
-/// (ThermalPrinterService) render from this same section list, so what you
-/// see in the preview screen is what actually prints.
+/// Thermal templates keep their existing mm58/mm80 behaviour. The paged
+/// [standardInvoice] layout uses a branch-configured A4/A5/Letter page size and
+/// is intended for PDF or an installed Windows printer, never raw ESC/POS TCP.
 enum InvoiceTemplate {
   standard,
   compact,
-  kitchen;
+  kitchen,
+  standardInvoice;
 
   String get value => switch (this) {
         InvoiceTemplate.standard => 'standard',
         InvoiceTemplate.compact => 'compact',
         InvoiceTemplate.kitchen => 'kitchen',
+        InvoiceTemplate.standardInvoice => 'standard_invoice',
       };
 
   String get label => switch (this) {
         InvoiceTemplate.standard => 'Standard Receipt',
         InvoiceTemplate.compact => 'Compact Receipt',
         InvoiceTemplate.kitchen => 'Kitchen Ticket',
+        InvoiceTemplate.standardInvoice => 'Standard Invoice',
       };
 
   String get description => switch (this) {
         InvoiceTemplate.standard =>
-          'Full customer receipt: shop details, customer info, itemised totals, and a footer.',
+          'Full 80 mm customer receipt with shop details, customer info, totals and footer.',
         InvoiceTemplate.compact =>
-          'Narrow 58mm layout for small printers: shop name and items only, no customer details.',
+          'Narrow 58 mm customer receipt for small thermal printers.',
         InvoiceTemplate.kitchen =>
-          'Operational secondary ticket: customer and item details with prices, without the full shop header or totals breakdown.',
+          'Operational secondary ticket for kitchen, packing or preparation.',
+        InvoiceTemplate.standardInvoice =>
+          'Professional paged invoice for normal printers. Supports A4, A5 and Letter paper, discount column, payments, optional logo and QR code.',
       };
 
-  /// 'mm58' | 'mm80'
-  String get paperWidthCode => this == InvoiceTemplate.compact ? 'mm58' : 'mm80';
+  bool get isPaged => this == InvoiceTemplate.standardInvoice;
+  bool get isCustomerFacing => this != InvoiceTemplate.kitchen;
+  bool get supportsRawNetwork => !isPaged;
+
+  /// Thermal paper code. Paged invoices use the configured paper size instead.
+  String get paperWidthCode => switch (this) {
+        InvoiceTemplate.compact => 'mm58',
+        InvoiceTemplate.standardInvoice => 'a4',
+        _ => 'mm80',
+      };
 
   InvoiceSections get sections => switch (this) {
         InvoiceTemplate.standard => const InvoiceSections(
@@ -55,6 +65,12 @@ enum InvoiceTemplate {
             totalsBreakdown: false,
             footer: false,
           ),
+        InvoiceTemplate.standardInvoice => const InvoiceSections(
+            header: true,
+            customer: true,
+            totalsBreakdown: true,
+            footer: true,
+          ),
       };
 
   static InvoiceTemplate fromValue(String? v) {
@@ -65,10 +81,6 @@ enum InvoiceTemplate {
   }
 }
 
-/// Which sections of the receipt actually render. Five toggles (logo removed
-/// per product spec — no logo on any print): header (shop name/address/
-/// phone), customer info, the totals breakdown (subtotal/discount/tax/
-/// delivery — grand total always shows regardless), and the footer.
 class InvoiceSections {
   final bool header;
   final bool customer;
@@ -85,13 +97,15 @@ class InvoiceSections {
   });
 
   factory InvoiceSections.fromJson(Map<String, dynamic> json) {
-    bool flag(String key, bool fallback) => json[key] is bool ? json[key] as bool : fallback;
+    bool flag(String key, bool fallback) =>
+        json[key] is bool ? json[key] as bool : fallback;
     final fallback = InvoiceTemplate.standard.sections;
     return InvoiceSections(
       header: flag('header', fallback.header),
       customer: flag('customer', fallback.customer),
       itemPrices: flag('item_prices', fallback.itemPrices),
-      totalsBreakdown: flag('totals_breakdown', fallback.totalsBreakdown),
+      totalsBreakdown:
+          flag('totals_breakdown', fallback.totalsBreakdown),
       footer: flag('footer', fallback.footer),
     );
   }

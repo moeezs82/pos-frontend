@@ -61,7 +61,7 @@ class CatalogCacheService {
     final path = p.join(dbPath, 'catalog_cache.db');
     return openDatabase(
       path,
-      version: 5,
+      version: 6,
       // v1 → v2 adds the unit columns. ADDITIVE ONLY, and deliberately not a
       // table rebuild or a cache wipe: this database is a read replica, but a
       // "just delete and re-download" upgrade would strand a till that is
@@ -121,6 +121,30 @@ class CatalogCacheService {
           await db.execute(
               'ALTER TABLE products ADD COLUMN discount_type TEXT');
         }
+        // v5 → v6: variable-product presentation metadata. These fields are
+        // catalog-only identifiers; transactional offline sales still store the
+        // real child product_id. Keeping them in the read replica lets the POS
+        // collapse sibling variants into one family card without connectivity.
+        if (oldVersion < 6) {
+          await db.execute(
+              'ALTER TABLE products ADD COLUMN product_group_id INTEGER');
+          await db.execute(
+              'ALTER TABLE products ADD COLUMN variant_size TEXT');
+          await db.execute(
+              'ALTER TABLE products ADD COLUMN variant_color TEXT');
+          await db.execute(
+              'CREATE INDEX IF NOT EXISTS idx_products_group ON products(product_group_id)');
+
+          // Keep the existing rows so an app upgraded while offline still has
+          // a usable catalog, but invalidate the cursor. The next successful
+          // refresh must be a full snapshot so older rows receive group/size/
+          // color metadata instead of waiting until each product is edited.
+          await db.delete(
+            'sync_meta',
+            where: 'key LIKE ? OR key LIKE ?',
+            whereArgs: const ['catalog_version:%', 'last_synced_at:%'],
+          );
+        }
       },
       onCreate: (db, version) async {
         await db.execute('''
@@ -143,6 +167,9 @@ class CatalogCacheService {
             unit_id INTEGER,
             unit_name TEXT,
             unit_allow_decimal INTEGER,
+            product_group_id INTEGER,
+            variant_size TEXT,
+            variant_color TEXT,
             is_active INTEGER DEFAULT 1,
             updated_at TEXT,
             PRIMARY KEY (id)
@@ -151,6 +178,7 @@ class CatalogCacheService {
         await db.execute('CREATE INDEX idx_products_branch ON products(branch_id)');
         await db.execute('CREATE INDEX idx_products_name ON products(name_lower)');
         await db.execute('CREATE INDEX idx_products_barcode ON products(barcode)');
+        await db.execute('CREATE INDEX idx_products_group ON products(product_group_id)');
 
         await db.execute('''
           CREATE TABLE customers (
@@ -456,6 +484,11 @@ class CatalogCacheService {
       'unit_id': rule.unitId,
       'unit_name': rule.unitName.isEmpty ? null : rule.unitName,
       'unit_allow_decimal': rule.allowDecimal ? 1 : 0,
+      'product_group_id': raw['product_group_id'] != null
+          ? _asInt(raw['product_group_id'])
+          : null,
+      'variant_size': raw['variant_size']?.toString(),
+      'variant_color': raw['variant_color']?.toString(),
       'is_active': _asBoolInt(raw['is_active'], defaultTrue: true),
       'updated_at': raw['updated_at']?.toString(),
     };
@@ -507,6 +540,9 @@ class CatalogCacheService {
       'unit_id': row['unit_id'],
       'unit_name': row['unit_name'],
       'unit_allow_decimal': row['unit_allow_decimal'],
+      'product_group_id': row['product_group_id'],
+      'variant_size': row['variant_size'],
+      'variant_color': row['variant_color'],
       '_offline': true, // marker: sourced from local cache, not a live fetch
     };
   }

@@ -1,6 +1,9 @@
+import 'dart:convert';
+
 import 'package:enterprise_pos/models/invoice_template.dart';
 import 'package:esc_pos_printer_plus/esc_pos_printer_plus.dart';
 import 'package:esc_pos_utils_plus/esc_pos_utils_plus.dart';
+import 'package:image/image.dart' as img;
 
 class ThermalPrinterService {
   ThermalPrinterService._();
@@ -34,6 +37,11 @@ class ThermalPrinterService {
     String paperWidth = 'mm80',
     List<String> footerLines = const [],
     String? receiptHeader,
+    bool showLogo = false,
+    String? logoData,
+    bool showQr = false,
+    String? qrUrl,
+    String qrCaption = 'Scan to review us',
   }) async {
     final profile = await CapabilityProfile.load();
     final paper = paperWidth == 'mm58' ? PaperSize.mm58 : PaperSize.mm80;
@@ -50,6 +58,13 @@ class ThermalPrinterService {
     }
 
     try {
+      if (showLogo && sections.header) {
+        final logo = _decodeLogoImage(logoData, paperWidth == 'mm58' ? 320 : 500);
+        if (logo != null) {
+          printer.imageRaster(logo, align: PosAlign.center);
+          printer.feed(1);
+        }
+      }
       _writeReceipt(
         printer,
         shopName: shopName,
@@ -68,6 +83,10 @@ class ThermalPrinterService {
         sections: sections,
         footerLines: footerLines,
         receiptHeader: receiptHeader,
+        showQr: showQr,
+        qrUrl: qrUrl,
+        qrCaption: qrCaption,
+        is58mm: paperWidth == 'mm58',
       );
     } finally {
       printer.disconnect();
@@ -81,6 +100,11 @@ class ThermalPrinterService {
     String shopName = 'Test Print',
     String paperWidth = 'mm80',
     String? receiptHeader,
+    bool showLogo = false,
+    String? logoData,
+    bool showQr = false,
+    String? qrUrl,
+    String qrCaption = 'Scan to review us',
   }) async {
     final profile = await CapabilityProfile.load();
     final paper = paperWidth == 'mm58' ? PaperSize.mm58 : PaperSize.mm80;
@@ -97,6 +121,13 @@ class ThermalPrinterService {
     }
 
     try {
+      if (showLogo) {
+        final logo = _decodeLogoImage(logoData, paperWidth == 'mm58' ? 320 : 500);
+        if (logo != null) {
+          printer.imageRaster(logo, align: PosAlign.center);
+          printer.feed(1);
+        }
+      }
       final header = (receiptHeader ?? '').trim();
       if (header.isNotEmpty) {
         printer.text(
@@ -117,6 +148,16 @@ class ThermalPrinterService {
       printer.text(DateTime.now().toString(), styles: const PosStyles(align: PosAlign.center));
       printer.hr();
       printer.text('If you can read this, the printer\nis connected and working.');
+      if (showQr && _validQrUrl(qrUrl)) {
+        printer.feed(1);
+        printer.qrcode(
+          qrUrl!.trim(),
+          size: paperWidth == 'mm58' ? QRSize.size3 : QRSize.size4,
+        );
+        if (qrCaption.trim().isNotEmpty) {
+          printer.text(qrCaption.trim(), styles: const PosStyles(align: PosAlign.center));
+        }
+      }
       printer.feed(2);
       printer.cut();
     } finally {
@@ -142,6 +183,10 @@ class ThermalPrinterService {
     required InvoiceSections sections,
     List<String> footerLines = const [],
     String? receiptHeader,
+    bool showQr = false,
+    String? qrUrl,
+    String qrCaption = 'Scan to review us',
+    bool is58mm = false,
   }) {
     final snapRaw = meta?['customer_snapshot'];
     final snap = (snapRaw is Map) ? snapRaw.cast<String, dynamic>() : <String, dynamic>{};
@@ -263,7 +308,7 @@ class ThermalPrinterService {
     // Payment method breakdown (split tender / non-cash tenders).
     final paymentsSnap = (meta?['payments_snapshot'] is List)
         ? (meta!['payments_snapshot'] as List)
-        : const [];
+        : (meta?['payments'] is List ? (meta!['payments'] as List) : const []);
     final showBreakdown = paymentsSnap.length > 1 ||
         (paymentsSnap.length == 1 &&
             paymentsSnap.first is Map &&
@@ -300,6 +345,20 @@ class ThermalPrinterService {
     }
     printer.hr();
 
+    if (showQr && _validQrUrl(qrUrl)) {
+      printer.qrcode(
+        qrUrl!.trim(),
+        size: is58mm ? QRSize.size3 : QRSize.size4,
+      );
+      if (qrCaption.trim().isNotEmpty) {
+        printer.text(
+          qrCaption.trim(),
+          styles: const PosStyles(align: PosAlign.center),
+        );
+      }
+      printer.hr();
+    }
+
     if (sections.footer) {
       final lines = footerLines.where((l) => l.trim().isNotEmpty).toList();
       for (final line in lines) {
@@ -310,6 +369,29 @@ class ThermalPrinterService {
 
     printer.feed(2);
     printer.cut();
+  }
+
+  static img.Image? _decodeLogoImage(String? data, int maxWidth) {
+    final raw = (data ?? '').trim();
+    if (!raw.startsWith('data:image/')) return null;
+    final comma = raw.indexOf(',');
+    if (comma <= 0 || comma >= raw.length - 1) return null;
+    try {
+      final bytes = base64Decode(raw.substring(comma + 1));
+      final decoded = img.decodeImage(bytes);
+      if (decoded == null) return null;
+      if (decoded.width <= maxWidth) return decoded;
+      return img.copyResize(decoded, width: maxWidth);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static bool _validQrUrl(String? value) {
+    final uri = Uri.tryParse((value ?? '').trim());
+    return uri != null &&
+        (uri.scheme == 'http' || uri.scheme == 'https') &&
+        uri.host.isNotEmpty;
   }
 
   static String _fmtDate(DateTime d) =>
@@ -325,11 +407,15 @@ class SaleReceiptItem {
   final double price;
   final double qty;
   final double total;
+  final String unitName;
+  final double discountAmount;
 
   SaleReceiptItem({
     required this.name,
     required this.price,
     required this.qty,
     required this.total,
+    this.unitName = '',
+    this.discountAmount = 0,
   });
 }

@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:typed_data';
+
 import 'package:enterprise_pos/api/common_service.dart';
 import 'package:enterprise_pos/api/printer_config_service.dart';
 import 'package:enterprise_pos/models/invoice_template.dart';
@@ -10,6 +13,7 @@ import 'package:enterprise_pos/services/local_printer_service.dart';
 import 'package:enterprise_pos/services/thermal_printer_service.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/enterprise/enterprise_panel.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:printing/printing.dart';
@@ -53,6 +57,9 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
   final _barcodeWidthCtrl = TextEditingController(text: '50');
   final _barcodeHeightCtrl = TextEditingController(text: '30');
   final _barcodeGapCtrl = TextEditingController(text: '2');
+  final _invoiceHeadingCtrl = TextEditingController(text: 'SALES INVOICE');
+  final _qrUrlCtrl = TextEditingController();
+  final _qrCaptionCtrl = TextEditingController(text: 'Scan to review us');
 
   String _activeConnection = 'none';
   bool _secondaryEnabled = false;
@@ -66,6 +73,10 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
   bool _barcodeShowPrice = true;
   List<Printer> _installedPrinters = [];
   InvoiceTemplate _mainTemplate = InvoiceTemplate.standard;
+  String _invoicePaperSize = 'a4';
+  bool _printLogoEnabled = false;
+  String? _printLogoData;
+  bool _qrCodeEnabled = false;
   InvoiceTemplate _secondaryTemplate = InvoiceTemplate.kitchen;
   List<InvoiceTemplate> _templates = InvoiceTemplate.values;
 
@@ -114,6 +125,9 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
     _barcodeWidthCtrl.dispose();
     _barcodeHeightCtrl.dispose();
     _barcodeGapCtrl.dispose();
+    _invoiceHeadingCtrl.dispose();
+    _qrUrlCtrl.dispose();
+    _qrCaptionCtrl.dispose();
     for (final c in _footerCtrls) {
       c.dispose();
     }
@@ -212,7 +226,16 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
           ? 'KITCHEN COPY'
           : config.secondaryReceiptHeader;
       _mainTemplate = config.mainInvoiceTemplate;
-      _secondaryTemplate = config.secondaryInvoiceTemplate;
+      _invoicePaperSize = config.invoicePaperSize;
+      _invoiceHeadingCtrl.text = config.invoiceHeading;
+      _printLogoEnabled = config.printLogoEnabled;
+      _printLogoData = config.printLogoData;
+      _qrCodeEnabled = config.qrCodeEnabled;
+      _qrUrlCtrl.text = config.qrCodeUrl ?? '';
+      _qrCaptionCtrl.text = config.qrCodeCaption;
+      _secondaryTemplate = config.secondaryInvoiceTemplate.isPaged
+          ? InvoiceTemplate.kitchen
+          : config.secondaryInvoiceTemplate;
       _barcodeAddonActive = config.barcodeAddonActive;
       _barcodeConnection = config.barcodeConnection;
       _barcodeLocalPrinterCtrl.text = config.barcodeLocalPrinterName ?? '';
@@ -378,6 +401,22 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
       _showMessage('Select an installed receipt printer.');
       return;
     }
+    if (_mainTemplate.isPaged && _activeConnection == 'network') {
+      _showMessage('Standard Invoice requires This computer / Windows printer or PDF printing. Raw network thermal mode is not supported.');
+      return;
+    }
+    if (_printLogoEnabled && (_printLogoData ?? '').trim().isEmpty) {
+      _showMessage('Upload a print logo or turn Show logo off.');
+      return;
+    }
+    if (_qrCodeEnabled) {
+      final rawUrl = _qrUrlCtrl.text.trim();
+      final uri = Uri.tryParse(rawUrl);
+      if (rawUrl.isEmpty || uri == null || !const {'http', 'https'}.contains(uri.scheme) || uri.host.isEmpty) {
+        _showMessage('Enter a valid http:// or https:// URL for the print QR code.');
+        return;
+      }
+    }
     if (_secondaryEnabled && _activeConnection == 'local' && _secondaryLocalPrinterCtrl.text.trim().isEmpty) {
       _showMessage('Select an installed secondary printer.');
       return;
@@ -429,6 +468,13 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
         networkPort: int.tryParse(_networkPortCtrl.text.trim()) ?? 9100,
         localPrinterName: _localPrinterCtrl.text.trim().isEmpty ? null : _localPrinterCtrl.text.trim(),
         mainInvoiceTemplate: _mainTemplate,
+        invoicePaperSize: _invoicePaperSize,
+        invoiceHeading: _invoiceHeadingCtrl.text.trim().isEmpty ? 'SALES INVOICE' : _invoiceHeadingCtrl.text.trim(),
+        printLogoEnabled: _printLogoEnabled,
+        printLogoData: _printLogoData,
+        qrCodeEnabled: _qrCodeEnabled,
+        qrCodeUrl: _qrUrlCtrl.text.trim().isEmpty ? null : _qrUrlCtrl.text.trim(),
+        qrCodeCaption: _qrCaptionCtrl.text.trim(),
         secondaryPrintEnabled: _secondaryEnabled,
         secondaryNetworkIp: _secondaryNetworkIpCtrl.text.trim().isEmpty ? null : _secondaryNetworkIpCtrl.text.trim(),
         secondaryNetworkPort: int.tryParse(_secondaryNetworkPortCtrl.text.trim()) ?? 9100,
@@ -475,6 +521,11 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
       return;
     }
 
+    if (_mainTemplate.isPaged && _activeConnection == 'network') {
+      _showMessage('Standard Invoice cannot be sent as raw ESC/POS. Choose This computer or use Preview / PDF.');
+      return;
+    }
+
     setState(() => _testing = true);
     try {
       if (_activeConnection == 'network') {
@@ -493,6 +544,11 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
           port: port,
           shopName: _shopNameCtrl.text.trim().isNotEmpty ? _shopNameCtrl.text.trim() : 'Test Print',
           paperWidth: _mainTemplate.paperWidthCode,
+          showLogo: _printLogoEnabled && _mainTemplate.isCustomerFacing,
+          logoData: _printLogoData,
+          showQr: _qrCodeEnabled && _mainTemplate.isCustomerFacing,
+          qrUrl: _qrUrlCtrl.text.trim().isEmpty ? null : _qrUrlCtrl.text.trim(),
+          qrCaption: _qrCaptionCtrl.text.trim(),
         );
       } else {
         final printerName = _localPrinterCtrl.text.trim();
@@ -505,12 +561,18 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
           shopAddress: _shopAddressCtrl.text.trim().isEmpty ? null : _shopAddressCtrl.text.trim(),
           shopPhone: _shopPhoneCtrl.text.trim().isEmpty ? null : _shopPhoneCtrl.text.trim(),
           sections: _mainTemplate.sections,
-          paperWidth: _mainTemplate.paperWidthCode,
+          paperWidth: _mainTemplate.isPaged ? _invoicePaperSize : _mainTemplate.paperWidthCode,
           footerLines: _currentFooterLines,
           copyLabel: 'RECEIPT PRINTER TEST',
+          invoiceHeading: _invoiceHeadingCtrl.text.trim().isEmpty ? 'SALES INVOICE' : _invoiceHeadingCtrl.text.trim(),
+          showLogo: _printLogoEnabled && _mainTemplate.isCustomerFacing,
+          logoData: _printLogoData,
+          showQr: _qrCodeEnabled && _mainTemplate.isCustomerFacing,
+          qrUrl: _qrUrlCtrl.text.trim().isEmpty ? null : _qrUrlCtrl.text.trim(),
+          qrCaption: _qrCaptionCtrl.text.trim(),
         );
       }
-      _showMessage('Test ticket sent — check the printer.');
+      _showMessage(_mainTemplate.isPaged ? 'Test invoice sent — check the printer.' : 'Test ticket sent — check the printer.');
     } catch (e) {
       _showMessage('Test print failed: ${e.toString().replaceFirst('Exception: ', '')}');
     } finally {
@@ -640,13 +702,22 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
       context,
       MaterialPageRoute(
         builder: (_) => InvoiceTemplatePreviewScreen(
-          templates: _templates,
+          templates: receiptHeader == null
+              ? _templates
+              : _templates.where((t) => !t.isPaged).toList(),
           initialTemplate: template,
           shopName: _shopNameCtrl.text.trim().isNotEmpty ? _shopNameCtrl.text.trim() : 'My Shop',
           shopAddress: _shopAddressCtrl.text.trim().isEmpty ? null : _shopAddressCtrl.text.trim(),
           shopPhone: _shopPhoneCtrl.text.trim().isEmpty ? null : _shopPhoneCtrl.text.trim(),
           footerLines: _currentFooterLines,
           receiptHeader: receiptHeader,
+          invoicePaperSize: _invoicePaperSize,
+          invoiceHeading: _invoiceHeadingCtrl.text.trim().isEmpty ? 'SALES INVOICE' : _invoiceHeadingCtrl.text.trim(),
+          showLogo: _printLogoEnabled && template.isCustomerFacing,
+          logoData: _printLogoData,
+          showQr: _qrCodeEnabled && template.isCustomerFacing,
+          qrUrl: _qrUrlCtrl.text.trim().isEmpty ? null : _qrUrlCtrl.text.trim(),
+          qrCaption: _qrCaptionCtrl.text.trim(),
         ),
       ),
     );
@@ -692,6 +763,8 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
                   _buildConnectionPanel(),
                   const SizedBox(height: 14),
                   _buildTemplatePanel(),
+                  const SizedBox(height: 14),
+                  _buildInvoiceBrandingPanel(),
                   const SizedBox(height: 14),
                   _buildFooterLinesPanel(),
                   const SizedBox(height: 14),
@@ -855,7 +928,7 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
           if (_activeConnection == 'local') ...[
             _buildLocalPrinterSelector(
               controller: _localPrinterCtrl,
-              label: 'Installed receipt printer',
+              label: _mainTemplate.isPaged ? 'Installed invoice printer' : 'Installed receipt printer',
             ),
             const SizedBox(height: 14),
             SizedBox(
@@ -874,6 +947,202 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
     );
   }
 
+  Uint8List? _decodedPrintLogo() {
+    final raw = (_printLogoData ?? '').trim();
+    if (raw.isEmpty) return null;
+    final comma = raw.indexOf(',');
+    if (comma <= 0 || comma >= raw.length - 1) return null;
+    try {
+      return base64Decode(raw.substring(comma + 1));
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _pickPrintLogo() async {
+    try {
+      final result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: const ['png', 'jpg', 'jpeg'],
+        withData: true,
+      );
+      if (!mounted || result == null || result.files.isEmpty) return;
+      final file = result.files.single;
+      final bytes = file.bytes;
+      if (bytes == null || bytes.isEmpty) {
+        _showMessage('Could not read the selected image.');
+        return;
+      }
+      if (bytes.length > 1024 * 1024) {
+        _showMessage('Please use a logo smaller than 1 MB.');
+        return;
+      }
+      final ext = (file.extension ?? '').toLowerCase();
+      final mime = ext == 'png' ? 'image/png' : 'image/jpeg';
+      setState(() {
+        _printLogoData = 'data:$mime;base64,${base64Encode(bytes)}';
+        _printLogoEnabled = true;
+      });
+    } catch (e) {
+      _showMessage('Could not load logo: ${e.toString().replaceFirst('Exception: ', '')}');
+    }
+  }
+
+  void _removePrintLogo() {
+    setState(() {
+      _printLogoData = null;
+      _printLogoEnabled = false;
+    });
+  }
+
+  Widget _buildInvoiceBrandingPanel() {
+    final logoBytes = _decodedPrintLogo();
+    final hasLogo = logoBytes != null;
+    return EnterprisePanel(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const EnterpriseSectionHeader(
+            title: 'Invoice branding & customer QR',
+            subtitle: 'Shared customer-facing print options. Kitchen/secondary and barcode labels stay clean.',
+            icon: Icons.branding_watermark_rounded,
+            color: AppTheme.primary,
+          ),
+          if (_mainTemplate.isPaged) ...[
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                Expanded(
+                  child: DropdownButtonFormField<String>(
+                    value: _invoicePaperSize,
+                    decoration: const InputDecoration(
+                      labelText: 'Standard Invoice paper size',
+                      prefixIcon: Icon(Icons.description_outlined),
+                    ),
+                    items: const [
+                      DropdownMenuItem(value: 'a4', child: Text('A4')),
+                      DropdownMenuItem(value: 'a5', child: Text('A5')),
+                      DropdownMenuItem(value: 'letter', child: Text('Letter')),
+                    ],
+                    onChanged: (value) {
+                      if (value != null) setState(() => _invoicePaperSize = value);
+                    },
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  flex: 2,
+                  child: TextFormField(
+                    controller: _invoiceHeadingCtrl,
+                    maxLength: 80,
+                    decoration: const InputDecoration(
+                      labelText: 'Invoice heading',
+                      hintText: 'SALES INVOICE',
+                      prefixIcon: Icon(Icons.title_rounded),
+                      counterText: '',
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            if (_activeConnection == 'network') ...[
+              const SizedBox(height: 10),
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: AppTheme.warning.withValues(alpha: .08),
+                  border: Border.all(color: AppTheme.warning.withValues(alpha: .3)),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Row(
+                  children: [
+                    Icon(Icons.info_outline_rounded, color: AppTheme.warning, size: 18),
+                    SizedBox(width: 8),
+                    Expanded(child: Text('Standard Invoice uses the Windows/PDF page renderer. Choose "This computer" for direct A4/A5/Letter printing.', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600))),
+                  ],
+                ),
+              ),
+            ],
+          ],
+          const SizedBox(height: 14),
+          const Divider(height: 1),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            value: _printLogoEnabled,
+            onChanged: (value) => setState(() => _printLogoEnabled = value),
+            title: const Text('Show business logo', style: TextStyle(fontWeight: FontWeight.w800)),
+            subtitle: const Text('Shown on customer-facing main receipts/invoices when enabled.'),
+          ),
+          Row(
+            children: [
+              if (hasLogo)
+                Container(
+                  width: 76,
+                  height: 58,
+                  margin: const EdgeInsets.only(right: 12),
+                  padding: const EdgeInsets.all(5),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    border: Border.all(color: AppTheme.border),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Image.memory(
+                    logoBytes!,
+                    fit: BoxFit.contain,
+                    errorBuilder: (_, __, ___) => const Icon(Icons.broken_image_outlined),
+                  ),
+                ),
+              OutlinedButton.icon(
+                onPressed: _pickPrintLogo,
+                icon: const Icon(Icons.upload_file_rounded),
+                label: Text(hasLogo ? 'Change logo' : 'Upload logo'),
+              ),
+              if (hasLogo) ...[
+                const SizedBox(width: 8),
+                TextButton.icon(
+                  onPressed: _removePrintLogo,
+                  icon: const Icon(Icons.delete_outline_rounded),
+                  label: const Text('Remove'),
+                ),
+              ],
+            ],
+          ),
+          const SizedBox(height: 14),
+          const Divider(height: 1),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            value: _qrCodeEnabled,
+            onChanged: (value) => setState(() => _qrCodeEnabled = value),
+            title: const Text('Show customer QR code', style: TextStyle(fontWeight: FontWeight.w800)),
+            subtitle: const Text('Use a review, website, WhatsApp, menu or feedback URL. Not printed on secondary/kitchen copies.'),
+          ),
+          if (_qrCodeEnabled) ...[
+            const SizedBox(height: 6),
+            TextFormField(
+              controller: _qrUrlCtrl,
+              decoration: const InputDecoration(
+                labelText: 'QR URL',
+                hintText: 'https://...',
+                prefixIcon: Icon(Icons.link_rounded),
+              ),
+            ),
+            const SizedBox(height: 10),
+            TextFormField(
+              controller: _qrCaptionCtrl,
+              maxLength: 120,
+              decoration: const InputDecoration(
+                labelText: 'QR caption (optional)',
+                hintText: 'Scan to review us',
+                prefixIcon: Icon(Icons.qr_code_2_rounded),
+                counterText: '',
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
   Widget _buildTemplatePanel() {
     return EnterprisePanel(
       child: Column(
@@ -881,7 +1150,7 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
         children: [
           const EnterpriseSectionHeader(
             title: 'Invoice template',
-            subtitle: 'Which layout the main receipt prints with.',
+            subtitle: 'Choose the customer-facing thermal receipt or paged office invoice layout.',
             icon: Icons.receipt_long_rounded,
             color: AppTheme.teal,
           ),
@@ -986,7 +1255,7 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
             const SizedBox(height: 8),
             const Text('Secondary printer template', style: TextStyle(fontWeight: FontWeight.w800)),
             const SizedBox(height: 8),
-            ..._templates.map((t) => _TemplateOptionTile(
+            ..._templates.where((t) => !t.isPaged).map((t) => _TemplateOptionTile(
                   template: t,
                   selected: _secondaryTemplate == t,
                   onSelected: () => setState(() => _secondaryTemplate = t),

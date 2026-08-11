@@ -866,8 +866,10 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
       ...meta,
       "customer_snapshot": customerSnap,
       "cash_received": cashReceived,
+      "change_amount": changeAmount,
       "delivery": effectiveDelivery,
       "payments": paymentsRaw,
+      "payments_snapshot": paymentsRaw,
     };
 
     // For reprints: use the official invoice_no. Also surface the offline
@@ -885,11 +887,23 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
       final qty = _d(m['quantity']);
       final lineTotal = _d(m['total']) != 0 ? _d(m['total']) : (price * qty);
 
+      final gross = (price * qty).abs();
+      final net = lineTotal.abs();
+      final lineDiscount = gross > net ? gross - net : 0.0;
+      final product = m['product'];
+      final unitRaw = m['unit_name'] ??
+          m['unit_symbol'] ??
+          (product is Map ? product['unit'] : null);
+      final unitName = unitRaw is Map
+          ? (unitRaw['symbol'] ?? unitRaw['name'] ?? '').toString()
+          : (unitRaw ?? '').toString();
       return SaleReceiptItem(
         name: name,
         price: price,
         qty: qty,
         total: lineTotal,
+        unitName: unitName,
+        discountAmount: lineDiscount,
       );
     }).toList();
 
@@ -918,7 +932,7 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
     debugPrint('Active printer connection: ${printerConfig.activeConnection}, template: ${mainTemplate.value}');
 
     var printedToHardware = false;
-    if (printerConfig.isNetworkPrinter && (printerConfig.networkIp ?? '').trim().isNotEmpty) {
+    if (printerConfig.isNetworkPrinter && mainTemplate.supportsRawNetwork && (printerConfig.networkIp ?? '').trim().isNotEmpty) {
       try {
         await ThermalPrinterService.instance.printSaleReceiptNetwork(
           printerIp: printerConfig.networkIp!.trim(),
@@ -939,6 +953,11 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
           sections: mainTemplate.sections,
           paperWidth: mainTemplate.paperWidthCode,
           footerLines: footerLines,
+          showLogo: printerConfig.printLogoEnabled && mainTemplate.isCustomerFacing,
+          logoData: printerConfig.printLogoData,
+          showQr: printerConfig.qrCodeEnabled && mainTemplate.isCustomerFacing,
+          qrUrl: printerConfig.qrCodeUrl,
+          qrCaption: printerConfig.qrCodeCaption,
         );
         printedToHardware = true;
 
@@ -992,8 +1011,14 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
           changeAmount: changeAmount,
           meta: printMeta,
           sections: mainTemplate.sections,
-          paperWidth: mainTemplate.paperWidthCode,
+          paperWidth: printerConfig.mainPaperCode,
           footerLines: footerLines,
+          invoiceHeading: printerConfig.invoiceHeading,
+          showLogo: printerConfig.printLogoEnabled && mainTemplate.isCustomerFacing,
+          logoData: printerConfig.printLogoData,
+          showQr: printerConfig.qrCodeEnabled && mainTemplate.isCustomerFacing,
+          qrUrl: printerConfig.qrCodeUrl,
+          qrCaption: printerConfig.qrCodeCaption,
         );
         printedToHardware = true;
 
@@ -1046,8 +1071,14 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
         grandTotal: total,
         meta: printMeta,
         sections: mainTemplate.sections,
-        paperWidth: mainTemplate.paperWidthCode,
+        paperWidth: printerConfig.mainPaperCode,
         footerLines: footerLines,
+        invoiceHeading: printerConfig.invoiceHeading,
+        showLogo: printerConfig.printLogoEnabled && mainTemplate.isCustomerFacing,
+        logoData: printerConfig.printLogoData,
+        showQr: printerConfig.qrCodeEnabled && mainTemplate.isCustomerFacing,
+        qrUrl: printerConfig.qrCodeUrl,
+        qrCaption: printerConfig.qrCodeCaption,
       );
     }
   }

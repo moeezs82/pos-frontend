@@ -2,27 +2,12 @@ import 'package:enterprise_pos/services/app_currency.dart' show AppCurrency;
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 
-/// Dialog that renders a size × color matrix from a set of variant product
-/// records belonging to one group. The cashier taps a cell to select that
-/// specific variant product, which is then returned to the caller.
+/// POS-first selector for a variable-product family.
 ///
-/// Usage:
-/// ```dart
-/// final picked = await showDialog<Map<String, dynamic>>(
-///   context: context,
-///   builder: (_) => VariantPickerDialog(
-///     groupName: 'Classic T-Shirt',
-///     variants: listOfProductMaps,
-///   ),
-/// );
-/// if (picked != null) _addToCart(picked);
-/// ```
-///
-/// Each element in [variants] is a raw product map as returned by the API
-/// (or the offline catalog cache). Required keys:
-///   id, name, price, variant_size (nullable), variant_color (nullable),
-///   is_active (1/0 or bool).
-class VariantPickerDialog extends StatelessWidget {
+/// [variants] always contains real product rows. The dialog only chooses one
+/// row and returns it; sale payloads, offline queueing, stock and accounting
+/// continue to use that child's existing product_id.
+class VariantPickerDialog extends StatefulWidget {
   final String groupName;
   final List<Map<String, dynamic>> variants;
 
@@ -33,69 +18,142 @@ class VariantPickerDialog extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
-    // Extract unique sizes and colors (preserving insertion order).
-    final sizes = <String>[];
-    final colors = <String>[];
-    for (final v in variants) {
-      final size = v['variant_size']?.toString() ?? '';
-      final color = v['variant_color']?.toString() ?? '';
-      if (size.isNotEmpty && !sizes.contains(size)) sizes.add(size);
-      if (color.isNotEmpty && !colors.contains(color)) colors.add(color);
-    }
+  State<VariantPickerDialog> createState() => _VariantPickerDialogState();
+}
 
-    final hasSizes = sizes.isNotEmpty;
-    final hasColors = colors.isNotEmpty;
+class _VariantPickerDialogState extends State<VariantPickerDialog> {
+  String? _selectedColor;
+
+  List<Map<String, dynamic>> get _activeVariants => widget.variants
+      .where(_isActive)
+      .toList(growable: false);
+
+  List<String> get _colors {
+    final values = <String>[];
+    for (final variant in _activeVariants) {
+      final value = _text(variant['variant_color']);
+      if (value.isNotEmpty && !values.contains(value)) values.add(value);
+    }
+    return values;
+  }
+
+  List<String> get _sizes {
+    final values = <String>[];
+    for (final variant in _activeVariants) {
+      final value = _text(variant['variant_size']);
+      if (value.isNotEmpty && !values.contains(value)) values.add(value);
+    }
+    return values;
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    final colors = _colors;
+    if (colors.isNotEmpty) _selectedColor = colors.first;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final variants = _activeVariants;
+    final colors = _colors;
+    final sizes = _sizes;
+    final useColorSizePicker = variants.isNotEmpty &&
+        variants.every((v) =>
+            _text(v['variant_size']).isNotEmpty &&
+            _text(v['variant_color']).isNotEmpty);
+    final offline = variants.isNotEmpty && variants.every((v) => v['_offline'] == true);
+
+    final visibleVariants = useColorSizePicker && _selectedColor != null
+        ? variants
+            .where((v) => _text(v['variant_color']) == _selectedColor)
+            .toList(growable: false)
+        : variants;
 
     return Dialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-      insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 40),
+      insetPadding: const EdgeInsets.symmetric(horizontal: 28, vertical: 32),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 560, maxHeight: 520),
+        constraints: const BoxConstraints(maxWidth: 640, maxHeight: 620),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // ── Header ──────────────────────────────────────────────────────
-            Container(
-              padding: const EdgeInsets.fromLTRB(20, 16, 12, 14),
-              decoration: const BoxDecoration(
-                color: AppTheme.navy,
-                borderRadius:
-                    BorderRadius.vertical(top: Radius.circular(14)),
-              ),
-              child: Row(
-                children: [
-                  const Icon(Icons.grid_view_rounded,
-                      color: Colors.white, size: 18),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      groupName,
-                      style: const TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w800,
-                          fontSize: 15),
-                    ),
-                  ),
-                  IconButton(
-                    onPressed: () => Navigator.pop(context),
-                    icon: const Icon(Icons.close_rounded,
-                        color: Colors.white, size: 20),
-                    visualDensity: VisualDensity.compact,
-                    tooltip: 'Close',
-                  ),
-                ],
-              ),
-            ),
-
-            // ── Matrix ──────────────────────────────────────────────────────
+            _buildHeader(context, variants.length, offline),
             Flexible(
               child: SingleChildScrollView(
-                padding: const EdgeInsets.all(16),
-                child: hasSizes && hasColors
-                    ? _buildMatrix(context, sizes, colors)
-                    : _buildFlatList(context, variants),
+                padding: const EdgeInsets.fromLTRB(22, 18, 22, 22),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    if (useColorSizePicker) ...[
+                      _sectionLabel(colors.length == 1 ? 'Color' : 'Choose color'),
+                      const SizedBox(height: 9),
+                      if (colors.length == 1)
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: _StaticAttributeChip(
+                            icon: Icons.palette_outlined,
+                            label: colors.first,
+                          ),
+                        )
+                      else
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: colors.map((color) {
+                            final selected = color == _selectedColor;
+                            final count = variants
+                                .where((v) => _text(v['variant_color']) == color)
+                                .length;
+                            return ChoiceChip(
+                              selected: selected,
+                              onSelected: (_) => setState(() => _selectedColor = color),
+                              avatar: Icon(
+                                Icons.circle,
+                                size: 9,
+                                color: selected ? AppTheme.primary : AppTheme.borderStrong,
+                              ),
+                              label: Text('$color  ·  $count'),
+                            );
+                          }).toList(),
+                        ),
+                      const SizedBox(height: 20),
+                    ],
+                    _sectionLabel(
+                      useColorSizePicker ? 'Choose size' : 'Choose variant',
+                    ),
+                    const SizedBox(height: 9),
+                    _buildVariantGrid(
+                      context,
+                      visibleVariants,
+                      sizeOnlyLabel: useColorSizePicker,
+                    ),
+                    const SizedBox(height: 14),
+                    Row(
+                      children: [
+                        const Icon(
+                          Icons.info_outline_rounded,
+                          size: 14,
+                          color: AppTheme.textMuted,
+                        ),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(
+                            offline
+                                ? 'Using the last synced offline catalog. The selected SKU will sync as its normal product when connectivity returns.'
+                                : 'Select the exact variant to add it to the sale.',
+                            style: const TextStyle(
+                              fontSize: 11,
+                              height: 1.3,
+                              color: AppTheme.textMuted,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
               ),
             ),
           ],
@@ -104,234 +162,385 @@ class VariantPickerDialog extends StatelessWidget {
     );
   }
 
-  /// Size × Color grid. Each cell is one variant; grey = inactive/out-of-stock.
-  Widget _buildMatrix(
-      BuildContext context, List<String> sizes, List<String> colors) {
-    final colCount = colors.length;
-
-    return Table(
-      columnWidths: {
-        // First column = size label
-        0: const IntrinsicColumnWidth(),
-        // Rest = color columns (equal width)
-        for (var i = 1; i <= colCount; i++) i: const FlexColumnWidth(),
-      },
-      children: [
-        // Header row: color labels
-        TableRow(
-          children: [
-            const SizedBox.shrink(), // empty corner
-            ...colors.map((c) => _headerCell(c)),
-          ],
-        ),
-        // Data rows: one per size
-        ...sizes.map((size) => TableRow(
+  Widget _buildHeader(
+    BuildContext context,
+    int variantCount,
+    bool offline,
+  ) {
+    final range = _priceRange(_activeVariants);
+    return Container(
+      padding: const EdgeInsets.fromLTRB(20, 16, 12, 16),
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        border: Border(bottom: BorderSide(color: AppTheme.border)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 42,
+            height: 42,
+            decoration: BoxDecoration(
+              color: AppTheme.primarySoft,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: const Icon(
+              Icons.tune_rounded,
+              color: AppTheme.primary,
+              size: 21,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Row header: size label
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(0, 6, 12, 6),
-                  child: Text(
-                    size,
-                    style: const TextStyle(
-                        fontWeight: FontWeight.w700,
-                        fontSize: 12,
-                        color: AppTheme.navy),
+                Text(
+                  widget.groupName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: AppTheme.navy,
+                    fontSize: 17,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: -.2,
                   ),
                 ),
-                // One cell per color
-                ...colors.map((color) {
-                  final variant = _findVariant(size, color);
-                  return _MatrixCell(
-                    variant: variant,
-                    onTap: variant != null && _isActive(variant)
-                        ? () => Navigator.pop(context, variant)
-                        : null,
-                  );
-                }),
+                const SizedBox(height: 3),
+                Wrap(
+                  spacing: 7,
+                  runSpacing: 3,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    Text(
+                      variantCount == 1 ? '1 variant' : '$variantCount variants',
+                      style: const TextStyle(
+                        color: AppTheme.textMuted,
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    if (range.isNotEmpty) ...[
+                      const Text('•', style: TextStyle(color: AppTheme.borderStrong)),
+                      Text(
+                        range,
+                        style: const TextStyle(
+                          color: AppTheme.primary,
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ],
+                    if (offline) ...[
+                      const Text('•', style: TextStyle(color: AppTheme.borderStrong)),
+                      const Text(
+                        'Offline catalog',
+                        style: TextStyle(
+                          color: AppTheme.warning,
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
               ],
-            )),
-      ],
-    );
-  }
-
-  /// Flat list for groups that only use size OR only color (no matrix).
-  Widget _buildFlatList(
-      BuildContext context, List<Map<String, dynamic>> vList) {
-    return Wrap(
-      spacing: 8,
-      runSpacing: 8,
-      children: vList.map((v) {
-        final active = _isActive(v);
-        final label = _variantLabel(v);
-        final price = AppCurrency.format(v['price'] ?? 0);
-        return _FlatChip(
-          label: label,
-          price: price,
-          enabled: active,
-          onTap: active ? () => Navigator.pop(context, v) : null,
-        );
-      }).toList(),
-    );
-  }
-
-  Widget _headerCell(String text) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
-      child: Text(
-        text,
-        textAlign: TextAlign.center,
-        style: const TextStyle(
-            fontSize: 11,
-            fontWeight: FontWeight.w700,
-            color: AppTheme.textMuted),
+            ),
+          ),
+          IconButton(
+            onPressed: () => Navigator.pop(context),
+            tooltip: 'Close',
+            icon: const Icon(Icons.close_rounded, color: AppTheme.textMuted),
+          ),
+        ],
       ),
     );
   }
 
-  Map<String, dynamic>? _findVariant(String size, String color) {
-    for (final v in variants) {
-      if ((v['variant_size']?.toString() ?? '') == size &&
-          (v['variant_color']?.toString() ?? '') == color) {
-        return v;
-      }
-    }
-    return null;
-  }
-
-  static bool _isActive(Map<String, dynamic> v) {
-    return v['is_active'] == 1 || v['is_active'] == true;
-  }
-
-  static String _variantLabel(Map<String, dynamic> v) {
-    final size = v['variant_size']?.toString() ?? '';
-    final color = v['variant_color']?.toString() ?? '';
-    final parts = [if (size.isNotEmpty) size, if (color.isNotEmpty) color];
-    return parts.isEmpty ? v['name']?.toString() ?? '—' : parts.join(' / ');
-  }
-}
-
-// ── Matrix cell ───────────────────────────────────────────────────────────────
-
-class _MatrixCell extends StatelessWidget {
-  final Map<String, dynamic>? variant;
-  final VoidCallback? onTap;
-
-  const _MatrixCell({this.variant, this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    if (variant == null) {
+  Widget _buildVariantGrid(
+    BuildContext context,
+    List<Map<String, dynamic>> variants, {
+    required bool sizeOnlyLabel,
+  }) {
+    if (variants.isEmpty) {
       return Container(
-        margin: const EdgeInsets.all(3),
-        height: 52,
+        padding: const EdgeInsets.all(20),
         decoration: BoxDecoration(
           color: AppTheme.surfaceSoft,
-          borderRadius: BorderRadius.circular(6),
-          border: Border.all(
-              color: AppTheme.border, style: BorderStyle.none),
+          borderRadius: BorderRadius.circular(12),
         ),
-        child: const Center(
-          child: Text('—',
-              style: TextStyle(
-                  fontSize: 12, color: AppTheme.textMuted)),
+        child: const Text(
+          'No active variants are available for this selection.',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: AppTheme.textMuted,
+            fontWeight: FontWeight.w700,
+          ),
         ),
       );
     }
 
-    final active = onTap != null;
-    final price = AppCurrency.format(variant!['price'] ?? 0);
-
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        margin: const EdgeInsets.all(3),
-        height: 52,
-        decoration: BoxDecoration(
-          color: active ? Colors.white : AppTheme.surfaceSoft,
-          borderRadius: BorderRadius.circular(6),
-          border: Border.all(
-              color: active ? AppTheme.primary : AppTheme.border),
-        ),
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(6),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Text(
-                price,
-                style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                    color: active ? AppTheme.navy : AppTheme.textMuted),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth;
+        final itemWidth = width >= 560
+            ? (width - 20) / 3
+            : width >= 380
+                ? (width - 10) / 2
+                : width;
+        return Wrap(
+          spacing: 10,
+          runSpacing: 10,
+          children: variants.map((variant) {
+            final size = _text(variant['variant_size']);
+            final color = _text(variant['variant_color']);
+            final label = sizeOnlyLabel && size.isNotEmpty
+                ? size
+                : _variantChoiceLabel(variant);
+            return SizedBox(
+              width: itemWidth,
+              child: _VariantOptionCard(
+                label: label,
+                secondary: sizeOnlyLabel && color.isNotEmpty && _colors.length <= 1
+                    ? color
+                    : null,
+                price: AppCurrency.format(variant['price'] ?? 0),
+                stock: _stockQuantity(variant),
+                onTap: () => Navigator.pop(context, variant),
               ),
-              if (!active)
-                const Text('N/A',
-                    style: TextStyle(
-                        fontSize: 10, color: AppTheme.textMuted)),
+            );
+          }).toList(),
+        );
+      },
+    );
+  }
+
+  Widget _sectionLabel(String text) {
+    return Text(
+      text,
+      style: const TextStyle(
+        color: AppTheme.navy,
+        fontSize: 12.5,
+        fontWeight: FontWeight.w900,
+      ),
+    );
+  }
+
+  static bool _isActive(Map<String, dynamic> variant) {
+    final raw = variant['is_active'];
+    if (raw == null) return true;
+    if (raw is bool) return raw;
+    if (raw is num) return raw != 0;
+    final value = raw.toString().trim().toLowerCase();
+    return value == '1' || value == 'true' || value == 'yes';
+  }
+
+  static String _text(dynamic value) => value?.toString().trim() ?? '';
+
+
+  static String _variantChoiceLabel(Map<String, dynamic> variant) {
+    final size = _text(variant['variant_size']);
+    final color = _text(variant['variant_color']);
+    final parts = <String>[
+      if (size.isNotEmpty) size,
+      if (color.isNotEmpty) color,
+    ];
+    return parts.isEmpty ? _fallbackVariantLabel(variant) : parts.join(' • ');
+  }
+  static String _fallbackVariantLabel(Map<String, dynamic> variant) {
+    final name = _text(variant['name']);
+    return name.isEmpty ? 'Variant' : name;
+  }
+
+  static double? _stockQuantity(Map<String, dynamic> variant) {
+    dynamic raw = variant['branch_stock'] ??
+        variant['stock'] ??
+        variant['quantity_in_stock'];
+    if (raw is Map) {
+      raw = raw['quantity'] ?? raw['qty'] ?? raw['in_stock'];
+    }
+    if (raw == null) return null;
+    if (raw is num) return raw.toDouble();
+    return double.tryParse(raw.toString());
+  }
+
+  static String _priceRange(List<Map<String, dynamic>> variants) {
+    final prices = variants
+        .map((v) {
+          final raw = v['price'];
+          if (raw is num) return raw.toDouble();
+          return double.tryParse(raw?.toString() ?? '');
+        })
+        .whereType<double>()
+        .toList();
+    if (prices.isEmpty) return '';
+    final min = prices.reduce((a, b) => a < b ? a : b);
+    final max = prices.reduce((a, b) => a > b ? a : b);
+    if ((max - min).abs() < 0.000001) return AppCurrency.format(min);
+    return '${AppCurrency.format(min)} – ${AppCurrency.format(max)}';
+  }
+}
+
+class _StaticAttributeChip extends StatelessWidget {
+  final IconData icon;
+  final String label;
+
+  const _StaticAttributeChip({required this.icon, required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: AppTheme.primarySoft,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: AppTheme.primary.withOpacity(.25)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 14, color: AppTheme.primary),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: const TextStyle(
+              color: AppTheme.primaryDark,
+              fontSize: 12,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _VariantOptionCard extends StatelessWidget {
+  final String label;
+  final String? secondary;
+  final String price;
+  final double? stock;
+  final VoidCallback onTap;
+
+  const _VariantOptionCard({
+    required this.label,
+    required this.price,
+    required this.onTap,
+    this.secondary,
+    this.stock,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final stockText = stock == null
+        ? null
+        : '${_compactQty(stock!)} in stock';
+
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: AppTheme.borderStrong),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 38,
+                height: 38,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: AppTheme.primarySoft,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: AppTheme.primaryDark,
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      price,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: AppTheme.navy,
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    if (secondary != null && secondary!.isNotEmpty) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        secondary!,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: AppTheme.textMuted,
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ] else if (stockText != null) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        stockText,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: AppTheme.textMuted,
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                    if (secondary != null && secondary!.isNotEmpty && stockText != null) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        stockText,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: AppTheme.textMuted,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              const Icon(
+                Icons.chevron_right_rounded,
+                color: AppTheme.textMuted,
+                size: 18,
+              ),
             ],
           ),
         ),
       ),
     );
   }
-}
 
-// ── Flat chip (size-only or color-only groups) ────────────────────────────────
-
-class _FlatChip extends StatelessWidget {
-  final String label;
-  final String price;
-  final bool enabled;
-  final VoidCallback? onTap;
-
-  const _FlatChip({
-    required this.label,
-    required this.price,
-    required this.enabled,
-    this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding:
-            const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        decoration: BoxDecoration(
-          color: enabled ? Colors.white : AppTheme.surfaceSoft,
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(
-              color:
-                  enabled ? AppTheme.primary : AppTheme.border),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              label,
-              style: TextStyle(
-                  fontWeight: FontWeight.w700,
-                  fontSize: 13,
-                  color: enabled ? AppTheme.navy : AppTheme.textMuted),
-            ),
-            const SizedBox(height: 2),
-            Text(
-              price,
-              style: TextStyle(
-                  fontSize: 12,
-                  color: enabled
-                      ? AppTheme.primary
-                      : AppTheme.textMuted),
-            ),
-            if (!enabled)
-              const Text('Inactive',
-                  style: TextStyle(
-                      fontSize: 10, color: AppTheme.textMuted)),
-          ],
-        ),
-      ),
-    );
+  static String _compactQty(double value) {
+    if ((value - value.roundToDouble()).abs() < 0.000001) {
+      return value.toStringAsFixed(0);
+    }
+    return value.toStringAsFixed(2);
   }
 }

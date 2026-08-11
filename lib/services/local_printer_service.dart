@@ -54,6 +54,12 @@ class LocalPrinterService {
     String paperWidth = 'mm80',
     List<String> footerLines = const [],
     String? receiptHeader,
+    String invoiceHeading = 'SALES INVOICE',
+    bool showLogo = false,
+    String? logoData,
+    bool showQr = false,
+    String? qrUrl,
+    String qrCaption = 'Scan to review us',
     String? jobName,
   }) async {
     final printer = await requirePrinter(printerName);
@@ -79,6 +85,12 @@ class LocalPrinterService {
       paperWidth: paperWidth,
       footerLines: footerLines,
       receiptHeader: receiptHeader,
+      invoiceHeading: invoiceHeading,
+      showLogo: showLogo,
+      logoData: logoData,
+      showQr: showQr,
+      qrUrl: qrUrl,
+      qrCaption: qrCaption,
     );
 
     final format = _pageFormat(paperWidth);
@@ -91,7 +103,7 @@ class LocalPrinterService {
       // configuration already defined by its installed driver. This is
       // especially important for USB thermal printers whose printable area is
       // narrower/offset from the nominal 58 mm or 80 mm roll.
-      usePrinterSettings: true,
+      usePrinterSettings: paperWidth == 'mm58' || paperWidth == 'mm80',
       onLayout: (_) async => bytes,
     );
 
@@ -110,6 +122,12 @@ class LocalPrinterService {
     List<String> footerLines = const [],
     String? receiptHeader,
     String copyLabel = 'LOCAL PRINTER TEST',
+    String invoiceHeading = 'SALES INVOICE',
+    bool showLogo = false,
+    String? logoData,
+    bool showQr = false,
+    String? qrUrl,
+    String qrCaption = 'Scan to review us',
   }) {
     final now = DateTime.now();
     return printSaleReceipt(
@@ -122,18 +140,25 @@ class LocalPrinterService {
       items: [
         SaleReceiptItem(
           name: copyLabel,
-          price: 0,
+          price: 1250,
           qty: 1,
-          total: 0,
+          total: 1200,
+          unitName: 'PCS',
+          discountAmount: 50,
         ),
       ],
-      subtotal: 0,
-      discount: 0,
+      subtotal: 1250,
+      discount: 50,
       tax: 0,
-      grandTotal: 0,
+      grandTotal: 1200,
       cashReceived: 0,
       changeAmount: 0,
-      meta: const <String, dynamic>{},
+      meta: const <String, dynamic>{
+        'customer_snapshot': {'name': 'Walk-in Customer'},
+        'payments_snapshot': [
+          {'method': 'cash', 'label': 'Cash', 'amount': 1200},
+        ],
+      },
       sections: sections,
       paperWidth: paperWidth,
       footerLines: [
@@ -141,6 +166,12 @@ class LocalPrinterService {
         'Printer connection successful',
       ],
       receiptHeader: receiptHeader,
+      invoiceHeading: invoiceHeading,
+      showLogo: showLogo,
+      logoData: logoData,
+      showQr: showQr,
+      qrUrl: qrUrl,
+      qrCaption: qrCaption,
       jobName: 'CounterIQ Printer Test',
     );
   }

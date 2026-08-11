@@ -1451,11 +1451,20 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         final qty = double.tryParse(i['quantity']?.toString() ?? '') ?? 0.0;
         final lineTotal =
             double.tryParse(i['total']?.toString() ?? '') ?? (price * qty);
+        final gross = (price * qty).abs();
+        final net = lineTotal.abs();
+        final lineDiscount = gross > net ? gross - net : 0.0;
+        final unitRaw = i['unit_name'] ?? i['unit_symbol'] ?? i['unit'];
+        final unitName = unitRaw is Map
+            ? (unitRaw['symbol'] ?? unitRaw['name'] ?? '').toString()
+            : (unitRaw ?? '').toString();
         return SaleReceiptItem(
           name: name,
           price: price,
           qty: qty,
           total: lineTotal,
+          unitName: unitName,
+          discountAmount: lineDiscount,
         );
       }).toList();
       final printerConfig = context.read<PrinterConfigProvider>();
@@ -1483,7 +1492,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       debugPrint('Active printer connection: ${printerConfig.activeConnection}, template: ${mainTemplate.value}');
 
       var printedToHardware = false;
-      if (printerConfig.isNetworkPrinter && (printerConfig.networkIp ?? '').trim().isNotEmpty) {
+      if (printerConfig.isNetworkPrinter && mainTemplate.supportsRawNetwork && (printerConfig.networkIp ?? '').trim().isNotEmpty) {
         try {
           await ThermalPrinterService.instance.printSaleReceiptNetwork(
             printerIp: printerConfig.networkIp!.trim(),
@@ -1504,6 +1513,11 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
             sections: mainTemplate.sections,
             paperWidth: mainTemplate.paperWidthCode,
             footerLines: footerLines,
+            showLogo: printerConfig.printLogoEnabled && mainTemplate.isCustomerFacing,
+            logoData: printerConfig.printLogoData,
+            showQr: printerConfig.qrCodeEnabled && mainTemplate.isCustomerFacing,
+            qrUrl: printerConfig.qrCodeUrl,
+            qrCaption: printerConfig.qrCodeCaption,
           );
           printedToHardware = true;
 
@@ -1557,8 +1571,14 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
             changeAmount: changeAmount,
             meta: meta,
             sections: mainTemplate.sections,
-            paperWidth: mainTemplate.paperWidthCode,
+            paperWidth: printerConfig.mainPaperCode,
             footerLines: footerLines,
+            invoiceHeading: printerConfig.invoiceHeading,
+            showLogo: printerConfig.printLogoEnabled && mainTemplate.isCustomerFacing,
+            logoData: printerConfig.printLogoData,
+            showQr: printerConfig.qrCodeEnabled && mainTemplate.isCustomerFacing,
+            qrUrl: printerConfig.qrCodeUrl,
+            qrCaption: printerConfig.qrCodeCaption,
           );
           printedToHardware = true;
 
@@ -1611,8 +1631,14 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
           grandTotal: total,
           meta: meta,
           sections: mainTemplate.sections,
-          paperWidth: mainTemplate.paperWidthCode,
+          paperWidth: printerConfig.mainPaperCode,
           footerLines: footerLines,
+          invoiceHeading: printerConfig.invoiceHeading,
+          showLogo: printerConfig.printLogoEnabled && mainTemplate.isCustomerFacing,
+          logoData: printerConfig.printLogoData,
+          showQr: printerConfig.qrCodeEnabled && mainTemplate.isCustomerFacing,
+          qrUrl: printerConfig.qrCodeUrl,
+          qrCaption: printerConfig.qrCodeCaption,
         );
       }
 
@@ -1639,8 +1665,14 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
             grandTotal: total,
             meta: meta,
             sections: mainTemplate.sections,
-            paperWidth: mainTemplate.paperWidthCode,
+            paperWidth: printerConfig.mainPaperCode,
             footerLines: footerLines,
+            invoiceHeading: printerConfig.invoiceHeading,
+            showLogo: printerConfig.printLogoEnabled && mainTemplate.isCustomerFacing,
+            logoData: printerConfig.printLogoData,
+            showQr: printerConfig.qrCodeEnabled && mainTemplate.isCustomerFacing,
+            qrUrl: printerConfig.qrCodeUrl,
+            qrCaption: printerConfig.qrCodeCaption,
           );
           final prepared =
               await WhatsAppInvoiceService.instance.prepareAndOpen(

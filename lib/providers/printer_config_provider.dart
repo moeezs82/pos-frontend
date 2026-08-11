@@ -46,6 +46,14 @@ class PrinterConfigProvider extends ChangeNotifier {
   int get secondaryNetworkPort => _config.secondaryNetworkPort;
   String? get secondaryLocalPrinterName => _config.secondaryLocalPrinterName;
   InvoiceTemplate get mainInvoiceTemplate => _config.mainInvoiceTemplate;
+  String get invoicePaperSize => _config.invoicePaperSize;
+  String get invoiceHeading => _config.invoiceHeading;
+  bool get printLogoEnabled => _config.printLogoEnabled;
+  String? get printLogoData => _config.printLogoData;
+  bool get qrCodeEnabled => _config.qrCodeEnabled;
+  String? get qrCodeUrl => _config.qrCodeUrl;
+  String get qrCodeCaption => _config.qrCodeCaption;
+  String get mainPaperCode => _config.mainPaperCode;
   InvoiceTemplate get secondaryInvoiceTemplate =>
       _config.secondaryInvoiceTemplate;
   String get secondaryReceiptHeader => _config.secondaryReceiptHeader;
