@@ -162,6 +162,18 @@ class ProductService {
     }
   }
 
+  /// Load one complete product record for edit/print actions from management UI.
+  Future<Map<String, dynamic>> getProduct(int id) async {
+    final res = await _client.get("/products/$id");
+    final data = res["data"];
+    if (data is Map) {
+      final product = data["product"];
+      if (product is Map) return Map<String, dynamic>.from(product);
+      return Map<String, dynamic>.from(data);
+    }
+    throw Exception('Product not found');
+  }
+
   /// Delete product
   Future<void> deleteProduct(int id) async {
     await _client.delete("/products/$id");
@@ -208,5 +220,36 @@ class ProductService {
     );
     final data = res['data'] ?? res;
     return ProductImportReport.fromJson(Map<String, dynamic>.from(data));
+  }
+
+  // ── Identifier generation ─────────────────────────────────────────────────
+  //
+  // Both methods call the backend rather than generating locally, which
+  // guarantees uniqueness within the caller's branch at the moment of
+  // generation.  The backend loops until a unique value is found, so the
+  // result is always safe to submit as-is (barring a race between generation
+  // and the final save, which the backend validates again on write).
+
+  /// Generates a unique SKU for a simple product in the caller's branch.
+  ///
+  /// [productName] is used to build a human-readable prefix (e.g. "T-Shirt"
+  /// → "TSH-…").  An empty name falls back to the "SKU" prefix on the backend.
+  Future<String> generateSKU({required String productName}) async {
+    final res = await _client.post('/products/generate-sku', body: {
+      'group_name': productName, // backend reuses the group_name field
+      'size': '',
+      'color': '',
+    });
+    final data = res['data'];
+    if (data is Map) return (data['sku'] ?? '').toString();
+    return '';
+  }
+
+  /// Generates a unique 13-digit EAN-style barcode in the caller's branch.
+  Future<String> generateBarcode() async {
+    final res = await _client.post('/products/generate-barcode', body: {});
+    final data = res['data'];
+    if (data is Map) return (data['barcode'] ?? '').toString();
+    return '';
   }
 }

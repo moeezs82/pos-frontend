@@ -62,8 +62,8 @@ class ApiDownloadResponse {
 class ApiClient {
   // static const String baseUrl = "http://127.0.0.1:8003/api/v1";
   // static const String baseUrl = "http://localhost/pos-backend/public/api/v1";
-  // static const String baseUrl = "http://127.0.0.1:8080/api/v1";
-  static const String baseUrl = "https://145.223.118.86:18443/api/v1";
+  static const String baseUrl = "http://127.0.0.1:8080/api/v1";
+  // static const String baseUrl = "https://145.223.118.86:18443/api/v1";
   final String? token;
 
   /// Set this callback in main.dart to be notified whenever any API call

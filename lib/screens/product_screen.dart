@@ -1,7 +1,10 @@
 import 'dart:async';
 
+import 'package:enterprise_pos/api/product_group_service.dart';
 import 'package:enterprise_pos/api/product_service.dart';
 import 'package:enterprise_pos/forms/product_form_screen.dart';
+import 'package:enterprise_pos/forms/variable_product_form_screen.dart';
+import 'package:enterprise_pos/screens/product_group_detail_screen.dart';
 import 'package:enterprise_pos/providers/branch_provider.dart';
 import 'package:enterprise_pos/providers/printer_config_provider.dart';
 import 'package:enterprise_pos/services/report_file_saver.dart';
@@ -24,17 +27,20 @@ class ProductsScreen extends StatefulWidget {
   State<ProductsScreen> createState() => _ProductsScreenState();
 }
 
-// ─── Autocomplete search field ────────────────────────────────────────────────
+// ─── Unified management autocomplete search field ─────────────────────────────
 
 class _ProductAutoSearchField extends StatefulWidget {
   final TextEditingController controller;
-  final ProductService productService;
+  final ProductGroupService productGroupService;
+  final String typeFilter;
   final VoidCallback onSearch;
   final VoidCallback onClear;
-  final ValueChanged<Map<String, dynamic>> onQuickView;
+  final ValueChanged<ManagementItem> onQuickView;
+
   const _ProductAutoSearchField({
     required this.controller,
-    required this.productService,
+    required this.productGroupService,
+    required this.typeFilter,
     required this.onSearch,
     required this.onClear,
     required this.onQuickView,
@@ -45,32 +51,20 @@ class _ProductAutoSearchField extends StatefulWidget {
 }
 
 class _ProductAutoSearchFieldState extends State<_ProductAutoSearchField> {
-  /// Key on the search field container — used to locate it on screen so the
-  /// dropdown can be positioned without CompositedTransformFollower.
   final _fieldKey = GlobalKey();
-
   late final FocusNode _focusNode;
   OverlayEntry? _overlayEntry;
-  List<Map<String, dynamic>> _suggestions = [];
+  List<ManagementItem> _suggestions = [];
   int _focusedIndex = -1;
   Timer? _debounce;
   bool _fetchingHints = false;
-
-  // Windows precision touchpads can keep the pointer gesture active longer
-  // than a physical mouse click. While the user is interacting with the
-  // autocomplete overlay, do not let the TextField focus-loss callback tear
-  // the overlay down before InkWell receives its onTap.
   bool _overlayPointerDown = false;
-
-  /// Cached absolute position for the dropdown (recomputed each open).
   Offset _dropdownOffset = Offset.zero;
   double _dropdownWidth = 420;
 
   @override
   void initState() {
     super.initState();
-    // Key events are intercepted at the FocusNode level so they run before
-    // TextField's own handlers (e.g. preventing cursor-move on ArrowDown).
     _focusNode = FocusNode(onKeyEvent: _handleKeyEvent);
     widget.controller.addListener(_onControllerChanged);
     _focusNode.addListener(_onFocusChanged);
@@ -86,76 +80,59 @@ class _ProductAutoSearchFieldState extends State<_ProductAutoSearchField> {
     super.dispose();
   }
 
-  // ── Key navigation ────────────────────────────────────────────────────────
-
   KeyEventResult _handleKeyEvent(FocusNode node, KeyEvent event) {
-    // Only act on down-events (and repeats for held arrow keys).
     if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
       return KeyEventResult.ignored;
     }
-    // No dropdown → pass every key through to TextField as normal.
     if (_suggestions.isEmpty || _overlayEntry == null) {
       return KeyEventResult.ignored;
     }
-
     final key = event.logicalKey;
-
     if (key == LogicalKeyboardKey.arrowDown) {
-      setState(() => _focusedIndex = (_focusedIndex + 1).clamp(0, _suggestions.length - 1));
+      setState(() =>
+          _focusedIndex = (_focusedIndex + 1).clamp(0, _suggestions.length - 1));
       _overlayEntry?.markNeedsBuild();
       return KeyEventResult.handled;
     }
     if (key == LogicalKeyboardKey.arrowUp) {
-      setState(() => _focusedIndex = (_focusedIndex - 1).clamp(-1, _suggestions.length - 1));
+      setState(() => _focusedIndex =
+          (_focusedIndex - 1).clamp(-1, _suggestions.length - 1));
       _overlayEntry?.markNeedsBuild();
       return KeyEventResult.handled;
     }
-    if (key == LogicalKeyboardKey.enter || key == LogicalKeyboardKey.numpadEnter) {
+    if (key == LogicalKeyboardKey.enter ||
+        key == LogicalKeyboardKey.numpadEnter) {
       if (_focusedIndex >= 0) {
         _selectAtIndex(_focusedIndex);
         return KeyEventResult.handled;
       }
-      // No item highlighted → let TextField fire onSubmitted normally.
       return KeyEventResult.ignored;
     }
     if (key == LogicalKeyboardKey.escape) {
-      // Consume Escape so the global "go back" shortcut doesn't also fire.
       _removeOverlay();
       return KeyEventResult.handled;
     }
-
     return KeyEventResult.ignored;
   }
 
-  // ── Overlay lifecycle ─────────────────────────────────────────────────────
-
-  void _onControllerChanged() => setState(() {});
+  void _onControllerChanged() {
+    if (mounted) setState(() {});
+  }
 
   void _onFocusChanged() {
     if (!_focusNode.hasFocus) {
-      // A physical mouse click usually completes before this delay, but a
-      // precision-touchpad tap/click can take longer. Keep the overlay alive
-      // while a pointer interaction inside it is still in progress.
       Future.delayed(const Duration(milliseconds: 150), () {
-        if (mounted &&
-            !_focusNode.hasFocus &&
-            !_overlayPointerDown) {
+        if (mounted && !_focusNode.hasFocus && !_overlayPointerDown) {
           _removeOverlay();
         }
       });
     }
   }
 
-  void _beginOverlayPointerInteraction() {
-    _overlayPointerDown = true;
-  }
+  void _beginOverlayPointerInteraction() => _overlayPointerDown = true;
 
   void _endOverlayPointerInteraction() {
     _overlayPointerDown = false;
-
-    // If the pointer interaction did not result in a row/icon tap, allow the
-    // overlay to close normally after the gesture has fully completed. The
-    // extra delay is intentionally longer than the same-event InkWell onTap.
     if (!_focusNode.hasFocus) {
       Future.delayed(const Duration(milliseconds: 200), () {
         if (mounted &&
@@ -171,29 +148,45 @@ class _ProductAutoSearchFieldState extends State<_ProductAutoSearchField> {
   void _removeOverlay() {
     _overlayEntry?.remove();
     _overlayEntry = null;
-    if (mounted) setState(() { _suggestions = []; _focusedIndex = -1; });
+    if (mounted) {
+      setState(() {
+        _suggestions = [];
+        _focusedIndex = -1;
+      });
+    }
   }
 
   void _onChanged(String value) {
     _debounce?.cancel();
     final query = value.trim();
-    if (query.length < 2) { _removeOverlay(); return; }
-    _debounce = Timer(const Duration(milliseconds: 350), () => _fetchSuggestions(query));
+    if (query.length < 2) {
+      _removeOverlay();
+      return;
+    }
+    _debounce = Timer(
+      const Duration(milliseconds: 350),
+      () => _fetchSuggestions(query),
+    );
   }
 
   Future<void> _fetchSuggestions(String query) async {
     if (!mounted) return;
     setState(() => _fetchingHints = true);
     try {
-      final data = await widget.productService.getProducts(page: 1, search: query);
-      final wrapper = (data['data'] as List).first;
-      final items = (wrapper['products'] as List<dynamic>)
-          .take(8)
-          .map((e) => Map<String, dynamic>.from(e as Map))
+      final data = await widget.productGroupService.managementCatalog(
+        page: 1,
+        perPage: 8,
+        search: query,
+        type: widget.typeFilter == 'all' ? null : widget.typeFilter,
+      );
+      final raw = (data['data'] as List?) ?? const [];
+      final items = raw
+          .whereType<Map>()
+          .map((e) => ManagementItem.fromJson(Map<String, dynamic>.from(e)))
           .toList();
       if (!mounted) return;
       _suggestions = items;
-      _focusedIndex = -1; // reset keyboard selection on each new result set
+      _focusedIndex = -1;
       if (items.isNotEmpty && _focusNode.hasFocus) {
         _showOrUpdateOverlay();
       } else {
@@ -211,44 +204,40 @@ class _ProductAutoSearchFieldState extends State<_ProductAutoSearchField> {
       _overlayEntry!.markNeedsBuild();
       return;
     }
-    // Compute absolute screen position once, when the overlay is first created.
-    // This avoids CompositedTransformFollower / RenderFollowerLayer entirely.
     final renderBox = _fieldKey.currentContext?.findRenderObject() as RenderBox?;
     if (renderBox != null) {
       final globalOffset = renderBox.localToGlobal(Offset.zero);
-      _dropdownOffset = Offset(globalOffset.dx, globalOffset.dy + renderBox.size.height);
-      _dropdownWidth = renderBox.size.width.clamp(320.0, 520.0);
+      _dropdownOffset =
+          Offset(globalOffset.dx, globalOffset.dy + renderBox.size.height);
+      _dropdownWidth = renderBox.size.width.clamp(320.0, 560.0);
     }
     _overlayEntry = OverlayEntry(builder: _buildOverlayContent);
     Overlay.of(context).insert(_overlayEntry!);
   }
 
-  // ── Actions ───────────────────────────────────────────────────────────────
-
   void _selectAtIndex(int index) {
     if (index < 0 || index >= _suggestions.length) return;
-    final p = _suggestions[index];
-    widget.controller.text = (p['name'] ?? '').toString();
+    final item = _suggestions[index];
+    widget.controller.text = item.name;
     _removeOverlay();
     widget.onSearch();
   }
 
   void _quickViewAtIndex(int index) {
     if (index < 0 || index >= _suggestions.length) return;
-
-    // Capture the product before the overlay state is cleared, then let the
-    // parent screen use the same _openForm navigation path as the normal Edit
-    // action. This avoids route pushes from a disappearing OverlayEntry.
-    final p = Map<String, dynamic>.from(_suggestions[index]);
+    final item = _suggestions[index];
     _removeOverlay();
-    widget.onQuickView(p);
+    widget.onQuickView(item);
   }
 
-  // ── Overlay UI ────────────────────────────────────────────────────────────
+  String _priceLabel(ManagementItem item) {
+    if (!item.isVariable) return AppCurrency.format(item.price ?? 0);
+    if (item.minPrice == null || item.maxPrice == null) return '—';
+    if (item.minPrice == item.maxPrice) return AppCurrency.format(item.minPrice!);
+    return '${AppCurrency.format(item.minPrice!)} – ${AppCurrency.format(item.maxPrice!)}';
+  }
 
   Widget _buildOverlayContent(BuildContext ctx) {
-    // Plain Positioned at the precomputed absolute screen offset.
-    // No CompositedTransformFollower — avoids all RenderFollowerLayer errors.
     return Positioned(
       left: _dropdownOffset.dx,
       top: _dropdownOffset.dy,
@@ -260,102 +249,113 @@ class _ProductAutoSearchFieldState extends State<_ProductAutoSearchField> {
         onPointerCancel: (_) => _endOverlayPointerInteraction(),
         child: Material(
           elevation: 8,
-        borderRadius: BorderRadius.circular(12),
-        clipBehavior: Clip.antiAlias,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: List.generate(_suggestions.length, (i) {
-                  final p = _suggestions[i];
-                  final isFocused = i == _focusedIndex;
-                  final name = (p['name'] ?? '').toString();
-                  final sku = (p['sku'] ?? '—').toString();
-                  final price = AppCurrency.format(p['price']);
-                  // The row tap (select/search) and the quick-view icon are in
-                  // separate, non-overlapping widgets so their gestures never
-                  // compete. Using nested InkWells previously caused both onTap
-                  // callbacks to fire on a single tap.
-                  return ColoredBox(
-                    color: isFocused ? AppTheme.primarySoft : Colors.transparent,
-                    child: Row(
-                      children: [
-                        // ── Tappable left area (select & search) ──────────
-                        Expanded(
-                          child: InkWell(
-                            canRequestFocus: false,
-                            onTap: () => _selectAtIndex(i),
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                              child: Row(
-                                children: [
-                                  Icon(
-                                    Icons.inventory_2_rounded,
-                                    size: 16,
-                                    color: isFocused
-                                        ? AppTheme.primary
-                                        : AppTheme.primary.withOpacity(0.55),
-                                  ),
-                                  const SizedBox(width: 10),
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          name,
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: TextStyle(
-                                            fontWeight: FontWeight.w700,
-                                            fontSize: 13,
-                                            color: isFocused
-                                                ? AppTheme.primary
-                                                : AppTheme.navy,
-                                          ),
-                                        ),
-                                        const SizedBox(height: 2),
-                                        Text(
-                                          'SKU: $sku · $price',
-                                          style: const TextStyle(
-                                            fontSize: 11,
-                                            color: AppTheme.textMuted,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ),
-
-                        // ── Quick-view icon (separate tap area) ───────────
-                        Tooltip(
-                          message: 'Quick view / edit',
-                          child: InkWell(
-                            canRequestFocus: false,
-                            onTap: () => _quickViewAtIndex(i),
-                            borderRadius: BorderRadius.circular(6),
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 12, vertical: 10),
-                              child: Icon(
-                                Icons.open_in_new_rounded,
+          borderRadius: BorderRadius.circular(12),
+          clipBehavior: Clip.antiAlias,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: List.generate(_suggestions.length, (i) {
+              final item = _suggestions[i];
+              final isFocused = i == _focusedIndex;
+              final subtitle = item.isVariable
+                  ? '${item.variantCount} variants · ${_stockLabel(item.totalStock)} stock · ${_priceLabel(item)}'
+                  : 'SKU: ${item.sku?.isNotEmpty == true ? item.sku : '—'} · ${_priceLabel(item)}';
+              return ColoredBox(
+                color: isFocused ? AppTheme.primarySoft : Colors.transparent,
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: InkWell(
+                        canRequestFocus: false,
+                        onTap: () => _selectAtIndex(i),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 10),
+                          child: Row(
+                            children: [
+                              Icon(
+                                item.isVariable
+                                    ? Icons.account_tree_rounded
+                                    : Icons.inventory_2_rounded,
                                 size: 16,
                                 color: isFocused
                                     ? AppTheme.primary
-                                    : AppTheme.textMuted,
+                                    : AppTheme.primary.withOpacity(0.55),
                               ),
-                            ),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      item.name,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.w700,
+                                        fontSize: 13,
+                                        color: isFocused
+                                            ? AppTheme.primary
+                                            : AppTheme.navy,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      subtitle,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(
+                                        fontSize: 11,
+                                        color: AppTheme.textMuted,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              EnterpriseStatusBadge(
+                                label: item.isVariable ? 'VARIABLE' : 'SIMPLE',
+                                color: item.isVariable
+                                    ? AppTheme.purple
+                                    : AppTheme.info,
+                              ),
+                            ],
                           ),
                         ),
-                      ],
+                      ),
                     ),
-                  );
-                }),
-              ),
-            ),
+                    Tooltip(
+                      message: item.isVariable
+                          ? 'Open variants'
+                          : 'Quick view / edit',
+                      child: InkWell(
+                        canRequestFocus: false,
+                        onTap: () => _quickViewAtIndex(i),
+                        borderRadius: BorderRadius.circular(6),
+                        child: const Padding(
+                          padding: EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 10),
+                          child: Icon(
+                            Icons.open_in_new_rounded,
+                            size: 16,
+                            color: AppTheme.textMuted,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }),
           ),
-        );
+        ),
+      ),
+    );
+  }
+
+  static String _stockLabel(double value) {
+    return value == value.truncateToDouble()
+        ? value.toInt().toString()
+        : value.toStringAsFixed(2);
   }
 
   @override
@@ -371,7 +371,7 @@ class _ProductAutoSearchFieldState extends State<_ProductAutoSearchField> {
           widget.onSearch();
         },
         decoration: InputDecoration(
-          hintText: 'Search product, SKU, barcode...',
+          hintText: 'Search product, group, SKU, barcode...',
           prefixIcon: const Icon(Icons.search_rounded),
           suffixIcon: Row(
             mainAxisSize: MainAxisSize.min,
@@ -419,16 +419,21 @@ class _ProductsScreenState extends State<ProductsScreen> {
   bool _importExportBusy = false;
   bool _showCost = false;
   String _search = '';
-  final List<dynamic> _products = [];
+  // Presentation-only filter over the unified management endpoint.
+  // 'all' keeps simple products and variable families in one paginated list.
+  String _typeFilter = 'all';
+  final List<ManagementItem> _items = [];
   final _searchController = TextEditingController();
 
   late ProductService _productService;
+  late ProductGroupService _groupService;
 
   @override
   void initState() {
     super.initState();
     final token = Provider.of<AuthProvider>(context, listen: false).token!;
     _productService = ProductService(token: token);
+    _groupService = ProductGroupService(token: token);
     _fetchProducts(reset: true);
   }
 
@@ -443,32 +448,84 @@ class _ProductsScreenState extends State<ProductsScreen> {
     setState(() => _loading = true);
 
     if (reset) {
-      _products.clear();
+      _items.clear();
       _page = 1;
     }
 
     try {
-      final data = await _productService.getProducts(
+      final data = await _groupService.managementCatalog(
         page: _page,
-        search: _search,
+        perPage: 20,
+        search: _search.isNotEmpty ? _search : null,
+        type: _typeFilter == 'all' ? null : _typeFilter,
       );
-
-      final wrapper = (data['data'] as List).first;
-      final items = wrapper['products'] as List<dynamic>;
-
+      final raw = (data['data'] as List?) ?? const [];
+      final items = raw
+          .whereType<Map>()
+          .map((e) => ManagementItem.fromJson(Map<String, dynamic>.from(e)))
+          .toList();
       if (!mounted) return;
       setState(() {
-        _products
+        _items
           ..clear()
           ..addAll(items);
-        _page = (wrapper['current_page'] as num?)?.toInt() ?? _page;
-        _lastPage = (wrapper['last_page'] as num?)?.toInt() ?? _lastPage;
+        _page = (data['current_page'] as num?)?.toInt() ?? _page;
+        _lastPage = (data['last_page'] as num?)?.toInt() ?? _lastPage;
       });
     } catch (e) {
       if (mounted) AppFeedback.error(context, 'Failed to load products: $e');
     } finally {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  void _switchType(String type) {
+    if (_typeFilter == type) return;
+    setState(() => _typeFilter = type);
+    _fetchProducts(reset: true);
+  }
+
+  Future<void> _openAddVariableProduct() async {
+    final result = await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const VariableProductFormScreen()),
+    );
+    if (result == true && mounted) _fetchProducts(reset: true);
+  }
+
+  Future<void> _openGroupDetailItem(ManagementItem item) async {
+    final groupId = item.groupId;
+    if (groupId == null) return;
+    final changed = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ProductGroupDetailScreen(
+          groupId: groupId,
+          groupName: item.name,
+        ),
+      ),
+    );
+    if (changed == true && mounted) _fetchProducts(reset: true);
+  }
+
+  Future<Map<String, dynamic>?> _loadSimpleProduct(ManagementItem item) async {
+    final id = item.id;
+    if (id == null) return null;
+    try {
+      return await _productService.getProduct(id);
+    } catch (e) {
+      if (mounted) AppFeedback.error(context, 'Failed to load product: $e');
+      return null;
+    }
+  }
+
+  Future<void> _openManagementItem(ManagementItem item) async {
+    if (item.isVariable) {
+      await _openGroupDetailItem(item);
+      return;
+    }
+    final product = await _loadSimpleProduct(item);
+    if (product != null && mounted) await _openForm(product);
   }
 
   void _onSearch() {
@@ -495,20 +552,6 @@ class _ProductsScreenState extends State<ProductsScreen> {
     }
   }
 
-  int _intVal(dynamic v) {
-    if (v is int) return v;
-    if (v is num) return v.toInt();
-    if (v is String) return int.tryParse(v) ?? 0;
-    return 0;
-  }
-  double _doubleVal(dynamic v) {
-    if (v is double) return v;
-    if (v is int) return v.toDouble();
-    if (v is num) return v.toDouble();
-    if (v is String) return double.tryParse(v) ?? 0.0;
-    return 0.0;
-  }
-
   Future<void> _openForm([dynamic product]) async {
     final result = await Navigator.push(
       context,
@@ -518,13 +561,16 @@ class _ProductsScreenState extends State<ProductsScreen> {
     if (result != null) _fetchProducts(reset: true);
   }
 
-  Future<void> _confirmDelete(dynamic product) async {
-    final name = (product['name'] ?? 'this product').toString();
+  Future<void> _confirmDeleteItem(ManagementItem item) async {
+    final id = item.id;
+    if (id == null || item.isVariable) return;
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Delete Product'),
-        content: Text('Are you sure you want to delete "$name"? This action cannot be undone.'),
+        content: Text(
+          'Are you sure you want to delete "${item.name}"? This action cannot be undone.',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
@@ -540,7 +586,13 @@ class _ProductsScreenState extends State<ProductsScreen> {
       ),
     );
 
-    if (confirm == true) await _deleteProduct(product['id']);
+    if (confirm == true) await _deleteProduct(id);
+  }
+
+  Future<void> _printBarcodeLabelsItem(ManagementItem item) async {
+    if (item.isVariable) return;
+    final product = await _loadSimpleProduct(item);
+    if (product != null && mounted) await _printBarcodeLabels(product);
   }
 
   Future<void> _printBarcodeLabels(dynamic product) async {
@@ -768,11 +820,12 @@ class _ProductsScreenState extends State<ProductsScreen> {
   Widget build(BuildContext context) {
     final auth = context.watch<AuthProvider>();
     final canManageProducts = auth.hasPermission('manage-products');
-    final canPrintBarcodes = auth.hasPermission('print-barcode-labels')
-        && auth.hasAddon('barcode_labels');
+    final canPrintBarcodes = auth.hasPermission('print-barcode-labels') &&
+        auth.hasAddon('barcode_labels');
+
     return EnterprisePage(
       title: 'Products',
-      subtitle: 'Manage SKU, pricing, brands, categories and available stock.',
+      subtitle: 'Manage simple products and variable product families in one catalog.',
       icon: Icons.inventory_2_rounded,
       appBarActions: const [
         Padding(
@@ -794,14 +847,13 @@ class _ProductsScreenState extends State<ProductsScreen> {
             label: const Text('Import/Export'),
           ),
           const SizedBox(width: 8),
-          FilledButton.icon(
-            onPressed: () => _openForm(),
-            icon: const Icon(Icons.add_rounded),
-            label: const Text('Add Product'),
+          _AddProductMenuButton(
+            onSimple: () => _openForm(),
+            onVariable: _openAddVariableProduct,
           ),
         ],
       ],
-      bottomNavigationBar: _products.isNotEmpty
+      bottomNavigationBar: _items.isNotEmpty
           ? EnterprisePaginationBar(
               page: _page,
               lastPage: _lastPage,
@@ -824,20 +876,30 @@ class _ProductsScreenState extends State<ProductsScreen> {
         children: [
           EnterpriseToolbar(
             children: [
+              _TypeFilterButtons(
+                current: _typeFilter,
+                onChanged: _switchType,
+              ),
+              const SizedBox(width: 8),
               SizedBox(
-                width: MediaQuery.of(context).size.width >= 720 ? 420 : double.infinity,
+                width: MediaQuery.of(context).size.width >= 720
+                    ? 420
+                    : double.infinity,
                 child: _ProductAutoSearchField(
                   controller: _searchController,
-                  productService: _productService,
+                  productGroupService: _groupService,
+                  typeFilter: _typeFilter,
                   onSearch: _onSearch,
                   onClear: _clearSearch,
-                  onQuickView: (product) => _openForm(product),
+                  onQuickView: _openManagementItem,
                 ),
               ),
               Tooltip(
                 message: _showCost ? 'Hide cost price' : 'Show cost price',
                 child: IconButton(
-                  icon: Icon(_showCost ? Icons.visibility_off_rounded : Icons.visibility_rounded),
+                  icon: Icon(_showCost
+                      ? Icons.visibility_off_rounded
+                      : Icons.visibility_rounded),
                   onPressed: () => setState(() => _showCost = !_showCost),
                 ),
               ),
@@ -854,140 +916,479 @@ class _ProductsScreenState extends State<ProductsScreen> {
               onRefresh: _onRefresh,
               child: _loading
                   ? const Center(child: CircularProgressIndicator())
-                  : _products.isEmpty
+                  : _items.isEmpty
                       ? ListView(
                           children: [
                             const SizedBox(height: 80),
                             EnterpriseEmptyState(
-                              icon: Icons.inventory_2_outlined,
-                              title: 'No products found',
-                              subtitle: _search.isEmpty
-                                  ? 'Add your first product to start selling and tracking stock.'
-                                  : 'No product matched your search. Try SKU, barcode, product name or category.',
+                              icon: _typeFilter == 'variable'
+                                  ? Icons.account_tree_rounded
+                                  : Icons.inventory_2_outlined,
+                              title: _emptyTitle(),
+                              subtitle: _emptySubtitle(),
                               action: canManageProducts
-                                  ? FilledButton.icon(
-                                      onPressed: () => _openForm(),
-                                      icon: const Icon(Icons.add_rounded),
-                                      label: const Text('Add Product'),
+                                  ? _AddProductMenuButton(
+                                      onSimple: () => _openForm(),
+                                      onVariable: _openAddVariableProduct,
                                     )
                                   : null,
                             ),
                           ],
                         )
                       : ListView.separated(
-                          itemCount: _products.length,
-                          separatorBuilder: (_, __) => const SizedBox(height: 10),
-                          itemBuilder: (context, index) {
-                            // Here's the corrected code to preserve decimals:
-                            final p = _products[index];
-                            final name = (p['name'] ?? 'Product').toString();
-                            final selectedBranchId = context.watch<BranchProvider>().selectedBranchId;
-                            final stocks = (p['stocks'] as List?)?.cast<Map<String, dynamic>>() ?? const [];
-
-                            // FIX: Use fold<double> instead of fold<int>, and _doubleVal instead of _intVal
-                            final stockQty = selectedBranchId == null
-                                ? stocks.fold<double>(0.0, (sum, s) => sum + _doubleVal(s['quantity']))
-                                : stocks
-                                    .where((s) => _intVal(s['branch_id']) == selectedBranchId)
-                                    .fold<double>(0.0, (sum, s) => sum + _doubleVal(s['quantity']));
-
-                            final brand = (p['brand']?['name'] ?? '—').toString();
-                            final category = (p['category']?['name'] ?? '—').toString();
-                            final price = AppCurrency.format(p['price']);
-                            final sku = (p['sku'] ?? '—').toString();
-                            final stockColor = stockQty <= 0 ? AppTheme.danger : stockQty <= 5 ? AppTheme.warning : AppTheme.success;
-
-                            return Card(
-                              child: ListTile(
-                                leading: CircleAvatar(
-                                  backgroundColor: AppTheme.primarySoft,
-                                  foregroundColor: AppTheme.primary,
-                                  child: Text(name.isNotEmpty ? name[0].toUpperCase() : '?'),
-                                ),
-                                title: Row(
-                                  children: [
-                                    Expanded(
-                                      child: Text(
-                                        name,
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
-                                    ),
-                                    EnterpriseStatusBadge(
-                                      label: stockQty <= 0 ? 'OUT' : 'STOCK $stockQty',
-                                      color: stockColor,
-                                      icon: Icons.inventory_rounded,
-                                    ),
-                                  ],
-                                ),
-                                subtitle: Padding(
-                                  padding: const EdgeInsets.only(top: 8),
-                                  child: Wrap(
-                                    spacing: 8,
-                                    runSpacing: 8,
-                                    children: [
-                                      EnterpriseMetricChip(
-                                        label: 'SKU',
-                                        value: sku,
-                                        color: AppTheme.info,
-                                        icon: Icons.qr_code_rounded,
-                                      ),
-                                      EnterpriseMetricChip(
-                                        label: 'Price',
-                                        value: price,
-                                        color: AppTheme.primary,
-                                        icon: Icons.sell_rounded,
-                                      ),
-                                      if (_showCost)
-                                        EnterpriseMetricChip(
-                                          label: 'Cost',
-                                          value: AppCurrency.format(p['cost_price'] ?? 0),
-                                          color: AppTheme.warning,
-                                          icon: Icons.price_change_rounded,
-                                        ),
-                                      EnterpriseMetricChip(
-                                        label: 'Brand',
-                                        value: brand,
-                                        color: AppTheme.purple,
-                                      ),
-                                      EnterpriseMetricChip(
-                                        label: 'Category',
-                                        value: category,
-                                        color: AppTheme.textMuted,
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                trailing: Wrap(
-                                  spacing: 4,
-                                  children: [
-                                    if (canPrintBarcodes)
-                                      IconButton(
-                                        tooltip: 'Print barcode labels',
-                                        onPressed: () => _printBarcodeLabels(p),
-                                        icon: const Icon(Icons.qr_code_2_rounded, color: AppTheme.primary),
-                                      ),
-                                    if (canManageProducts) ...[
-                                      IconButton(
-                                        tooltip: 'Edit',
-                                        onPressed: () => _openForm(p),
-                                        icon: const Icon(Icons.edit_rounded),
-                                      ),
-                                      IconButton(
-                                        tooltip: 'Delete',
-                                        onPressed: () => _confirmDelete(p),
-                                        icon: const Icon(Icons.delete_outline_rounded, color: AppTheme.danger),
-                                      ),
-                                    ],
-                                  ],
-                                ),
-                              ),
-                            );
-                          },
+                          itemCount: _items.length,
+                          separatorBuilder: (_, __) =>
+                              const SizedBox(height: 8),
+                          itemBuilder: (context, index) =>
+                              _buildManagementCard(
+                            _items[index],
+                            canManageProducts: canManageProducts,
+                            canPrintBarcodes: canPrintBarcodes,
+                          ),
                         ),
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  String _emptyTitle() {
+    if (_search.isNotEmpty) return 'No products found';
+    switch (_typeFilter) {
+      case 'simple':
+        return 'No simple products';
+      case 'variable':
+        return 'No variable products';
+      default:
+        return 'No products yet';
+    }
+  }
+
+  String _emptySubtitle() {
+    if (_search.isNotEmpty) {
+      return 'No product or product family matched your search. Try a name, SKU or barcode.';
+    }
+    switch (_typeFilter) {
+      case 'simple':
+        return 'Add a simple product to start selling and tracking stock.';
+      case 'variable':
+        return 'Add a variable product to manage size and color variants.';
+      default:
+        return 'Add a simple or variable product to build your catalog.';
+    }
+  }
+
+  Widget _buildManagementCard(
+    ManagementItem item, {
+    required bool canManageProducts,
+    required bool canPrintBarcodes,
+  }) {
+    if (item.isVariable) {
+      return _buildVariableCard(item);
+    }
+    return _buildSimpleCard(
+      item,
+      canManageProducts: canManageProducts,
+      canPrintBarcodes: canPrintBarcodes,
+    );
+  }
+
+  Widget _buildSimpleCard(
+    ManagementItem item, {
+    required bool canManageProducts,
+    required bool canPrintBarcodes,
+  }) {
+    final stock = _stockLabel(item.totalStock);
+    final stockColor = item.totalStock <= 0
+        ? AppTheme.danger
+        : item.totalStock <= 5
+            ? AppTheme.warning
+            : AppTheme.success;
+    final sku = item.sku?.trim().isNotEmpty == true ? item.sku!.trim() : '—';
+    final brand = item.brandName?.trim().isNotEmpty == true
+        ? item.brandName!.trim()
+        : '—';
+    final category = item.categoryName?.trim().isNotEmpty == true
+        ? item.categoryName!.trim()
+        : '—';
+
+    return Card(
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: canManageProducts ? () => _openManagementItem(item) : null,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          child: Row(
+            children: [
+              CircleAvatar(
+                backgroundColor: AppTheme.primarySoft,
+                foregroundColor: AppTheme.primary,
+                child: Text(
+                  item.name.isNotEmpty ? item.name[0].toUpperCase() : '?',
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            item.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w700,
+                              fontSize: 14,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        EnterpriseStatusBadge(
+                          label: 'SIMPLE',
+                          color: AppTheme.info,
+                        ),
+                        const SizedBox(width: 6),
+                        EnterpriseStatusBadge(
+                          label: item.isActive ? 'ACTIVE' : 'INACTIVE',
+                          color: item.isActive
+                              ? AppTheme.success
+                              : AppTheme.textMuted,
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        EnterpriseMetricChip(
+                          label: 'SKU',
+                          value: sku,
+                          color: AppTheme.info,
+                          icon: Icons.qr_code_rounded,
+                        ),
+                        EnterpriseMetricChip(
+                          label: 'Stock',
+                          value: stock,
+                          color: stockColor,
+                          icon: Icons.inventory_rounded,
+                        ),
+                        EnterpriseMetricChip(
+                          label: 'Price',
+                          value: AppCurrency.format(item.price ?? 0),
+                          color: AppTheme.primary,
+                          icon: Icons.sell_rounded,
+                        ),
+                        if (_showCost)
+                          EnterpriseMetricChip(
+                            label: 'Cost',
+                            value: AppCurrency.format(item.costPrice ?? 0),
+                            color: AppTheme.warning,
+                            icon: Icons.price_change_rounded,
+                          ),
+                        EnterpriseMetricChip(
+                          label: 'Brand',
+                          value: brand,
+                          color: AppTheme.purple,
+                        ),
+                        EnterpriseMetricChip(
+                          label: 'Category',
+                          value: category,
+                          color: AppTheme.textMuted,
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 10),
+              Wrap(
+                spacing: 2,
+                children: [
+                  if (canPrintBarcodes)
+                    IconButton(
+                      tooltip: 'Print barcode labels',
+                      onPressed: () => _printBarcodeLabelsItem(item),
+                      icon: const Icon(
+                        Icons.qr_code_2_rounded,
+                        color: AppTheme.primary,
+                      ),
+                    ),
+                  if (canManageProducts) ...[
+                    IconButton(
+                      tooltip: 'Edit product',
+                      onPressed: () => _openManagementItem(item),
+                      icon: const Icon(Icons.edit_rounded),
+                    ),
+                    IconButton(
+                      tooltip: 'Delete product',
+                      onPressed: () => _confirmDeleteItem(item),
+                      icon: const Icon(
+                        Icons.delete_outline_rounded,
+                        color: AppTheme.danger,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildVariableCard(ManagementItem item) {
+    final stock = _stockLabel(item.totalStock);
+    final priceRange = _priceRange(item);
+    final brand = item.brandName?.trim().isNotEmpty == true
+        ? item.brandName!.trim()
+        : '—';
+    final category = item.categoryName?.trim().isNotEmpty == true
+        ? item.categoryName!.trim()
+        : '—';
+
+    return Card(
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: () => _openGroupDetailItem(item),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          child: Row(
+            children: [
+              CircleAvatar(
+                backgroundColor: AppTheme.purple.withOpacity(0.10),
+                foregroundColor: AppTheme.purple,
+                child: const Icon(Icons.account_tree_rounded, size: 19),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            item.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w700,
+                              fontSize: 14,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        EnterpriseStatusBadge(
+                          label: 'VARIABLE',
+                          color: AppTheme.purple,
+                        ),
+                        const SizedBox(width: 6),
+                        EnterpriseStatusBadge(
+                          label: item.isActive ? 'ACTIVE' : 'INACTIVE',
+                          color: item.isActive
+                              ? AppTheme.success
+                              : AppTheme.textMuted,
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        EnterpriseMetricChip(
+                          label: 'Variants',
+                          value: item.variantCount.toString(),
+                          color: AppTheme.purple,
+                          icon: Icons.tune_rounded,
+                        ),
+                        EnterpriseMetricChip(
+                          label: 'Total Stock',
+                          value: stock,
+                          color: item.totalStock <= 0
+                              ? AppTheme.danger
+                              : AppTheme.success,
+                          icon: Icons.inventory_rounded,
+                        ),
+                        EnterpriseMetricChip(
+                          label: 'Price',
+                          value: priceRange,
+                          color: AppTheme.primary,
+                          icon: Icons.sell_rounded,
+                        ),
+                        EnterpriseMetricChip(
+                          label: 'Brand',
+                          value: brand,
+                          color: AppTheme.purple,
+                        ),
+                        EnterpriseMetricChip(
+                          label: 'Category',
+                          value: category,
+                          color: AppTheme.textMuted,
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              const Icon(Icons.chevron_right_rounded, color: AppTheme.textMuted),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _stockLabel(double value) {
+    return value == value.truncateToDouble()
+        ? value.toInt().toString()
+        : value.toStringAsFixed(2);
+  }
+
+  String _priceRange(ManagementItem item) {
+    if (item.minPrice == null || item.maxPrice == null) return '—';
+    if (item.minPrice == item.maxPrice) {
+      return AppCurrency.format(item.minPrice!);
+    }
+    return '${AppCurrency.format(item.minPrice!)} – ${AppCurrency.format(item.maxPrice!)}';
+  }
+}
+
+class _AddProductMenuButton extends StatelessWidget {
+  final VoidCallback onSimple;
+  final VoidCallback onVariable;
+
+  const _AddProductMenuButton({
+    required this.onSimple,
+    required this.onVariable,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return PopupMenuButton<String>(
+      tooltip: 'Add product',
+      offset: const Offset(0, 42),
+      onSelected: (value) {
+        if (value == 'variable') {
+          onVariable();
+        } else {
+          onSimple();
+        }
+      },
+      itemBuilder: (context) => const [
+        PopupMenuItem<String>(
+          value: 'simple',
+          child: ListTile(
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            leading: Icon(Icons.inventory_2_outlined),
+            title: Text('Simple Product'),
+            subtitle: Text('Single SKU and stock item'),
+          ),
+        ),
+        PopupMenuItem<String>(
+          value: 'variable',
+          child: ListTile(
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            leading: Icon(Icons.account_tree_rounded),
+            title: Text('Variable Product'),
+            subtitle: Text('Size/color variants with separate stock'),
+          ),
+        ),
+      ],
+      child: Container(
+        height: 40,
+        padding: const EdgeInsets.symmetric(horizontal: 14),
+        decoration: BoxDecoration(
+          color: AppTheme.primary,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: const Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.add_rounded, color: Colors.white, size: 18),
+            SizedBox(width: 7),
+            Text(
+              'Add Product',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            SizedBox(width: 5),
+            Icon(Icons.expand_more_rounded, color: Colors.white, size: 18),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ── Type filter toggle buttons ────────────────────────────────────────────────
+
+class _TypeFilterButtons extends StatelessWidget {
+  final String current;
+  final ValueChanged<String> onChanged;
+
+  const _TypeFilterButtons({required this.current, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        border: Border.all(color: AppTheme.border),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _tab('all', 'All', Icons.apps_rounded),
+          _tab('simple', 'Simple', Icons.inventory_2_outlined),
+          _tab('variable', 'Variable', Icons.account_tree_rounded),
+        ],
+      ),
+    );
+  }
+
+  Widget _tab(String value, String label, IconData icon) {
+    final selected = current == value;
+    return InkWell(
+      onTap: () => onChanged(value),
+      borderRadius: BorderRadius.circular(7),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        decoration: BoxDecoration(
+          color: selected ? AppTheme.primary : Colors.transparent,
+          borderRadius: BorderRadius.circular(7),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon,
+                size: 14,
+                color: selected ? Colors.white : AppTheme.textMuted),
+            const SizedBox(width: 5),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight:
+                    selected ? FontWeight.w700 : FontWeight.w500,
+                color: selected ? Colors.white : AppTheme.textMuted,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

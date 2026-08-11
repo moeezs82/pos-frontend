@@ -1,10 +1,10 @@
 import 'dart:io';
-import 'dart:math';
 import 'package:enterprise_pos/api/common_service.dart';
 import 'package:enterprise_pos/api/product_service.dart';
 import 'package:enterprise_pos/api/unit_service.dart';
 import 'package:enterprise_pos/models/product_unit.dart';
 import 'package:enterprise_pos/screens/units_screen.dart';
+import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/vendor_picker_sheet.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -36,9 +36,11 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
   final _taxRateController        = TextEditingController();
   final _discountController       = TextEditingController();
 
-  bool _isActive      = true;
-  bool _taxInclusive  = false;
-  bool _loading       = false;
+  bool _isActive          = true;
+  bool _taxInclusive      = false;
+  bool _loading           = false;
+  bool _skuGenerating     = false;
+  bool _barcodeGenerating = false;
   String _discountType = 'percentage'; // 'percentage' | 'fixed'
 
   int? _selectedCategoryId;
@@ -72,6 +74,44 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
 
   bool get _isEdit => widget.product != null;
 
+  /// True when this product belongs to a variable-product group.
+  bool get _isVariantProduct =>
+      widget.product != null &&
+      widget.product!['product_group_id'] != null;
+
+  Widget _buildVariantBadge() {
+    final p = widget.product!;
+    final size = p['variant_size']?.toString() ?? '';
+    final color = p['variant_color']?.toString() ?? '';
+    final dims = [if (size.isNotEmpty) size, if (color.isNotEmpty) color];
+    final label = dims.isEmpty ? 'Variant product' : dims.join(' / ');
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: AppTheme.primarySoft,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppTheme.primary.withOpacity(0.3)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.grid_view_rounded,
+              size: 16, color: AppTheme.primary),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'Variant: $label  ·  Changes here affect this variant only.',
+              style: const TextStyle(
+                  fontSize: 12,
+                  color: AppTheme.primary,
+                  fontWeight: FontWeight.w600),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   void initState() {
     super.initState();
@@ -83,8 +123,8 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
 
     if (widget.product != null) {
       final p = widget.product!;
-      _skuController.text            = p['sku']             ?? _generateSKU();
-      _barcodeController.text        = p['barcode']         ?? _generateBarcode();
+      _skuController.text            = p['sku']?.toString()     ?? '';
+      _barcodeController.text        = p['barcode']?.toString() ?? '';
       _nameController.text           = p['name']            ?? '';
       _descController.text           = p['description']     ?? '';
       _priceController.text          = p['price']?.toString()           ?? '';
@@ -172,13 +212,41 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
     }
   }
 
-  String _generateSKU() {
-    final ts = DateTime.now().millisecondsSinceEpoch.toRadixString(36).toUpperCase();
-    final r  = Random().nextInt(36 * 36 * 36).toRadixString(36).padLeft(3, '0').toUpperCase();
-    return 'SKU-$ts$r';
+  Future<void> _autoSKU() async {
+    setState(() => _skuGenerating = true);
+    try {
+      final sku = await _productService.generateSKU(
+        productName: _nameController.text.trim(),
+      );
+      if (mounted) setState(() => _skuController.text = sku);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('SKU generation failed: $e'),
+              backgroundColor: Colors.red),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _skuGenerating = false);
+    }
   }
 
-  String _generateBarcode() => '${DateTime.now().millisecondsSinceEpoch}';
+  Future<void> _autoBarcode() async {
+    setState(() => _barcodeGenerating = true);
+    try {
+      final barcode = await _productService.generateBarcode();
+      if (mounted) setState(() => _barcodeController.text = barcode);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Barcode generation failed: $e'),
+              backgroundColor: Colors.red),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _barcodeGenerating = false);
+    }
+  }
 
   // ── Image helpers ─────────────────────────────────────────────────────────────
 
@@ -430,6 +498,10 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              // ── Variant badge (read-only, shown when editing a variant) ─────
+              if (_isEdit && _isVariantProduct) _buildVariantBadge(),
+              if (_isEdit && _isVariantProduct) const SizedBox(height: 16),
+
               // ── Image ────────────────────────────────────────────────────────
               _buildImageSection(),
               const SizedBox(height: 20),
@@ -439,10 +511,20 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
                 decoration: InputDecoration(
                   labelText: 'SKU',
                   border: const OutlineInputBorder(),
-                  suffixIcon: IconButton(
-                    icon: const Icon(Icons.qr_code),
-                    onPressed: () => setState(() => _skuController.text = _generateSKU()),
-                  ),
+                  suffixIcon: _skuGenerating
+                      ? const Padding(
+                          padding: EdgeInsets.all(12),
+                          child: SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                        )
+                      : IconButton(
+                          icon: const Icon(Icons.auto_awesome_rounded),
+                          tooltip: 'Auto-generate unique SKU',
+                          onPressed: _autoSKU,
+                        ),
                 ),
                 validator: (v) => v!.isEmpty ? 'Required' : null,
               ),
@@ -453,10 +535,20 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
                 decoration: InputDecoration(
                   labelText: 'Barcode',
                   border: const OutlineInputBorder(),
-                  suffixIcon: IconButton(
-                    icon: const Icon(Icons.qr_code),
-                    onPressed: () => setState(() => _barcodeController.text = _generateBarcode()),
-                  ),
+                  suffixIcon: _barcodeGenerating
+                      ? const Padding(
+                          padding: EdgeInsets.all(12),
+                          child: SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                        )
+                      : IconButton(
+                          icon: const Icon(Icons.qr_code_2_rounded),
+                          tooltip: 'Auto-generate unique barcode',
+                          onPressed: _autoBarcode,
+                        ),
                 ),
               ),
               const SizedBox(height: 12),

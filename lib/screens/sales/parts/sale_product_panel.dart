@@ -1,11 +1,13 @@
 import 'dart:async';
 
 import 'package:enterprise_pos/api/common_service.dart';
+import 'package:enterprise_pos/api/product_group_service.dart';
 import 'package:enterprise_pos/api/product_service.dart';
 import 'package:enterprise_pos/forms/product_form_screen.dart';
 import 'package:enterprise_pos/services/catalog_cache_service.dart';
 import 'package:enterprise_pos/services/party_pick_caches.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
+import 'package:enterprise_pos/widgets/variant_picker_dialog.dart';
 import 'package:flutter/material.dart';
 
 /// Always-visible embedded product grid for the Create Sale 3-panel layout.
@@ -99,6 +101,7 @@ class _SaleProductPanelState extends State<SaleProductPanel> {
   String _search = '';
 
   late final ProductService _productService;
+  late final ProductGroupService _groupService;
   late final CommonService _commonService;
 
   String get _cacheKey => ProductPickCache.keyFor(vendorId: widget.vendorId);
@@ -108,6 +111,7 @@ class _SaleProductPanelState extends State<SaleProductPanel> {
   void initState() {
     super.initState();
     _productService = ProductService(token: widget.token);
+    _groupService = ProductGroupService(token: widget.token);
     _commonService = CommonService(token: widget.token);
 
     // Cache-first: show whatever was warmed by PartyPrefetch instantly.
@@ -555,12 +559,66 @@ class _SaleProductPanelState extends State<SaleProductPanel> {
               imageUrl: _imageUrl(p),
               inCart: inCart,
               stock: _stockValue(p),
-              onTap: () => widget.onProductTapped(p),
+              onTap: () => _handleProductTap(p),
             );
           },
         );
       },
     );
+  }
+
+  /// Intercepts taps on variant products (those with a product_group_id).
+  /// Shows [VariantPickerDialog] with siblings fetched from the API.
+  /// Falls back to direct tap if the group cannot be fetched.
+  Future<void> _handleProductTap(Map<String, dynamic> product) async {
+    final rawGroupId = product['product_group_id'];
+    if (rawGroupId == null) {
+      // Simple product — add directly.
+      widget.onProductTapped(product);
+      return;
+    }
+    final groupId = rawGroupId is int ? rawGroupId : int.tryParse(rawGroupId.toString());
+    if (groupId == null) {
+      widget.onProductTapped(product);
+      return;
+    }
+
+    // Fetch sibling variants for the picker.
+    List<Map<String, dynamic>> variants = [];
+    String groupName = (product['name'] ?? '').toString();
+    // Strip the " / Size / Color" suffix to get the group name for the dialog title.
+    try {
+      final data = await _groupService.showGroup(groupId);
+      final grp = data['group'];
+      if (grp is Map) groupName = (grp['name'] ?? groupName).toString();
+      final rawProducts = data['products'] as List? ?? [];
+      variants = rawProducts
+          .whereType<Map>()
+          .map((v) => Map<String, dynamic>.from(v))
+          .where((v) => v['is_active'] == 1 || v['is_active'] == true)
+          .toList();
+    } catch (_) {
+      // Network/API error: fall back to tapping the product directly.
+      if (mounted) widget.onProductTapped(product);
+      return;
+    }
+
+    if (variants.isEmpty) {
+      widget.onProductTapped(product);
+      return;
+    }
+
+    if (!mounted) return;
+    final picked = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (_) => VariantPickerDialog(
+        groupName: groupName,
+        variants: variants,
+      ),
+    );
+    if (picked != null && mounted) {
+      widget.onProductTapped(picked);
+    }
   }
 
   int? _stockValue(Map<String, dynamic> p) {

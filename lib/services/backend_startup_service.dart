@@ -16,8 +16,8 @@ class BackendStartupException implements Exception {
 /// Ensures the local CounterIQ backend is available before Flutter starts
 /// authentication or other API bootstrap work.
 class BackendStartupService {
-  static final Uri _healthUri = Uri.parse('https://145.223.118.86:18443/up');
-  // static final Uri _healthUri = Uri.parse('http://127.0.0.1:8080/up');
+  // static final Uri _healthUri = Uri.parse('https://145.223.118.86:18443/up');
+  static final Uri _healthUri = Uri.parse('http://127.0.0.1:8080/up');
 
   static const Duration _healthRequestTimeout = Duration(seconds: 1);
   static const Duration _startupTimeout = Duration(seconds: 45);
