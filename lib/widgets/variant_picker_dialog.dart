@@ -1,4 +1,5 @@
 import 'package:enterprise_pos/services/app_currency.dart' show AppCurrency;
+import 'package:enterprise_pos/services/sale_pricing.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 
@@ -10,11 +11,13 @@ import 'package:flutter/material.dart';
 class VariantPickerDialog extends StatefulWidget {
   final String groupName;
   final List<Map<String, dynamic>> variants;
+  final String customerType;
 
   const VariantPickerDialog({
     super.key,
     required this.groupName,
     required this.variants,
+    this.customerType = 'retail',
   });
 
   @override
@@ -231,6 +234,17 @@ class _VariantPickerDialogState extends State<VariantPickerDialog> {
                         ),
                       ),
                     ],
+                    if (SalePricing.isWholesale(widget.customerType)) ...[
+                      const Text('•', style: TextStyle(color: AppTheme.borderStrong)),
+                      const Text(
+                        'Wholesale pricing',
+                        style: TextStyle(
+                          color: AppTheme.primary,
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ],
                     if (offline) ...[
                       const Text('•', style: TextStyle(color: AppTheme.borderStrong)),
                       const Text(
@@ -304,7 +318,12 @@ class _VariantPickerDialogState extends State<VariantPickerDialog> {
                 secondary: sizeOnlyLabel && color.isNotEmpty && _colors.length <= 1
                     ? color
                     : null,
-                price: AppCurrency.format(variant['price'] ?? 0),
+                price: AppCurrency.format(
+                  SalePricing.effectiveProductPrice(
+                    variant,
+                    customerType: widget.customerType,
+                  ),
+                ),
                 stock: _stockQuantity(variant),
                 onTap: () => Navigator.pop(context, variant),
               ),
@@ -364,14 +383,12 @@ class _VariantPickerDialogState extends State<VariantPickerDialog> {
     return double.tryParse(raw.toString());
   }
 
-  static String _priceRange(List<Map<String, dynamic>> variants) {
+  String _priceRange(List<Map<String, dynamic>> variants) {
     final prices = variants
-        .map((v) {
-          final raw = v['price'];
-          if (raw is num) return raw.toDouble();
-          return double.tryParse(raw?.toString() ?? '');
-        })
-        .whereType<double>()
+        .map((v) => SalePricing.effectiveProductPrice(
+              v,
+              customerType: widget.customerType,
+            ))
         .toList();
     if (prices.isEmpty) return '';
     final min = prices.reduce((a, b) => a < b ? a : b);

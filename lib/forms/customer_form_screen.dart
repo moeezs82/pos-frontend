@@ -62,8 +62,6 @@ class _CustomerFormScreenState extends State<CustomerFormScreen> {
       }
       final rawMode = (c['credit_limit_mode'] ?? 'block').toString().toLowerCase();
       _creditLimitMode = rawMode == 'warning' ? 'warning' : 'block';
-    } else {
-      _customerCodeController.text = 'Auto-generated on save';
     }
   }
 
@@ -87,6 +85,7 @@ class _CustomerFormScreenState extends State<CustomerFormScreen> {
     // would be Map<String, String> and the numeric opening_balance below
     // would not compile.
     final Map<String, dynamic> data = {
+      'customer_code': _customerCodeController.text.trim(),
       'customer_type': _customerType,
       'first_name': _firstNameController.text.trim(),
       'last_name': _lastNameController.text.trim(),
@@ -109,6 +108,12 @@ class _CustomerFormScreenState extends State<CustomerFormScreen> {
       if (opening != null && opening.abs() >= 0.005) {
         data['opening_balance'] = _openingOwes ? opening.abs() : -opening.abs();
       }
+    }
+
+    if (widget.customer != null) {
+      // Preserve Laravel-compatible unique-field update semantics and let the
+      // backend exclude this customer while validating branch uniqueness.
+      data['id'] = widget.customer!['id'];
     }
 
     try {
@@ -139,6 +144,7 @@ class _CustomerFormScreenState extends State<CustomerFormScreen> {
     bool obscure = false,
     int maxLines = 1,
     bool enabled = true,
+    String? helperText,
   }) {
     return TextFormField(
       controller: controller,
@@ -146,7 +152,11 @@ class _CustomerFormScreenState extends State<CustomerFormScreen> {
       obscureText: obscure,
       maxLines: maxLines,
       enabled: enabled,
-      decoration: InputDecoration(labelText: label, prefixIcon: icon == null ? null : Icon(icon)),
+      decoration: InputDecoration(
+        labelText: label,
+        helperText: helperText,
+        prefixIcon: icon == null ? null : Icon(icon),
+      ),
       validator: validator,
     );
   }
@@ -190,9 +200,16 @@ class _CustomerFormScreenState extends State<CustomerFormScreen> {
                         width: 360,
                         child: _field(
                           controller: _customerCodeController,
-                          label: 'Customer ID',
+                          label: isEdit ? 'Customer ID' : 'Customer ID (optional)',
                           icon: Icons.numbers_rounded,
-                          enabled: false,
+                          helperText: isEdit
+                              ? 'Unique within this branch. Leave blank to keep the current ID.'
+                              : 'Enter your own ID or leave blank to auto-generate one.',
+                          validator: (v) {
+                            final code = (v ?? '').trim();
+                            if (code.length > 64) return 'Customer ID must be 64 characters or fewer';
+                            return null;
+                          },
                         ),
                       ),
                       SizedBox(

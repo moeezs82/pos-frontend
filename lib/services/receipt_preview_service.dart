@@ -13,6 +13,18 @@ class ReceiptPreviewService {
   ReceiptPreviewService._();
   static final instance = ReceiptPreviewService._();
 
+  String _customerDisplayName(
+    Map<String, dynamic> customer, {
+    String fallback = '',
+  }) {
+    final name = (customer['name'] ?? '').toString().trim();
+    final code = (customer['customer_code'] ?? '').toString().trim();
+    if (code.isNotEmpty && name.isNotEmpty) return '($code) $name';
+    if (name.isNotEmpty) return name;
+    if (code.isNotEmpty) return '($code)';
+    return fallback;
+  }
+
   /// Thermal roll page format used by PDF preview and local Windows printing.
   ///
   /// PdfPageFormat.roll57/roll80 include a built-in 5 mm margin. The receipt
@@ -142,7 +154,7 @@ class ReceiptPreviewService {
     final snapRaw = meta?["customer_snapshot"];
     final snap = (snapRaw is Map) ? snapRaw.cast<String, dynamic>() : <String, dynamic>{};
 
-    final cName = (snap["name"] ?? "").toString().trim();
+    final cName = _customerDisplayName(snap);
     final cPhone = (snap["phone"] ?? "").toString().trim();
     final cAddr = (snap["address"] ?? "").toString().trim();
 
@@ -609,7 +621,7 @@ class ReceiptPreviewService {
     final customer = customerRaw is Map
         ? customerRaw.cast<String, dynamic>()
         : <String, dynamic>{};
-    final customerName = (customer['name'] ?? '').toString().trim();
+    final customerName = _customerDisplayName(customer);
     final customerPhone = (customer['phone'] ?? '').toString().trim();
     final customerAddress = (customer['address'] ?? '').toString().trim();
 
@@ -966,7 +978,7 @@ class ReceiptPreviewService {
     final customer = customerRaw is Map
         ? customerRaw.cast<String, dynamic>()
         : <String, dynamic>{};
-    final customerName = (customer['name'] ?? '').toString().trim();
+    final customerName = _customerDisplayName(customer);
     final customerPhone = (customer['phone'] ?? '').toString().trim();
     final customerAddress = (customer['address'] ?? '').toString().trim();
     final effectiveCustomer = customerName.isEmpty ? 'Walk-in Customer' : customerName;
@@ -1440,7 +1452,7 @@ class ReceiptPreviewService {
     final customer = customerRaw is Map
         ? customerRaw.cast<String, dynamic>()
         : <String, dynamic>{};
-    final customerName = (customer['name'] ?? '').toString().trim();
+    final customerName = _customerDisplayName(customer);
     final customerPhone = (customer['phone'] ?? '').toString().trim();
     final customerAddress = (customer['address'] ?? '').toString().trim();
     final effectiveCustomer = customerName.isEmpty ? 'Walk-in Customer' : customerName;

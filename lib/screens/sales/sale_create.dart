@@ -28,6 +28,7 @@ import 'package:enterprise_pos/widgets/vendor_picker_sheet.dart';
 import 'package:enterprise_pos/services/party_prefetch.dart';
 import 'package:enterprise_pos/services/party_pick_caches.dart';
 import 'package:enterprise_pos/services/catalog_cache_service.dart';
+import 'package:enterprise_pos/services/sale_pricing.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/enterprise/enterprise_panel.dart';
 import 'package:enterprise_pos/widgets/app_feedback.dart';
@@ -77,6 +78,9 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
   String? _selectedCustomerId;
   Map<String, dynamic>? _selectedBranch;
   Map<String, dynamic>? _selectedCustomer;
+
+  String get _selectedCustomerType =>
+      SalePricing.normalizeCustomerType(_selectedCustomer?['customer_type']);
   Map<String, dynamic>? _selectedVendor;
   int? _selectedVendorId;
   Map<String, dynamic>? _selectedUser;
@@ -441,7 +445,10 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     final productId = int.tryParse(product['id']?.toString() ?? '') ?? 0;
     if (productId == 0) return;
 
-    final price = double.tryParse(product['price']?.toString() ?? '') ?? 0.0;
+    final price = SalePricing.effectiveProductPrice(
+      product,
+      customerType: _selectedCustomerType,
+    );
 
     final idx = _items.indexWhere((it) {
       final existingId =
@@ -503,7 +510,10 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     final productId = int.tryParse(product['id']?.toString() ?? '') ?? 0;
     if (productId == 0) return;
 
-    final price = double.tryParse(product['price']?.toString() ?? '') ?? 0.0;
+    final price = SalePricing.effectiveProductPrice(
+      product,
+      customerType: _selectedCustomerType,
+    );
 
     final idx = _items.indexWhere(
       (it) => (int.tryParse(it["product_id"].toString()) ?? 0) == productId,
@@ -568,6 +578,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       context,
       token: token,
       vendorId: _selectedVendorId,
+      customerType: _selectedCustomerType,
       alreadySelectedIds: alreadySelectedIds,
       alreadySelectedQty: alreadySelectedQty,
       alreadySelectedProducts: _items.map((item) {
@@ -850,14 +861,20 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
 
     final customerSnapshot = <String, dynamic>{
       if (_selectedCustomerId != null) 'id': _selectedCustomerId,
-      'name': customerNameController.text.trim().isEmpty
-          ? (_metaText(_selectedCustomer?['first_name']).isEmpty
+      if ((_selectedCustomer?['customer_code'] ?? '').toString().trim().isNotEmpty)
+        'customer_code': _selectedCustomer!['customer_code'],
+      if (_selectedCustomer != null)
+        'customer_type': SalePricing.normalizeCustomerType(
+          _selectedCustomer!['customer_type'],
+        ),
+      'name': _selectedCustomer != null
+          ? [
+              _metaText(_selectedCustomer?['first_name']),
+              _metaText(_selectedCustomer?['last_name']),
+            ].where((v) => v.isNotEmpty).join(' ').trim()
+          : (customerNameController.text.trim().isEmpty
               ? 'Walk-in customer'
-              : [
-                  _metaText(_selectedCustomer?['first_name']),
-                  _metaText(_selectedCustomer?['last_name']),
-                ].where((v) => v.isNotEmpty).join(' ').trim())
-          : customerNameController.text.trim(),
+              : customerNameController.text.trim()),
       'phone': customerPhoneController.text.trim(),
       'address': addressController.text.trim(),
       if (_selectedCustomer != null &&
@@ -2369,6 +2386,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
                                 token: token,
                                 vendorId: _selectedVendorId,
                                 branchId: int.tryParse(_effectiveBranchIdStr()),
+                                customerType: _selectedCustomerType,
                                 cartProductIds: _cartProductIds,
                                 onProductTapped: (p) =>
                                     setState(() => _addOrIncrementProduct(p)),

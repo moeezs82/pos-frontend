@@ -3,6 +3,7 @@ import 'package:enterprise_pos/api/product_service.dart';
 import 'package:enterprise_pos/forms/product_form_screen.dart';
 import 'package:enterprise_pos/models/product_unit.dart';
 import 'package:enterprise_pos/services/party_pick_caches.dart';
+import 'package:enterprise_pos/services/sale_pricing.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/enterprise/enterprise_panel.dart';
 import 'package:flutter/material.dart';
@@ -17,6 +18,7 @@ import 'package:flutter/services.dart';
 class ProductPickerGridSheet extends StatefulWidget {
   final String token;
   final int? vendorId;
+  final String customerType;
 
   /// If true -> returns List<{product, qty}>, else -> returns single product map
   final bool multi;
@@ -34,6 +36,7 @@ class ProductPickerGridSheet extends StatefulWidget {
     super.key,
     required this.token,
     this.vendorId,
+    this.customerType = 'retail',
     this.multi = true,
     this.alreadySelectedIds = const [],
     this.alreadySelectedProducts = const [],
@@ -45,6 +48,7 @@ class ProductPickerGridSheet extends StatefulWidget {
     BuildContext context, {
     required String token,
     int? vendorId,
+    String customerType = 'retail',
     List<int> alreadySelectedIds = const [],
     Map<int, double> alreadySelectedQty = const {},
     List<Map<String, dynamic>> alreadySelectedProducts = const [],
@@ -59,6 +63,7 @@ class ProductPickerGridSheet extends StatefulWidget {
           child: ProductPickerGridSheet(
             token: token,
             vendorId: vendorId,
+            customerType: customerType,
             multi: true,
             alreadySelectedIds: alreadySelectedIds,
             alreadySelectedQty: alreadySelectedQty,
@@ -692,7 +697,10 @@ Padding(
 
                                 return _ProductGridCard(
                                   title: _name(p['name']),
-                                  price: _money(p['price']),
+                                  price: _money(SalePricing.effectiveProductPrice(
+                                    p,
+                                    customerType: widget.customerType,
+                                  )),
                                   imageUrl: _imageUrl(p),
                                   selected: selected,
                                   qty: qty,

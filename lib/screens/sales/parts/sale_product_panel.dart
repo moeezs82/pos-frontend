@@ -6,6 +6,7 @@ import 'package:enterprise_pos/api/product_service.dart';
 import 'package:enterprise_pos/forms/product_form_screen.dart';
 import 'package:enterprise_pos/services/catalog_cache_service.dart';
 import 'package:enterprise_pos/services/party_pick_caches.dart';
+import 'package:enterprise_pos/services/sale_pricing.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/variant_picker_dialog.dart';
 import 'package:flutter/material.dart';
@@ -24,6 +25,10 @@ class SaleProductPanel extends StatefulWidget {
   /// limited to the active branch's stock. Nullable — null means "all branches"
   /// which is the safe default when no branch is selected.
   final int? branchId;
+
+  /// Customer classification used only to choose the default/display price.
+  /// Existing cart rows are never repriced when this changes.
+  final String customerType;
 
   /// IDs of products already in the cart — used to show the in-cart badge.
   final Set<int> cartProductIds;
@@ -59,6 +64,7 @@ class SaleProductPanel extends StatefulWidget {
     required this.onOpenModal,
     this.vendorId,
     this.branchId,
+    this.customerType = 'retail',
     this.searchFocusNode,
     this.externalSearchController,
     this.showSearchBar = true,
@@ -320,8 +326,10 @@ class _SaleProductPanelState extends State<SaleProductPanel> {
       if (siblings.isEmpty) continue;
 
       final prices = siblings
-          .map((p) => _asDouble(p['price'] ?? p['tp']))
-          .whereType<double>()
+          .map((p) => SalePricing.effectiveProductPrice(
+                p,
+                customerType: widget.customerType,
+              ))
           .toList();
       final minPrice = prices.isEmpty ? null : prices.reduce((a, b) => a < b ? a : b);
       final maxPrice = prices.isEmpty ? null : prices.reduce((a, b) => a > b ? a : b);
@@ -401,12 +409,24 @@ class _SaleProductPanelState extends State<SaleProductPanel> {
   }
 
   String _groupPriceText(Map<String, dynamic> product) {
-    final minPrice = _asDouble(product['_min_price']);
-    final maxPrice = _asDouble(product['_max_price']);
-    if (minPrice == null && maxPrice == null) return '';
-    final minText = _compactMoney(minPrice ?? maxPrice ?? 0);
-    final maxText = _compactMoney(maxPrice ?? minPrice ?? 0);
-    if ((minPrice ?? 0) == (maxPrice ?? minPrice ?? 0)) return minText;
+    final variants = (product['_group_variants'] as List?)
+            ?.whereType<Map>()
+            .map((v) => Map<String, dynamic>.from(v))
+            .where(_isActiveProduct)
+            .toList() ??
+        const <Map<String, dynamic>>[];
+    final prices = variants
+        .map((v) => SalePricing.effectiveProductPrice(
+              v,
+              customerType: widget.customerType,
+            ))
+        .toList();
+    if (prices.isEmpty) return '';
+    final minPrice = prices.reduce((a, b) => a < b ? a : b);
+    final maxPrice = prices.reduce((a, b) => a > b ? a : b);
+    final minText = _compactMoney(minPrice);
+    final maxText = _compactMoney(maxPrice);
+    if ((minPrice - maxPrice).abs() < 0.000001) return minText;
     return '$minText – $maxText';
   }
 
@@ -693,7 +713,11 @@ class _SaleProductPanelState extends State<SaleProductPanel> {
               sku: (p['sku'] ?? p['barcode'] ?? '').toString(),
               price: isVariable
                   ? _groupPriceText(p)
-                  : (p['price'] ?? p['tp'] ?? 0).toString(),
+                  : _compactMoney(SalePricing.effectiveProductPrice(
+                      p,
+                      customerType: widget.customerType,
+                    )),
+              wholesalePricing: SalePricing.isWholesale(widget.customerType),
               imageUrl: _imageUrl(p),
               inCart: inCart,
               stock: isVariable
@@ -765,6 +789,7 @@ class _SaleProductPanelState extends State<SaleProductPanel> {
       builder: (_) => VariantPickerDialog(
         groupName: groupName,
         variants: variants,
+        customerType: widget.customerType,
       ),
     );
     if (picked != null && mounted) {
@@ -958,6 +983,7 @@ class _ProductCard extends StatelessWidget {
   final int? stock;
   final bool isVariable;
   final int variantCount;
+  final bool wholesalePricing;
   final VoidCallback onTap;
 
   const _ProductCard({
@@ -970,6 +996,7 @@ class _ProductCard extends StatelessWidget {
     this.stock,
     this.isVariable = false,
     this.variantCount = 0,
+    this.wholesalePricing = false,
   });
 
   @override
@@ -1039,18 +1066,46 @@ class _ProductCard extends StatelessWidget {
                           ),
                         ),
                         const SizedBox(height: 2),
-                        // Price
-                        Text(
-                          price,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: inCart
-                                ? AppTheme.primary
-                                : const Color(0xFF1A5C58),
-                            fontSize: 10,
-                            fontWeight: FontWeight.w800,
-                          ),
+                        // Effective selling price for the currently
+                        // selected customer classification.
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                price,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: inCart
+                                      ? AppTheme.primary
+                                      : const Color(0xFF1A5C58),
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                            ),
+                            if (wholesalePricing) ...[
+                              const SizedBox(width: 3),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 4,
+                                  vertical: 1,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: AppTheme.primarySoft,
+                                  borderRadius: BorderRadius.circular(3),
+                                ),
+                                child: const Text(
+                                  'WHOLESALE',
+                                  style: TextStyle(
+                                    color: AppTheme.primaryDark,
+                                    fontSize: 6.8,
+                                    fontWeight: FontWeight.w900,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ],
                         ),
                         if (isVariable) ...[
                           const SizedBox(height: 2),

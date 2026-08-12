@@ -12,6 +12,15 @@ class ThermalPrinterService {
   ThermalPrinterService._();
   static final instance = ThermalPrinterService._();
 
+  String _customerDisplayName(Map<String, dynamic> customer) {
+    final name = (customer['name'] ?? '').toString().trim();
+    final code = (customer['customer_code'] ?? '').toString().trim();
+    if (code.isNotEmpty && name.isNotEmpty) return '($code) $name';
+    if (name.isNotEmpty) return name;
+    if (code.isNotEmpty) return '($code)';
+    return '';
+  }
+
   static const InvoiceSections _defaultSections = InvoiceSections(
     header: true,
     customer: true,
@@ -362,7 +371,7 @@ class ThermalPrinterService {
   }) {
     final snapRaw = meta?['customer_snapshot'];
     final snap = (snapRaw is Map) ? snapRaw.cast<String, dynamic>() : <String, dynamic>{};
-    final cName = (snap['name'] ?? '').toString().trim();
+    final cName = _customerDisplayName(snap);
     final cPhone = (snap['phone'] ?? '').toString().trim();
 
     final delivery = (meta?['delivery'] is num)

@@ -825,7 +825,21 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
     Map<String, dynamic> customerSnap = {};
     final snapRaw = _mapFrom(meta['customer_snapshot']);
     if (snapRaw.isNotEmpty) {
-      customerSnap = snapRaw;
+      customerSnap = Map<String, dynamic>.from(snapRaw);
+      // New sales snapshot customer identity directly. For an older sale whose
+      // snapshot predates customer codes, use the live customer relation as a
+      // best-effort fallback without changing the stored historical metadata.
+      final c = sale['customer'];
+      if (c is Map) {
+        final code = (c['customer_code'] ?? '').toString().trim();
+        if ((customerSnap['customer_code'] ?? '').toString().trim().isEmpty &&
+            code.isNotEmpty) {
+          customerSnap['customer_code'] = code;
+        }
+        if (customerSnap['customer_type'] == null && c['customer_type'] != null) {
+          customerSnap['customer_type'] = c['customer_type'];
+        }
+      }
     } else {
       final c = sale['customer'];
       if (c is Map) {
@@ -838,6 +852,10 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
           "phone": (c['phone'] ?? c['mobile'] ?? c['mobile_no'] ?? "")
               .toString(),
           "address": (c['address'] ?? c['full_address'] ?? "").toString(),
+          if ((c['customer_code'] ?? '').toString().trim().isNotEmpty)
+            "customer_code": c['customer_code'],
+          if (c['customer_type'] != null)
+            "customer_type": c['customer_type'],
         };
       } else {
         customerSnap = {"name": "Walk-in", "phone": "", "address": ""};
