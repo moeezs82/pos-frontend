@@ -33,16 +33,29 @@ class PrinterConfigService {
       final res = await _client.get("/printer-config/templates");
       if (res["success"] == true) {
         final rows = (res["data"]?["templates"] as List? ?? []);
-        final values = rows
-            .whereType<Map>()
-            .map((e) => e['value']?.toString())
-            .whereType<String>()
-            .toList();
-        if (values.isNotEmpty) {
-          return values.map(InvoiceTemplate.fromValue).toList();
+        final templates = <InvoiceTemplate>[];
+
+        for (final row in rows.whereType<Map>()) {
+          final template = InvoiceTemplate.tryFromValue(
+            row['value']?.toString(),
+            label: row['label']?.toString(),
+          );
+
+          // Never turn an unknown backend template into Standard Receipt.
+          // Also de-duplicate aliases if a mixed-version backend happens to
+          // publish the same logical template more than once.
+          if (template != null && !templates.contains(template)) {
+            templates.add(template);
+          }
         }
+
+        if (templates.isNotEmpty) return templates;
       }
     } catch (_) {}
+
+    // The template catalogue is static in the Flutter application, so a
+    // temporary catalogue request failure can safely fall back to the local
+    // supported set.
     return InvoiceTemplate.values;
   }
 
@@ -58,6 +71,7 @@ class PrinterConfigService {
     String? localPrinterName,
     InvoiceTemplate mainInvoiceTemplate = InvoiceTemplate.standard,
     String invoicePaperSize = 'a4',
+    String thermalPaperSize = 'mm80',
     String invoiceHeading = 'SALES INVOICE',
     bool printLogoEnabled = false,
     String? printLogoData,
@@ -99,6 +113,7 @@ class PrinterConfigService {
       'local_printer_name': localPrinterName,
       'main_invoice_template': mainInvoiceTemplate.value,
       'invoice_paper_size': invoicePaperSize,
+      'thermal_paper_size': thermalPaperSize,
       'invoice_heading': invoiceHeading,
       'print_logo_enabled': printLogoEnabled,
       'print_logo_data': printLogoData,

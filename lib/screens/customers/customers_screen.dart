@@ -99,7 +99,7 @@ class _CustomersScreenState extends State<CustomersScreen> {
       context,
       MaterialPageRoute(builder: (_) => CustomerFormScreen(customer: customer)),
     );
-    if (result == true) _fetchCustomers(reset: true);
+    if (result != null) _fetchCustomers(reset: true);
   }
 
   Future<void> _deleteCustomer(Map<String, dynamic> customer) async {
@@ -143,6 +143,28 @@ class _CustomersScreenState extends State<CustomersScreen> {
     final parts = name.split(' ').where((e) => e.isNotEmpty).toList();
     if (parts.length == 1) return parts.first[0].toUpperCase();
     return '${parts.first[0]}${parts.last[0]}'.toUpperCase();
+  }
+
+  String _customerTypeLabel(dynamic raw) {
+    switch ((raw ?? 'retail').toString().toLowerCase()) {
+      case 'wholesale':
+        return 'Wholesale';
+      case 'reseller':
+        return 'Reseller';
+      default:
+        return 'Retail';
+    }
+  }
+
+  Color _customerTypeColor(dynamic raw) {
+    switch ((raw ?? 'retail').toString().toLowerCase()) {
+      case 'wholesale':
+        return AppTheme.info;
+      case 'reseller':
+        return AppTheme.warning;
+      default:
+        return AppTheme.primary;
+    }
   }
 
   double _toDouble(dynamic v) {
@@ -200,7 +222,7 @@ class _CustomersScreenState extends State<CustomersScreen> {
                 width: MediaQuery.of(context).size.width >= 720 ? 440 : double.infinity,
                 child: EnterpriseSearchField(
                   controller: _searchController,
-                  hintText: 'Search name, phone, email...',
+                  hintText: 'Search customer ID, name, phone, email...',
                   onSubmitted: (_) => _searchNow(),
                   onSearch: _searchNow,
                   onClear: _clearSearch,
@@ -241,6 +263,9 @@ class _CustomersScreenState extends State<CustomersScreen> {
                             final email = (c['email'] ?? '—').toString();
                             final phone = (c['phone'] ?? '—').toString();
                             final status = (c['status'] ?? 'active').toString();
+                            final customerCode = (c['customer_code'] ?? '').toString().trim();
+                            final customerType = _customerTypeLabel(c['customer_type']);
+                            final customerTypeColor = _customerTypeColor(c['customer_type']);
                             final balance = _toDouble(c['balance']);
                             final totalSales = _money(c['total_sales']);
                             final totalReceipts = _money(c['total_receipts']);
@@ -274,6 +299,11 @@ class _CustomersScreenState extends State<CustomersScreen> {
                                       ),
                                     ),
                                     EnterpriseStatusBadge(
+                                      label: customerType.toUpperCase(),
+                                      color: customerTypeColor,
+                                    ),
+                                    const SizedBox(width: 6),
+                                    EnterpriseStatusBadge(
                                       label: status.toUpperCase(),
                                       color: AppTheme.statusColor(status),
                                     ),
@@ -285,6 +315,8 @@ class _CustomersScreenState extends State<CustomersScreen> {
                                     spacing: 8,
                                     runSpacing: 8,
                                     children: [
+                                      if (customerCode.isNotEmpty)
+                                        EnterpriseMetricChip(label: 'Customer ID', value: customerCode, color: AppTheme.primary, icon: Icons.numbers_rounded),
                                       EnterpriseMetricChip(label: 'Phone', value: phone, color: AppTheme.info, icon: Icons.call_rounded),
                                       EnterpriseMetricChip(label: 'Balance', value: _money(balance), color: balColor, icon: Icons.account_balance_wallet_rounded),
                                       EnterpriseMetricChip(label: 'Sales', value: totalSales, color: AppTheme.primary),

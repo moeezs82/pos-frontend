@@ -61,7 +61,7 @@ class CatalogCacheService {
     final path = p.join(dbPath, 'catalog_cache.db');
     return openDatabase(
       path,
-      version: 7,
+      version: 8,
       // v1 → v2 adds the unit columns. ADDITIVE ONLY, and deliberately not a
       // table rebuild or a cache wipe: this database is a read replica, but a
       // "just delete and re-download" upgrade would strand a till that is
@@ -162,6 +162,21 @@ class CatalogCacheService {
             whereArgs: const ['catalog_version:%', 'last_synced_at:%'],
           );
         }
+        // v7 → v8: business-facing customer ID and classification. Existing
+        // cached rows remain usable while offline; the invalidated cursor
+        // forces a full refresh once connectivity returns so codes/types are
+        // authoritative and the search_blob is rebuilt with customer_code.
+        if (oldVersion < 8) {
+          await db.execute(
+              'ALTER TABLE customers ADD COLUMN customer_code TEXT');
+          await db.execute(
+              "ALTER TABLE customers ADD COLUMN customer_type TEXT NOT NULL DEFAULT 'retail'");
+          await db.delete(
+            'sync_meta',
+            where: 'key LIKE ? OR key LIKE ?',
+            whereArgs: const ['catalog_version:%', 'last_synced_at:%'],
+          );
+        }
       },
       onCreate: (db, version) async {
         await db.execute('''
@@ -204,6 +219,8 @@ class CatalogCacheService {
           CREATE TABLE customers (
             id INTEGER NOT NULL,
             branch_id INTEGER,
+            customer_code TEXT,
+            customer_type TEXT NOT NULL DEFAULT 'retail',
             first_name TEXT,
             last_name TEXT,
             phone TEXT,
@@ -520,6 +537,8 @@ class CatalogCacheService {
 
   Map<String, Object?> _customerRow(Map raw) {
     final parts = [
+      raw['customer_code'],
+      raw['customer_type'],
       raw['first_name'],
       raw['last_name'],
       raw['phone'],
@@ -528,6 +547,8 @@ class CatalogCacheService {
     return {
       'id': _asInt(raw['id']),
       'branch_id': raw['branch_id'] != null ? _asInt(raw['branch_id']) : null,
+      'customer_code': raw['customer_code']?.toString(),
+      'customer_type': (raw['customer_type'] ?? 'retail').toString(),
       'first_name': raw['first_name']?.toString(),
       'last_name': raw['last_name']?.toString(),
       'phone': raw['phone']?.toString(),
@@ -575,6 +596,8 @@ class CatalogCacheService {
   Map<String, dynamic> _customerToApiShape(Map<String, Object?> row) {
     return {
       'id': row['id'],
+      'customer_code': row['customer_code'],
+      'customer_type': row['customer_type'] ?? 'retail',
       'first_name': row['first_name'],
       'last_name': row['last_name'],
       'name': [row['first_name'], row['last_name']]

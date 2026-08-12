@@ -113,6 +113,18 @@ class PartySectionCard extends StatelessWidget {
     return "$first ${last.isNotEmpty ? last : ''}".trim();
   }
 
+  String _customerSubtitle(PartyMap c) {
+    final code = (c['customer_code'] ?? '').toString().trim();
+    final phone = (c['phone'] ?? '').toString().trim();
+    final rawType = (c['customer_type'] ?? 'retail').toString().toLowerCase();
+    final type = rawType == 'wholesale'
+        ? 'Wholesale'
+        : rawType == 'reseller'
+            ? 'Reseller'
+            : 'Retail';
+    return [if (code.isNotEmpty) code, type, if (phone.isNotEmpty) phone].join(' • ');
+  }
+
   String _personLabel(PartyMap u) => (u['name'] ?? '').toString();
 
   @override
@@ -146,7 +158,7 @@ class PartySectionCard extends StatelessWidget {
               final allFields = [
                 PartyAutocompleteField<PartyMap>(
                   label: 'Customer',
-                  hintText: 'Type customer name or phone…',
+                  hintText: 'Type customer ID, name or phone…',
                   focusNode: customerFocusNode,
                   controller: customerController,
                   getCachedItems: () =>
@@ -157,10 +169,10 @@ class PartySectionCard extends StatelessWidget {
                     branchId: int.tryParse(branchId ?? ''),
                   ),
                   labelOf: _customerLabel,
-                  subtitleOf: (c) => (c['phone'] ?? '').toString(),
+                  subtitleOf: _customerSubtitle,
                   idOf: (c) => (c['id'] ?? '').toString(),
                   selectedLabel: selectedCustomer != null ? _customerLabel(selectedCustomer!) : null,
-                  selectedSubtitle: selectedCustomer != null ? (selectedCustomer!['phone'] ?? '').toString() : null,
+                  selectedSubtitle: selectedCustomer != null ? _customerSubtitle(selectedCustomer!) : null,
                   onSelectedTap: onPickCustomer,
                   onSelected: (c) => onApplyCustomer(c),
                   onCleared: () => onApplyCustomer(null),

@@ -158,7 +158,10 @@ class _CustomerPickerSheetState extends State<CustomerPickerSheet> {
               final name = "${c['first_name'] ?? ''} ${c['last_name'] ?? ''}".toLowerCase();
               final phone = (c['phone'] ?? '').toString().toLowerCase();
               final email = (c['email'] ?? '').toString().toLowerCase();
-              return name.contains(q) || phone.contains(q) || email.contains(q);
+              final customerCode = (c['customer_code'] ?? '').toString().toLowerCase();
+              final customerType = (c['customer_type'] ?? '').toString().toLowerCase();
+              return name.contains(q) || phone.contains(q) || email.contains(q) ||
+                  customerCode.contains(q) || customerType.contains(q);
             }).toList();
       setState(() => _customers = filtered);
     }
@@ -275,7 +278,7 @@ class _CustomerPickerSheetState extends State<CustomerPickerSheet> {
                         },
                       )
                     : null,
-                hintText: "Search customer…",
+                hintText: "Search customer ID, name or phone…",
                 isDense: true,
                 border: const OutlineInputBorder(),
                 contentPadding: const EdgeInsets.symmetric(
@@ -356,6 +359,13 @@ class _CustomerPickerSheetState extends State<CustomerPickerSheet> {
                             .trim();
                         final email = (c['email'] ?? '').toString();
                         final phone = (c['phone'] ?? '').toString();
+                        final customerCode = (c['customer_code'] ?? '').toString().trim();
+                        final rawType = (c['customer_type'] ?? 'retail').toString().toLowerCase();
+                        final customerType = rawType == 'wholesale'
+                            ? 'Wholesale'
+                            : rawType == 'reseller'
+                                ? 'Reseller'
+                                : 'Retail';
                         final balance = _balanceOf(c);
 
                         return ListTile(
@@ -375,19 +385,15 @@ class _CustomerPickerSheetState extends State<CustomerPickerSheet> {
                               _balanceChip(balance),
                             ],
                           ),
-                          subtitle: Row(
-                            children: [
-                              if (email.isNotEmpty)
-                                Expanded(
-                                  child: Text(
-                                    email,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
-                              if (email.isNotEmpty && phone.isNotEmpty)
-                                const SizedBox(width: 8),
-                              if (phone.isNotEmpty) Text(phone),
-                            ],
+                          subtitle: Text(
+                            [
+                              if (customerCode.isNotEmpty) customerCode,
+                              customerType,
+                              if (phone.isNotEmpty) phone,
+                              if (email.isNotEmpty) email,
+                            ].join(' • '),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                           ),
                           trailing: const Icon(Icons.chevron_right, size: 18),
                           onTap: () => Navigator.pop(context, c),

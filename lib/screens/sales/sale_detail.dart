@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:enterprise_pos/api/core/api_client.dart';
+import 'package:enterprise_pos/models/sale_receipt_item.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/providers/printer_config_provider.dart';
 import 'package:enterprise_pos/widgets/branch_indicator.dart';
@@ -897,8 +898,14 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
       final unitName = unitRaw is Map
           ? (unitRaw['symbol'] ?? unitRaw['name'] ?? '').toString()
           : (unitRaw ?? '').toString();
+      final secondaryName = (product is Map
+              ? (product['secondary_name'] ?? '')
+              : (m['secondary_name'] ?? ''))
+          .toString()
+          .trim();
       return SaleReceiptItem(
         name: name,
+        secondaryName: secondaryName.isEmpty ? null : secondaryName,
         price: price,
         qty: qty,
         total: lineTotal,
@@ -951,13 +958,14 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
           changeAmount: changeAmount,
           meta: printMeta,
           sections: mainTemplate.sections,
-          paperWidth: mainTemplate.paperWidthCode,
+          paperWidth: printerConfig.mainPaperCode,
           footerLines: footerLines,
           showLogo: printerConfig.printLogoEnabled && mainTemplate.isCustomerFacing,
           logoData: printerConfig.printLogoData,
           showQr: printerConfig.qrCodeEnabled && mainTemplate.isCustomerFacing,
           qrUrl: printerConfig.qrCodeUrl,
           qrCaption: printerConfig.qrCodeCaption,
+          template: mainTemplate,
         );
         printedToHardware = true;
 
@@ -982,6 +990,7 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
             paperWidth: secondaryTemplate.paperWidthCode,
             footerLines: footerLines,
             receiptHeader: secondaryHeader,
+            template: secondaryTemplate,
           );
         }
       } catch (e, s) {
@@ -1019,6 +1028,7 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
           showQr: printerConfig.qrCodeEnabled && mainTemplate.isCustomerFacing,
           qrUrl: printerConfig.qrCodeUrl,
           qrCaption: printerConfig.qrCodeCaption,
+          template: mainTemplate,
         );
         printedToHardware = true;
 
@@ -1043,6 +1053,7 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
             paperWidth: secondaryTemplate.paperWidthCode,
             footerLines: footerLines,
             receiptHeader: secondaryHeader,
+            template: secondaryTemplate,
             jobName: 'Secondary Copy $receiptNo',
           );
         }
@@ -1079,6 +1090,7 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
         showQr: printerConfig.qrCodeEnabled && mainTemplate.isCustomerFacing,
         qrUrl: printerConfig.qrCodeUrl,
         qrCaption: printerConfig.qrCodeCaption,
+        template: mainTemplate,
       );
     }
   }

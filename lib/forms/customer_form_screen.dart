@@ -17,6 +17,7 @@ class CustomerFormScreen extends StatefulWidget {
 
 class _CustomerFormScreenState extends State<CustomerFormScreen> {
   final _formKey = GlobalKey<FormState>();
+  final _customerCodeController = TextEditingController();
   final _firstNameController = TextEditingController();
   final _lastNameController = TextEditingController();
   final _emailController = TextEditingController();
@@ -34,6 +35,7 @@ class _CustomerFormScreenState extends State<CustomerFormScreen> {
   String _creditLimitMode = 'block';
 
   String _status = 'active';
+  String _customerType = 'retail';
   bool _saving = false;
   late CustomerService _customerService;
 
@@ -44,6 +46,9 @@ class _CustomerFormScreenState extends State<CustomerFormScreen> {
     _customerService = CustomerService(token: token);
     final c = widget.customer;
     if (c != null) {
+      _customerCodeController.text = (c['customer_code'] ?? '').toString();
+      final rawType = (c['customer_type'] ?? 'retail').toString().toLowerCase();
+      _customerType = const {'retail', 'wholesale', 'reseller'}.contains(rawType) ? rawType : 'retail';
       _firstNameController.text = (c['first_name'] ?? '').toString();
       _lastNameController.text = (c['last_name'] ?? '').toString();
       _emailController.text = (c['email'] ?? '').toString();
@@ -57,11 +62,14 @@ class _CustomerFormScreenState extends State<CustomerFormScreen> {
       }
       final rawMode = (c['credit_limit_mode'] ?? 'block').toString().toLowerCase();
       _creditLimitMode = rawMode == 'warning' ? 'warning' : 'block';
+    } else {
+      _customerCodeController.text = 'Auto-generated on save';
     }
   }
 
   @override
   void dispose() {
+    _customerCodeController.dispose();
     _firstNameController.dispose();
     _lastNameController.dispose();
     _emailController.dispose();
@@ -79,6 +87,7 @@ class _CustomerFormScreenState extends State<CustomerFormScreen> {
     // would be Map<String, String> and the numeric opening_balance below
     // would not compile.
     final Map<String, dynamic> data = {
+      'customer_type': _customerType,
       'first_name': _firstNameController.text.trim(),
       'last_name': _lastNameController.text.trim(),
       'email': _emailController.text.trim(),
@@ -177,6 +186,31 @@ class _CustomerFormScreenState extends State<CustomerFormScreen> {
                     spacing: 12,
                     runSpacing: 12,
                     children: [
+                      SizedBox(
+                        width: 360,
+                        child: _field(
+                          controller: _customerCodeController,
+                          label: 'Customer ID',
+                          icon: Icons.numbers_rounded,
+                          enabled: false,
+                        ),
+                      ),
+                      SizedBox(
+                        width: 360,
+                        child: DropdownButtonFormField<String>(
+                          value: _customerType,
+                          items: const [
+                            DropdownMenuItem(value: 'retail', child: Text('Retail')),
+                            DropdownMenuItem(value: 'wholesale', child: Text('Wholesale')),
+                            DropdownMenuItem(value: 'reseller', child: Text('Reseller')),
+                          ],
+                          onChanged: (v) => setState(() => _customerType = v ?? 'retail'),
+                          decoration: const InputDecoration(
+                            labelText: 'Customer Type',
+                            prefixIcon: Icon(Icons.storefront_outlined),
+                          ),
+                        ),
+                      ),
                       SizedBox(width: 360, child: _field(controller: _firstNameController, label: 'First Name *', icon: Icons.person_outline_rounded, validator: (v) => v == null || v.trim().isEmpty ? 'First name is required' : null)),
                       SizedBox(width: 360, child: _field(controller: _lastNameController, label: 'Last Name', icon: Icons.person_outline_rounded)),
                       SizedBox(width: 360, child: _field(controller: _phoneController, label: 'Phone *', icon: Icons.call_outlined, keyboardType: TextInputType.phone, validator: (v) => v == null || v.trim().isEmpty ? 'Phone is required' : null)),

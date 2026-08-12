@@ -1,7 +1,8 @@
 import 'dart:convert';
 import 'dart:typed_data';
 import 'package:enterprise_pos/models/invoice_template.dart';
-import 'package:enterprise_pos/services/thermal_printer_service.dart';
+import 'package:enterprise_pos/models/sale_receipt_item.dart';
+import 'package:enterprise_pos/services/pdf_arabic_font_loader.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
@@ -72,6 +73,7 @@ class ReceiptPreviewService {
     bool showQr = false,
     String? qrUrl,
     String qrCaption = 'Scan to review us',
+    InvoiceTemplate? template,
     bool layoutForPrinting = true,
   }) async {
     final bytes = await buildReceiptPdf(
@@ -96,6 +98,7 @@ class ReceiptPreviewService {
       showQr: showQr,
       qrUrl: qrUrl,
       qrCaption: qrCaption,
+      template: template,
     );
 
     if (layoutForPrinting) {
@@ -133,6 +136,7 @@ class ReceiptPreviewService {
     bool showQr = false,
     String? qrUrl,
     String qrCaption = 'Scan to review us',
+    InvoiceTemplate? template,
   }) async {
     // --- extract meta safely ---
     final snapRaw = meta?["customer_snapshot"];
@@ -158,7 +162,55 @@ class ReceiptPreviewService {
         ? (meta!["payments_snapshot"] as List)
         : (meta?["payments"] is List ? (meta!["payments"] as List) : const []);
 
-    if (const {'a4', 'a5', 'letter'}.contains(paperWidth.toLowerCase())) {
+    if (template == InvoiceTemplate.arabicStandardInvoice) {
+      return _buildArabicStandardInvoicePdf(
+        shopName: shopName,
+        shopAddress: shopAddress,
+        shopPhone: shopPhone,
+        receiptNo: receiptNo,
+        dateTime: dateTime,
+        items: items,
+        subtotal: subtotal,
+        discount: discount,
+        tax: tax,
+        grandTotal: grandTotal,
+        meta: meta,
+        paperWidth: paperWidth,
+        footerLines: footerLines,
+        invoiceHeading: invoiceHeading,
+        showLogo: showLogo,
+        logoData: logoData,
+        showQr: showQr,
+        qrUrl: qrUrl,
+        qrCaption: qrCaption,
+      );
+    }
+
+    if (template == InvoiceTemplate.arabicThermal) {
+      return _buildArabicThermalPdf(
+        shopName: shopName,
+        shopAddress: shopAddress,
+        shopPhone: shopPhone,
+        receiptNo: receiptNo,
+        dateTime: dateTime,
+        items: items,
+        subtotal: subtotal,
+        discount: discount,
+        tax: tax,
+        grandTotal: grandTotal,
+        meta: meta,
+        paperWidth: paperWidth,
+        footerLines: footerLines,
+        showLogo: showLogo,
+        logoData: logoData,
+        showQr: showQr,
+        qrUrl: qrUrl,
+        qrCaption: qrCaption,
+      );
+    }
+
+    if (template == InvoiceTemplate.standardInvoice ||
+        (template == null && const {'a4', 'a5', 'letter'}.contains(paperWidth.toLowerCase()))) {
       return _buildStandardInvoicePdf(
         shopName: shopName,
         shopAddress: shopAddress,
@@ -463,6 +515,890 @@ class ReceiptPreviewService {
             ],
           );
         },
+      ),
+    );
+
+    return doc.save();
+  }
+
+  Future<ArabicPdfFonts> _loadArabicFonts() async {
+    final system = await loadSystemArabicPdfFonts();
+    if (system != null) return system;
+
+    // Web/non-IO fallback. CounterIQ Windows workstations normally resolve an
+    // installed Segoe UI/Tahoma/Arial font above, so Arabic printing remains
+    // fully offline on the primary desktop target.
+    try {
+      final regular = await PdfGoogleFonts.notoNaskhArabicRegular();
+      final bold = await PdfGoogleFonts.notoNaskhArabicBold();
+      return ArabicPdfFonts(regular: regular, bold: bold);
+    } catch (_) {
+      throw Exception(
+        'Arabic print template needs an Arabic-capable font. '
+        'Install Segoe UI, Tahoma, Arial, or Noto Arabic on this device.',
+      );
+    }
+  }
+
+  String _arabicInvoiceHeading(String english) {
+    switch (english.trim().toUpperCase()) {
+      case 'TAX INVOICE':
+        return 'فاتورة ضريبية';
+      case 'CASH INVOICE':
+        return 'فاتورة نقدية';
+      case 'RECEIPT':
+        return 'إيصال';
+      case 'INVOICE':
+        return 'فاتورة';
+      default:
+        return 'فاتورة بيع';
+    }
+  }
+
+  String _arabicPaymentLabel(String raw) {
+    switch (raw.trim().toLowerCase()) {
+      case 'cash':
+        return 'نقدي';
+      case 'card':
+      case 'credit card':
+      case 'debit card':
+        return 'بطاقة';
+      case 'bank':
+      case 'bank transfer':
+        return 'تحويل بنكي';
+      case 'knet':
+        return 'كي نت';
+      case 'cheque':
+      case 'check':
+        return 'شيك';
+      default:
+        return 'دفعة';
+    }
+  }
+
+  Future<Uint8List> _buildArabicThermalPdf({
+    required String shopName,
+    String? shopAddress,
+    String? shopPhone,
+    required String receiptNo,
+    required DateTime dateTime,
+    required List<ReceiptItem> items,
+    required double subtotal,
+    required double discount,
+    required double tax,
+    required double grandTotal,
+    Map<String, dynamic>? meta,
+    required String paperWidth,
+    required List<String> footerLines,
+    required bool showLogo,
+    String? logoData,
+    required bool showQr,
+    String? qrUrl,
+    required String qrCaption,
+  }) async {
+    final fonts = await _loadArabicFonts();
+    final doc = pw.Document();
+    final is58 = paperWidth.toLowerCase() == 'mm58';
+    final widthMm = is58 ? 58.0 : 80.0;
+    final accent = PdfColor.fromInt(0xFF0F766E);
+    final muted = PdfColor.fromInt(0xFF5F6B76);
+    final border = PdfColor.fromInt(0xFFD7DEE3);
+    final logoBytes = showLogo ? _decodeLogo(logoData) : null;
+
+    final customerRaw = meta?['customer_snapshot'];
+    final customer = customerRaw is Map
+        ? customerRaw.cast<String, dynamic>()
+        : <String, dynamic>{};
+    final customerName = (customer['name'] ?? '').toString().trim();
+    final customerPhone = (customer['phone'] ?? '').toString().trim();
+    final customerAddress = (customer['address'] ?? '').toString().trim();
+
+    double numericMeta(String key) {
+      final raw = meta?[key];
+      if (raw is num) return raw.toDouble();
+      return double.tryParse((raw ?? '').toString()) ?? 0;
+    }
+
+    final delivery = numericMeta('delivery');
+    final cashReceived = numericMeta('cash_received');
+    final change = numericMeta('change_amount');
+    final paymentRaw = meta?['payments_snapshot'] is List
+        ? meta!['payments_snapshot'] as List
+        : (meta?['payments'] is List ? meta!['payments'] as List : const []);
+    final payments = <Map<String, dynamic>>[];
+    for (final raw in paymentRaw) {
+      if (raw is Map) payments.add(raw.cast<String, dynamic>());
+    }
+    final paidFromPayments = payments.fold<double>(0, (sum, p) {
+      final raw = p['amount'];
+      return sum +
+          (raw is num
+              ? raw.toDouble()
+              : double.tryParse((raw ?? '').toString()) ?? 0);
+    });
+    final paid = paidFromPayments > 0 ? paidFromPayments : cashReceived;
+    final balanceDue = (grandTotal - paid).clamp(0, double.infinity).toDouble();
+
+    final itemHeightMm = items.fold<double>(0, (sum, item) {
+      final hasArabic = item.effectiveSecondaryName.isNotEmpty;
+      return sum + (is58 ? (hasArabic ? 20 : 15) : (hasArabic ? 16 : 12));
+    });
+    final customerHeight = customerName.isNotEmpty || customerPhone.isNotEmpty || customerAddress.isNotEmpty
+        ? (is58 ? 25.0 : 20.0)
+        : 0.0;
+    final paymentHeight = payments.isEmpty ? 0.0 : 13.0 + payments.length * 6.0;
+    final qrHeight = showQr && _validQrUrl(qrUrl) ? (is58 ? 35.0 : 40.0) : 0.0;
+    final footerHeight = footerLines.where((e) => e.trim().isNotEmpty).length * 5.0 + 14.0;
+    final estimatedHeightMm = (92.0 + customerHeight + itemHeightMm + 50.0 + paymentHeight + qrHeight + footerHeight)
+        .clamp(150.0, 3000.0)
+        .toDouble();
+
+    final format = PdfPageFormat(
+      widthMm * PdfPageFormat.mm,
+      estimatedHeightMm * PdfPageFormat.mm,
+      marginAll: 0,
+    );
+
+    pw.TextStyle style(
+      double size, {
+      bool bold = false,
+      PdfColor? color,
+    }) =>
+        pw.TextStyle(
+          font: bold ? fonts.bold : fonts.regular,
+          fontSize: size,
+          color: color ?? PdfColors.black,
+        );
+
+    pw.Widget arText(
+      String text, {
+      double size = 9,
+      bool bold = true,
+      PdfColor? color,
+      pw.TextAlign align = pw.TextAlign.right,
+    }) =>
+        pw.Text(
+          text,
+          style: style(size, bold: bold, color: color),
+          textDirection: pw.TextDirection.rtl,
+          textAlign: align,
+        );
+
+    pw.Widget bilingualLabel(
+      String ar,
+      String en, {
+      double arSize = 8.5,
+      double enSize = 6.8,
+    }) =>
+        pw.Column(
+          crossAxisAlignment: pw.CrossAxisAlignment.end,
+          children: [
+            arText(ar, size: arSize, bold: true),
+            pw.Text(
+              en,
+              style: style(enSize, color: muted),
+              textAlign: pw.TextAlign.right,
+            ),
+          ],
+        );
+
+    pw.Widget divider() => pw.Container(
+          height: .7,
+          margin: const pw.EdgeInsets.symmetric(vertical: 5),
+          color: border,
+        );
+
+    pw.Widget valueRow(
+      String ar,
+      String en,
+      String value, {
+      bool strong = false,
+    }) =>
+        pw.Padding(
+          padding: const pw.EdgeInsets.symmetric(vertical: 2),
+          child: pw.Row(
+            crossAxisAlignment: pw.CrossAxisAlignment.center,
+            children: [
+              pw.Expanded(
+                child: pw.Text(
+                  value,
+                  style: style(is58 ? 7.2 : 8.2, bold: strong),
+                  textAlign: pw.TextAlign.left,
+                ),
+              ),
+              pw.SizedBox(width: 6),
+              pw.SizedBox(
+                width: is58 ? 72 : 94,
+                child: bilingualLabel(ar, en),
+              ),
+            ],
+          ),
+        );
+
+    final dateText =
+        '${dateTime.day.toString().padLeft(2, '0')}/${dateTime.month.toString().padLeft(2, '0')}/${dateTime.year}';
+    final timeText =
+        '${dateTime.hour.toString().padLeft(2, '0')}:${dateTime.minute.toString().padLeft(2, '0')}';
+    final activeFooterLines = footerLines.where((e) => e.trim().isNotEmpty).toList();
+
+    doc.addPage(
+      pw.Page(
+        pageFormat: format,
+        margin: pw.EdgeInsets.fromLTRB(is58 ? 8 : 10, 8, is58 ? 8 : 10, 8),
+        build: (_) => pw.Column(
+          crossAxisAlignment: pw.CrossAxisAlignment.stretch,
+          children: [
+            if (logoBytes != null) ...[
+              pw.Center(
+                child: pw.SizedBox(
+                  height: is58 ? 32 : 40,
+                  child: pw.Image(pw.MemoryImage(logoBytes), fit: pw.BoxFit.contain),
+                ),
+              ),
+              pw.SizedBox(height: 3),
+            ],
+            pw.Text(
+              shopName,
+              style: style(is58 ? 12 : 14, bold: true, color: accent),
+              textAlign: pw.TextAlign.center,
+            ),
+            if ((shopAddress ?? '').trim().isNotEmpty)
+              pw.Padding(
+                padding: const pw.EdgeInsets.only(top: 2),
+                child: pw.Text(
+                  shopAddress!.trim(),
+                  style: style(is58 ? 6.6 : 7.6, color: muted),
+                  textAlign: pw.TextAlign.center,
+                ),
+              ),
+            if ((shopPhone ?? '').trim().isNotEmpty)
+              pw.Padding(
+                padding: const pw.EdgeInsets.only(top: 1),
+                child: pw.Text(
+                  shopPhone!.trim(),
+                  style: style(is58 ? 6.6 : 7.6, color: muted),
+                  textAlign: pw.TextAlign.center,
+                ),
+              ),
+            pw.SizedBox(height: 5),
+            arText('فاتورة بيع', size: is58 ? 12 : 14, bold: true, color: accent, align: pw.TextAlign.center),
+            pw.Text(
+              'SALES INVOICE',
+              style: style(is58 ? 7.5 : 8.5, bold: true, color: accent),
+              textAlign: pw.TextAlign.center,
+            ),
+            divider(),
+            valueRow('رقم الفاتورة', 'Invoice No.', receiptNo, strong: true),
+            valueRow('التاريخ', 'Date', dateText),
+            valueRow('الوقت', 'Time', timeText),
+            if (receiptNo.startsWith('OFF-'))
+              pw.Padding(
+                padding: const pw.EdgeInsets.only(top: 3),
+                child: pw.Column(
+                  children: [
+                    arText('غير متصل - بانتظار المزامنة', size: 7, bold: true, color: accent, align: pw.TextAlign.center),
+                    pw.Text('Offline - Pending Sync', style: style(6, color: muted), textAlign: pw.TextAlign.center),
+                  ],
+                ),
+              ),
+            if (customerName.isNotEmpty || customerPhone.isNotEmpty || customerAddress.isNotEmpty) ...[
+              divider(),
+              valueRow(
+                'العميل',
+                'Customer',
+                customerName.isEmpty ? 'Walk-in Customer' : customerName,
+                strong: true,
+              ),
+              if (customerPhone.isNotEmpty) valueRow('الهاتف', 'Phone', customerPhone),
+              if (customerAddress.isNotEmpty) valueRow('العنوان', 'Address', customerAddress),
+            ],
+            divider(),
+            ...List.generate(items.length, (index) {
+              final item = items[index];
+              final secondary = item.effectiveSecondaryName;
+              return pw.Container(
+                margin: const pw.EdgeInsets.only(bottom: 6),
+                padding: const pw.EdgeInsets.only(bottom: 5),
+                decoration: pw.BoxDecoration(
+                  border: pw.Border(bottom: pw.BorderSide(color: border, width: .45)),
+                ),
+                child: pw.Column(
+                  crossAxisAlignment: pw.CrossAxisAlignment.stretch,
+                  children: [
+                    if (secondary.isNotEmpty)
+                      arText(secondary, size: is58 ? 8.7 : 9.7, bold: true),
+                    pw.Text(
+                      item.name,
+                      style: style(is58 ? 7.1 : 8.1, bold: secondary.isEmpty),
+                      textAlign: pw.TextAlign.right,
+                    ),
+                    pw.SizedBox(height: 3),
+                    pw.Row(
+                      children: [
+                        pw.Expanded(
+                          child: bilingualLabel('الكمية', 'Qty', arSize: 7.2, enSize: 5.8),
+                        ),
+                        pw.Text(_q(item.qty), style: style(is58 ? 7 : 8, bold: true)),
+                        pw.SizedBox(width: 7),
+                        pw.Expanded(
+                          child: bilingualLabel('السعر', 'Price', arSize: 7.2, enSize: 5.8),
+                        ),
+                        pw.Text(_m(item.price), style: style(is58 ? 7 : 8, bold: true)),
+                      ],
+                    ),
+                    if (item.discountAmount > 0)
+                      pw.Padding(
+                        padding: const pw.EdgeInsets.only(top: 2),
+                        child: valueRow('الخصم', 'Discount', _m(item.discountAmount)),
+                      ),
+                    pw.Padding(
+                      padding: const pw.EdgeInsets.only(top: 1),
+                      child: valueRow('المبلغ', 'Amount', _m(item.total), strong: true),
+                    ),
+                  ],
+                ),
+              );
+            }),
+            valueRow('المجموع الفرعي', 'Subtotal', _m(subtotal)),
+            if (discount > 0) valueRow('الخصم', 'Discount', '-${_m(discount)}'),
+            if (tax > 0) valueRow('الضريبة', 'Tax', _m(tax)),
+            if (delivery > 0) valueRow('التوصيل', 'Delivery', _m(delivery)),
+            divider(),
+            valueRow('الإجمالي', 'TOTAL', _m(grandTotal), strong: true),
+            if (paid > 0) valueRow('المدفوع', 'Paid', _m(paid), strong: true),
+            if (change > 0) valueRow('الباقي', 'Change', _m(change), strong: true),
+            if (balanceDue > .004) valueRow('المتبقي', 'Balance Due', _m(balanceDue), strong: true),
+            if (payments.isNotEmpty) ...[
+              divider(),
+              pw.Row(
+                mainAxisAlignment: pw.MainAxisAlignment.end,
+                children: [bilingualLabel('تفاصيل الدفع', 'Payment Details', arSize: 9, enSize: 7)],
+              ),
+              pw.SizedBox(height: 3),
+              ...payments.map((p) {
+                final label = (p['label'] ?? p['method'] ?? 'Payment').toString();
+                final method = (p['method'] ?? label).toString();
+                final raw = p['amount'];
+                final amount = raw is num
+                    ? raw.toDouble()
+                    : double.tryParse((raw ?? '').toString()) ?? 0;
+                final ref = (p['reference'] ?? '').toString().trim();
+                final shown = ref.isEmpty ? _m(amount) : '${_m(amount)}  ($ref)';
+                return valueRow(_arabicPaymentLabel(method), label, shown);
+              }),
+            ],
+            if (showQr && _validQrUrl(qrUrl)) ...[
+              divider(),
+              pw.Center(
+                child: pw.BarcodeWidget(
+                  barcode: pw.Barcode.qrCode(),
+                  data: qrUrl!.trim(),
+                  width: is58 ? 52 : 64,
+                  height: is58 ? 52 : 64,
+                ),
+              ),
+              pw.SizedBox(height: 3),
+              arText('امسح للمراجعة', size: is58 ? 7 : 8, bold: true, color: accent, align: pw.TextAlign.center),
+              if (qrCaption.trim().isNotEmpty)
+                pw.Text(
+                  qrCaption.trim(),
+                  style: style(is58 ? 6 : 7, color: muted),
+                  textAlign: pw.TextAlign.center,
+                ),
+            ],
+            if (activeFooterLines.isNotEmpty) ...[
+              divider(),
+              ...activeFooterLines.map(
+                (line) => pw.Padding(
+                  padding: const pw.EdgeInsets.only(bottom: 2),
+                  child: pw.Text(line.trim(), style: style(is58 ? 6.4 : 7.3), textAlign: pw.TextAlign.center),
+                ),
+              ),
+            ],
+            pw.SizedBox(height: 5),
+            arText('شكراً لتسوقكم معنا', size: is58 ? 8 : 9, bold: true, color: accent, align: pw.TextAlign.center),
+            pw.Text(
+              'Thank you for your business!',
+              style: style(is58 ? 6.4 : 7.2, bold: true, color: accent),
+              textAlign: pw.TextAlign.center,
+            ),
+          ],
+        ),
+      ),
+    );
+
+    return doc.save();
+  }
+
+  Future<Uint8List> _buildArabicStandardInvoicePdf({
+    required String shopName,
+    String? shopAddress,
+    String? shopPhone,
+    required String receiptNo,
+    required DateTime dateTime,
+    required List<ReceiptItem> items,
+    required double subtotal,
+    required double discount,
+    required double tax,
+    required double grandTotal,
+    Map<String, dynamic>? meta,
+    required String paperWidth,
+    required List<String> footerLines,
+    required String invoiceHeading,
+    required bool showLogo,
+    String? logoData,
+    required bool showQr,
+    String? qrUrl,
+    required String qrCaption,
+  }) async {
+    final fonts = await _loadArabicFonts();
+    final doc = pw.Document();
+    final format = pageFormatForPaperWidth(paperWidth);
+    final isA5 = paperWidth.toLowerCase() == 'a5';
+    final accent = PdfColor.fromInt(0xFF0F766E);
+    final accentSoft = PdfColor.fromInt(0xFFF0FDFA);
+    final border = PdfColor.fromInt(0xFFD8E1E7);
+    final ink = PdfColor.fromInt(0xFF172033);
+    final muted = PdfColor.fromInt(0xFF617083);
+    final logoBytes = showLogo ? _decodeLogo(logoData) : null;
+
+    final customerRaw = meta?['customer_snapshot'];
+    final customer = customerRaw is Map
+        ? customerRaw.cast<String, dynamic>()
+        : <String, dynamic>{};
+    final customerName = (customer['name'] ?? '').toString().trim();
+    final customerPhone = (customer['phone'] ?? '').toString().trim();
+    final customerAddress = (customer['address'] ?? '').toString().trim();
+    final effectiveCustomer = customerName.isEmpty ? 'Walk-in Customer' : customerName;
+
+    double numericMeta(String key) {
+      final raw = meta?[key];
+      if (raw is num) return raw.toDouble();
+      return double.tryParse((raw ?? '').toString()) ?? 0;
+    }
+
+    final delivery = numericMeta('delivery');
+    final cashReceived = numericMeta('cash_received');
+    final change = numericMeta('change_amount');
+    final paymentRaw = meta?['payments_snapshot'] is List
+        ? meta!['payments_snapshot'] as List
+        : (meta?['payments'] is List ? meta!['payments'] as List : const []);
+    final payments = <Map<String, dynamic>>[];
+    for (final raw in paymentRaw) {
+      if (raw is Map) payments.add(raw.cast<String, dynamic>());
+    }
+    final paidFromPayments = payments.fold<double>(0, (sum, p) {
+      final raw = p['amount'];
+      return sum +
+          (raw is num
+              ? raw.toDouble()
+              : double.tryParse((raw ?? '').toString()) ?? 0);
+    });
+    final paid = paidFromPayments > 0 ? paidFromPayments : cashReceived;
+    final balanceDue = (grandTotal - paid).clamp(0, double.infinity).toDouble();
+
+    String dateOnly(DateTime d) =>
+        '${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year}';
+    String timeOnly(DateTime d) =>
+        '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
+
+    pw.TextStyle style(
+      double size, {
+      bool bold = false,
+      PdfColor? color,
+    }) =>
+        pw.TextStyle(
+          font: bold ? fonts.bold : fonts.regular,
+          fontSize: size,
+          color: color ?? ink,
+        );
+
+    pw.Widget arText(
+      String text, {
+      double size = 9,
+      bool bold = true,
+      PdfColor? color,
+      pw.TextAlign align = pw.TextAlign.right,
+    }) =>
+        pw.Text(
+          text,
+          style: style(size, bold: bold, color: color),
+          textDirection: pw.TextDirection.rtl,
+          textAlign: align,
+        );
+
+    pw.Widget bilingualLabel(
+      String ar,
+      String en, {
+      double? width,
+      bool strong = false,
+    }) {
+      final child = pw.Column(
+        crossAxisAlignment: pw.CrossAxisAlignment.end,
+        children: [
+          arText(ar, size: isA5 ? 7.7 : 8.7, bold: true),
+          pw.Text(
+            en,
+            style: style(isA5 ? 5.7 : 6.5, bold: strong, color: muted),
+            textAlign: pw.TextAlign.right,
+          ),
+        ],
+      );
+      return width == null ? child : pw.SizedBox(width: width, child: child);
+    }
+
+    pw.Widget singleValueRow(
+      String ar,
+      String en,
+      String value, {
+      bool strong = false,
+      bool accentValue = false,
+    }) =>
+        pw.Padding(
+          padding: pw.EdgeInsets.symmetric(vertical: isA5 ? 2.2 : 3),
+          child: pw.Row(
+            crossAxisAlignment: pw.CrossAxisAlignment.center,
+            children: [
+              pw.Expanded(
+                child: pw.Text(
+                  value,
+                  style: style(
+                    isA5 ? 7.5 : 8.8,
+                    bold: strong || accentValue,
+                    color: accentValue ? accent : ink,
+                  ),
+                  textAlign: pw.TextAlign.left,
+                ),
+              ),
+              pw.SizedBox(width: isA5 ? 7 : 10),
+              bilingualLabel(ar, en, width: isA5 ? 80 : 105, strong: strong),
+            ],
+          ),
+        );
+
+    pw.Widget tableHeader(String ar, String en) => pw.Padding(
+          padding: pw.EdgeInsets.symmetric(horizontal: isA5 ? 2 : 4, vertical: isA5 ? 4 : 5),
+          child: pw.Column(
+            mainAxisAlignment: pw.MainAxisAlignment.center,
+            children: [
+              arText(ar, size: isA5 ? 6.4 : 7.2, bold: true, color: PdfColors.white, align: pw.TextAlign.center),
+              pw.Text(
+                en,
+                style: style(isA5 ? 5.1 : 5.8, bold: true, color: PdfColors.white),
+                textAlign: pw.TextAlign.center,
+              ),
+            ],
+          ),
+        );
+
+    pw.Widget tableValue(
+      String value, {
+      pw.TextAlign align = pw.TextAlign.center,
+      bool bold = false,
+    }) =>
+        pw.Padding(
+          padding: pw.EdgeInsets.symmetric(horizontal: isA5 ? 2 : 4, vertical: isA5 ? 5 : 6),
+          child: pw.Text(
+            value,
+            style: style(isA5 ? 6.4 : 7.6, bold: bold),
+            textAlign: align,
+          ),
+        );
+
+    pw.Widget productCell(ReceiptItem item) {
+      final secondary = item.effectiveSecondaryName;
+      return pw.Padding(
+        padding: pw.EdgeInsets.symmetric(horizontal: isA5 ? 3 : 5, vertical: isA5 ? 4 : 5),
+        child: pw.Column(
+          crossAxisAlignment: pw.CrossAxisAlignment.stretch,
+          children: [
+            if (secondary.isNotEmpty) ...[
+              arText(secondary, size: isA5 ? 7 : 8.2, bold: true),
+              pw.SizedBox(height: 1),
+            ],
+            pw.Text(
+              item.name,
+              style: style(isA5 ? 6.2 : 7.2, bold: secondary.isEmpty, color: secondary.isEmpty ? ink : muted),
+              textAlign: pw.TextAlign.right,
+            ),
+          ],
+        ),
+      );
+    }
+
+    final headingEn = invoiceHeading.trim().isEmpty ? 'SALES INVOICE' : invoiceHeading.trim();
+    final headingAr = _arabicInvoiceHeading(headingEn);
+    final activeFooterLines = footerLines.where((line) => line.trim().isNotEmpty).toList();
+
+    doc.addPage(
+      pw.MultiPage(
+        pageFormat: format,
+        margin: pw.EdgeInsets.fromLTRB(isA5 ? 18 : 26, isA5 ? 18 : 24, isA5 ? 18 : 26, isA5 ? 20 : 26),
+        footer: (context) => pw.Container(
+          padding: const pw.EdgeInsets.only(top: 5),
+          decoration: pw.BoxDecoration(
+            border: pw.Border(top: pw.BorderSide(color: border, width: .5)),
+          ),
+          child: pw.Row(
+            mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+            children: [
+              pw.Column(
+                crossAxisAlignment: pw.CrossAxisAlignment.start,
+                children: [
+                  arText('شكراً لتسوقكم معنا', size: isA5 ? 6.2 : 7, bold: true, color: accent),
+                  pw.Text('Thank you for your business!', style: style(isA5 ? 5.3 : 6.1, color: accent)),
+                ],
+              ),
+              pw.Text(
+                'صفحة / Page ${context.pageNumber}/${context.pagesCount}',
+                style: style(isA5 ? 5.5 : 6.3, color: muted),
+              ),
+            ],
+          ),
+        ),
+        build: (_) => [
+          pw.Column(
+            crossAxisAlignment: pw.CrossAxisAlignment.stretch,
+            children: [
+              if (logoBytes != null) ...[
+                pw.Center(
+                  child: pw.SizedBox(
+                    height: isA5 ? 42 : 52,
+                    child: pw.Image(pw.MemoryImage(logoBytes), fit: pw.BoxFit.contain),
+                  ),
+                ),
+                pw.SizedBox(height: 4),
+              ],
+              pw.Text(
+                shopName,
+                style: style(isA5 ? 13 : 16, bold: true, color: accent),
+                textAlign: pw.TextAlign.center,
+              ),
+              if ((shopAddress ?? '').trim().isNotEmpty)
+                pw.Padding(
+                  padding: const pw.EdgeInsets.only(top: 2),
+                  child: pw.Text(shopAddress!.trim(), style: style(isA5 ? 6.4 : 7.4, color: muted), textAlign: pw.TextAlign.center),
+                ),
+              if ((shopPhone ?? '').trim().isNotEmpty)
+                pw.Padding(
+                  padding: const pw.EdgeInsets.only(top: 1),
+                  child: pw.Text(shopPhone!.trim(), style: style(isA5 ? 6.4 : 7.4, color: muted), textAlign: pw.TextAlign.center),
+                ),
+              pw.SizedBox(height: isA5 ? 6 : 8),
+              arText(headingAr, size: isA5 ? 14 : 17, bold: true, color: accent, align: pw.TextAlign.center),
+              pw.Text(
+                headingEn,
+                style: style(isA5 ? 8.5 : 10, bold: true, color: accent),
+                textAlign: pw.TextAlign.center,
+              ),
+            ],
+          ),
+          pw.SizedBox(height: isA5 ? 8 : 11),
+          pw.Container(
+            padding: pw.EdgeInsets.all(isA5 ? 7 : 9),
+            decoration: pw.BoxDecoration(
+              color: PdfColor.fromInt(0xFFF8FAFC),
+              border: pw.Border.all(color: border, width: .7),
+              borderRadius: const pw.BorderRadius.all(pw.Radius.circular(4)),
+            ),
+            child: pw.Column(
+              children: [
+                singleValueRow('رقم الفاتورة', 'Invoice No.', receiptNo, strong: true),
+                singleValueRow('التاريخ', 'Date', dateOnly(dateTime)),
+                singleValueRow('الوقت', 'Time', timeOnly(dateTime)),
+                if (receiptNo.startsWith('OFF-'))
+                  pw.Padding(
+                    padding: const pw.EdgeInsets.only(top: 3),
+                    child: pw.Column(
+                      children: [
+                        arText('غير متصل - بانتظار المزامنة', size: isA5 ? 6.2 : 7, bold: true, color: accent, align: pw.TextAlign.center),
+                        pw.Text('Offline - Pending Sync', style: style(isA5 ? 5.3 : 6.1, color: muted), textAlign: pw.TextAlign.center),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          pw.SizedBox(height: isA5 ? 7 : 10),
+          pw.Container(
+            padding: pw.EdgeInsets.all(isA5 ? 7 : 9),
+            decoration: pw.BoxDecoration(
+              color: PdfColor.fromInt(0xFFF8FAFC),
+              border: pw.Border.all(color: border, width: .7),
+              borderRadius: const pw.BorderRadius.all(pw.Radius.circular(4)),
+            ),
+            child: pw.Column(
+              children: [
+                singleValueRow('العميل', 'Customer', effectiveCustomer, strong: true),
+                if (customerPhone.isNotEmpty) singleValueRow('الهاتف', 'Phone', customerPhone),
+                if (customerAddress.isNotEmpty) singleValueRow('العنوان', 'Address', customerAddress),
+              ],
+            ),
+          ),
+          pw.SizedBox(height: isA5 ? 8 : 11),
+          pw.Table(
+            border: pw.TableBorder(
+              verticalInside: pw.BorderSide(color: border, width: .35),
+              horizontalInside: pw.BorderSide(color: border, width: .35),
+              bottom: pw.BorderSide(color: border, width: .6),
+            ),
+            columnWidths: {
+              0: const pw.FixedColumnWidth(20),
+              1: const pw.FlexColumnWidth(3.9),
+              2: const pw.FlexColumnWidth(1.05),
+              3: const pw.FlexColumnWidth(.85),
+              4: const pw.FlexColumnWidth(1.45),
+              5: const pw.FlexColumnWidth(1.25),
+              6: const pw.FlexColumnWidth(1.45),
+            },
+            children: [
+              pw.TableRow(
+                decoration: pw.BoxDecoration(color: accent),
+                children: [
+                  tableHeader('#', '#'),
+                  tableHeader('المنتج', 'Product'),
+                  tableHeader('الوحدة', 'Unit'),
+                  tableHeader('الكمية', 'Qty'),
+                  tableHeader('سعر الوحدة', 'Unit Price'),
+                  tableHeader('الخصم', 'Discount'),
+                  tableHeader('المبلغ', 'Amount'),
+                ],
+              ),
+              ...List.generate(items.length, (index) {
+                final item = items[index];
+                return pw.TableRow(
+                  children: [
+                    tableValue('${index + 1}'),
+                    productCell(item),
+                    tableValue(item.unitName.isEmpty ? '-' : item.unitName),
+                    tableValue(_q(item.qty)),
+                    tableValue(_m(item.price), align: pw.TextAlign.right),
+                    tableValue(_m(item.discountAmount), align: pw.TextAlign.right),
+                    tableValue(_m(item.total), align: pw.TextAlign.right, bold: true),
+                  ],
+                );
+              }),
+            ],
+          ),
+          pw.SizedBox(height: isA5 ? 8 : 12),
+          pw.Row(
+            crossAxisAlignment: pw.CrossAxisAlignment.start,
+            children: [
+              pw.Expanded(
+                child: pw.Container(
+                  padding: pw.EdgeInsets.all(isA5 ? 7 : 9),
+                  decoration: pw.BoxDecoration(
+                    border: pw.Border.all(color: border, width: .6),
+                    borderRadius: const pw.BorderRadius.all(pw.Radius.circular(4)),
+                  ),
+                  child: pw.Column(
+                    crossAxisAlignment: pw.CrossAxisAlignment.stretch,
+                    children: [
+                      bilingualLabel('تفاصيل الدفع', 'Payment Details'),
+                      pw.SizedBox(height: 4),
+                      if (payments.isEmpty)
+                        pw.Text('-', style: style(isA5 ? 6 : 7, color: muted))
+                      else
+                        ...payments.map((p) {
+                          final label = (p['label'] ?? p['method'] ?? 'Payment').toString();
+                          final method = (p['method'] ?? label).toString();
+                          final raw = p['amount'];
+                          final amount = raw is num
+                              ? raw.toDouble()
+                              : double.tryParse((raw ?? '').toString()) ?? 0;
+                          final ref = (p['reference'] ?? '').toString().trim();
+                          return pw.Padding(
+                            padding: const pw.EdgeInsets.only(top: 3),
+                            child: singleValueRow(
+                              _arabicPaymentLabel(method),
+                              label,
+                              ref.isEmpty ? _m(amount) : '${_m(amount)}  ($ref)',
+                            ),
+                          );
+                        }),
+                    ],
+                  ),
+                ),
+              ),
+              pw.SizedBox(width: isA5 ? 8 : 12),
+              pw.Expanded(
+                child: pw.Container(
+                  padding: pw.EdgeInsets.all(isA5 ? 7 : 9),
+                  decoration: pw.BoxDecoration(
+                    color: accentSoft,
+                    border: pw.Border.all(color: border, width: .6),
+                    borderRadius: const pw.BorderRadius.all(pw.Radius.circular(4)),
+                  ),
+                  child: pw.Column(
+                    children: [
+                      singleValueRow('المجموع الفرعي', 'Subtotal', _m(subtotal)),
+                      if (discount > 0) singleValueRow('الخصم', 'Discount', '-${_m(discount)}'),
+                      if (tax > 0) singleValueRow('الضريبة', 'Tax', _m(tax)),
+                      if (delivery > 0) singleValueRow('التوصيل', 'Delivery', _m(delivery)),
+                      pw.Container(height: .6, margin: const pw.EdgeInsets.symmetric(vertical: 4), color: border),
+                      singleValueRow('الإجمالي', 'TOTAL', _m(grandTotal), strong: true, accentValue: true),
+                      if (paid > 0) singleValueRow('المدفوع', 'Paid', _m(paid), strong: true),
+                      if (change > 0) singleValueRow('الباقي', 'Change', _m(change), strong: true),
+                      if (balanceDue > .004) singleValueRow('المتبقي', 'Balance Due', _m(balanceDue), strong: true, accentValue: true),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+          pw.SizedBox(height: isA5 ? 8 : 12),
+          pw.Container(
+            width: double.infinity,
+            padding: pw.EdgeInsets.all(isA5 ? 7 : 9),
+            decoration: pw.BoxDecoration(
+              border: pw.Border.all(color: border, width: .6),
+              borderRadius: const pw.BorderRadius.all(pw.Radius.circular(4)),
+            ),
+            child: pw.Row(
+              crossAxisAlignment: pw.CrossAxisAlignment.center,
+              children: [
+                if (showQr && _validQrUrl(qrUrl)) ...[
+                  pw.BarcodeWidget(
+                    barcode: pw.Barcode.qrCode(),
+                    data: qrUrl!.trim(),
+                    width: isA5 ? 48 : 58,
+                    height: isA5 ? 48 : 58,
+                  ),
+                  pw.SizedBox(width: isA5 ? 7 : 10),
+                  pw.Column(
+                    crossAxisAlignment: pw.CrossAxisAlignment.start,
+                    children: [
+                      arText('امسح للمراجعة', size: isA5 ? 6.6 : 7.6, bold: true, color: accent),
+                      if (qrCaption.trim().isNotEmpty)
+                        pw.Text(qrCaption.trim(), style: style(isA5 ? 5.6 : 6.5, color: muted)),
+                    ],
+                  ),
+                ],
+                pw.Spacer(),
+                pw.Column(
+                  crossAxisAlignment: pw.CrossAxisAlignment.center,
+                  children: [
+                    arText('شكراً لتسوقكم معنا', size: isA5 ? 7.4 : 8.6, bold: true, color: accent, align: pw.TextAlign.center),
+                    pw.Text('Thank you for your business!', style: style(isA5 ? 5.8 : 6.8, bold: true, color: accent), textAlign: pw.TextAlign.center),
+                  ],
+                ),
+                if (activeFooterLines.isNotEmpty) ...[
+                  pw.Spacer(),
+                  pw.Column(
+                    crossAxisAlignment: pw.CrossAxisAlignment.end,
+                    children: activeFooterLines
+                        .map((line) => pw.Padding(
+                              padding: const pw.EdgeInsets.only(top: 2),
+                              child: pw.Text(line.trim(), style: style(isA5 ? 5.5 : 6.4, color: muted), textAlign: pw.TextAlign.right),
+                            ))
+                        .toList(),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          pw.SizedBox(height: 10),
+        ],
       ),
     );
 

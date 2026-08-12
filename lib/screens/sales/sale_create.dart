@@ -4,6 +4,7 @@ import 'dart:ui' show FontFeature;
 import 'package:enterprise_pos/api/core/api_client.dart' show ApiException;
 import 'package:enterprise_pos/api/product_service.dart';
 import 'package:enterprise_pos/models/product_unit.dart';
+import 'package:enterprise_pos/models/sale_receipt_item.dart';
 import 'package:enterprise_pos/api/sale_service.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/providers/branch_feature_provider.dart';
@@ -464,6 +465,9 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       final rowPrice =
           double.tryParse(_items[idx]['price']?.toString() ?? '') ?? price;
       _items[idx]['quantity'] = newQty;
+      if ((product['secondary_name'] ?? '').toString().trim().isNotEmpty) {
+        _items[idx]['secondary_name'] = product['secondary_name'];
+      }
       _items[idx]['total'] =
           _lineTotal(price: rowPrice, qty: newQty, discPct: discPct, discountType: rowDiscType);
     } else {
@@ -472,6 +476,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       _items.add({
         'product_id': productId,
         'name': product['name'],
+        'secondary_name': product['secondary_name'],
         'cost_price': product['cost_price'],
         'wholesale_price': product['wholesale_price'],
         'quantity': 1.0,
@@ -506,6 +511,9 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
 
     if (idx != -1) {
       _items[idx]["quantity"] = qty;
+      if ((product['secondary_name'] ?? '').toString().trim().isNotEmpty) {
+        _items[idx]['secondary_name'] = product['secondary_name'];
+      }
       final discPct =
           double.tryParse(_items[idx]["discount_pct"]?.toString() ?? '') ?? 0.0;
       final existingDiscType =
@@ -522,6 +530,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       _items.add({
         "product_id": productId,
         "name": product['name'],
+        "secondary_name": product['secondary_name'],
         "cost_price": product['cost_price'],
         "wholesale_price": product['wholesale_price'],
         "quantity": qty,
@@ -565,6 +574,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         return {
           'id': item['product_id'],
           'name': item['name'],
+          'secondary_name': item['secondary_name'],
           'price': item['price'],
           'cost_price': item['cost_price'],
           'wholesale_price': item['wholesale_price'],
@@ -1460,6 +1470,9 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
             : (unitRaw ?? '').toString();
         return SaleReceiptItem(
           name: name,
+          secondaryName: (i['secondary_name'] ?? '').toString().trim().isEmpty
+              ? null
+              : (i['secondary_name'] ?? '').toString().trim(),
           price: price,
           qty: qty,
           total: lineTotal,
@@ -1511,13 +1524,14 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
             changeAmount: changeAmount,
             meta: meta,
             sections: mainTemplate.sections,
-            paperWidth: mainTemplate.paperWidthCode,
+            paperWidth: printerConfig.mainPaperCode,
             footerLines: footerLines,
             showLogo: printerConfig.printLogoEnabled && mainTemplate.isCustomerFacing,
             logoData: printerConfig.printLogoData,
             showQr: printerConfig.qrCodeEnabled && mainTemplate.isCustomerFacing,
             qrUrl: printerConfig.qrCodeUrl,
             qrCaption: printerConfig.qrCodeCaption,
+            template: mainTemplate,
           );
           printedToHardware = true;
 
@@ -1542,6 +1556,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
               paperWidth: secondaryTemplate.paperWidthCode,
               footerLines: footerLines,
               receiptHeader: secondaryHeader,
+              template: secondaryTemplate,
             );
           }
         } catch (e, s) {
@@ -1579,6 +1594,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
             showQr: printerConfig.qrCodeEnabled && mainTemplate.isCustomerFacing,
             qrUrl: printerConfig.qrCodeUrl,
             qrCaption: printerConfig.qrCodeCaption,
+            template: mainTemplate,
           );
           printedToHardware = true;
 
@@ -1603,6 +1619,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
               paperWidth: secondaryTemplate.paperWidthCode,
               footerLines: footerLines,
               receiptHeader: secondaryHeader,
+              template: secondaryTemplate,
               jobName: 'Secondary Copy $receiptNo',
             );
           }
@@ -1639,6 +1656,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
           showQr: printerConfig.qrCodeEnabled && mainTemplate.isCustomerFacing,
           qrUrl: printerConfig.qrCodeUrl,
           qrCaption: printerConfig.qrCodeCaption,
+          template: mainTemplate,
         );
       }
 
@@ -1673,6 +1691,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
             showQr: printerConfig.qrCodeEnabled && mainTemplate.isCustomerFacing,
             qrUrl: printerConfig.qrCodeUrl,
             qrCaption: printerConfig.qrCodeCaption,
+            template: mainTemplate,
           );
           final prepared =
               await WhatsAppInvoiceService.instance.prepareAndOpen(

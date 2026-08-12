@@ -642,6 +642,13 @@ class _CustomerEditScreenState extends State<CustomerEditScreen>
     final phone = (c['phone'] ?? '').toString();
     final email = (c['email'] ?? '').toString();
     final address = (c['address'] ?? '').toString();
+    final customerCode = (c['customer_code'] ?? '').toString().trim();
+    final rawType = (c['customer_type'] ?? 'retail').toString().toLowerCase();
+    final customerType = rawType == 'wholesale'
+        ? 'Wholesale'
+        : rawType == 'reseller'
+            ? 'Reseller'
+            : 'Retail';
     final balance = _toDouble(c['balance']);
 
     return _PartyHeroCard(
@@ -663,6 +670,9 @@ class _CustomerEditScreenState extends State<CustomerEditScreen>
       onPrimaryAction: busy ? null : _openReceiveModal,
       onEdit: busy ? null : _openEdit,
       infoPills: [
+        if (customerCode.isNotEmpty)
+          _PartyInfoPill(icon: Icons.numbers_rounded, label: 'Customer ID', value: customerCode),
+        _PartyInfoPill(icon: Icons.storefront_outlined, label: 'Type', value: customerType),
         _PartyInfoPill(icon: Icons.phone_rounded, label: 'Phone', value: phone),
         _PartyInfoPill(icon: Icons.mail_rounded, label: 'Email', value: email),
       ],

@@ -15,8 +15,13 @@ class PrinterConfig {
   final String? localPrinterName;
   final InvoiceTemplate mainInvoiceTemplate;
 
-  /// Settings used only by the paged Standard Invoice template.
+  /// Settings used by paged office invoices.
   final String invoicePaperSize; // a4 | a5 | letter
+
+  /// Width used by templates whose thermal paper is configurable (currently
+  /// Arabic Thermal). Existing Standard/Compact templates keep their historic
+  /// fixed 80 mm / 58 mm behaviour.
+  final String thermalPaperSize; // mm58 | mm80
   final String invoiceHeading;
 
   /// Shared customer-facing print branding.
@@ -73,6 +78,7 @@ class PrinterConfig {
     this.localPrinterName,
     this.mainInvoiceTemplate = InvoiceTemplate.standard,
     this.invoicePaperSize = 'a4',
+    this.thermalPaperSize = 'mm80',
     this.invoiceHeading = 'SALES INVOICE',
     this.printLogoEnabled = false,
     this.printLogoData,
@@ -111,8 +117,11 @@ class PrinterConfig {
   bool get isConfigured => activeConnection != 'none';
   bool get isBarcodeConfigured => barcodeAccessGranted && barcodePrintEnabled;
   bool get isPagedInvoice => mainInvoiceTemplate.isPaged;
-  String get mainPaperCode =>
-      mainInvoiceTemplate.isPaged ? invoicePaperSize : mainInvoiceTemplate.paperWidthCode;
+  String get mainPaperCode {
+    if (mainInvoiceTemplate.isPaged) return invoicePaperSize;
+    if (mainInvoiceTemplate.usesConfigurableThermalWidth) return thermalPaperSize;
+    return mainInvoiceTemplate.paperWidthCode;
+  }
 
   // Source compatibility for receipt-printing code during rolling upgrades.
   bool get kitchenPrintEnabled => secondaryPrintEnabled;
@@ -170,6 +179,7 @@ class PrinterConfig {
       mainInvoiceTemplate:
           InvoiceTemplate.fromValue(json['main_invoice_template']?.toString()),
       invoicePaperSize: (json['invoice_paper_size'] ?? 'a4').toString(),
+      thermalPaperSize: (json['thermal_paper_size'] ?? 'mm80').toString(),
       invoiceHeading: (json['invoice_heading'] ?? 'SALES INVOICE').toString(),
       printLogoEnabled: _bool(json['print_logo_enabled']),
       printLogoData: json['print_logo_data']?.toString(),
@@ -229,6 +239,7 @@ class PrinterConfig {
         'local_printer_name': localPrinterName,
         'main_invoice_template': mainInvoiceTemplate.value,
         'invoice_paper_size': invoicePaperSize,
+        'thermal_paper_size': thermalPaperSize,
         'invoice_heading': invoiceHeading,
         'print_logo_enabled': printLogoEnabled,
         'print_logo_data': printLogoData,
@@ -275,6 +286,7 @@ class PrinterConfig {
     String? localPrinterName,
     InvoiceTemplate? mainInvoiceTemplate,
     String? invoicePaperSize,
+    String? thermalPaperSize,
     String? invoiceHeading,
     bool? printLogoEnabled,
     String? printLogoData,
@@ -322,6 +334,7 @@ class PrinterConfig {
       localPrinterName: localPrinterName ?? this.localPrinterName,
       mainInvoiceTemplate: mainInvoiceTemplate ?? this.mainInvoiceTemplate,
       invoicePaperSize: invoicePaperSize ?? this.invoicePaperSize,
+      thermalPaperSize: thermalPaperSize ?? this.thermalPaperSize,
       invoiceHeading: invoiceHeading ?? this.invoiceHeading,
       printLogoEnabled: printLogoEnabled ?? this.printLogoEnabled,
       printLogoData:

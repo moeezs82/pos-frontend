@@ -1,19 +1,23 @@
 /// Predefined customer receipt/invoice layouts.
 ///
-/// Thermal templates keep their existing mm58/mm80 behaviour. The paged
-/// [standardInvoice] layout uses a branch-configured A4/A5/Letter page size and
-/// is intended for PDF or an installed Windows printer, never raw ESC/POS TCP.
+/// Thermal templates keep their existing mm58/mm80 behaviour. Paged invoice
+/// layouts use a branch-configured A4/A5/Letter page size and are intended for
+/// PDF or an installed Windows printer, never raw ESC/POS TCP.
 enum InvoiceTemplate {
   standard,
   compact,
   kitchen,
-  standardInvoice;
+  standardInvoice,
+  arabicThermal,
+  arabicStandardInvoice;
 
   String get value => switch (this) {
         InvoiceTemplate.standard => 'standard',
         InvoiceTemplate.compact => 'compact',
         InvoiceTemplate.kitchen => 'kitchen',
         InvoiceTemplate.standardInvoice => 'standard_invoice',
+        InvoiceTemplate.arabicThermal => 'arabic_thermal',
+        InvoiceTemplate.arabicStandardInvoice => 'arabic_standard_invoice',
       };
 
   String get label => switch (this) {
@@ -21,6 +25,8 @@ enum InvoiceTemplate {
         InvoiceTemplate.compact => 'Compact Receipt',
         InvoiceTemplate.kitchen => 'Kitchen Ticket',
         InvoiceTemplate.standardInvoice => 'Standard Invoice',
+        InvoiceTemplate.arabicThermal => 'Arabic Thermal Receipt',
+        InvoiceTemplate.arabicStandardInvoice => 'Arabic Standard Invoice',
       };
 
   String get description => switch (this) {
@@ -32,16 +38,37 @@ enum InvoiceTemplate {
           'Operational secondary ticket for kitchen, packing or preparation.',
         InvoiceTemplate.standardInvoice =>
           'Professional paged invoice for normal printers. Supports A4, A5 and Letter paper, discount column, payments, optional logo and QR code.',
+        InvoiceTemplate.arabicThermal =>
+          'Arabic-first bilingual customer receipt. Arabic labels and local product names print first, with English secondary. Supports configurable 58 mm or 80 mm thermal paper.',
+        InvoiceTemplate.arabicStandardInvoice =>
+          'Arabic-first bilingual paged invoice for A4, A5 and Letter printers. Values print once with bilingual labels; Arabic product names appear above English names.',
       };
 
-  bool get isPaged => this == InvoiceTemplate.standardInvoice;
+  bool get isPaged =>
+      this == InvoiceTemplate.standardInvoice ||
+      this == InvoiceTemplate.arabicStandardInvoice;
+
+  bool get isArabicFirst =>
+      this == InvoiceTemplate.arabicThermal ||
+      this == InvoiceTemplate.arabicStandardInvoice;
+
+  bool get usesConfigurableThermalWidth => this == InvoiceTemplate.arabicThermal;
+
   bool get isCustomerFacing => this != InvoiceTemplate.kitchen;
+  bool get isSecondaryEligible => !isPaged && !isArabicFirst;
+
+  /// The Arabic thermal template is still valid for a raw network thermal
+  /// destination because CounterIQ rasterises the fully-shaped bilingual PDF
+  /// and sends the result as ESC/POS image data. Paged templates remain local
+  /// Windows/PDF only.
   bool get supportsRawNetwork => !isPaged;
 
-  /// Thermal paper code. Paged invoices use the configured paper size instead.
+  /// Default thermal paper code. Arabic Thermal may override this with the
+  /// branch-configured [PrinterConfig.thermalPaperSize].
   String get paperWidthCode => switch (this) {
         InvoiceTemplate.compact => 'mm58',
-        InvoiceTemplate.standardInvoice => 'a4',
+        InvoiceTemplate.standardInvoice ||
+        InvoiceTemplate.arabicStandardInvoice => 'a4',
         _ => 'mm80',
       };
 
@@ -65,7 +92,9 @@ enum InvoiceTemplate {
             totalsBreakdown: false,
             footer: false,
           ),
-        InvoiceTemplate.standardInvoice => const InvoiceSections(
+        InvoiceTemplate.standardInvoice ||
+        InvoiceTemplate.arabicThermal ||
+        InvoiceTemplate.arabicStandardInvoice => const InvoiceSections(
             header: true,
             customer: true,
             totalsBreakdown: true,
@@ -73,11 +102,54 @@ enum InvoiceTemplate {
           ),
       };
 
+  /// Strict template resolver used when reading the server-side template
+  /// catalogue. Unknown values must never silently become Standard Receipt,
+  /// otherwise one unsupported/mismatched server value creates a duplicate
+  /// Standard Receipt option in Printer Settings.
+  static InvoiceTemplate? tryFromValue(String? v, {String? label}) {
+    String normalize(String? value) => (value ?? '')
+        .trim()
+        .toLowerCase()
+        .replaceAll(RegExp(r'[\s\-]+'), '_');
+
+    final value = normalize(v);
+    final byValue = switch (value) {
+      'standard' => InvoiceTemplate.standard,
+      'compact' => InvoiceTemplate.compact,
+      'kitchen' => InvoiceTemplate.kitchen,
+      'standard_invoice' || 'standardinvoice' =>
+        InvoiceTemplate.standardInvoice,
+      'arabic_thermal' ||
+      'arabicthermal' ||
+      'arabic_thermal_receipt' ||
+      'arabic_receipt' =>
+        InvoiceTemplate.arabicThermal,
+      'arabic_standard_invoice' ||
+      'arabicstandardinvoice' ||
+      'arabic_invoice' ||
+      'arabic_a4_invoice' =>
+        InvoiceTemplate.arabicStandardInvoice,
+      _ => null,
+    };
+    if (byValue != null) return byValue;
+
+    // Older/newer backend builds may expose a different internal value while
+    // still returning the stable human-readable catalogue label. Use that as
+    // a compatibility fallback instead of incorrectly mapping to Standard.
+    final labelValue = normalize(label);
+    return switch (labelValue) {
+      'standard_receipt' => InvoiceTemplate.standard,
+      'compact_receipt' => InvoiceTemplate.compact,
+      'kitchen_ticket' => InvoiceTemplate.kitchen,
+      'standard_invoice' => InvoiceTemplate.standardInvoice,
+      'arabic_thermal_receipt' => InvoiceTemplate.arabicThermal,
+      'arabic_standard_invoice' => InvoiceTemplate.arabicStandardInvoice,
+      _ => null,
+    };
+  }
+
   static InvoiceTemplate fromValue(String? v) {
-    return InvoiceTemplate.values.firstWhere(
-      (t) => t.value == v,
-      orElse: () => InvoiceTemplate.standard,
-    );
+    return tryFromValue(v) ?? InvoiceTemplate.standard;
   }
 }
 

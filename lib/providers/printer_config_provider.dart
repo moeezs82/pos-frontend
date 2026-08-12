@@ -47,6 +47,7 @@ class PrinterConfigProvider extends ChangeNotifier {
   String? get secondaryLocalPrinterName => _config.secondaryLocalPrinterName;
   InvoiceTemplate get mainInvoiceTemplate => _config.mainInvoiceTemplate;
   String get invoicePaperSize => _config.invoicePaperSize;
+  String get thermalPaperSize => _config.thermalPaperSize;
   String get invoiceHeading => _config.invoiceHeading;
   bool get printLogoEnabled => _config.printLogoEnabled;
   String? get printLogoData => _config.printLogoData;

@@ -75,6 +75,7 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
   List<Printer> _installedPrinters = [];
   InvoiceTemplate _mainTemplate = InvoiceTemplate.standard;
   String _invoicePaperSize = 'a4';
+  String _thermalPaperSize = 'mm80';
   bool _printLogoEnabled = false;
   String? _printLogoData;
   bool _qrCodeEnabled = false;
@@ -228,15 +229,16 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
           : config.secondaryReceiptHeader;
       _mainTemplate = config.mainInvoiceTemplate;
       _invoicePaperSize = config.invoicePaperSize;
+      _thermalPaperSize = config.thermalPaperSize;
       _invoiceHeadingCtrl.text = config.invoiceHeading;
       _printLogoEnabled = config.printLogoEnabled;
       _printLogoData = config.printLogoData;
       _qrCodeEnabled = config.qrCodeEnabled;
       _qrUrlCtrl.text = config.qrCodeUrl ?? '';
       _qrCaptionCtrl.text = config.qrCodeCaption;
-      _secondaryTemplate = config.secondaryInvoiceTemplate.isPaged
-          ? InvoiceTemplate.kitchen
-          : config.secondaryInvoiceTemplate;
+      _secondaryTemplate = config.secondaryInvoiceTemplate.isSecondaryEligible
+          ? config.secondaryInvoiceTemplate
+          : InvoiceTemplate.kitchen;
       _barcodeAddonActive = config.barcodeAddonActive;
       _barcodeConnection = config.barcodeConnection;
       _barcodeLocalPrinterCtrl.text = config.barcodeLocalPrinterName ?? '';
@@ -471,6 +473,7 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
         localPrinterName: _localPrinterCtrl.text.trim().isEmpty ? null : _localPrinterCtrl.text.trim(),
         mainInvoiceTemplate: _mainTemplate,
         invoicePaperSize: _invoicePaperSize,
+        thermalPaperSize: _thermalPaperSize,
         invoiceHeading: _invoiceHeadingCtrl.text.trim().isEmpty ? 'SALES INVOICE' : _invoiceHeadingCtrl.text.trim(),
         printLogoEnabled: _printLogoEnabled,
         printLogoData: _printLogoData,
@@ -518,6 +521,12 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
     }
   }
 
+  String get _mainPaperCode {
+    if (_mainTemplate.isPaged) return _invoicePaperSize;
+    if (_mainTemplate.usesConfigurableThermalWidth) return _thermalPaperSize;
+    return _mainTemplate.paperWidthCode;
+  }
+
   Future<void> _testPrint() async {
     if (_activeConnection == 'none') {
       _showMessage('Choose Network or This computer before sending a test print.');
@@ -525,7 +534,7 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
     }
 
     if (_mainTemplate.isPaged && _activeConnection == 'network') {
-      _showMessage('Standard Invoice cannot be sent as raw ESC/POS. Choose This computer or use Preview / PDF.');
+      _showMessage('Paged invoice templates cannot be sent as raw ESC/POS. Choose This computer or use Preview / PDF.');
       return;
     }
 
@@ -546,12 +555,13 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
           printerIp: ip,
           port: port,
           shopName: _shopNameCtrl.text.trim().isNotEmpty ? _shopNameCtrl.text.trim() : 'Test Print',
-          paperWidth: _mainTemplate.paperWidthCode,
+          paperWidth: _mainPaperCode,
           showLogo: _printLogoEnabled && _mainTemplate.isCustomerFacing,
           logoData: _printLogoData,
           showQr: _qrCodeEnabled && _mainTemplate.isCustomerFacing,
           qrUrl: _qrUrlCtrl.text.trim().isEmpty ? null : _qrUrlCtrl.text.trim(),
           qrCaption: _qrCaptionCtrl.text.trim(),
+          template: _mainTemplate,
         );
       } else {
         final printerName = _localPrinterCtrl.text.trim();
@@ -564,7 +574,7 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
           shopAddress: _shopAddressCtrl.text.trim().isEmpty ? null : _shopAddressCtrl.text.trim(),
           shopPhone: _shopPhoneCtrl.text.trim().isEmpty ? null : _shopPhoneCtrl.text.trim(),
           sections: _mainTemplate.sections,
-          paperWidth: _mainTemplate.isPaged ? _invoicePaperSize : _mainTemplate.paperWidthCode,
+          paperWidth: _mainPaperCode,
           footerLines: _currentFooterLines,
           copyLabel: 'RECEIPT PRINTER TEST',
           invoiceHeading: _invoiceHeadingCtrl.text.trim().isEmpty ? 'SALES INVOICE' : _invoiceHeadingCtrl.text.trim(),
@@ -573,6 +583,7 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
           showQr: _qrCodeEnabled && _mainTemplate.isCustomerFacing,
           qrUrl: _qrUrlCtrl.text.trim().isEmpty ? null : _qrUrlCtrl.text.trim(),
           qrCaption: _qrCaptionCtrl.text.trim(),
+          template: _mainTemplate,
         );
       }
       _showMessage(_mainTemplate.isPaged ? 'Test invoice sent — check the printer.' : 'Test ticket sent — check the printer.');
@@ -772,7 +783,7 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
         builder: (_) => InvoiceTemplatePreviewScreen(
           templates: receiptHeader == null
               ? _templates
-              : _templates.where((t) => !t.isPaged).toList(),
+              : _templates.where((t) => t.isSecondaryEligible).toList(),
           initialTemplate: template,
           shopName: _shopNameCtrl.text.trim().isNotEmpty ? _shopNameCtrl.text.trim() : 'My Shop',
           shopAddress: _shopAddressCtrl.text.trim().isEmpty ? null : _shopAddressCtrl.text.trim(),
@@ -780,6 +791,7 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
           footerLines: _currentFooterLines,
           receiptHeader: receiptHeader,
           invoicePaperSize: _invoicePaperSize,
+          thermalPaperSize: _thermalPaperSize,
           invoiceHeading: _invoiceHeadingCtrl.text.trim().isEmpty ? 'SALES INVOICE' : _invoiceHeadingCtrl.text.trim(),
           showLogo: _printLogoEnabled && template.isCustomerFacing,
           logoData: _printLogoData,
@@ -1084,7 +1096,7 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
                   child: DropdownButtonFormField<String>(
                     value: _invoicePaperSize,
                     decoration: const InputDecoration(
-                      labelText: 'Standard Invoice paper size',
+                      labelText: 'Paged invoice paper size',
                       prefixIcon: Icon(Icons.description_outlined),
                     ),
                     items: const [
@@ -1126,7 +1138,7 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
                   children: [
                     Icon(Icons.info_outline_rounded, color: AppTheme.warning, size: 18),
                     SizedBox(width: 8),
-                    Expanded(child: Text('Standard Invoice uses the Windows/PDF page renderer. Choose "This computer" for direct A4/A5/Letter printing.', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600))),
+                    Expanded(child: Text('Paged invoice templates use the Windows/PDF page renderer. Choose "This computer" for direct A4/A5/Letter printing.', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600))),
                   ],
                 ),
               ),
@@ -1229,6 +1241,24 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
                 onSelected: () => setState(() => _mainTemplate = t),
                 onPreview: () => _openPreview(t),
               )),
+          if (_mainTemplate.usesConfigurableThermalWidth) ...[
+            const SizedBox(height: 12),
+            DropdownButtonFormField<String>(
+              value: _thermalPaperSize,
+              decoration: const InputDecoration(
+                labelText: 'Arabic thermal paper width',
+                prefixIcon: Icon(Icons.straighten_rounded),
+                helperText: 'The same Arabic-first receipt layout adapts to 58 mm or 80 mm thermal rolls.',
+              ),
+              items: const [
+                DropdownMenuItem(value: 'mm58', child: Text('58 mm thermal roll')),
+                DropdownMenuItem(value: 'mm80', child: Text('80 mm thermal roll')),
+              ],
+              onChanged: (value) {
+                if (value != null) setState(() => _thermalPaperSize = value);
+              },
+            ),
+          ],
         ],
       ),
     );
@@ -1323,7 +1353,7 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
             const SizedBox(height: 8),
             const Text('Secondary printer template', style: TextStyle(fontWeight: FontWeight.w800)),
             const SizedBox(height: 8),
-            ..._templates.where((t) => !t.isPaged).map((t) => _TemplateOptionTile(
+            ..._templates.where((t) => t.isSecondaryEligible).map((t) => _TemplateOptionTile(
                   template: t,
                   selected: _secondaryTemplate == t,
                   onSelected: () => setState(() => _secondaryTemplate = t),

@@ -18,6 +18,7 @@ class InvoiceTemplatePreviewScreen extends StatefulWidget {
   final List<String> footerLines;
   final String? receiptHeader;
   final String invoicePaperSize;
+  final String thermalPaperSize;
   final String invoiceHeading;
   final bool showLogo;
   final String? logoData;
@@ -38,6 +39,7 @@ class InvoiceTemplatePreviewScreen extends StatefulWidget {
     ],
     this.receiptHeader,
     this.invoicePaperSize = 'a4',
+    this.thermalPaperSize = 'mm80',
     this.invoiceHeading = 'SALES INVOICE',
     this.showLogo = false,
     this.logoData,
@@ -61,12 +63,16 @@ class _InvoiceTemplatePreviewScreenState
     _selected = widget.initialTemplate;
   }
 
-  String get _paperCode =>
-      _selected.isPaged ? widget.invoicePaperSize : _selected.paperWidthCode;
+  String get _paperCode {
+    if (_selected.isPaged) return widget.invoicePaperSize;
+    if (_selected.usesConfigurableThermalWidth) return widget.thermalPaperSize;
+    return _selected.paperWidthCode;
+  }
 
   List<ReceiptItem> get _sampleItems => [
         ReceiptItem(
           name: 'Classic T-Shirt / Black / M',
+          secondaryName: 'تي شيرت كلاسيك / أسود / M',
           unitName: 'PCS',
           price: 1250,
           qty: 1,
@@ -75,6 +81,7 @@ class _InvoiceTemplatePreviewScreenState
         ),
         ReceiptItem(
           name: 'Coca Cola 500ml',
+          secondaryName: 'كوكا كولا 500 مل',
           unitName: 'PCS',
           price: 120,
           qty: 3,
@@ -83,6 +90,7 @@ class _InvoiceTemplatePreviewScreenState
         ),
         ReceiptItem(
           name: 'USB Cable 1m',
+          secondaryName: 'كابل يو إس بي 1م',
           unitName: 'PCS',
           price: 350,
           qty: 1,
@@ -125,6 +133,7 @@ class _InvoiceTemplatePreviewScreenState
       showQr: widget.showQr && _selected.isCustomerFacing,
       qrUrl: widget.qrUrl,
       qrCaption: widget.qrCaption,
+      template: _selected,
     );
   }
 

@@ -1,6 +1,6 @@
 import 'package:enterprise_pos/models/invoice_template.dart';
+import 'package:enterprise_pos/models/sale_receipt_item.dart';
 import 'package:enterprise_pos/services/receipt_preview_service.dart';
-import 'package:enterprise_pos/services/thermal_printer_service.dart';
 import 'package:pdf/pdf.dart';
 import 'package:printing/printing.dart';
 
@@ -60,6 +60,7 @@ class LocalPrinterService {
     bool showQr = false,
     String? qrUrl,
     String qrCaption = 'Scan to review us',
+    InvoiceTemplate? template,
     String? jobName,
   }) async {
     final printer = await requirePrinter(printerName);
@@ -91,6 +92,7 @@ class LocalPrinterService {
       showQr: showQr,
       qrUrl: qrUrl,
       qrCaption: qrCaption,
+      template: template,
     );
 
     final format = _pageFormat(paperWidth);
@@ -128,6 +130,7 @@ class LocalPrinterService {
     bool showQr = false,
     String? qrUrl,
     String qrCaption = 'Scan to review us',
+    InvoiceTemplate? template,
   }) {
     final now = DateTime.now();
     return printSaleReceipt(
@@ -140,6 +143,7 @@ class LocalPrinterService {
       items: [
         SaleReceiptItem(
           name: copyLabel,
+          secondaryName: template?.isArabicFirst == true ? 'اختبار طباعة' : null,
           price: 1250,
           qty: 1,
           total: 1200,
@@ -172,6 +176,7 @@ class LocalPrinterService {
       showQr: showQr,
       qrUrl: qrUrl,
       qrCaption: qrCaption,
+      template: template,
       jobName: 'CounterIQ Printer Test',
     );
   }

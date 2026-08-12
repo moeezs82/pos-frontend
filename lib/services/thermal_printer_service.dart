@@ -1,9 +1,12 @@
 import 'dart:convert';
 
 import 'package:enterprise_pos/models/invoice_template.dart';
+import 'package:enterprise_pos/models/sale_receipt_item.dart';
+import 'package:enterprise_pos/services/receipt_preview_service.dart';
 import 'package:esc_pos_printer_plus/esc_pos_printer_plus.dart';
 import 'package:esc_pos_utils_plus/esc_pos_utils_plus.dart';
 import 'package:image/image.dart' as img;
+import 'package:printing/printing.dart';
 
 class ThermalPrinterService {
   ThermalPrinterService._();
@@ -42,6 +45,7 @@ class ThermalPrinterService {
     bool showQr = false,
     String? qrUrl,
     String qrCaption = 'Scan to review us',
+    InvoiceTemplate? template,
   }) async {
     final profile = await CapabilityProfile.load();
     final paper = paperWidth == 'mm58' ? PaperSize.mm58 : PaperSize.mm80;
@@ -55,6 +59,37 @@ class ThermalPrinterService {
 
     if (result != PosPrintResult.success) {
       throw Exception('Could not reach printer at $printerIp:$port (${result.msg})');
+    }
+
+    if (template == InvoiceTemplate.arabicThermal) {
+      try {
+        await _writeArabicRasterReceipt(
+          printer,
+          shopName: shopName,
+          shopAddress: shopAddress,
+          shopPhone: shopPhone,
+          receiptNo: receiptNo,
+          dateTime: dateTime,
+          items: items,
+          subtotal: subtotal,
+          discount: discount,
+          tax: tax,
+          grandTotal: grandTotal,
+          cashReceived: cashReceived,
+          changeAmount: changeAmount,
+          meta: meta,
+          paperWidth: paperWidth,
+          footerLines: footerLines,
+          showLogo: showLogo,
+          logoData: logoData,
+          showQr: showQr,
+          qrUrl: qrUrl,
+          qrCaption: qrCaption,
+        );
+      } finally {
+        printer.disconnect();
+      }
+      return;
     }
 
     try {
@@ -105,6 +140,7 @@ class ThermalPrinterService {
     bool showQr = false,
     String? qrUrl,
     String qrCaption = 'Scan to review us',
+    InvoiceTemplate? template,
   }) async {
     final profile = await CapabilityProfile.load();
     final paper = paperWidth == 'mm58' ? PaperSize.mm58 : PaperSize.mm80;
@@ -118,6 +154,52 @@ class ThermalPrinterService {
 
     if (result != PosPrintResult.success) {
       throw Exception('Could not reach printer at $printerIp:$port (${result.msg})');
+    }
+
+    if (template == InvoiceTemplate.arabicThermal) {
+      try {
+        await _writeArabicRasterReceipt(
+          printer,
+          shopName: shopName,
+          shopAddress: null,
+          shopPhone: null,
+          receiptNo: 'TEST-${DateTime.now().millisecondsSinceEpoch}',
+          dateTime: DateTime.now(),
+          items: const [
+            SaleReceiptItem(
+              name: 'Classic T-Shirt',
+              secondaryName: 'تي شيرت كلاسيك',
+              price: 1250,
+              qty: 1,
+              total: 1200,
+              unitName: 'PCS',
+              discountAmount: 50,
+            ),
+          ],
+          subtotal: 1250,
+          discount: 50,
+          tax: 0,
+          grandTotal: 1200,
+          cashReceived: 1200,
+          changeAmount: 0,
+          meta: const <String, dynamic>{
+            'customer_snapshot': {'name': 'Walk-in Customer'},
+            'payments_snapshot': [
+              {'method': 'cash', 'label': 'Cash', 'amount': 1200},
+            ],
+          },
+          paperWidth: paperWidth,
+          footerLines: const ['Printer connection successful'],
+          showLogo: showLogo,
+          logoData: logoData,
+          showQr: showQr,
+          qrUrl: qrUrl,
+          qrCaption: qrCaption,
+        );
+      } finally {
+        printer.disconnect();
+      }
+      return;
     }
 
     try {
@@ -163,6 +245,96 @@ class ThermalPrinterService {
     } finally {
       printer.disconnect();
     }
+  }
+
+  Future<void> _writeArabicRasterReceipt(
+    NetworkPrinter printer, {
+    required String shopName,
+    String? shopAddress,
+    String? shopPhone,
+    required String receiptNo,
+    required DateTime dateTime,
+    required List<SaleReceiptItem> items,
+    required double subtotal,
+    required double discount,
+    required double tax,
+    required double grandTotal,
+    required double cashReceived,
+    required double changeAmount,
+    Map<String, dynamic>? meta,
+    required String paperWidth,
+    required List<String> footerLines,
+    required bool showLogo,
+    String? logoData,
+    required bool showQr,
+    String? qrUrl,
+    required String qrCaption,
+  }) async {
+    final effectiveMeta = <String, dynamic>{
+      ...?meta,
+      'cash_received': cashReceived,
+      'change_amount': changeAmount,
+    };
+
+    // Arabic text cannot be safely emitted as a printer-specific code page:
+    // shaping/RTL support varies wildly between ESC/POS firmwares. CounterIQ
+    // therefore renders the exact bilingual PDF first and rasterises it. The
+    // printer only receives pixels, so Arabic output is consistent on common
+    // network thermal printers without changing their firmware/code page.
+    final pdfBytes = await ReceiptPreviewService.instance.buildReceiptPdf(
+      shopName: shopName,
+      shopAddress: shopAddress,
+      shopPhone: shopPhone,
+      receiptNo: receiptNo,
+      dateTime: dateTime,
+      items: items,
+      subtotal: subtotal,
+      discount: discount,
+      tax: tax,
+      grandTotal: grandTotal,
+      meta: effectiveMeta,
+      sections: InvoiceTemplate.arabicThermal.sections,
+      paperWidth: paperWidth,
+      footerLines: footerLines,
+      showLogo: showLogo,
+      logoData: logoData,
+      showQr: showQr,
+      qrUrl: qrUrl,
+      qrCaption: qrCaption,
+      template: InvoiceTemplate.arabicThermal,
+    );
+
+    final maxWidth = paperWidth.toLowerCase() == 'mm58' ? 384 : 576;
+    await for (final page in Printing.raster(pdfBytes, dpi: 203)) {
+      final png = await page.toPng();
+      var raster = img.decodePng(png);
+      if (raster == null) {
+        throw Exception('Could not rasterise Arabic thermal receipt.');
+      }
+      if (raster.width > maxWidth) {
+        raster = img.copyResize(raster, width: maxWidth);
+      }
+
+      // Send manageable horizontal slices. Some ESC/POS devices reject one
+      // extremely tall bitmap even though they accept the same data in chunks.
+      const chunkHeight = 720;
+      for (var y = 0; y < raster.height; y += chunkHeight) {
+        final height = (raster.height - y) > chunkHeight
+            ? chunkHeight
+            : raster.height - y;
+        final slice = img.copyCrop(
+          raster,
+          x: 0,
+          y: y,
+          width: raster.width,
+          height: height,
+        );
+        printer.imageRaster(slice, align: PosAlign.center);
+      }
+    }
+
+    printer.feed(2);
+    printer.cut();
   }
 
   void _writeReceipt(
@@ -400,22 +572,4 @@ class ThermalPrinterService {
 
   static String _m(num v) => v.toStringAsFixed(2);
   static String _q(num v) => (v % 1 == 0) ? v.toInt().toString() : v.toString();
-}
-
-class SaleReceiptItem {
-  final String name;
-  final double price;
-  final double qty;
-  final double total;
-  final String unitName;
-  final double discountAmount;
-
-  SaleReceiptItem({
-    required this.name,
-    required this.price,
-    required this.qty,
-    required this.total,
-    this.unitName = '',
-    this.discountAmount = 0,
-  });
 }
