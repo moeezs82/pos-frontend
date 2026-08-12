@@ -54,6 +54,7 @@ class PrinterConfig {
   final bool barcodeShowName;
   final bool barcodeShowValue;
   final bool barcodeShowPrice;
+  final bool barcodeShowVariantDetails;
 
   // Legacy display helpers retained for older call sites.
   final String? mainPrinterName;
@@ -102,6 +103,7 @@ class PrinterConfig {
     this.barcodeShowName = true,
     this.barcodeShowValue = true,
     this.barcodeShowPrice = true,
+    this.barcodeShowVariantDetails = true,
     this.mainPrinterName,
     this.secondaryPrinterName,
   });
@@ -207,6 +209,7 @@ class PrinterConfig {
       barcodeShowName: _bool(json['barcode_show_name'], fallback: true),
       barcodeShowValue: _bool(json['barcode_show_value'], fallback: true),
       barcodeShowPrice: _bool(json['barcode_show_price'], fallback: true),
+      barcodeShowVariantDetails: _bool(json['barcode_show_variant_details'], fallback: true),
       mainPrinterName: json['main_printer_name']?.toString(),
       secondaryPrinterName:
           preferred('secondary_printer_name', 'kitchen_printer_name')?.toString(),
@@ -256,6 +259,7 @@ class PrinterConfig {
         'barcode_show_name': barcodeShowName,
         'barcode_show_value': barcodeShowValue,
         'barcode_show_price': barcodeShowPrice,
+        'barcode_show_variant_details': barcodeShowVariantDetails,
         'main_printer_name': mainPrinterName,
         'secondary_printer_name': secondaryPrinterName,
       };
@@ -303,6 +307,7 @@ class PrinterConfig {
     bool? barcodeShowName,
     bool? barcodeShowValue,
     bool? barcodeShowPrice,
+    bool? barcodeShowVariantDetails,
   }) {
     return PrinterConfig(
       branchId: branchId,
@@ -359,6 +364,8 @@ class PrinterConfig {
       barcodeShowName: barcodeShowName ?? this.barcodeShowName,
       barcodeShowValue: barcodeShowValue ?? this.barcodeShowValue,
       barcodeShowPrice: barcodeShowPrice ?? this.barcodeShowPrice,
+      barcodeShowVariantDetails:
+          barcodeShowVariantDetails ?? this.barcodeShowVariantDetails,
       mainPrinterName: mainPrinterName,
       secondaryPrinterName: secondaryPrinterName,
     );

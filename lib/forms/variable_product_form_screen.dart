@@ -30,6 +30,7 @@ class _VariableProductFormScreenState extends State<VariableProductFormScreen> {
   final _formKey = GlobalKey<FormState>();
 
   final _nameCtrl = TextEditingController();
+  final _secondaryNameCtrl = TextEditingController();
   final _taxRateCtrl = TextEditingController(text: '0');
 
   // Defaults are create-screen helpers only. They prefill a newly-added
@@ -86,6 +87,7 @@ class _VariableProductFormScreenState extends State<VariableProductFormScreen> {
     if (widget.group != null) {
       final g = widget.group!;
       _nameCtrl.text = (g['name'] ?? '').toString();
+      _secondaryNameCtrl.text = (g['secondary_name'] ?? '').toString();
       _isActive = g['is_active'] == 1 || g['is_active'] == true;
       _taxInclusive =
           g['tax_inclusive'] == 1 || g['tax_inclusive'] == true;
@@ -102,6 +104,7 @@ class _VariableProductFormScreenState extends State<VariableProductFormScreen> {
   @override
   void dispose() {
     _nameCtrl.dispose();
+    _secondaryNameCtrl.dispose();
     _taxRateCtrl.dispose();
     _defaultRetailCtrl.dispose();
     _defaultWholesaleCtrl.dispose();
@@ -156,6 +159,7 @@ class _VariableProductFormScreenState extends State<VariableProductFormScreen> {
 
   _VariantDraft _newVariantSeed() => _VariantDraft(
         id: _nextVariantId++,
+        secondaryName: _secondaryNameCtrl.text.trim(),
         retailPrice: _parseDouble(_defaultRetailCtrl.text),
         wholesalePrice: _parseDouble(_defaultWholesaleCtrl.text),
         costPrice: _parseDouble(_defaultCostCtrl.text),
@@ -345,6 +349,7 @@ class _VariableProductFormScreenState extends State<VariableProductFormScreen> {
         await _groupService.updateGroup(
           _asInt(widget.group!['id'])!,
           name: _nameCtrl.text.trim(),
+          secondaryName: _secondaryNameCtrl.text.trim(),
           isActive: _isActive,
           categoryId: _selectedCategoryId,
           brandId: _selectedBrandId,
@@ -365,6 +370,7 @@ class _VariableProductFormScreenState extends State<VariableProductFormScreen> {
             (v) => VariantInput(
               size: v.size,
               color: v.color,
+              secondaryName: v.secondaryName,
               sku: v.sku,
               barcode: v.barcode,
               price: v.retailPrice,
@@ -381,6 +387,7 @@ class _VariableProductFormScreenState extends State<VariableProductFormScreen> {
 
       await _groupService.createVariableProduct(
         name: _nameCtrl.text.trim(),
+        secondaryName: _secondaryNameCtrl.text.trim(),
         isActive: _isActive,
         categoryId: _selectedCategoryId,
         brandId: _selectedBrandId,
@@ -533,6 +540,18 @@ class _VariableProductFormScreenState extends State<VariableProductFormScreen> {
                   validator: (value) => (value?.trim().isEmpty ?? true)
                       ? 'Product name is required'
                       : null,
+                ),
+              ),
+              SizedBox(
+                width: constraints.maxWidth,
+                child: TextFormField(
+                  controller: _secondaryNameCtrl,
+                  decoration: _inputDecoration(
+                    'Secondary Name',
+                    icon: Icons.translate_rounded,
+                  ).copyWith(
+                    hintText: 'Optional alternate or local-language family name',
+                  ),
                 ),
               ),
               SizedBox(
@@ -1262,6 +1281,7 @@ class _VariantEditorDialogState extends State<_VariantEditorDialog> {
 
   late final TextEditingController _sizeCtrl;
   late final TextEditingController _colorCtrl;
+  late final TextEditingController _secondaryNameCtrl;
   late final TextEditingController _skuCtrl;
   late final TextEditingController _barcodeCtrl;
   late final TextEditingController _retailCtrl;
@@ -1282,6 +1302,7 @@ class _VariantEditorDialogState extends State<_VariantEditorDialog> {
     final seed = widget.seed;
     _sizeCtrl = TextEditingController(text: seed.size);
     _colorCtrl = TextEditingController(text: seed.color);
+    _secondaryNameCtrl = TextEditingController(text: seed.secondaryName);
     _skuCtrl = TextEditingController(text: seed.sku);
     _barcodeCtrl = TextEditingController(text: seed.barcode);
     _retailCtrl = TextEditingController(text: _numberText(seed.retailPrice));
@@ -1298,6 +1319,7 @@ class _VariantEditorDialogState extends State<_VariantEditorDialog> {
   void dispose() {
     _sizeCtrl.dispose();
     _colorCtrl.dispose();
+    _secondaryNameCtrl.dispose();
     _skuCtrl.dispose();
     _barcodeCtrl.dispose();
     _retailCtrl.dispose();
@@ -1355,6 +1377,7 @@ class _VariantEditorDialogState extends State<_VariantEditorDialog> {
       id: widget.seed.id,
       size: _sizeCtrl.text.trim(),
       color: _colorCtrl.text.trim(),
+      secondaryName: _secondaryNameCtrl.text.trim(),
       sku: _skuCtrl.text.trim(),
       barcode: _barcodeCtrl.text.trim(),
       retailPrice: _parseDouble(_retailCtrl.text),
@@ -1426,6 +1449,12 @@ class _VariantEditorDialogState extends State<_VariantEditorDialog> {
                             ),
                           ),
                         ],
+                      ),
+                      const SizedBox(height: 12),
+                      _field(
+                        _secondaryNameCtrl,
+                        'Secondary Name',
+                        hint: 'Optional local-language name for this variant',
                       ),
                       const SizedBox(height: 22),
                       _sectionTitle('Identification'),
@@ -1700,6 +1729,7 @@ class _VariantDraft {
   final int id;
   String size;
   String color;
+  String secondaryName;
   String sku;
   String barcode;
   double retailPrice;
@@ -1712,6 +1742,7 @@ class _VariantDraft {
     required this.id,
     this.size = '',
     this.color = '',
+    this.secondaryName = '',
     this.sku = '',
     this.barcode = '',
     this.retailPrice = 0,
@@ -1725,6 +1756,7 @@ class _VariantDraft {
         id: id,
         size: size,
         color: color,
+        secondaryName: secondaryName,
         sku: sku,
         barcode: barcode,
         retailPrice: retailPrice,
@@ -1736,6 +1768,7 @@ class _VariantDraft {
 
   _VariantDraft copyForNext({required int id}) => _VariantDraft(
         id: id,
+        secondaryName: secondaryName,
         retailPrice: retailPrice,
         wholesalePrice: wholesalePrice,
         costPrice: costPrice,

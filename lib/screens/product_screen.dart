@@ -4,6 +4,7 @@ import 'package:enterprise_pos/api/product_group_service.dart';
 import 'package:enterprise_pos/api/product_service.dart';
 import 'package:enterprise_pos/forms/product_form_screen.dart';
 import 'package:enterprise_pos/forms/variable_product_form_screen.dart';
+import 'package:enterprise_pos/models/printer_config.dart';
 import 'package:enterprise_pos/screens/product_group_detail_screen.dart';
 import 'package:enterprise_pos/providers/branch_provider.dart';
 import 'package:enterprise_pos/providers/printer_config_provider.dart';
@@ -11,6 +12,7 @@ import 'package:enterprise_pos/services/report_file_saver.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/app_feedback.dart';
 import 'package:enterprise_pos/widgets/barcode_print_dialog.dart';
+import 'package:enterprise_pos/widgets/variant_barcode_print_dialog.dart';
 import 'package:enterprise_pos/widgets/branch_indicator.dart';
 import 'package:enterprise_pos/widgets/enterprise/enterprise_ui.dart';
 import 'package:file_picker/file_picker.dart';
@@ -298,6 +300,19 @@ class _ProductAutoSearchFieldState extends State<_ProductAutoSearchField> {
                                             : AppTheme.navy,
                                       ),
                                     ),
+                                    if (item.secondaryName?.trim().isNotEmpty == true) ...[
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        item.secondaryName!.trim(),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(
+                                          fontSize: 11,
+                                          color: AppTheme.textMuted,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                    ],
                                     const SizedBox(height: 2),
                                     Text(
                                       subtitle,
@@ -590,43 +605,44 @@ class _ProductsScreenState extends State<ProductsScreen> {
   }
 
   Future<void> _printBarcodeLabelsItem(ManagementItem item) async {
-    if (item.isVariable) return;
+    if (item.isVariable) {
+      await _printVariableBarcodeLabelsItem(item);
+      return;
+    }
     final product = await _loadSimpleProduct(item);
     if (product != null && mounted) await _printBarcodeLabels(product);
   }
 
-  Future<void> _printBarcodeLabels(dynamic product) async {
+  Future<PrinterConfig?> _loadBarcodePrinterConfig() async {
     final auth = context.read<AuthProvider>();
     if (!auth.hasPermission('print-barcode-labels')) {
       AppFeedback.error(context, 'You do not have permission to print product labels.');
-      return;
+      return null;
     }
     if (!auth.hasAddon('barcode_labels')) {
       AppFeedback.warning(
         context,
         'Barcode Label Printing is not active for this branch.',
       );
-      return;
-    }
-
-    final barcode = (product['barcode'] ?? '').toString().trim();
-    if (barcode.isEmpty) {
-      AppFeedback.warning(context, 'Add a barcode to this product before printing labels.');
-      return;
+      return null;
     }
 
     final printerConfig = context.read<PrinterConfigProvider>();
     try {
       final token = auth.token;
-      if (token == null) throw Exception('Your session has expired. Please sign in again.');
+      if (token == null) {
+        throw Exception('Your session has expired. Please sign in again.');
+      }
       // Refresh here so a recent branch switch cannot print with another
       // branch's cached label size or printer destination.
       await printerConfig.refresh(token);
     } catch (e) {
-      if (mounted) AppFeedback.error(context, 'Could not load barcode printer settings: $e');
-      return;
+      if (mounted) {
+        AppFeedback.error(context, 'Could not load barcode printer settings: $e');
+      }
+      return null;
     }
-    if (!mounted) return;
+    if (!mounted) return null;
 
     final config = printerConfig.config.copyWith(
       barcodeCurrency: context.read<BranchProvider>().currency,
@@ -635,11 +651,63 @@ class _ProductsScreenState extends State<ProductsScreen> {
       AppFeedback.warning(
         context,
         config.barcodeAddonActive
-            ? 'Ask a Master Admin to configure the Barcode Printer for this branch.'
+            ? 'Ask a Master Admin to configure Barcode Label Printing for this branch.'
             : 'Barcode Label Printing is not active for this branch.',
       );
+      return null;
+    }
+    return config;
+  }
+
+  Future<void> _printVariableBarcodeLabelsItem(ManagementItem item) async {
+    final groupId = item.groupId;
+    if (groupId == null) return;
+    final config = await _loadBarcodePrinterConfig();
+    if (config == null || !mounted) return;
+
+    try {
+      final data = await _groupService.showGroup(groupId);
+      if (!mounted) return;
+      final raw = data['products'] as List? ?? const [];
+      final variants = raw
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList();
+      if (variants.isEmpty) {
+        AppFeedback.warning(context, 'This product family does not have any variants to print.');
+        return;
+      }
+      final copies = await showDialog<int>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => VariantBarcodePrintDialog(
+          groupId: groupId,
+          groupName: item.name,
+          variants: variants,
+          config: config,
+          service: _groupService,
+        ),
+      );
+      if (copies != null && mounted) {
+        AppFeedback.success(
+          context,
+          '$copies barcode label${copies == 1 ? '' : 's'} sent to print.',
+        );
+      }
+    } catch (e) {
+      if (mounted) AppFeedback.error(context, 'Could not load product variants: $e');
+    }
+  }
+
+  Future<void> _printBarcodeLabels(dynamic product) async {
+    final barcode = (product['barcode'] ?? '').toString().trim();
+    if (barcode.isEmpty) {
+      AppFeedback.warning(context, 'Add a barcode to this product before printing labels.');
       return;
     }
+
+    final config = await _loadBarcodePrinterConfig();
+    if (config == null || !mounted) return;
 
     final copies = await showDialog<int>(
       context: context,
@@ -1061,6 +1129,19 @@ class _ProductsScreenState extends State<ProductsScreen> {
                         ),
                       ],
                     ),
+                    if (item.secondaryName?.trim().isNotEmpty == true) ...[
+                      const SizedBox(height: 3),
+                      Text(
+                        item.secondaryName!.trim(),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 11.5,
+                          color: AppTheme.textMuted,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: 8),
                     Wrap(
                       spacing: 8,
@@ -1112,7 +1193,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
                 children: [
                   if (canPrintBarcodes)
                     IconButton(
-                      tooltip: 'Print barcode labels',
+                      tooltip: item.isVariable ? 'Print variant barcodes' : 'Print barcode labels',
                       onPressed: () => _printBarcodeLabelsItem(item),
                       icon: const Icon(
                         Icons.qr_code_2_rounded,
@@ -1198,6 +1279,19 @@ class _ProductsScreenState extends State<ProductsScreen> {
                         ),
                       ],
                     ),
+                    if (item.secondaryName?.trim().isNotEmpty == true) ...[
+                      const SizedBox(height: 3),
+                      Text(
+                        item.secondaryName!.trim(),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 11.5,
+                          color: AppTheme.textMuted,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: 8),
                     Wrap(
                       spacing: 8,

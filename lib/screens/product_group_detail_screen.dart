@@ -1,8 +1,13 @@
 import 'package:enterprise_pos/api/product_group_service.dart';
 import 'package:enterprise_pos/forms/variable_product_form_screen.dart';
+import 'package:enterprise_pos/models/printer_config.dart';
+import 'package:enterprise_pos/providers/branch_provider.dart';
+import 'package:enterprise_pos/providers/printer_config_provider.dart';
 import 'package:enterprise_pos/services/app_currency.dart' show AppCurrency;
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/app_feedback.dart';
+import 'package:enterprise_pos/widgets/barcode_print_dialog.dart';
+import 'package:enterprise_pos/widgets/variant_barcode_print_dialog.dart';
 import 'package:enterprise_pos/widgets/enterprise/enterprise_ui.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -84,11 +89,97 @@ class _ProductGroupDetailScreenState extends State<ProductGroupDetailScreen> {
     }
   }
 
+  Future<PrinterConfig?> _barcodeConfig() async {
+    final auth = context.read<AuthProvider>();
+    if (!auth.hasPermission('print-barcode-labels')) {
+      AppFeedback.error(context, 'You do not have permission to print product labels.');
+      return null;
+    }
+    if (!auth.hasAddon('barcode_labels')) {
+      AppFeedback.warning(context, 'Barcode Label Printing is not active for this branch.');
+      return null;
+    }
+    final provider = context.read<PrinterConfigProvider>();
+    try {
+      final token = auth.token;
+      if (token == null) throw Exception('Your session has expired. Please sign in again.');
+      await provider.refresh(token);
+    } catch (e) {
+      if (mounted) AppFeedback.error(context, 'Could not load barcode printer settings: $e');
+      return null;
+    }
+    if (!mounted) return null;
+    final config = provider.config.copyWith(
+      barcodeCurrency: context.read<BranchProvider>().currency,
+    );
+    if (!config.isBarcodeConfigured) {
+      AppFeedback.warning(
+        context,
+        config.barcodeAddonActive
+            ? 'Ask a Master Admin to configure Barcode Label Printing for this branch.'
+            : 'Barcode Label Printing is not active for this branch.',
+      );
+      return null;
+    }
+    return config;
+  }
+
+  Future<void> _printGroupBarcodes() async {
+    if (_variants.isEmpty) return;
+    final config = await _barcodeConfig();
+    if (config == null || !mounted) return;
+    final copies = await showDialog<int>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => VariantBarcodePrintDialog(
+        groupId: widget.groupId,
+        groupName: _group?['name']?.toString() ?? widget.groupName,
+        variants: _variants,
+        config: config,
+        service: _service,
+      ),
+    );
+    if (!mounted) return;
+    // Refresh after every batch dialog close because Generate Missing Barcodes
+    // can persist child-product barcodes even when the user decides not to print.
+    await _load();
+    if (copies != null && mounted) {
+      AppFeedback.success(context, '$copies barcode label${copies == 1 ? '' : 's'} sent to print.');
+    }
+  }
+
+  Future<void> _printOneVariant(Map<String, dynamic> variant) async {
+    final barcode = (variant['barcode'] ?? '').toString().trim();
+    if (barcode.isEmpty) {
+      AppFeedback.warning(context, 'Generate a barcode for this variant before printing.');
+      return;
+    }
+    final config = await _barcodeConfig();
+    if (config == null || !mounted) return;
+    final payload = Map<String, dynamic>.from(variant)
+      ..['_barcode_label_name'] = _group?['name']?.toString() ?? widget.groupName
+      ..['_barcode_variant_details'] = [
+        (variant['variant_color'] ?? '').toString().trim(),
+        (variant['variant_size'] ?? '').toString().trim(),
+      ].where((e) => e.isNotEmpty).join(' • ');
+    final copies = await showDialog<int>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => BarcodePrintDialog(product: payload, config: config),
+    );
+    if (copies != null && mounted) {
+      AppFeedback.success(context, '$copies barcode label${copies == 1 ? '' : 's'} sent to print.');
+    }
+  }
+
   // ── Add Variant dialog ────────────────────────────────────────────────────
 
   Future<bool?> _showAddVariantDialog() async {
     final sizeCtrl = TextEditingController();
     final colorCtrl = TextEditingController();
+    final secondaryNameCtrl = TextEditingController(
+      text: (_group?['secondary_name'] ?? '').toString(),
+    );
     final priceCtrl = TextEditingController();
     final costCtrl = TextEditingController();
     final stockCtrl = TextEditingController();
@@ -184,6 +275,11 @@ class _ProductGroupDetailScreenState extends State<ProductGroupDetailScreen> {
                             child: _dlgField(colorCtrl,
                                 'Color (e.g. Black)')),
                       ]),
+                      const SizedBox(height: 10),
+                      _dlgField(
+                        secondaryNameCtrl,
+                        'Secondary Name',
+                      ),
                       const SizedBox(height: 16),
                       _dlgLabel('Pricing'),
                       const SizedBox(height: 8),
@@ -326,6 +422,7 @@ class _ProductGroupDetailScreenState extends State<ProductGroupDetailScreen> {
                               VariantInput(
                                 size: size,
                                 color: color,
+                                secondaryName: secondaryNameCtrl.text.trim(),
                                 sku: sku,
                                 barcode: barcodeCtrl.text.trim(),
                                 price: price,
@@ -367,6 +464,7 @@ class _ProductGroupDetailScreenState extends State<ProductGroupDetailScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       sizeCtrl.dispose();
       colorCtrl.dispose();
+      secondaryNameCtrl.dispose();
       priceCtrl.dispose();
       costCtrl.dispose();
       stockCtrl.dispose();
@@ -387,6 +485,8 @@ class _ProductGroupDetailScreenState extends State<ProductGroupDetailScreen> {
         text: (variant['wholesale_price'] ?? '').toString());
     final costCtrl = TextEditingController(
         text: (variant['cost_price'] ?? '').toString());
+    final secondaryNameCtrl = TextEditingController(
+        text: (variant['secondary_name'] ?? '').toString());
     final skuCtrl =
         TextEditingController(text: (variant['sku'] ?? '').toString());
     final barcodeCtrl = TextEditingController(
@@ -560,6 +660,8 @@ class _ProductGroupDetailScreenState extends State<ProductGroupDetailScreen> {
                     ]),
                     const SizedBox(height: 10),
                     _dlgField(costCtrl, 'Reference Cost', numeric: true),
+                    const SizedBox(height: 10),
+                    _dlgField(secondaryNameCtrl, 'Secondary Name'),
                     const SizedBox(height: 16),
                     _dlgLabel('Identification'),
                     const SizedBox(height: 8),
@@ -649,6 +751,7 @@ class _ProductGroupDetailScreenState extends State<ProductGroupDetailScreen> {
                           if (costCtrl.text.isNotEmpty)
                             'cost_price':
                                 double.tryParse(costCtrl.text) ?? 0.0,
+                          'secondary_name': secondaryNameCtrl.text.trim(),
                           'sku': skuCtrl.text.trim(),
                           'barcode': barcodeCtrl.text.trim(),
                           if (reorderCtrl.text.isNotEmpty)
@@ -692,6 +795,7 @@ class _ProductGroupDetailScreenState extends State<ProductGroupDetailScreen> {
       priceCtrl.dispose();
       wholesaleCtrl.dispose();
       costCtrl.dispose();
+      secondaryNameCtrl.dispose();
       skuCtrl.dispose();
       barcodeCtrl.dispose();
       reorderCtrl.dispose();
@@ -843,6 +947,8 @@ class _ProductGroupDetailScreenState extends State<ProductGroupDetailScreen> {
   Widget build(BuildContext context) {
     final auth = Provider.of<AuthProvider>(context);
     final canManage = auth.hasPermission('manage-products');
+    final canPrintBarcodes = auth.hasPermission('print-barcode-labels') &&
+        auth.hasAddon('barcode_labels');
 
     final groupName = _group?['name']?.toString() ?? widget.groupName;
     final isActive =
@@ -861,6 +967,14 @@ class _ProductGroupDetailScreenState extends State<ProductGroupDetailScreen> {
             : 'Variable product • ${_variants.length} variant${_variants.length == 1 ? '' : 's'} • ${isActive ? 'Active' : 'Inactive'}',
         icon: Icons.style_rounded,
         actions: [
+          if (canPrintBarcodes && !_loading && _variants.isNotEmpty) ...[
+            OutlinedButton.icon(
+              onPressed: _printGroupBarcodes,
+              icon: const Icon(Icons.qr_code_2_rounded, size: 17),
+              label: const Text('Print Barcodes'),
+            ),
+            const SizedBox(width: 8),
+          ],
           if (canManage && !_loading) ...[
             OutlinedButton.icon(
               onPressed: _editGroup,
@@ -884,7 +998,7 @@ class _ProductGroupDetailScreenState extends State<ProductGroupDetailScreen> {
                   children: [
                     if (_group != null) _buildGroupInfoCard(),
                     const SizedBox(height: 14),
-                    _buildVariantsSection(canManage),
+                    _buildVariantsSection(canManage, canPrintBarcodes),
                   ],
                 ),
               ),
@@ -912,6 +1026,7 @@ class _ProductGroupDetailScreenState extends State<ProductGroupDetailScreen> {
         .toString();
     final safeVendor = vendorName.trim().isEmpty ? '—' : vendorName;
     final taxRate = _dbl(g['tax_rate']);
+    final secondaryName = (g['secondary_name'] ?? '').toString().trim();
 
     return Card(
       child: Padding(
@@ -1007,6 +1122,15 @@ class _ProductGroupDetailScreenState extends State<ProductGroupDetailScreen> {
                   spacing: 12,
                   runSpacing: 10,
                   children: [
+                    if (secondaryName.isNotEmpty)
+                      SizedBox(
+                        width: itemWidth,
+                        child: _metadataItem(
+                          Icons.translate_rounded,
+                          'Secondary Name',
+                          secondaryName,
+                        ),
+                      ),
                     SizedBox(
                       width: itemWidth,
                       child: _metadataItem(
@@ -1115,7 +1239,7 @@ class _ProductGroupDetailScreenState extends State<ProductGroupDetailScreen> {
 
   // ── Variants section ──────────────────────────────────────────────────────
 
-  Widget _buildVariantsSection(bool canManage) {
+  Widget _buildVariantsSection(bool canManage, bool canPrintBarcodes) {
     return Card(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1182,7 +1306,7 @@ class _ProductGroupDetailScreenState extends State<ProductGroupDetailScreen> {
           if (_variants.isEmpty)
             _buildEmptyVariants(canManage)
           else
-            _buildVariantTable(canManage),
+            _buildVariantTable(canManage, canPrintBarcodes),
         ],
       ),
     );
@@ -1208,7 +1332,7 @@ class _ProductGroupDetailScreenState extends State<ProductGroupDetailScreen> {
 
   // ── Variant table ─────────────────────────────────────────────────────────
 
-  Widget _buildVariantTable(bool canManage) {
+  Widget _buildVariantTable(bool canManage, bool canPrintBarcodes) {
     final hasSize = _variants
         .any((v) => (v['variant_size'] ?? '').toString().isNotEmpty);
     final hasColor = _variants
@@ -1281,7 +1405,7 @@ class _ProductGroupDetailScreenState extends State<ProductGroupDetailScreen> {
                 hdr('RETAIL', right: true),
                 hdr('WHOLESALE', right: true),
                 hdr('STATUS'),
-                if (canManage) hdr(''),
+                if (canManage || canPrintBarcodes) hdr(''),
               ],
             ),
             // ── Data rows ─────────────────────────────────────────────────
@@ -1449,20 +1573,30 @@ class _ProductGroupDetailScreenState extends State<ProductGroupDetailScreen> {
                       ),
                     ),
                   ),
-                  if (canManage)
+                  if (canManage || canPrintBarcodes)
                     Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 6),
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          IconButton(
-                            tooltip: 'Edit variant',
-                            onPressed: () => _editVariant(v),
-                            icon: const Icon(Icons.edit_outlined, size: 17),
-                            color: AppTheme.primary,
-                            visualDensity: VisualDensity.compact,
-                          ),
-                          PopupMenuButton<String>(
+                          if (canPrintBarcodes)
+                            IconButton(
+                              tooltip: 'Print this variant barcode',
+                              onPressed: () => _printOneVariant(v),
+                              icon: const Icon(Icons.qr_code_2_rounded, size: 17),
+                              color: AppTheme.primary,
+                              visualDensity: VisualDensity.compact,
+                            ),
+                          if (canManage)
+                            IconButton(
+                              tooltip: 'Edit variant',
+                              onPressed: () => _editVariant(v),
+                              icon: const Icon(Icons.edit_outlined, size: 17),
+                              color: AppTheme.primary,
+                              visualDensity: VisualDensity.compact,
+                            ),
+                          if (canManage)
+                            PopupMenuButton<String>(
                             tooltip: 'More actions',
                             onSelected: (action) {
                               if (action == 'toggle') _toggleVariantActive(v);

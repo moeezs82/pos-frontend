@@ -28,6 +28,7 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
   final _skuController            = TextEditingController();
   final _barcodeController        = TextEditingController();
   final _nameController           = TextEditingController();
+  final _secondaryNameController  = TextEditingController();
   final _descController           = TextEditingController();
   final _priceController          = TextEditingController();
   final _stockController          = TextEditingController();
@@ -125,8 +126,9 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
       final p = widget.product!;
       _skuController.text            = p['sku']?.toString()     ?? '';
       _barcodeController.text        = p['barcode']?.toString() ?? '';
-      _nameController.text           = p['name']            ?? '';
-      _descController.text           = p['description']     ?? '';
+      _nameController.text           = p['name']?.toString() ?? '';
+      _secondaryNameController.text  = p['secondary_name']?.toString() ?? '';
+      _descController.text           = p['description']?.toString() ?? '';
       _priceController.text          = p['price']?.toString()           ?? '';
       _costPriceController.text      = p['cost_price']?.toString()      ?? '';
       _wholesalePriceController.text = p['wholesale_price']?.toString() ?? '';
@@ -166,6 +168,7 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
     _skuController.dispose();
     _barcodeController.dispose();
     _nameController.dispose();
+    _secondaryNameController.dispose();
     _descController.dispose();
     _priceController.dispose();
     _stockController.dispose();
@@ -430,6 +433,7 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
       'sku':             _skuController.text,
       'barcode':         _barcodeController.text,
       'name':            _nameController.text,
+      'secondary_name':  _secondaryNameController.text.trim(),
       'description':     _descController.text,
       'stock':           double.tryParse(_stockController.text) ?? 0,
       'price':           double.tryParse(_priceController.text) ?? 0.0,
@@ -557,6 +561,17 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
                 controller: _nameController,
                 decoration: const InputDecoration(labelText: 'Name', border: OutlineInputBorder()),
                 validator: (v) => v!.isEmpty ? 'Required' : null,
+              ),
+              const SizedBox(height: 12),
+
+              TextFormField(
+                controller: _secondaryNameController,
+                decoration: const InputDecoration(
+                  labelText: 'Secondary Name',
+                  hintText: 'Optional alternate or local-language name',
+                  helperText: 'For example an Arabic, Urdu, or other local product name.',
+                  border: OutlineInputBorder(),
+                ),
               ),
               const SizedBox(height: 12),
 

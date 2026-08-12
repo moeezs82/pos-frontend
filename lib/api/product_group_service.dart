@@ -5,6 +5,7 @@ import 'package:enterprise_pos/api/core/api_client.dart';
 class ProductGroupSummary {
   final int id;
   final String name;
+  final String? secondaryName;
   final String? imageUrl;
   final bool isActive;
   final int variantCount;
@@ -17,6 +18,7 @@ class ProductGroupSummary {
   const ProductGroupSummary({
     required this.id,
     required this.name,
+    this.secondaryName,
     this.imageUrl,
     required this.isActive,
     required this.variantCount,
@@ -31,6 +33,7 @@ class ProductGroupSummary {
     return ProductGroupSummary(
       id: _i(j['id']),
       name: (j['name'] ?? '').toString(),
+      secondaryName: j['secondary_name']?.toString(),
       imageUrl: j['image_url']?.toString(),
       isActive: j['is_active'] == 1 || j['is_active'] == true,
       variantCount: _i(j['variant_count']),
@@ -60,6 +63,7 @@ class ProductGroupSummary {
 class VariantInput {
   String size;
   String color;
+  String secondaryName;
   String sku;
   String barcode;
   double price;
@@ -75,6 +79,7 @@ class VariantInput {
   VariantInput({
     this.size = '',
     this.color = '',
+    this.secondaryName = '',
     this.sku = '',
     this.barcode = '',
     this.price = 0.0,
@@ -91,6 +96,7 @@ class VariantInput {
   Map<String, dynamic> toJson() => {
         'size': size,
         'color': color,
+        if (secondaryName.trim().isNotEmpty) 'secondary_name': secondaryName.trim(),
         if (sku.isNotEmpty) 'sku': sku,
         if (barcode.isNotEmpty) 'barcode': barcode,
         'price': price,
@@ -116,6 +122,7 @@ class ProductGroupService {
   /// POST /api/v1/products/variable — create group + variants atomically.
   Future<Map<String, dynamic>> createVariableProduct({
     required String name,
+    String secondaryName = '',
     bool isActive = true,
     int? categoryId,
     int? brandId,
@@ -128,6 +135,7 @@ class ProductGroupService {
   }) async {
     final body = <String, dynamic>{
       'name': name,
+      if (secondaryName.trim().isNotEmpty) 'secondary_name': secondaryName.trim(),
       'is_active': isActive,
       if (categoryId != null) 'category_id': categoryId,
       if (brandId != null) 'brand_id': brandId,
@@ -172,6 +180,7 @@ class ProductGroupService {
   Future<Map<String, dynamic>> updateGroup(
     int id, {
     String? name,
+    String? secondaryName,
     bool? isActive,
     String? imageUrl,
     int? categoryId,
@@ -183,6 +192,7 @@ class ProductGroupService {
   }) async {
     final body = <String, dynamic>{
       if (name != null) 'name': name,
+      if (secondaryName != null) 'secondary_name': secondaryName.trim(),
       if (isActive != null) 'is_active': isActive,
       if (imageUrl != null) 'image_url': imageUrl,
       if (categoryId != null) 'category_id': categoryId,
@@ -270,6 +280,7 @@ class ManagementItem {
   final int? id; // product_id for simple
   final int? groupId; // group_id for variable
   final String name;
+  final String? secondaryName;
   final String? sku;
   final String? barcode;
   final double? price;
@@ -287,6 +298,7 @@ class ManagementItem {
     this.id,
     this.groupId,
     required this.name,
+    this.secondaryName,
     this.sku,
     this.barcode,
     this.price,
@@ -306,6 +318,7 @@ class ManagementItem {
       id: _iNull(j['id']),
       groupId: _iNull(j['group_id']),
       name: (j['name'] ?? '').toString(),
+      secondaryName: j['secondary_name']?.toString(),
       sku: j['sku']?.toString(),
       barcode: j['barcode']?.toString(),
       price: _dNull(j['price']),

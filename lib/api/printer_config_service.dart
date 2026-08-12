@@ -85,6 +85,7 @@ class PrinterConfigService {
     bool barcodeShowName = true,
     bool barcodeShowValue = true,
     bool barcodeShowPrice = true,
+    bool barcodeShowVariantDetails = true,
   }) async {
     final res = await _client.post("/printer-config/save", body: {
       'branch_id': branchId,
@@ -125,6 +126,7 @@ class PrinterConfigService {
       'barcode_show_name': barcodeShowName,
       'barcode_show_value': barcodeShowValue,
       'barcode_show_price': barcodeShowPrice,
+      'barcode_show_variant_details': barcodeShowVariantDetails,
     });
 
     if (res["success"] == true) {

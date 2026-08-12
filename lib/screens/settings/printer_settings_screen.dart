@@ -71,6 +71,7 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
   bool _barcodeShowName = true;
   bool _barcodeShowValue = true;
   bool _barcodeShowPrice = true;
+  bool _barcodeShowVariantDetails = true;
   List<Printer> _installedPrinters = [];
   InvoiceTemplate _mainTemplate = InvoiceTemplate.standard;
   String _invoicePaperSize = 'a4';
@@ -250,6 +251,7 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
       _barcodeShowName = config.barcodeShowName;
       _barcodeShowValue = config.barcodeShowValue;
       _barcodeShowPrice = config.barcodeShowPrice;
+      _barcodeShowVariantDetails = config.barcodeShowVariantDetails;
     });
   }
 
@@ -496,6 +498,7 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
         barcodeShowName: _barcodeShowName,
         barcodeShowValue: _barcodeShowValue,
         barcodeShowPrice: _barcodeShowPrice,
+        barcodeShowVariantDetails: _barcodeShowVariantDetails,
       );
 
       if (!mounted) return;
@@ -665,6 +668,7 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
       barcodeShowName: _barcodeShowName,
       barcodeShowValue: _barcodeShowValue,
       barcodeShowPrice: _barcodeShowPrice,
+      barcodeShowVariantDetails: _barcodeShowVariantDetails,
     );
   }
 
@@ -690,6 +694,70 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
     } finally {
       if (mounted) setState(() => _testingBarcode = false);
     }
+  }
+
+  Future<void> _previewBarcodeLabel() async {
+    if (!_barcodeAddonActive) {
+      _showMessage('Activate the Barcode Label Printing add-on for this branch first.');
+      return;
+    }
+    final config = _barcodeConfigFromForm();
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => Dialog(
+        insetPadding: const EdgeInsets.all(24),
+        child: SizedBox(
+          width: 620,
+          height: 560,
+          child: Padding(
+            padding: const EdgeInsets.all(18),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    const Icon(Icons.preview_rounded, color: AppTheme.primary),
+                    const SizedBox(width: 8),
+                    const Expanded(
+                      child: Text(
+                        'Barcode Label Preview',
+                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: () => Navigator.pop(ctx),
+                      icon: const Icon(Icons.close_rounded),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Expanded(
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: PdfPreview(
+                      build: (_) => BarcodeLabelPrinterService.instance.buildLabelsPdf(
+                        config: config,
+                        productName: 'Classic T-Shirt',
+                        variantDetails: 'Black • M',
+                        barcode: '123456789012',
+                        price: 1250,
+                      ),
+                      initialPageFormat: BarcodeLabelPrinterService.instance.pageFormat(config),
+                      canChangePageFormat: false,
+                      canChangeOrientation: false,
+                      allowPrinting: false,
+                      allowSharing: false,
+                      useActions: false,
+                      pdfFileName: 'barcode-label-preview.pdf',
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
   }
 
   void _showMessage(String message) {
@@ -1589,18 +1657,56 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
                   selected: _barcodeShowPrice,
                   onSelected: (v) => setState(() => _barcodeShowPrice = v),
                 ),
+                FilterChip(
+                  label: const Text('Variant details'),
+                  selected: _barcodeShowVariantDetails,
+                  onSelected: (v) => setState(() => _barcodeShowVariantDetails = v),
+                ),
               ],
             ),
             const SizedBox(height: 14),
-            SizedBox(
-              width: double.infinity,
-              child: OutlinedButton.icon(
-                onPressed: _testingBarcode ? null : _testBarcodePrint,
-                icon: _testingBarcode
-                    ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
-                    : const Icon(Icons.qr_code_2_rounded),
-                label: Text(_testingBarcode ? 'Sending test label...' : 'Print Test Barcode Label'),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppTheme.primary.withOpacity(.045),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: AppTheme.primary.withOpacity(.16)),
               ),
+              child: const Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(Icons.description_outlined, size: 18, color: AppTheme.primary),
+                  SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'A4 and A5 barcode cut sheets are selected at print time. CounterIQ fills the whole page using this configured label size, adds cut guides, and lets the user choose the configured barcode printer or any local/system printer.',
+                      style: TextStyle(fontSize: 12, color: AppTheme.textMuted, fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _previewBarcodeLabel,
+                    icon: const Icon(Icons.preview_rounded),
+                    label: const Text('Preview Label'),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _testingBarcode ? null : _testBarcodePrint,
+                    icon: _testingBarcode
+                        ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                        : const Icon(Icons.qr_code_2_rounded),
+                    label: Text(_testingBarcode ? 'Sending test label...' : 'Print Test Barcode Label'),
+                  ),
+                ),
+              ],
             ),
         ],
       ),

@@ -61,7 +61,7 @@ class CatalogCacheService {
     final path = p.join(dbPath, 'catalog_cache.db');
     return openDatabase(
       path,
-      version: 6,
+      version: 7,
       // v1 → v2 adds the unit columns. ADDITIVE ONLY, and deliberately not a
       // table rebuild or a cache wipe: this database is a read replica, but a
       // "just delete and re-download" upgrade would strand a till that is
@@ -145,6 +145,23 @@ class CatalogCacheService {
             whereArgs: const ['catalog_version:%', 'last_synced_at:%'],
           );
         }
+        // v6 → v7: optional alternate/local-language product name. Keep a
+        // normalized companion column for fast offline searches (including
+        // Arabic/Urdu text) and invalidate the cursor so every cached product
+        // receives the authoritative server value on the next refresh.
+        if (oldVersion < 7) {
+          await db.execute(
+              'ALTER TABLE products ADD COLUMN secondary_name TEXT');
+          await db.execute(
+              'ALTER TABLE products ADD COLUMN secondary_name_lower TEXT');
+          await db.execute(
+              'CREATE INDEX IF NOT EXISTS idx_products_secondary_name ON products(secondary_name_lower)');
+          await db.delete(
+            'sync_meta',
+            where: 'key LIKE ? OR key LIKE ?',
+            whereArgs: const ['catalog_version:%', 'last_synced_at:%'],
+          );
+        }
       },
       onCreate: (db, version) async {
         await db.execute('''
@@ -155,6 +172,8 @@ class CatalogCacheService {
             barcode TEXT,
             name TEXT,
             name_lower TEXT,
+            secondary_name TEXT,
+            secondary_name_lower TEXT,
             price REAL,
             cost_price REAL,
             wholesale_price REAL,
@@ -177,6 +196,7 @@ class CatalogCacheService {
         ''');
         await db.execute('CREATE INDEX idx_products_branch ON products(branch_id)');
         await db.execute('CREATE INDEX idx_products_name ON products(name_lower)');
+        await db.execute('CREATE INDEX idx_products_secondary_name ON products(secondary_name_lower)');
         await db.execute('CREATE INDEX idx_products_barcode ON products(barcode)');
         await db.execute('CREATE INDEX idx_products_group ON products(product_group_id)');
 
@@ -322,7 +342,8 @@ class CatalogCacheService {
   // Local reads (used by pickers — pure offline, no network)
   // ---------------------------------------------------------------------------
 
-  /// Products matching [query] (name / sku / barcode), active only, scoped to
+  /// Products matching [query] (name / secondary name / sku / barcode),
+  /// active only, scoped to
   /// [branchId] and optionally [vendorId] (products with a null vendor are
   /// always eligible, matching ProductController's vendor filter). Returns
   /// maps shaped like the product picker expects (id, name, sku, barcode,
@@ -347,8 +368,8 @@ class CatalogCacheService {
       args.add(vendorId);
     }
     if (q.isNotEmpty) {
-      where.add('(name_lower LIKE ? OR sku LIKE ? OR barcode LIKE ?)');
-      args..add('%$q%')..add('%$q%')..add('%$q%');
+      where.add('(name_lower LIKE ? OR secondary_name_lower LIKE ? OR sku LIKE ? OR barcode LIKE ?)');
+      args..add('%$q%')..add('%$q%')..add('%$q%')..add('%$q%');
     }
 
     final rows = await db.query(
@@ -462,6 +483,7 @@ class CatalogCacheService {
 
   Map<String, Object?> _productRow(Map raw, int? branchId) {
     final name = (raw['name'] ?? '').toString();
+    final secondaryName = (raw['secondary_name'] ?? '').toString();
     // /catalog emits the unit as a nested object (or null); QuantityRule
     // flattens both that and an already-flat row into the three columns.
     final rule = QuantityRule.fromProduct(Map<String, dynamic>.from(raw));
@@ -472,6 +494,8 @@ class CatalogCacheService {
       'barcode': raw['barcode']?.toString(),
       'name': name,
       'name_lower': name.toLowerCase(),
+      'secondary_name': secondaryName.isEmpty ? null : secondaryName,
+      'secondary_name_lower': secondaryName.toLowerCase(),
       'price': _asDouble(raw['price']),
       'cost_price': _asDouble(raw['cost_price']),
       'wholesale_price': _asDouble(raw['wholesale_price']),
@@ -523,6 +547,7 @@ class CatalogCacheService {
     return {
       'id': row['id'],
       'name': row['name'],
+      'secondary_name': row['secondary_name'],
       'sku': row['sku'],
       'barcode': row['barcode'],
       'price': row['price'],
