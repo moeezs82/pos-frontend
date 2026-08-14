@@ -470,10 +470,13 @@ class _VariableProductFormScreenState extends State<VariableProductFormScreen> {
           name: _nameCtrl.text.trim(),
           secondaryName: _secondaryNameCtrl.text.trim(),
           isActive: _isActive,
-          categoryId: _selectedCategoryId,
-          brandId: _selectedBrandId,
-          unitId: _selectedUnitId,
-          vendorId: _selectedVendorId,
+          // Update sends every shared family FK explicitly. Zero is the
+          // backend's clear sentinel, so choosing "None" really clears the
+          // group and all existing variants instead of silently omitting it.
+          categoryId: _selectedCategoryId ?? 0,
+          brandId: _selectedBrandId ?? 0,
+          unitId: _selectedUnitId ?? 0,
+          vendorId: _selectedVendorId ?? 0,
           taxRate: taxRate,
           taxInclusive: _taxInclusive,
         );

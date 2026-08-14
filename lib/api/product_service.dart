@@ -57,13 +57,17 @@ class ProductService {
     int page = 1,
     String? search,
     int? vendorId,
-    int per_page= 20
+    int? categoryId,
+    int? brandId,
+    int per_page = 20,
   }) async {
     final queryParams = {
       "page": page.toString(),
       "per_page": per_page.toString(),
       if (search != null && search.isNotEmpty) "search": search,
       if (vendorId != null) "vendor_id": vendorId.toString(),
+      if (categoryId != null) "category_id": categoryId.toString(),
+      if (brandId != null) "brand_id": brandId.toString(),
     };
     return await _client.get("/products", query: queryParams);
   }

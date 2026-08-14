@@ -175,8 +175,9 @@ class ProductGroupService {
   }
 
   /// PUT /api/v1/products/groups/{id} — update group metadata.
-  /// Cascades name rename to all child variant display names on the backend.
-  /// Cascades is_active changes to all child variant products on the backend.
+  /// Shared family fields (name/category/brand/unit/vendor/tax/is_active) are
+  /// cascaded atomically to existing child products by the backend. For the
+  /// nullable FK fields, ID 0 is the explicit "clear" value on update.
   Future<Map<String, dynamic>> updateGroup(
     int id, {
     String? name,

@@ -242,12 +242,16 @@ class ProductPickCache {
     required int page,
     String search = '',
     int? vendorId,
+    int? categoryId,
+    int? brandId,
     int perPage = 100,
   }) async {
     final data = await service.getProducts(
       page: page,
       search: search,
       vendorId: vendorId,
+      categoryId: categoryId,
+      brandId: brandId,
       per_page: perPage,
     );
 
@@ -303,6 +307,8 @@ class ProductPickCache {
     ProductService service,
     String query, {
     int? vendorId,
+    int? categoryId,
+    int? brandId,
     int perPage = 25,
     int? branchId,
   }) async {
@@ -312,12 +318,21 @@ class ProductPickCache {
         page: 1,
         search: query,
         vendorId: vendorId,
+        categoryId: categoryId,
+        brandId: brandId,
         perPage: perPage,
       );
       return entry.items;
     } catch (_) {
       return CatalogCacheService.instance
-          .searchProducts(query, branchId: branchId, vendorId: vendorId, limit: perPage);
+          .searchProducts(
+            query,
+            branchId: branchId,
+            vendorId: vendorId,
+            categoryId: categoryId,
+            brandId: brandId,
+            limit: perPage,
+          );
     }
   }
 

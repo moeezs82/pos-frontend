@@ -6,18 +6,17 @@ import 'package:enterprise_pos/api/product_service.dart';
 import 'package:enterprise_pos/forms/product_form_screen.dart';
 import 'package:enterprise_pos/services/catalog_cache_service.dart';
 import 'package:enterprise_pos/services/party_pick_caches.dart';
-import 'package:enterprise_pos/services/sale_pricing.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/variant_picker_dialog.dart';
 import 'package:flutter/material.dart';
 
-/// Always-visible embedded product grid for the Create Sale 3-panel layout.
+/// Always-visible embedded product grid for the Create Purchase 2-panel layout.
 ///
 /// Replaces the first-load auto-open of [ProductPickerGridSheet] so the
 /// cashier can browse and click products without ever opening a modal.
 /// [ProductPickerGridSheet] (F2) remains available as a multi-select
 /// fallback for bulk additions.
-class SaleProductPanel extends StatefulWidget {
+class PurchaseProductPanel extends StatefulWidget {
   final String token;
   final int? vendorId;
 
@@ -25,10 +24,6 @@ class SaleProductPanel extends StatefulWidget {
   /// limited to the active branch's stock. Nullable — null means "all branches"
   /// which is the safe default when no branch is selected.
   final int? branchId;
-
-  /// Customer classification used only to choose the default/display price.
-  /// Existing cart rows are never repriced when this changes.
-  final String customerType;
 
   /// IDs of products already in the cart — used to show the in-cart badge.
   final Set<int> cartProductIds;
@@ -64,7 +59,7 @@ class SaleProductPanel extends StatefulWidget {
   /// renders the search field elsewhere (e.g. in the input row on the left).
   final bool showSearchBar;
 
-  const SaleProductPanel({
+  const PurchaseProductPanel({
     super.key,
     required this.token,
     required this.cartProductIds,
@@ -74,17 +69,16 @@ class SaleProductPanel extends StatefulWidget {
     required this.onOpenModal,
     this.vendorId,
     this.branchId,
-    this.customerType = 'retail',
     this.searchFocusNode,
     this.externalSearchController,
     this.showSearchBar = true,
   });
 
   @override
-  State<SaleProductPanel> createState() => _SaleProductPanelState();
+  State<PurchaseProductPanel> createState() => _PurchaseProductPanelState();
 }
 
-class _SaleProductPanelState extends State<SaleProductPanel> {
+class _PurchaseProductPanelState extends State<PurchaseProductPanel> {
   // ── Controllers & focus ─────────────────────────────────────────────────
   /// Internal controller used when the parent does NOT provide its own.
   final _searchCtrl = TextEditingController();
@@ -153,7 +147,7 @@ class _SaleProductPanelState extends State<SaleProductPanel> {
   }
 
   @override
-  void didUpdateWidget(covariant SaleProductPanel oldWidget) {
+  void didUpdateWidget(covariant PurchaseProductPanel oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.vendorId != widget.vendorId) {
       _selectedCategoryId = null;
@@ -358,10 +352,7 @@ class _SaleProductPanelState extends State<SaleProductPanel> {
       if (siblings.isEmpty) continue;
 
       final prices = siblings
-          .map((p) => SalePricing.effectiveProductPrice(
-                p,
-                customerType: widget.customerType,
-              ))
+          .map((p) => _purchaseCost(p))
           .toList();
       final minPrice = prices.isEmpty ? null : prices.reduce((a, b) => a < b ? a : b);
       final maxPrice = prices.isEmpty ? null : prices.reduce((a, b) => a > b ? a : b);
@@ -440,7 +431,21 @@ class _SaleProductPanelState extends State<SaleProductPanel> {
     return double.tryParse(value.toString());
   }
 
-  String _groupPriceText(Map<String, dynamic> product) {
+  static double _purchaseCost(Map<String, dynamic> product) {
+    for (final key in [
+      'purchase_price',
+      'cost_price',
+      'tp',
+      'unit_price',
+      'price',
+    ]) {
+      final parsed = _asDouble(product[key]);
+      if (parsed != null) return parsed;
+    }
+    return 0.0;
+  }
+
+  String _groupCostText(Map<String, dynamic> product) {
     final variants = (product['_group_variants'] as List?)
             ?.whereType<Map>()
             .map((v) => Map<String, dynamic>.from(v))
@@ -448,10 +453,7 @@ class _SaleProductPanelState extends State<SaleProductPanel> {
             .toList() ??
         const <Map<String, dynamic>>[];
     final prices = variants
-        .map((v) => SalePricing.effectiveProductPrice(
-              v,
-              customerType: widget.customerType,
-            ))
+        .map((v) => _purchaseCost(v))
         .toList();
     if (prices.isEmpty) return '';
     final minPrice = prices.reduce((a, b) => a < b ? a : b);
@@ -552,7 +554,7 @@ class _SaleProductPanelState extends State<SaleProductPanel> {
           const SizedBox(width: 6),
           const Expanded(
             child: Text(
-              'Product Browser',
+              'Purchase Product Browser',
               style: TextStyle(
                 fontSize: 12,
                 fontWeight: FontWeight.w700,
@@ -600,7 +602,7 @@ class _SaleProductPanelState extends State<SaleProductPanel> {
           onChanged: _onSearchChanged,
           onSubmitted: (_) => _fetchProducts(page: 1, replace: true),
           decoration: InputDecoration(
-            hintText: 'Filter products by name, SKU or barcode…',
+            hintText: 'Filter supplier products by name, SKU or barcode…',
             hintStyle: const TextStyle(fontSize: 12, color: AppTheme.textMuted),
             prefixIcon: const Icon(
               Icons.search_rounded,
@@ -744,12 +746,8 @@ class _SaleProductPanelState extends State<SaleProductPanel> {
               name: (p['name'] ?? 'Unnamed').toString(),
               sku: (p['sku'] ?? p['barcode'] ?? '').toString(),
               price: isVariable
-                  ? _groupPriceText(p)
-                  : _compactMoney(SalePricing.effectiveProductPrice(
-                      p,
-                      customerType: widget.customerType,
-                    )),
-              wholesalePricing: SalePricing.isWholesale(widget.customerType),
+                  ? 'Cost ${_groupCostText(p)}'
+                  : 'Cost ${_compactMoney(_purchaseCost(p))}',
               imageUrl: _imageUrl(p),
               inCart: inCart,
               stock: isVariable
@@ -806,7 +804,7 @@ class _SaleProductPanelState extends State<SaleProductPanel> {
         if (fresh.isNotEmpty) variants = fresh;
       } catch (_) {
         // Network unavailable: the locally cached children below are enough
-        // to select the real child product and queue the sale normally.
+        // to select the real child product and continue the purchase normally.
       }
     }
 
@@ -819,9 +817,8 @@ class _SaleProductPanelState extends State<SaleProductPanel> {
         groupId: groupId,
         groupName: groupName,
         variants: variants,
-        mode: VariantPickerMode.sale,
+        mode: VariantPickerMode.purchase,
         token: widget.token,
-        customerType: widget.customerType,
         canCreateVariant: widget.canCreateVariant,
         existingCartQuantities: widget.cartProductQuantities,
       ),
@@ -940,7 +937,6 @@ class _SaleProductPanelState extends State<SaleProductPanel> {
   }
 }
 
-// ── Dropdown helpers ─────────────────────────────────────────────────────────
 
 class _DropdownOption<T> {
   final T value;
@@ -1024,7 +1020,6 @@ class _ProductCard extends StatelessWidget {
   final int? stock;
   final bool isVariable;
   final int variantCount;
-  final bool wholesalePricing;
   final VoidCallback onTap;
 
   const _ProductCard({
@@ -1037,7 +1032,6 @@ class _ProductCard extends StatelessWidget {
     this.stock,
     this.isVariable = false,
     this.variantCount = 0,
-    this.wholesalePricing = false,
   });
 
   @override
@@ -1107,8 +1101,7 @@ class _ProductCard extends StatelessWidget {
                           ),
                         ),
                         const SizedBox(height: 2),
-                        // Effective selling price for the currently
-                        // selected customer classification.
+                        // Last/default purchase cost.
                         Row(
                           children: [
                             Expanded(
@@ -1125,27 +1118,6 @@ class _ProductCard extends StatelessWidget {
                                 ),
                               ),
                             ),
-                            if (wholesalePricing) ...[
-                              const SizedBox(width: 3),
-                              Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 4,
-                                  vertical: 1,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: AppTheme.primarySoft,
-                                  borderRadius: BorderRadius.circular(3),
-                                ),
-                                child: const Text(
-                                  'WHOLESALE',
-                                  style: TextStyle(
-                                    color: AppTheme.primaryDark,
-                                    fontSize: 6.8,
-                                    fontWeight: FontWeight.w900,
-                                  ),
-                                ),
-                              ),
-                            ],
                           ],
                         ),
                         if (isVariable) ...[

@@ -1,6 +1,7 @@
 import 'dart:async' show Timer;
 import 'package:flutter/material.dart';
 import 'package:enterprise_pos/services/app_currency.dart';
+import 'package:enterprise_pos/services/sale_profit.dart';
 import 'dart:ui' show FontFeature;
 import 'package:flutter/services.dart';
 import 'package:enterprise_pos/models/product_unit.dart';
@@ -43,6 +44,7 @@ class ItemsTable extends StatefulWidget {
   final VoidCallback onAddItem;
   final Future<List<ProductRef>> Function(String query) onQueryProducts;
   final void Function(List<Map<String, dynamic>> nextItems) onItemsChanged;
+  final void Function(int index)? onProfitInsight;
 
   /// When [compact] is true the table renders as a plain borderless table
   /// (no EnterprisePanel card, no section header, tighter row padding)
@@ -55,6 +57,7 @@ class ItemsTable extends StatefulWidget {
     required this.onQueryProducts,
     required this.onItemsChanged,
     required this.onAddItem,
+    this.onProfitInsight,
     this.compact = false,
   });
 
@@ -70,6 +73,7 @@ class _ItemsTableState extends State<ItemsTable> {
 
   // per-row commit debounce (keeps parent totals live but efficient)
   final Map<int, Timer?> _rowDebounce = {};
+  int? _hoveredRow;
 
   // NEW: anchor for the product cell
   final LayerLink _productSearchLink = LayerLink();
@@ -286,14 +290,19 @@ class _ItemsTableState extends State<ItemsTable> {
     final discPct  = double.tryParse(p.raw?['discount']?.toString() ?? '') ?? 0.0;
     final discType = (p.raw?['discount_type'] ?? 'percentage').toString();
     final next = [...widget.items];
+    final raw = p.raw ?? const <String, dynamic>{};
     next.add({
       'product_id': p.id,
       'name': p.name,
+      'secondary_name': raw['secondary_name'],
+      'cost_price': raw['cost_price'],
+      'wholesale_price': raw['wholesale_price'],
       'price': p.tp,
       'discount_pct': discPct,
       'discount_type': discType,
       'quantity': 1.0,
       'total': _calcLineTotal(price: p.tp, qty: 1.0, discountPct: discPct, discountType: discType),
+      ...SaleProfitCalculator.costFieldsFromProduct(raw),
       // Carry the quantity contract on the line: the search result that knew
       // it is discarded as soon as this returns.
       ...p.quantityRule.toRowFields(),
@@ -666,15 +675,20 @@ class _ItemsTableState extends State<ItemsTable> {
       discountType: compactDiscType,
     );
 
-    return Container(
-      height: 58,
-      decoration: const BoxDecoration(
-        border: Border(
-          bottom: BorderSide(color: AppTheme.border, width: 0.8),
+    return MouseRegion(
+      onEnter: (_) => setState(() => _hoveredRow = i),
+      onExit: (_) {
+        if (_hoveredRow == i) setState(() => _hoveredRow = null);
+      },
+      child: Container(
+        height: 58,
+        decoration: const BoxDecoration(
+          border: Border(
+            bottom: BorderSide(color: AppTheme.border, width: 0.8),
+          ),
         ),
-      ),
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-      child: Row(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+        child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           // Product name — no icon, flexible
@@ -682,14 +696,43 @@ class _ItemsTableState extends State<ItemsTable> {
             flex: 5,
             child: Padding(
               padding: const EdgeInsets.only(right: 4),
-              child: Text(
-                (item['name'] ?? '').toString(),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontWeight: FontWeight.w700,
-                  fontSize: 12,
-                ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      (item['name'] ?? '').toString(),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ),
+                  if (widget.onProfitInsight != null && _hoveredRow == i)
+                    SizedBox(
+                      width: 24,
+                      height: 28,
+                      child: IconButton(
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(
+                          minWidth: 24,
+                          minHeight: 28,
+                        ),
+                        tooltip: 'Profit insight',
+                        icon: const Icon(
+                          Icons.visibility_outlined,
+                          size: 15,
+                          color: AppTheme.primary,
+                        ),
+                        onPressed: () {
+                          _rowDebounce[i]?.cancel();
+                          _commitRow(i);
+                          widget.onProfitInsight?.call(i);
+                        },
+                      ),
+                    ),
+                ],
               ),
             ),
           ),
@@ -796,7 +839,8 @@ class _ItemsTableState extends State<ItemsTable> {
               onPressed: () => _removeRow(i),
             ),
           ),
-        ],
+          ],
+        ),
       ),
     );
   }

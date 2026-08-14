@@ -8,13 +8,12 @@ import 'package:enterprise_pos/providers/payment_method_provider.dart';
 import 'package:enterprise_pos/models/payment_method.dart';
 import 'package:enterprise_pos/models/product_unit.dart';
 import 'package:enterprise_pos/screens/sales/parts/create_sale_items_section.dart';
-import 'package:enterprise_pos/screens/sales/parts/sale_totals_card.dart';
+import 'package:enterprise_pos/screens/purchases/parts/purchase_product_panel.dart';
+import 'package:enterprise_pos/widgets/purchase_status_bar.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/app_feedback.dart';
 import 'package:enterprise_pos/widgets/app_keyboard_shortcuts.dart';
-import 'package:enterprise_pos/widgets/branch_indicator.dart';
 import 'package:enterprise_pos/widgets/credit_limit_override_dialog.dart';
-import 'package:enterprise_pos/widgets/enterprise/enterprise_panel.dart';
 import 'package:enterprise_pos/widgets/product_picker_grid_sheet.dart';
 import 'package:enterprise_pos/widgets/vendor_picker_sheet.dart';
 import 'package:enterprise_pos/services/party_prefetch.dart';
@@ -276,6 +275,8 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
   void _applyPickedProduct(Map<String, dynamic> product, {double qty = 1.0}) {
     final productId = int.tryParse(product['id']?.toString() ?? '') ?? 0;
     if (productId <= 0) return;
+    final pickerAddQty =
+        double.tryParse(product['_picker_add_qty']?.toString() ?? '');
 
     final idx = _items.indexWhere(
       (item) => item['product_id']?.toString() == productId.toString(),
@@ -284,22 +285,29 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
     if (idx != -1) {
       final price = _toNum(_items[idx]['price']);
       final discPct = _toNum(_items[idx]['discount_pct'] ?? 0);
-      _items[idx]['quantity'] = qty;
-      _items[idx]['received_qty'] = _receiveNow ? qty : 0.0;
-      _items[idx]['total'] = _lineTotal(price: price, qty: qty, discPct: discPct);
+      final targetQty = pickerAddQty != null && pickerAddQty > 0
+          ? _toNum(_items[idx]['quantity']) + pickerAddQty
+          : qty;
+      _items[idx]['quantity'] = targetQty;
+      _items[idx]['received_qty'] = _receiveNow ? targetQty : 0.0;
+      _items[idx]['total'] =
+          _lineTotal(price: price, qty: targetQty, discPct: discPct);
       _items[idx].addAll(QuantityRule.fromProduct(product).toRowFields());
     } else {
       final unitCost = _purchaseUnitCost(product);
+      final targetQty = pickerAddQty != null && pickerAddQty > 0
+          ? pickerAddQty
+          : qty;
       _items.add({
         'product_id': productId,
         'name': product['name'] ?? product['title'] ?? 'Unnamed product',
         'cost_price': product['cost_price'],
         'wholesale_price': product['wholesale_price'],
-        'quantity': qty,
+        'quantity': targetQty,
         'price': unitCost,
         'discount_pct': 0.0,
-        'received_qty': _receiveNow ? qty : 0.0,
-        'total': _lineTotal(price: unitCost, qty: qty, discPct: 0.0),
+        'received_qty': _receiveNow ? targetQty : 0.0,
+        'total': _lineTotal(price: unitCost, qty: targetQty, discPct: 0.0),
         ...QuantityRule.fromProduct(product).toRowFields(),
       });
     }
@@ -684,167 +692,561 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
     return AppTheme.success;
   }
 
+  Set<int> get _cartProductIds => _items
+      .map((item) => int.tryParse(item['product_id']?.toString() ?? ''))
+      .whereType<int>()
+      .where((id) => id > 0)
+      .toSet();
+
+  Map<int, double> get _cartProductQuantities {
+    final result = <int, double>{};
+    for (final item in _items) {
+      final id = int.tryParse(item['product_id']?.toString() ?? '') ?? 0;
+      final qty = _toNum(item['quantity']);
+      if (id <= 0 || qty <= 0) continue;
+      result[id] = (result[id] ?? 0) + qty;
+    }
+    return result;
+  }
+
+  Widget _buildPurchaseVendorStrip({
+    required bool branchMissing,
+  }) {
+    String vendorLabelOf(Map<String, dynamic> vendor) {
+      final first = (vendor['first_name'] ??
+              vendor['company_name'] ??
+              vendor['name'] ??
+              '')
+          .toString();
+      final last = (vendor['last_name'] ?? '').toString();
+      return '$first ${last.isNotEmpty ? last : ''}'.trim();
+    }
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(10, 7, 10, 7),
+      color: Colors.white,
+      child: Row(
+        children: [
+          Expanded(
+            child: PartyAutocompleteField<Map<String, dynamic>>(
+              label: 'Vendor',
+              hintText: 'Type vendor name…',
+              focusNode: _vendorFocusNode,
+              controller: _vendorController,
+              getCachedItems: () =>
+                  VendorPickCache.cache.peek(VendorPickCache.keyFor())?.items ??
+                  const [],
+              onSearchRemote: (query) =>
+                  VendorPickCache.searchRemote(VendorService(token: _token), query),
+              labelOf: vendorLabelOf,
+              idOf: (vendor) => (vendor['id'] ?? '').toString(),
+              selectedLabel: _selectedVendor == null
+                  ? null
+                  : vendorLabelOf(_selectedVendor!),
+              selectedSubtitle: _selectedVendor == null
+                  ? null
+                  : (_selectedVendor!['phone'] ?? '').toString(),
+              onSelected: _applyVendorSelection,
+              onCleared: _clearVendorSelection,
+              onBrowseAll: _openVendorSheet,
+            ),
+          ),
+          if (branchMissing) ...[
+            const SizedBox(width: 8),
+            Tooltip(
+              message:
+                  'Select a working branch from Branch Control before creating a purchase.',
+              child: InkWell(
+                onTap: _showBranchControlNotice,
+                borderRadius: BorderRadius.circular(7),
+                child: Container(
+                  height: 38,
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  decoration: BoxDecoration(
+                    color: AppTheme.warning.withOpacity(.10),
+                    borderRadius: BorderRadius.circular(7),
+                    border: Border.all(
+                      color: AppTheme.warning.withOpacity(.30),
+                    ),
+                  ),
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.warning_amber_rounded,
+                          size: 16, color: AppTheme.warning),
+                      SizedBox(width: 5),
+                      Text(
+                        'Branch required',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: AppTheme.navy,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPurchaseInputRow() {
+    return Container(
+      height: 48,
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+      color: Colors.white,
+      child: Row(
+        children: [
+          Expanded(
+            child: PartyAutocompleteField<Map<String, dynamic>>(
+              label: 'Add product',
+              hintText: 'Type product name, SKU or barcode…',
+              focusNode: _productSearchFocusNode,
+              controller: _productSearchController,
+              getCachedItems: () =>
+                  ProductPickCache.cache
+                      .peek(ProductPickCache.keyFor(vendorId: _selectedVendorId))
+                      ?.items ??
+                  const [],
+              onSearchRemote: (query) => ProductPickCache.searchRemote(
+                _productService,
+                query,
+                vendorId: _selectedVendorId,
+              ),
+              labelOf: (product) => (product['name'] ?? '').toString(),
+              subtitleOf: (product) =>
+                  (product['sku'] ?? product['barcode'] ?? '').toString(),
+              idOf: (product) => (product['id'] ?? '').toString(),
+              onSelected: (product) {
+                setState(() => _applyPickedProduct(product));
+                _productSearchController.clear();
+              },
+              onBrowseAll: () async {
+                await _addItemManual();
+                return null;
+              },
+            ),
+          ),
+          const SizedBox(width: 6),
+          Tooltip(
+            message: 'Focus barcode scanner  (F9)',
+            child: InkWell(
+              onTap: () {
+                Future.delayed(const Duration(milliseconds: 50), () {
+                  if (mounted) _barcodeFocusNode.requestFocus();
+                });
+              },
+              borderRadius: BorderRadius.circular(8),
+              child: Container(
+                height: 36,
+                width: 36,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: _scannerEnabled
+                      ? AppTheme.success.withOpacity(.10)
+                      : AppTheme.surfaceSoft,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: _scannerEnabled
+                        ? AppTheme.success.withOpacity(.40)
+                        : AppTheme.border,
+                  ),
+                ),
+                child: Icon(
+                  _scannerEnabled
+                      ? Icons.check_circle_rounded
+                      : Icons.qr_code_scanner_rounded,
+                  size: 16,
+                  color: _scannerEnabled
+                      ? AppTheme.success
+                      : AppTheme.textMuted,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 4),
+          Tooltip(
+            message: 'Add items  (F2)',
+            child: OutlinedButton.icon(
+              onPressed: _addItemManual,
+              icon: const Icon(Icons.add_rounded, size: 14),
+              label: const Text('F2', style: TextStyle(fontSize: 12)),
+              style: OutlinedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                minimumSize: const Size(0, 36),
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPurchaseTableHeader() {
+    const style = TextStyle(
+      fontSize: 11,
+      fontWeight: FontWeight.w700,
+      color: AppTheme.textMuted,
+    );
+    return Container(
+      height: 28,
+      padding: const EdgeInsets.symmetric(horizontal: 6),
+      decoration: const BoxDecoration(
+        color: AppTheme.surfaceSoft,
+        border: Border(bottom: BorderSide(color: AppTheme.border)),
+      ),
+      child: const Row(
+        children: [
+          Expanded(flex: 5, child: Text('Product', style: style)),
+          Expanded(
+            flex: 2,
+            child: Text('Cost', style: style, textAlign: TextAlign.right),
+          ),
+          SizedBox(width: 4),
+          Expanded(
+            flex: 2,
+            child: Text('Disc', style: style, textAlign: TextAlign.right),
+          ),
+          SizedBox(width: 4),
+          Expanded(
+            flex: 3,
+            child: Text('Qty', style: style, textAlign: TextAlign.center),
+          ),
+          SizedBox(width: 4),
+          Expanded(
+            flex: 2,
+            child: Text('Total', style: style, textAlign: TextAlign.right),
+          ),
+          SizedBox(width: 28),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPurchaseSummaryRow() {
+    InputDecoration compactDecoration() => InputDecoration(
+          isDense: true,
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(6),
+            borderSide: const BorderSide(color: AppTheme.border),
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(6),
+            borderSide: const BorderSide(color: AppTheme.border),
+          ),
+        );
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      color: AppTheme.surfaceSoft,
+      child: Row(
+        children: [
+          Text(
+            '${_items.length} item${_items.length == 1 ? '' : 's'}',
+            style: const TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+              color: AppTheme.textMuted,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Text(
+            'Sub: ${_money(_subtotal)}',
+            style: const TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w800,
+              color: AppTheme.navy,
+            ),
+          ),
+          const Spacer(),
+          const Text(
+            'Disc(-):',
+            style: TextStyle(
+              fontSize: 11,
+              color: AppTheme.textMuted,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(width: 4),
+          SizedBox(
+            width: 72,
+            height: 34,
+            child: TextField(
+              controller: discountController,
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              textAlign: TextAlign.right,
+              decoration: compactDecoration(),
+              style:
+                  const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+            ),
+          ),
+          const SizedBox(width: 10),
+          const Text(
+            'Tax(+):',
+            style: TextStyle(
+              fontSize: 11,
+              color: AppTheme.textMuted,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(width: 4),
+          SizedBox(
+            width: 72,
+            height: 34,
+            child: TextField(
+              controller: taxController,
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              textAlign: TextAlign.right,
+              decoration: compactDecoration(),
+              style:
+                  const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Text(
+            'Total ${_money(_total)}',
+            style: const TextStyle(
+              fontSize: 12,
+              color: AppTheme.navy,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPurchaseCartWorkspace({required bool branchMissing}) {
+    return Container(
+      color: Colors.white,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _buildPurchaseVendorStrip(branchMissing: branchMissing),
+          const Divider(height: 1, thickness: 1, color: AppTheme.border),
+          _buildPurchaseInputRow(),
+          _buildPurchaseTableHeader(),
+          Expanded(
+            child: ItemsTable(
+              compact: true,
+              items: _items,
+              onAddItem: _addItemManual,
+              onQueryProducts: _queryProducts,
+              onItemsChanged: (next) {
+                setState(() {
+                  _items = next.map((item) {
+                    final copy = Map<String, dynamic>.from(item);
+                    if (_receiveNow) {
+                      copy['received_qty'] = _toNum(copy['quantity']);
+                    }
+                    return copy;
+                  }).toList();
+                });
+              },
+            ),
+          ),
+          const Divider(height: 1, thickness: 1, color: AppTheme.border),
+          _buildPurchaseSummaryRow(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPaymentStrip() {
+    if (_payments.isEmpty) return const SizedBox.shrink();
+    final methods = context.read<PaymentMethodProvider>();
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: const BoxDecoration(
+        color: AppTheme.surfaceSoft,
+        border: Border(top: BorderSide(color: AppTheme.border)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.call_split_rounded,
+              size: 16, color: AppTheme.textMuted),
+          const SizedBox(width: 8),
+          Expanded(
+            child: SizedBox(
+              height: 34,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                itemCount: _payments.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 6),
+                itemBuilder: (_, index) {
+                  final payment = _payments[index];
+                  final method = methods
+                      .displayNameFor(payment['method']?.toString());
+                  final amount = _money(_toNum(payment['amount']));
+                  final reference =
+                      (payment['reference'] ?? '').toString().trim();
+                  return InputChip(
+                    label: Text(reference.isEmpty
+                        ? '$method  $amount'
+                        : '$method  $amount · $reference'),
+                    onDeleted: () =>
+                        setState(() => _payments.removeAt(index)),
+                  );
+                },
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            'Paid ${_money(_paid)}',
+            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(width: 10),
+          Text(
+            'Balance ${_money(_balance)}',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w800,
+              color: _balanceColor(_balance),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPurchaseBottomBar() {
+    return Container(
+      height: 62,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        border: Border(top: BorderSide(color: AppTheme.border)),
+      ),
+      child: Row(
+        children: [
+          const Text(
+            'Auto Cash',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              color: AppTheme.navy,
+            ),
+          ),
+          const SizedBox(width: 4),
+          Transform.scale(
+            scale: .8,
+            alignment: Alignment.centerLeft,
+            child: Switch(
+              value: _autoCashIfEmpty,
+              onChanged: (value) =>
+                  setState(() => _autoCashIfEmpty = value),
+            ),
+          ),
+          const SizedBox(width: 4),
+          OutlinedButton.icon(
+            onPressed: _addPaymentDialog,
+            icon: const Icon(Icons.add_card_rounded, size: 16),
+            label: Text(_payments.isEmpty ? 'Add Payment' : 'Split / Add'),
+            style: OutlinedButton.styleFrom(
+              minimumSize: const Size(0, 42),
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+            ),
+          ),
+          const Spacer(),
+          _PurchaseBottomMetric(label: 'Paid', value: _money(_paid)),
+          const SizedBox(width: 16),
+          _PurchaseBottomMetric(
+            label: 'Balance',
+            value: _money(_balance),
+            valueColor: _balanceColor(_balance),
+          ),
+          const SizedBox(width: 16),
+          _PurchaseBottomMetric(
+            label: 'Total',
+            value: _money(_total),
+            emphasized: true,
+          ),
+          const SizedBox(width: 14),
+          SizedBox(
+            height: 44,
+            child: FilledButton.icon(
+              onPressed: _submitting ? null : _submitPurchase,
+              icon: _submitting
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.check_circle_rounded, size: 18),
+              label: Text(
+                _submitting ? 'Saving...' : 'Save Purchase  Ctrl+Enter',
+              ),
+              style: FilledButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 18),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthProvider>();
     final branchProvider = context.watch<BranchProvider>();
-    final isBranchMissing = auth.isMasterAdmin && !branchProvider.hasActiveBranch;
+    final branchMissing = auth.isMasterAdmin && !branchProvider.hasActiveBranch;
     final width = MediaQuery.of(context).size.width;
-    final wide = width >= 1080;
+    final desktopWorkspace = width >= 1080;
+    final branchId =
+        int.tryParse(branchProvider.selectedBranchId?.toString() ?? '');
 
-    final vendorLabel = _selectedVendor == null
-        ? 'No vendor selected'
-        : ([
-              _selectedVendor?['company_name'],
-              _selectedVendor?['name'],
-              '${_selectedVendor?['first_name'] ?? ''} ${_selectedVendor?['last_name'] ?? ''}'.trim(),
-            ].where((value) => value != null && value.toString().trim().isNotEmpty).firstOrNull
-                ?.toString() ??
-            'Selected vendor');
-
-    final purchaseSetupPanel = Column(
-      children: [
-        _PurchasePartyPanel(
-          isAll: isBranchMissing,
-          vendorLabel: vendorLabel,
-          branchLabel: branchProvider.label,
-          hasVendor: _selectedVendor != null,
-          onPickVendor: _pickVendor,
-          onClearVendor: _clearVendorSelection,
-          onPickBranch: _showBranchControlNotice,
-          token: _token,
-          selectedVendor: _selectedVendor,
-          onBrowseVendorSheet: _openVendorSheet,
-          onApplyVendor: _applyVendorSelection,
-          vendorFocusNode: _vendorFocusNode,
-          vendorController: _vendorController,
-        ),
-        const SizedBox(height: 14),
-        _PurchaseOptionsPanel(
-          receiveNow: _receiveNow,
-          onReceiveNowChanged: (value) {
-            setState(() {
-              _receiveNow = value;
-              for (final item in _items) {
-                final qty = _toNum(item['quantity']);
-                item['received_qty'] = value ? qty : 0.0;
-              }
-            });
-          },
-        ),
-      ],
-    );
-
-    final itemsPanel = Column(
-      children: [
-        _PurchaseScannerPanel(
-          scannerEnabled: _scannerEnabled,
-          onActivateScanner: () {
-            Future.delayed(const Duration(milliseconds: 50), () {
-              if (mounted) _barcodeFocusNode.requestFocus();
-            });
-          },
-          onOpenPicker: _addItemManual,
-        ),
-        const SizedBox(height: 10),
-        PartyAutocompleteField<Map<String, dynamic>>(
-          label: 'Add product',
-          hintText: 'Type product name, SKU or barcode…',
-          focusNode: _productSearchFocusNode,
-          controller: _productSearchController,
-          getCachedItems: () =>
-              ProductPickCache.cache
-                  .peek(ProductPickCache.keyFor(vendorId: _selectedVendorId))
-                  ?.items ??
-              const [],
-          onSearchRemote: (query) => ProductPickCache.searchRemote(
-            _productService,
-            query,
-            vendorId: _selectedVendorId,
-          ),
-          labelOf: (p) => (p['name'] ?? '').toString(),
-          subtitleOf: (p) => (p['sku'] ?? p['barcode'] ?? '').toString(),
-          idOf: (p) => (p['id'] ?? '').toString(),
-          onSelected: (p) => setState(() => _applyPickedProduct(p)),
-          onBrowseAll: () async {
-            final alreadySelectedIds = _items
-                .map((e) => int.tryParse(e['product_id'].toString()) ?? 0)
-                .where((id) => id > 0)
-                .toList();
-            final alreadySelectedQty = <int, double>{
-              for (final it in _items)
-                (int.tryParse(it['product_id'].toString()) ?? 0):
-                    (double.tryParse(it['quantity'].toString()) ?? 1.0),
-            }..removeWhere((k, _) => k == 0);
-            final picked = await ProductPickerGridSheet.openMulti(
-              context,
-              token: _token,
-              vendorId: _selectedVendorId,
-              alreadySelectedIds: alreadySelectedIds,
-              alreadySelectedQty: alreadySelectedQty,
-              alreadySelectedProducts: _items.map((item) {
-                return {
-                  'id': item['product_id'],
-                  'name': item['name'],
-                  'price': item['price'],
-                  'cost_price': item['cost_price'],
-                  'wholesale_price': item['wholesale_price'],
-                };
-              }).toList(),
-            );
-            if (picked != null) {
-              setState(() {
-                for (final x in picked) {
-                  final product =
-                      (x['product'] as Map?)?.cast<String, dynamic>();
-                  final qty = (x['qty'] as num?)?.toDouble() ?? 1.0;
-                  if (product != null) _applyPickedProduct(product, qty: qty);
-                }
-              });
-            }
-            return null; // adding already happened above
-          },
-          // selectedLabel intentionally omitted — keeps field open after each add
-        ),
-        const SizedBox(height: 14),
-        ItemsTable(
-          items: _items,
-          onAddItem: _addItemManual,
-          onQueryProducts: _queryProducts,
-          onItemsChanged: (next) {
-            setState(() {
-              _items = next.map((item) {
-                final copy = Map<String, dynamic>.from(item);
-                if (_receiveNow) copy['received_qty'] = _toNum(copy['quantity']);
-                return copy;
-              }).toList();
-            });
-          },
-        ),
-      ],
-    );
-
-    final paymentAndTotalsPanel = Column(
-      children: [
-        _PurchasePaymentsCard(
-          payments: _payments,
-          autoCashIfEmpty: _autoCashIfEmpty,
-          onToggleAutoCash: (value) => setState(() => _autoCashIfEmpty = value),
-          onAddPayment: _addPaymentDialog,
-          onRemovePayment: (index) => setState(() => _payments.removeAt(index)),
-        ),
-        const SizedBox(height: 14),
-        TotalsCardInline(
-          subtotal: _money(_subtotal),
-          discountController: discountController,
-          taxController: taxController,
-          total: _money(_total),
-          paid: _money(_paid),
-          balance: _money(_balance),
-          balanceColor: _balanceColor(_balance),
-        ),
-      ],
-    );
+    final workspace = desktopWorkspace
+        ? Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(
+                flex: 57,
+                child: _buildPurchaseCartWorkspace(
+                  branchMissing: branchMissing,
+                ),
+              ),
+              const VerticalDivider(
+                width: 1,
+                thickness: 1,
+                color: AppTheme.border,
+              ),
+              Expanded(
+                flex: 43,
+                child: PurchaseProductPanel(
+                  key: ValueKey(_selectedVendorId),
+                  token: _token,
+                  vendorId: _selectedVendorId,
+                  branchId: branchId,
+                  cartProductIds: _cartProductIds,
+                  cartProductQuantities: _cartProductQuantities,
+                  canCreateVariant: auth.hasPermission('manage-products'),
+                  onProductTapped: (product) =>
+                      setState(() => _applyPickedProduct(product)),
+                  onOpenModal: _addItemManual,
+                ),
+              ),
+            ],
+          )
+        : Column(
+            children: [
+              Expanded(
+                child: _buildPurchaseCartWorkspace(
+                  branchMissing: branchMissing,
+                ),
+              ),
+            ],
+          );
 
     return GestureDetector(
       behavior: HitTestBehavior.translucent,
@@ -863,22 +1265,23 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
             ...posSaveShortcuts(() {
               if (!_submitting) _submitPurchase();
             }),
-            const SingleActivator(LogicalKeyboardKey.f2): () => _addItemManual(),
-            posCtrl(LogicalKeyboardKey.keyI): () => _addItemManual(),
-            posCmd(LogicalKeyboardKey.keyI): () => _addItemManual(),
-            const SingleActivator(LogicalKeyboardKey.f3): () => _pickVendor(),
-            posCtrlShift(LogicalKeyboardKey.keyV): () => _pickVendor(),
-            posCmdShift(LogicalKeyboardKey.keyV): () => _pickVendor(),
+            const SingleActivator(LogicalKeyboardKey.f2): _addItemManual,
+            posCtrl(LogicalKeyboardKey.keyI): _addItemManual,
+            posCmd(LogicalKeyboardKey.keyI): _addItemManual,
+            const SingleActivator(LogicalKeyboardKey.f3): _pickVendor,
+            posCtrlShift(LogicalKeyboardKey.keyV): _pickVendor,
+            posCmdShift(LogicalKeyboardKey.keyV): _pickVendor,
             const SingleActivator(LogicalKeyboardKey.f9): () {
               if (mounted) _barcodeFocusNode.requestFocus();
             },
-            posCtrl(LogicalKeyboardKey.slash): () => showAppShortcutGuide(context, extra: PosShortcutCatalog.purchaseCreate),
-            posCmd(LogicalKeyboardKey.slash): () => showAppShortcutGuide(context, extra: PosShortcutCatalog.purchaseCreate),
-            // Field-focus shortcuts — jump directly into autocomplete fields.
-            // Ctrl+Shift+V already opens the vendor picker sheet, so vendor
-            // field-focus uses Ctrl+Shift+F (Find vendor). Ctrl+Shift+P for
-            // product search. Both are ADDITIVE and do not replace any
-            // existing binding.
+            posCtrl(LogicalKeyboardKey.slash): () => showAppShortcutGuide(
+                  context,
+                  extra: PosShortcutCatalog.purchaseCreate,
+                ),
+            posCmd(LogicalKeyboardKey.slash): () => showAppShortcutGuide(
+                  context,
+                  extra: PosShortcutCatalog.purchaseCreate,
+                ),
             posCtrlShift(LogicalKeyboardKey.keyF): () {
               _vendorController.clear();
               _vendorFocusNode.requestFocus();
@@ -889,613 +1292,31 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
             },
           },
           child: Scaffold(
-      appBar: AppBar(
-        title: const Text('Create Purchase'),
-        actions: [
-          Padding(
-            padding: const EdgeInsets.only(right: 8),
-            child: OutlinedButton.icon(
-              onPressed: _addItemManual,
-              icon: const Icon(Icons.inventory_2_outlined, size: 18),
-              label: const Text('Select items'),
-            ),
-          ),
-          IconButton(
-            tooltip: 'Keyboard shortcuts',
-            onPressed: () => showAppShortcutGuide(context, extra: PosShortcutCatalog.purchaseCreate),
-            icon: const Icon(Icons.keyboard_rounded),
-          ),
-          const BranchIndicator(tappable: false),
-        ],
-      ),
-      body: Stack(
-        children: [
-          Column(
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
-                child: _PurchaseWorkspaceHeader(
-                  vendorLabel: vendorLabel,
-                  itemCount: _items.length,
-                  total: _money(_total),
-                  balance: _money(_balance),
-                  onAddItems: _addItemManual,
-                ),
-              ),
-              const SizedBox(height: 12),
-              Expanded(
-                child: Form(
-                  key: _formKey,
-                  child: SingleChildScrollView(
-                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 120),
-                    child: wide
-                        ? Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Expanded(
-                                flex: 7,
-                                child: Column(
-                                  children: [
-                                    purchaseSetupPanel,
-                                    const SizedBox(height: 14),
-                                    itemsPanel,
-                                  ],
-                                ),
-                              ),
-                              const SizedBox(width: 16),
-                              SizedBox(width: 390, child: paymentAndTotalsPanel),
-                            ],
-                          )
-                        : Column(
-                            children: [
-                              purchaseSetupPanel,
-                              const SizedBox(height: 14),
-                              itemsPanel,
-                              const SizedBox(height: 14),
-                              paymentAndTotalsPanel,
-                            ],
-                          ),
-                  ),
-                ),
-              ),
-              _CreatePurchaseBottomBar(
-                itemCount: _items.length,
-                total: _money(_total),
-                paid: _money(_paid),
-                balance: _money(_balance),
-                submitting: _submitting,
-                onSubmit: _submitPurchase,
-              ),
-            ],
-          ),
-          Positioned(left: 0, top: 0, child: _hiddenBarcodeInput()),
-        ],
-      ),
-        ),
-      ),
-    ),
-  );
-  }
-}
-
-class _PurchaseWorkspaceHeader extends StatelessWidget {
-  final String vendorLabel;
-  final int itemCount;
-  final String total;
-  final String balance;
-  final VoidCallback onAddItems;
-
-  const _PurchaseWorkspaceHeader({
-    required this.vendorLabel,
-    required this.itemCount,
-    required this.total,
-    required this.balance,
-    required this.onAddItems,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppTheme.border),
-      ),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final compact = constraints.maxWidth < 760;
-          final title = Row(
-            children: [
-              Container(
-                height: 44,
-                width: 44,
-                decoration: BoxDecoration(
-                  color: AppTheme.primarySoft,
-                  borderRadius: BorderRadius.circular(13),
-                ),
-                child: const Icon(Icons.shopping_cart_checkout_rounded, color: AppTheme.primary),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text('New Purchase', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
-                    const SizedBox(height: 2),
-                    Text(
-                      vendorLabel,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(color: AppTheme.textMuted, fontWeight: FontWeight.w600),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          );
-          final stats = Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              _PlainStat(label: 'Items', value: itemCount.toString()),
-              _PlainStat(label: 'Total', value: total),
-              _PlainStat(label: 'Balance', value: balance),
-            ],
-          );
-          final button = FilledButton.icon(
-            onPressed: onAddItems,
-            icon: const Icon(Icons.add_rounded),
-            label: const Text('Add Items'),
-          );
-
-          if (compact) {
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [title, const SizedBox(height: 12), stats, const SizedBox(height: 12), button],
-            );
-          }
-          return Row(children: [Expanded(child: title), const SizedBox(width: 16), stats, const SizedBox(width: 12), button]);
-        },
-      ),
-    );
-  }
-}
-
-class _PurchasePartyPanel extends StatelessWidget {
-  final bool isAll;
-  final String vendorLabel;
-  final String branchLabel;
-  final bool hasVendor;
-  final VoidCallback onPickVendor;
-  final VoidCallback onClearVendor;
-  final VoidCallback onPickBranch;
-
-  /// Needed to call the live, full-database vendor search as the user
-  /// types past whatever's in the local warm cache.
-  final String? token;
-
-  /// Optional fast-path: when provided, the vendor field becomes an instant
-  /// type-to-search autocomplete over the shared vendor cache, with
-  /// "Browse all" still available via the classic full sheet.
-  final Map<String, dynamic>? selectedVendor;
-  final Future<Map<String, dynamic>?> Function()? onBrowseVendorSheet;
-  final void Function(Map<String, dynamic>?)? onApplyVendor;
-
-  /// Optional external focus node / controller for the vendor autocomplete
-  /// field so that keyboard shortcuts can jump focus directly into it.
-  final FocusNode? vendorFocusNode;
-  final TextEditingController? vendorController;
-
-  const _PurchasePartyPanel({
-    required this.isAll,
-    required this.vendorLabel,
-    required this.branchLabel,
-    required this.hasVendor,
-    required this.onPickVendor,
-    required this.onClearVendor,
-    required this.onPickBranch,
-    this.token,
-    this.selectedVendor,
-    this.onBrowseVendorSheet,
-    this.onApplyVendor,
-    this.vendorFocusNode,
-    this.vendorController,
-  });
-
-  String _vendorLabelOf(Map<String, dynamic> v) {
-    final first = (v['first_name'] ?? v['company_name'] ?? v['name'] ?? '').toString();
-    final last = (v['last_name'] ?? '').toString();
-    return "$first ${last.isNotEmpty ? last : ''}".trim();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final vendorField = (onBrowseVendorSheet != null && token != null)
-        ? PartyAutocompleteField<Map<String, dynamic>>(
-            label: 'Vendor',
-            hintText: 'Type vendor name…',
-            focusNode: vendorFocusNode,
-            controller: vendorController,
-            getCachedItems: () =>
-                VendorPickCache.cache.peek(VendorPickCache.keyFor())?.items ?? const [],
-            onSearchRemote: (query) =>
-                VendorPickCache.searchRemote(VendorService(token: token!), query),
-            labelOf: _vendorLabelOf,
-            idOf: (v) => (v['id'] ?? '').toString(),
-            selectedLabel: selectedVendor != null ? _vendorLabelOf(selectedVendor!) : null,
-            selectedSubtitle: selectedVendor != null ? (selectedVendor!['phone'] ?? '').toString() : null,
-            onSelected: (v) => onApplyVendor?.call(v),
-            onCleared: onClearVendor,
-            onBrowseAll: onBrowseVendorSheet!,
-          )
-        : _SelectField(
-            label: 'Vendor',
-            valueText: vendorLabel,
-            icon: Icons.storefront_outlined,
-            onTap: onPickVendor,
-            showClear: hasVendor,
-            onClear: onClearVendor,
-          );
-
-    final fields = <Widget>[
-      vendorField,
-      if (isAll)
-        const _BranchRequiredNotice(),
-    ];
-
-    return EnterprisePanel(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const EnterpriseSectionHeader(
-            title: 'Purchase setup',
-            subtitle: 'Select vendor before adding supplier items.',
-            icon: Icons.receipt_long_outlined,
-            color: AppTheme.primary,
-          ),
-          const SizedBox(height: 14),
-          LayoutBuilder(
-            builder: (context, constraints) {
-              if (constraints.maxWidth < 700 || fields.length == 1) {
-                return Column(
-                  children: fields
-                      .map((field) => Padding(padding: const EdgeInsets.only(bottom: 10), child: field))
-                      .toList(),
-                );
-              }
-              return Row(
+            backgroundColor: AppTheme.bg,
+            body: Form(
+              key: _formKey,
+              child: Stack(
                 children: [
-                  for (int i = 0; i < fields.length; i++) ...[
-                    if (i != 0) const SizedBox(width: 10),
-                    Expanded(child: fields[i]),
-                  ],
-                ],
-              );
-            },
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-
-class _BranchRequiredNotice extends StatelessWidget {
-  const _BranchRequiredNotice();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: AppTheme.warning.withOpacity(.10),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: AppTheme.warning.withOpacity(.28)),
-      ),
-      child: const Row(
-        children: [
-          Icon(Icons.info_outline_rounded, color: AppTheme.warning),
-          SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              'Select a working branch from Branch Control before creating a purchase.',
-              style: TextStyle(fontWeight: FontWeight.w700, color: AppTheme.navy),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _PurchaseOptionsPanel extends StatelessWidget {
-  final bool receiveNow;
-  final ValueChanged<bool> onReceiveNowChanged;
-
-  const _PurchaseOptionsPanel({required this.receiveNow, required this.onReceiveNowChanged});
-
-  @override
-  Widget build(BuildContext context) {
-    return EnterprisePanel(
-      padding: const EdgeInsets.all(14),
-      child: Row(
-        children: [
-          Icon(receiveNow ? Icons.inventory_rounded : Icons.pending_actions_rounded,
-              color: receiveNow ? AppTheme.success : AppTheme.primary),
-          const SizedBox(width: 10),
-          const Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('Receiving mode', style: TextStyle(fontWeight: FontWeight.w800)),
-                SizedBox(height: 2),
-                Text(
-                  'Turn on if goods are received immediately with this purchase.',
-                  style: TextStyle(color: AppTheme.textMuted, fontWeight: FontWeight.w500),
-                ),
-              ],
-            ),
-          ),
-          Switch(value: receiveNow, onChanged: onReceiveNowChanged),
-        ],
-      ),
-    );
-  }
-}
-
-class _PurchaseScannerPanel extends StatelessWidget {
-  final bool scannerEnabled;
-  final VoidCallback onActivateScanner;
-  final VoidCallback onOpenPicker;
-
-  const _PurchaseScannerPanel({
-    required this.scannerEnabled,
-    required this.onActivateScanner,
-    required this.onOpenPicker,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return EnterprisePanel(
-      padding: const EdgeInsets.all(12),
-      child: Row(
-        children: [
-          Icon(scannerEnabled ? Icons.check_circle_rounded : Icons.qr_code_scanner_rounded,
-              color: scannerEnabled ? AppTheme.success : AppTheme.primary),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              scannerEnabled ? 'Scanner active' : 'Search supplier products or scan barcode',
-              style: const TextStyle(fontWeight: FontWeight.w700),
-            ),
-          ),
-          OutlinedButton.icon(
-            onPressed: onActivateScanner,
-            icon: const Icon(Icons.qr_code_scanner_rounded, size: 18),
-            label: const Text('Scan'),
-          ),
-          const SizedBox(width: 8),
-          FilledButton.icon(
-            onPressed: onOpenPicker,
-            icon: const Icon(Icons.add_rounded, size: 18),
-            label: const Text('Items'),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-
-class _PurchasePaymentsCard extends StatelessWidget {
-  final List<Map<String, dynamic>> payments;
-  final bool autoCashIfEmpty;
-  final ValueChanged<bool> onToggleAutoCash;
-  final VoidCallback onAddPayment;
-  final void Function(int index) onRemovePayment;
-
-  const _PurchasePaymentsCard({
-    required this.payments,
-    required this.autoCashIfEmpty,
-    required this.onToggleAutoCash,
-    required this.onAddPayment,
-    required this.onRemovePayment,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return EnterprisePanel(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              const Expanded(child: Text('Supplier payment', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800))),
-              TextButton.icon(
-                onPressed: onAddPayment,
-                icon: const Icon(Icons.add_rounded, size: 18),
-                label: const Text('Add'),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            decoration: BoxDecoration(
-              color: AppTheme.surfaceSoft,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: AppTheme.border),
-            ),
-            child: Row(
-              children: [
-                const Expanded(
-                  child: Text(
-                    'Auto cash if no payment is added',
-                    style: TextStyle(fontWeight: FontWeight.w700),
-                  ),
-                ),
-                Switch(value: autoCashIfEmpty, onChanged: onToggleAutoCash),
-              ],
-            ),
-          ),
-          if (payments.isNotEmpty) ...[
-            const SizedBox(height: 10),
-            ...payments.asMap().entries.map((entry) {
-              final index = entry.key;
-              final payment = entry.value;
-              return Container(
-                margin: const EdgeInsets.only(bottom: 8),
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: AppTheme.border),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(Icons.payments_outlined, color: AppTheme.primary, size: 20),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(
-                        '${AppCurrency.format(payment['amount'])} • ${(payment['method'] ?? '').toString().toUpperCase()}',
-                        style: const TextStyle(fontWeight: FontWeight.w800),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      const PurchaseStatusBar(
+                        light: true,
+                        showBackButton: true,
                       ),
-                    ),
-                    IconButton(
-                      tooltip: 'Remove payment',
-                      icon: const Icon(Icons.close_rounded, color: AppTheme.danger),
-                      onPressed: () => onRemovePayment(index),
-                    ),
-                  ],
-                ),
-              );
-            }),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
-class _CreatePurchaseBottomBar extends StatelessWidget {
-  final int itemCount;
-  final String total;
-  final String paid;
-  final String balance;
-  final bool submitting;
-  final VoidCallback onSubmit;
-
-  const _CreatePurchaseBottomBar({
-    required this.itemCount,
-    required this.total,
-    required this.paid,
-    required this.balance,
-    required this.submitting,
-    required this.onSubmit,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: EdgeInsets.fromLTRB(16, 10, 16, 10 + MediaQuery.of(context).padding.bottom),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        border: const Border(top: BorderSide(color: AppTheme.border)),
-        boxShadow: [
-          BoxShadow(color: AppTheme.navy.withOpacity(.05), blurRadius: 18, offset: const Offset(0, -8)),
-        ],
-      ),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final info = Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              EnterpriseStatPill(label: 'Items', value: itemCount.toString(), icon: Icons.inventory_2_outlined, color: AppTheme.primary),
-              EnterpriseStatPill(label: 'Total', value: total, icon: Icons.payments_outlined, color: AppTheme.success),
-              EnterpriseStatPill(label: 'Balance', value: balance, icon: Icons.account_balance_wallet_outlined, color: AppTheme.warning),
-            ],
-          );
-          final button = SizedBox(
-            height: 52,
-            child: FilledButton.icon(
-              onPressed: submitting ? null : onSubmit,
-              icon: submitting
-                  ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
-                  : const Icon(Icons.check_circle_rounded),
-              label: Text(submitting ? 'Saving...' : 'Save Purchase  Ctrl+Enter'),
-            ),
-          );
-
-          if (constraints.maxWidth < 760) {
-            return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [info, const SizedBox(height: 10), button]);
-          }
-          return Row(children: [Expanded(child: info), const SizedBox(width: 12), button]);
-        },
-      ),
-    );
-  }
-}
-
-class _SelectField extends StatelessWidget {
-  final String label;
-  final String valueText;
-  final IconData icon;
-  final VoidCallback onTap;
-  final bool showClear;
-  final VoidCallback? onClear;
-
-  const _SelectField({
-    required this.label,
-    required this.valueText,
-    required this.icon,
-    required this.onTap,
-    this.showClear = false,
-    this.onClear,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: AppTheme.surfaceSoft,
-      borderRadius: BorderRadius.circular(12),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(12),
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: AppTheme.border),
-          ),
-          child: Row(
-            children: [
-              Icon(icon, color: AppTheme.primary, size: 21),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(label, style: const TextStyle(color: AppTheme.textMuted, fontSize: 11, fontWeight: FontWeight.w600)),
-                    const SizedBox(height: 2),
-                    Text(
-                      valueText,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontWeight: FontWeight.w800),
-                    ),
-                  ],
-                ),
+                      Expanded(child: workspace),
+                      if (_payments.isNotEmpty) _buildPaymentStrip(),
+                      _buildPurchaseBottomBar(),
+                    ],
+                  ),
+                  Positioned(
+                    left: 0,
+                    top: 30,
+                    child: _hiddenBarcodeInput(),
+                  ),
+                ],
               ),
-              if (showClear)
-                IconButton(tooltip: 'Clear', icon: const Icon(Icons.close_rounded), onPressed: onClear)
-              else
-                const Icon(Icons.keyboard_arrow_down_rounded, color: AppTheme.textMuted),
-            ],
+            ),
           ),
         ),
       ),
@@ -1503,30 +1324,43 @@ class _SelectField extends StatelessWidget {
   }
 }
 
-class _PlainStat extends StatelessWidget {
+class _PurchaseBottomMetric extends StatelessWidget {
   final String label;
   final String value;
+  final Color? valueColor;
+  final bool emphasized;
 
-  const _PlainStat({required this.label, required this.value});
+  const _PurchaseBottomMetric({
+    required this.label,
+    required this.value,
+    this.valueColor,
+    this.emphasized = false,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-      decoration: BoxDecoration(
-        color: AppTheme.surfaceSoft,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppTheme.border),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(label, style: const TextStyle(color: AppTheme.textMuted, fontSize: 11, fontWeight: FontWeight.w600)),
-          const SizedBox(height: 2),
-          Text(value, style: const TextStyle(fontWeight: FontWeight.w900)),
-        ],
-      ),
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        Text(
+          label,
+          style: const TextStyle(
+            fontSize: 10,
+            color: AppTheme.textMuted,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        const SizedBox(height: 1),
+        Text(
+          value,
+          style: TextStyle(
+            fontSize: emphasized ? 16 : 13,
+            color: valueColor ?? AppTheme.navy,
+            fontWeight: emphasized ? FontWeight.w900 : FontWeight.w800,
+          ),
+        ),
+      ],
     );
   }
 }

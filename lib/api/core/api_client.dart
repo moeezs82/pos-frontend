@@ -1,8 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
-import 'package:http/http.dart' as http;
 import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
 
 import '../../config/backend_config.dart';
 
@@ -244,6 +244,7 @@ class ApiClient {
   }
 
   Map<String, dynamic> _handleResponse(http.Response res) {
+
     // A non-2xx response may not be JSON (proxy error page, maintenance
     // HTML, etc.). Decode defensively so the status code is never lost just
     // because the body wasn't parseable.

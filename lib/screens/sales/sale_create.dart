@@ -20,6 +20,7 @@ import 'package:enterprise_pos/utils/network_failure.dart';
 import 'package:uuid/uuid.dart';
 import 'package:enterprise_pos/screens/sales/parts/create_sale_items_section.dart';
 import 'package:enterprise_pos/screens/sales/parts/sale_product_panel.dart';
+import 'package:enterprise_pos/screens/sales/parts/sale_profit_insight.dart';
 import 'package:enterprise_pos/widgets/product_picker_grid_sheet.dart';
 import 'package:enterprise_pos/widgets/customer_picker_sheet.dart';
 import 'package:enterprise_pos/widgets/credit_limit_override_dialog.dart';
@@ -29,6 +30,7 @@ import 'package:enterprise_pos/services/party_prefetch.dart';
 import 'package:enterprise_pos/services/party_pick_caches.dart';
 import 'package:enterprise_pos/services/catalog_cache_service.dart';
 import 'package:enterprise_pos/services/sale_pricing.dart';
+import 'package:enterprise_pos/services/sale_profit.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/enterprise/enterprise_panel.dart';
 import 'package:enterprise_pos/widgets/app_feedback.dart';
@@ -115,6 +117,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
   final _barcodeController = TextEditingController();
   final _barcodeFocusNode = FocusNode();
   bool _scannerEnabled = false;
+  bool _showProfitInsight = false;
 
   // Named focus nodes for keyboard-shortcut field-jumping.
   // Party autocomplete fields (controllers cleared before focus so the field
@@ -444,11 +447,16 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
   void _addOrIncrementProduct(Map<String, dynamic> product) {
     final productId = int.tryParse(product['id']?.toString() ?? '') ?? 0;
     if (productId == 0) return;
+    final pickerAddQty =
+        double.tryParse(product['_picker_add_qty']?.toString() ?? '');
+    final addQty = pickerAddQty != null && pickerAddQty > 0 ? pickerAddQty : 1.0;
 
     final price = SalePricing.effectiveProductPrice(
       product,
       customerType: _selectedCustomerType,
     );
+    final profitCostFields =
+        SaleProfitCalculator.costFieldsFromProduct(product);
 
     final idx = _items.indexWhere((it) {
       final existingId =
@@ -464,7 +472,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       // Increment quantity while preserving edited price, discount, and type.
       final existingQty =
           double.tryParse(_items[idx]['quantity']?.toString() ?? '') ?? 0.0;
-      final newQty = existingQty + 1.0;
+      final newQty = existingQty + addQty;
       final discPct =
           double.tryParse(_items[idx]['discount_pct']?.toString() ?? '') ?? 0.0;
       final rowDiscType =
@@ -472,6 +480,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       final rowPrice =
           double.tryParse(_items[idx]['price']?.toString() ?? '') ?? price;
       _items[idx]['quantity'] = newQty;
+      _items[idx].addAll(profitCostFields);
       if ((product['secondary_name'] ?? '').toString().trim().isNotEmpty) {
         _items[idx]['secondary_name'] = product['secondary_name'];
       }
@@ -486,11 +495,12 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         'secondary_name': product['secondary_name'],
         'cost_price': product['cost_price'],
         'wholesale_price': product['wholesale_price'],
-        'quantity': 1.0,
+        ...profitCostFields,
+        'quantity': addQty,
         'price': price,
         'discount_pct': scanDiscPct,
         'discount_type': scanDiscType,
-        'total': _lineTotal(price: price, qty: 1.0, discPct: scanDiscPct, discountType: scanDiscType),
+        'total': _lineTotal(price: price, qty: addQty, discPct: scanDiscPct, discountType: scanDiscType),
         // Stamp the quantity contract onto the line — the product map this
         // came from (search hit, scan lookup, cache row) is not kept.
         ...QuantityRule.fromProduct(product).toRowFields(),
@@ -514,6 +524,8 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       product,
       customerType: _selectedCustomerType,
     );
+    final profitCostFields =
+        SaleProfitCalculator.costFieldsFromProduct(product);
 
     final idx = _items.indexWhere(
       (it) => (int.tryParse(it["product_id"].toString()) ?? 0) == productId,
@@ -521,6 +533,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
 
     if (idx != -1) {
       _items[idx]["quantity"] = qty;
+      _items[idx].addAll(profitCostFields);
       if ((product['secondary_name'] ?? '').toString().trim().isNotEmpty) {
         _items[idx]['secondary_name'] = product['secondary_name'];
       }
@@ -543,6 +556,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         "secondary_name": product['secondary_name'],
         "cost_price": product['cost_price'],
         "wholesale_price": product['wholesale_price'],
+        ...profitCostFields,
         "quantity": qty,
         "price": price,
         "discount_pct": pickDiscPct,
@@ -589,6 +603,12 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
           'price': item['price'],
           'cost_price': item['cost_price'],
           'wholesale_price': item['wholesale_price'],
+          SaleProfitCalculator.unitCostKey:
+              item[SaleProfitCalculator.unitCostKey],
+          SaleProfitCalculator.estimatedKey:
+              item[SaleProfitCalculator.estimatedKey],
+          SaleProfitCalculator.sourceKey:
+              item[SaleProfitCalculator.sourceKey],
         };
       }).toList(),
     );
@@ -712,6 +732,28 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         },
       ),
     );
+  }
+
+  SaleProfitSummary _currentProfitSummary() {
+    return SaleProfitCalculator.invoice(
+      items: _items,
+      invoiceDiscount: _toDouble(discountController),
+      shippingRevenue: _toDouble(shippingController),
+      tax: _toDouble(taxController),
+    );
+  }
+
+  void _showItemProfitInsight(int index) {
+    if (!context.read<AuthProvider>().hasPermission('view-sale-profit')) return;
+    if (index < 0 || index >= _items.length) return;
+    final summary = _currentProfitSummary();
+    if (index >= summary.lines.length) return;
+    showSaleLineProfitDialog(context, summary.lines[index]);
+  }
+
+  void _showInvoiceProfitDetails() {
+    if (!context.read<AuthProvider>().hasPermission('view-sale-profit')) return;
+    showSaleProfitDetailsDialog(context, _currentProfitSummary());
   }
 
   // ---------------- Barcode ----------------
@@ -1883,6 +1925,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       _autoCashIfEmpty = true;
       _sendInvoiceOnWhatsApp = false;
       _whatsappPhoneEdited = false;
+      _showProfitInsight = false;
       whatsappPhoneController.clear();
 
       if (!keepInitialCustomer) {
@@ -2053,6 +2096,17 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         .toSet();
   }
 
+  Map<int, double> get _cartProductQuantities {
+    final result = <int, double>{};
+    for (final item in _items) {
+      final id = int.tryParse(item['product_id']?.toString() ?? '') ?? 0;
+      final qty = double.tryParse(item['quantity']?.toString() ?? '') ?? 0.0;
+      if (id <= 0 || qty <= 0) continue;
+      result[id] = (result[id] ?? 0) + qty;
+    }
+    return result;
+  }
+
   // ── Split-tender helpers ────────────────────────────────────────────────
   double _pmAmt(dynamic v) => double.tryParse(v?.toString() ?? '') ?? 0.0;
 
@@ -2186,7 +2240,8 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
   @override
   Widget build(BuildContext context) {
     final isAll = context.watch<BranchProvider>().isAll;
-    final token = Provider.of<AuthProvider>(context, listen: false).token!;
+    final auth = context.watch<AuthProvider>();
+    final token = auth.token!;
 
     // Feature flags — watched so the UI reacts when settings change.
     final featureProvider = context.watch<BranchFeatureProvider>();
@@ -2369,6 +2424,8 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
                                 subtotal: subtotal,
                                 deliveryEnabled: deliveryEnabled,
                                 saleVendorEnabled: saleVendorEnabled,
+                                canViewProfit:
+                                    auth.hasPermission('view-sale-profit'),
                               ),
                             ),
 
@@ -2388,6 +2445,9 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
                                 branchId: int.tryParse(_effectiveBranchIdStr()),
                                 customerType: _selectedCustomerType,
                                 cartProductIds: _cartProductIds,
+                                cartProductQuantities: _cartProductQuantities,
+                                canCreateVariant:
+                                    auth.hasPermission('manage-products'),
                                 onProductTapped: (p) =>
                                     setState(() => _addOrIncrementProduct(p)),
                                 onOpenModal: _addItemManual,
@@ -2431,6 +2491,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     required double subtotal,
     required bool deliveryEnabled,
     required bool saleVendorEnabled,
+    required bool canViewProfit,
   }) {
     return Container(
       color: Colors.white,
@@ -2495,12 +2556,17 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
               onQueryProducts: _queryProducts,
               onAddItem: _addItemManual,
               onItemsChanged: (next) => setState(() => _items = next),
+              onProfitInsight:
+                  canViewProfit ? _showItemProfitInsight : null,
             ),
           ),
 
           // 6. FIXED — subtotal + editable discount/tax
           const Divider(height: 1, thickness: 1, color: AppTheme.border),
-          _buildSummaryRow(subtotal: subtotal),
+          _buildSummaryRow(
+            subtotal: subtotal,
+            canViewProfit: canViewProfit,
+          ),
         ],
       ),
     );
@@ -2816,148 +2882,206 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
   }
 
   // ── Summary row: item count + subtotal + editable discount/tax ─────────
-  Widget _buildSummaryRow({required double subtotal}) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: AppTheme.surfaceSoft,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: AppTheme.border),
-      ),
-      child: Row(
-        children: [
-          // Item count + subtotal (read-only)
-          Text(
-            '${_items.length} item${_items.length == 1 ? '' : 's'}',
-            style: const TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.w700,
-              color: AppTheme.textMuted,
-            ),
-          ),
-          const SizedBox(width: 10),
-          Text(
-            'Sub: ${AppCurrency.format(subtotal)}',
-            style: const TextStyle(
-              fontSize: 11,
-              fontWeight: FontWeight.w800,
-              color: AppTheme.navy,
-              fontFeatures: [FontFeature.tabularFigures()],
-            ),
-          ),
-          const Spacer(),
+  Widget _buildSummaryRow({
+    required double subtotal,
+    required bool canViewProfit,
+  }) {
+    final profitSummary = _currentProfitSummary();
 
-          // Order Discount (editable inline)
-          const Text(
-            'Disc(-):',
-            style: TextStyle(
-              fontSize: 11,
-              color: AppTheme.textMuted,
-              fontWeight: FontWeight.w600,
-            ),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          decoration: BoxDecoration(
+            color: AppTheme.surfaceSoft,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: AppTheme.border),
           ),
-          const SizedBox(width: 4),
-          Tooltip(
-            message: 'Focus: Ctrl+Shift+G',
-            child: SizedBox(
-              width: 70,
-              height: 36,
-              child: TextField(
-                controller: discountController,
-                focusNode: _discountFocusNode,
-                keyboardType:
-                    const TextInputType.numberWithOptions(decimal: true),
-                textAlign: TextAlign.right,
-                decoration: const InputDecoration(
-                  isDense: true,
-                  contentPadding:
-                      EdgeInsets.symmetric(horizontal: 6, vertical: 8),
-                  border: OutlineInputBorder(),
+          child: Row(
+            children: [
+              // Item count + subtotal (read-only)
+              Text(
+                '${_items.length} item${_items.length == 1 ? '' : 's'}',
+                style: const TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  color: AppTheme.textMuted,
                 ),
+              ),
+              const SizedBox(width: 10),
+              Text(
+                'Sub: ${AppCurrency.format(subtotal)}',
                 style: const TextStyle(
                   fontSize: 11,
                   fontWeight: FontWeight.w800,
+                  color: AppTheme.navy,
                   fontFeatures: [FontFeature.tabularFigures()],
                 ),
               ),
-            ),
-          ),
-          const SizedBox(width: 10),
+              if (canViewProfit) ...[
+                const SizedBox(width: 5),
+                Tooltip(
+                  message: _showProfitInsight
+                      ? 'Hide profit insight'
+                      : 'Show profit insight',
+                  child: Material(
+                    color: _showProfitInsight
+                        ? AppTheme.primary.withOpacity(.08)
+                        : Colors.transparent,
+                    borderRadius: BorderRadius.circular(6),
+                    child: InkWell(
+                      onTap: () => setState(
+                        () => _showProfitInsight = !_showProfitInsight,
+                      ),
+                      borderRadius: BorderRadius.circular(6),
+                      child: SizedBox(
+                        width: 28,
+                        height: 28,
+                        child: Icon(
+                          _showProfitInsight
+                              ? Icons.visibility_off_outlined
+                              : Icons.visibility_outlined,
+                          size: 15,
+                          color: _showProfitInsight
+                              ? AppTheme.primary
+                              : AppTheme.textMuted,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+              const Spacer(),
 
-          // Order Tax (editable inline)
-          const Text(
-            'Tax(+):',
-            style: TextStyle(
-              fontSize: 11,
-              color: AppTheme.textMuted,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(width: 4),
-          Tooltip(
-            message: 'Focus: Ctrl+Shift+T',
-            child: SizedBox(
-              width: 70,
-              height: 36,
-              child: TextField(
-                controller: taxController,
-                focusNode: _taxFocusNode,
-                keyboardType:
-                    const TextInputType.numberWithOptions(decimal: true),
-                textAlign: TextAlign.right,
-                decoration: const InputDecoration(
-                  isDense: true,
-                  contentPadding:
-                      EdgeInsets.symmetric(horizontal: 6, vertical: 8),
-                  border: OutlineInputBorder(),
-                ),
-                style: const TextStyle(
+              // Order Discount (editable inline)
+              const Text(
+                'Disc(-):',
+                style: TextStyle(
                   fontSize: 11,
-                  fontWeight: FontWeight.w800,
-                  fontFeatures: [FontFeature.tabularFigures()],
+                  color: AppTheme.textMuted,
+                  fontWeight: FontWeight.w600,
                 ),
               ),
-            ),
-          ),
-          const SizedBox(width: 10),
+              const SizedBox(width: 4),
+              Tooltip(
+                message: 'Focus: Ctrl+Shift+G',
+                child: SizedBox(
+                  width: 70,
+                  height: 36,
+                  child: TextField(
+                    controller: discountController,
+                    focusNode: _discountFocusNode,
+                    keyboardType:
+                        const TextInputType.numberWithOptions(decimal: true),
+                    textAlign: TextAlign.right,
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      contentPadding:
+                          EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+                      border: OutlineInputBorder(),
+                    ),
+                    style: const TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                      fontFeatures: [FontFeature.tabularFigures()],
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
 
-          // Shipping Charges (editable inline)
-          const Text(
-            'Ship(+):',
-            style: TextStyle(
-              fontSize: 11,
-              color: AppTheme.textMuted,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(width: 4),
-          Tooltip(
-            message: 'Shipping Charges — Focus: Ctrl+Shift+S',
-            child: SizedBox(
-              width: 70,
-              height: 36,
-              child: TextField(
-                controller: shippingController,
-                focusNode: _shippingFocusNode,
-                keyboardType:
-                    const TextInputType.numberWithOptions(decimal: true),
-                textAlign: TextAlign.right,
-                decoration: const InputDecoration(
-                  isDense: true,
-                  contentPadding:
-                      EdgeInsets.symmetric(horizontal: 6, vertical: 8),
-                  border: OutlineInputBorder(),
-                ),
-                style: const TextStyle(
+              // Order Tax (editable inline)
+              const Text(
+                'Tax(+):',
+                style: TextStyle(
                   fontSize: 11,
-                  fontWeight: FontWeight.w800,
-                  fontFeatures: [FontFeature.tabularFigures()],
+                  color: AppTheme.textMuted,
+                  fontWeight: FontWeight.w600,
                 ),
               ),
-            ),
+              const SizedBox(width: 4),
+              Tooltip(
+                message: 'Focus: Ctrl+Shift+T',
+                child: SizedBox(
+                  width: 70,
+                  height: 36,
+                  child: TextField(
+                    controller: taxController,
+                    focusNode: _taxFocusNode,
+                    keyboardType:
+                        const TextInputType.numberWithOptions(decimal: true),
+                    textAlign: TextAlign.right,
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      contentPadding:
+                          EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+                      border: OutlineInputBorder(),
+                    ),
+                    style: const TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                      fontFeatures: [FontFeature.tabularFigures()],
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+
+              // Shipping Charges (editable inline)
+              const Text(
+                'Ship(+):',
+                style: TextStyle(
+                  fontSize: 11,
+                  color: AppTheme.textMuted,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(width: 4),
+              Tooltip(
+                message: 'Shipping Charges — Focus: Ctrl+Shift+S',
+                child: SizedBox(
+                  width: 70,
+                  height: 36,
+                  child: TextField(
+                    controller: shippingController,
+                    focusNode: _shippingFocusNode,
+                    keyboardType:
+                        const TextInputType.numberWithOptions(decimal: true),
+                    textAlign: TextAlign.right,
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      contentPadding:
+                          EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+                      border: OutlineInputBorder(),
+                    ),
+                    style: const TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                      fontFeatures: [FontFeature.tabularFigures()],
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ),
-        ],
-      ),
+        ),
+        AnimatedSwitcher(
+          duration: const Duration(milliseconds: 160),
+          switchInCurve: Curves.easeOut,
+          switchOutCurve: Curves.easeIn,
+          child: canViewProfit && _showProfitInsight
+              ? SaleProfitStrip(
+                  key: const ValueKey('sale-profit-strip'),
+                  summary: profitSummary,
+                  onDetails: _showInvoiceProfitDetails,
+                )
+              : const SizedBox.shrink(
+                  key: ValueKey('sale-profit-strip-hidden'),
+                ),
+        ),
+      ],
     );
   }
 

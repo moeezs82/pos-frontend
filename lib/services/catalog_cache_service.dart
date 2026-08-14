@@ -61,7 +61,7 @@ class CatalogCacheService {
     final path = p.join(dbPath, 'catalog_cache.db');
     return openDatabase(
       path,
-      version: 8,
+      version: 9,
       // v1 → v2 adds the unit columns. ADDITIVE ONLY, and deliberately not a
       // table rebuild or a cache wipe: this database is a read replica, but a
       // "just delete and re-download" upgrade would strand a till that is
@@ -177,6 +177,22 @@ class CatalogCacheService {
             whereArgs: const ['catalog_version:%', 'last_synced_at:%'],
           );
         }
+        // v8 → v9: brand_id is required for offline brand filtering. Category
+        // was already cached, but brand existed only in the online product
+        // response. Keep the existing catalog usable while offline, then force
+        // one full authoritative snapshot as soon as connectivity returns.
+        if (oldVersion < 9) {
+          await db.execute('ALTER TABLE products ADD COLUMN brand_id INTEGER');
+          await db.execute(
+              'CREATE INDEX IF NOT EXISTS idx_products_category ON products(category_id)');
+          await db.execute(
+              'CREATE INDEX IF NOT EXISTS idx_products_brand ON products(brand_id)');
+          await db.delete(
+            'sync_meta',
+            where: 'key LIKE ? OR key LIKE ?',
+            whereArgs: const ['catalog_version:%', 'last_synced_at:%'],
+          );
+        }
       },
       onCreate: (db, version) async {
         await db.execute('''
@@ -198,6 +214,7 @@ class CatalogCacheService {
             discount_type TEXT,
             vendor_id INTEGER,
             category_id INTEGER,
+            brand_id INTEGER,
             unit_id INTEGER,
             unit_name TEXT,
             unit_allow_decimal INTEGER,
@@ -214,6 +231,8 @@ class CatalogCacheService {
         await db.execute('CREATE INDEX idx_products_secondary_name ON products(secondary_name_lower)');
         await db.execute('CREATE INDEX idx_products_barcode ON products(barcode)');
         await db.execute('CREATE INDEX idx_products_group ON products(product_group_id)');
+        await db.execute('CREATE INDEX idx_products_category ON products(category_id)');
+        await db.execute('CREATE INDEX idx_products_brand ON products(brand_id)');
 
         await db.execute('''
           CREATE TABLE customers (
@@ -369,6 +388,8 @@ class CatalogCacheService {
     String query, {
     int? branchId,
     int? vendorId,
+    int? categoryId,
+    int? brandId,
     int limit = 50,
   }) async {
     final db = await _database;
@@ -383,6 +404,14 @@ class CatalogCacheService {
     if (vendorId != null) {
       where.add('(vendor_id = ? OR vendor_id IS NULL)');
       args.add(vendorId);
+    }
+    if (categoryId != null) {
+      where.add('category_id = ?');
+      args.add(categoryId);
+    }
+    if (brandId != null) {
+      where.add('brand_id = ?');
+      args.add(brandId);
     }
     if (q.isNotEmpty) {
       where.add('(name_lower LIKE ? OR secondary_name_lower LIKE ? OR sku LIKE ? OR barcode LIKE ?)');
@@ -522,6 +551,7 @@ class CatalogCacheService {
       'discount_type': raw['discount_type']?.toString() ?? 'percentage',
       'vendor_id': raw['vendor_id'] != null ? _asInt(raw['vendor_id']) : null,
       'category_id': raw['category_id'] != null ? _asInt(raw['category_id']) : null,
+      'brand_id': raw['brand_id'] != null ? _asInt(raw['brand_id']) : null,
       'unit_id': rule.unitId,
       'unit_name': rule.unitName.isEmpty ? null : rule.unitName,
       'unit_allow_decimal': rule.allowDecimal ? 1 : 0,
@@ -580,6 +610,7 @@ class CatalogCacheService {
       'discount_type': row['discount_type'] ?? 'percentage',
       'vendor_id': row['vendor_id'],
       'category_id': row['category_id'],
+      'brand_id': row['brand_id'],
       // Flat unit columns, read by QuantityRule.fromProduct. A row cached
       // before v2 has NULL here, which parses as decimal-allowed rather than
       // blocking quantities the cashier entered fine yesterday.

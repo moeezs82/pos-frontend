@@ -33,6 +33,7 @@ class _UserFormScreenState extends State<UserFormScreen> {
   static const Map<String, String> _permissionLabels = {
     'view-sales': 'View Sales',
     'create-sales': 'Create Sales',
+    'view-sale-profit': 'View Sale Profit',
     'manage-sales': 'Edit Sales & Payments',
     'refund-sale': 'Process Returns & Refunds',
     'view-products': 'View Products',
@@ -73,7 +74,13 @@ class _UserFormScreenState extends State<UserFormScreen> {
       key.split('-').map((word) => word.isEmpty ? word : '${word[0].toUpperCase()}${word.substring(1)}').join(' ');
 
   String _fallbackPermissionGroup(String key) {
-    if ({'view-sales', 'create-sales', 'manage-sales', 'refund-sale'}.contains(key)) {
+    if ({
+      'view-sales',
+      'create-sales',
+      'view-sale-profit',
+      'manage-sales',
+      'refund-sale',
+    }.contains(key)) {
       return 'Sales';
     }
     if ({
