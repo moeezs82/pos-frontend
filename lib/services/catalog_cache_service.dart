@@ -61,7 +61,7 @@ class CatalogCacheService {
     final path = p.join(dbPath, 'catalog_cache.db');
     return openDatabase(
       path,
-      version: 9,
+      version: 10,
       // v1 → v2 adds the unit columns. ADDITIVE ONLY, and deliberately not a
       // table rebuild or a cache wipe: this database is a read replica, but a
       // "just delete and re-download" upgrade would strand a till that is
@@ -193,6 +193,27 @@ class CatalogCacheService {
             whereArgs: const ['catalog_version:%', 'last_synced_at:%'],
           );
         }
+        // v9 → v10: managed Sale From/source reference data. Sources are
+        // global master data, not branch-owned rows, so every catalog refresh
+        // replaces this small table with the authoritative server list.
+        if (oldVersion < 10) {
+          await db.execute('''
+            CREATE TABLE IF NOT EXISTS sale_sources (
+              id INTEGER PRIMARY KEY,
+              code TEXT,
+              name TEXT NOT NULL,
+              is_active INTEGER NOT NULL DEFAULT 1,
+              sort_order INTEGER NOT NULL DEFAULT 0
+            )
+          ''');
+          await db.execute(
+              'CREATE INDEX IF NOT EXISTS idx_sale_sources_active_sort ON sale_sources(is_active, sort_order, id)');
+          await db.delete(
+            'sync_meta',
+            where: 'key LIKE ? OR key LIKE ?',
+            whereArgs: const ['catalog_version:%', 'last_synced_at:%'],
+          );
+        }
       },
       onCreate: (db, version) async {
         await db.execute('''
@@ -258,6 +279,17 @@ class CatalogCacheService {
         await db.execute('CREATE INDEX idx_customers_search ON customers(search_blob)');
 
         await db.execute('''
+          CREATE TABLE sale_sources (
+            id INTEGER PRIMARY KEY,
+            code TEXT,
+            name TEXT NOT NULL,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            sort_order INTEGER NOT NULL DEFAULT 0
+          )
+        ''');
+        await db.execute('CREATE INDEX idx_sale_sources_active_sort ON sale_sources(is_active, sort_order, id)');
+
+        await db.execute('''
           CREATE TABLE sync_meta (
             key TEXT PRIMARY KEY,
             value TEXT
@@ -307,6 +339,7 @@ class CatalogCacheService {
       final customers = (data['customers'] as List?) ?? const [];
       final deletedProducts = (data['deleted_products'] as List?) ?? const [];
       final deletedCustomers = (data['deleted_customers'] as List?) ?? const [];
+      final saleSources = (data['sale_sources'] as List?) ?? const [];
       final newVersion = (data['catalog_version'] ?? '').toString();
 
       await db.transaction((txn) async {
@@ -339,6 +372,24 @@ class CatalogCacheService {
         }
         for (final id in deletedCustomers) {
           await txn.delete('customers', where: 'id = ?', whereArgs: [_asInt(id)]);
+        }
+
+        if (data.containsKey('sale_sources')) {
+          await txn.delete('sale_sources');
+          for (final raw in saleSources) {
+            final src = raw as Map;
+            await txn.insert(
+              'sale_sources',
+              {
+                'id': _asInt(src['id']),
+                'code': src['code']?.toString(),
+                'name': (src['name'] ?? '').toString(),
+                'is_active': _asBoolInt(src['is_active'], defaultTrue: true),
+                'sort_order': _asInt(src['sort_order']),
+              },
+              conflictAlgorithm: ConflictAlgorithm.replace,
+            );
+          }
         }
       });
 
@@ -501,6 +552,28 @@ class CatalogCacheService {
       limit: limit,
     );
     return rows.map(_customerToApiShape).toList();
+  }
+
+  /// Managed Sale From values cached by the catalog feed for offline sale
+  /// entry. Inactive rows remain available to display historical invoices but
+  /// are excluded from new-sale pickers when [activeOnly] is true.
+  Future<List<Map<String, dynamic>>> saleSources({bool activeOnly = false}) async {
+    final db = await _database;
+    final rows = await db.query(
+      'sale_sources',
+      where: activeOnly ? 'is_active = 1' : null,
+      orderBy: 'sort_order ASC, name COLLATE NOCASE ASC, id ASC',
+    );
+    return rows
+        .map((row) => <String, dynamic>{
+              'id': row['id'],
+              'code': row['code'],
+              'name': row['name'],
+              'is_active': row['is_active'] == 1,
+              'sort_order': row['sort_order'],
+              '_offline': true,
+            })
+        .toList(growable: false);
   }
 
   /// When the cache for [branchId] was last successfully refreshed — drives

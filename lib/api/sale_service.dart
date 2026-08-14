@@ -5,6 +5,42 @@ class SaleService {
 
   SaleService({required String token}) : _client = ApiClient(token: token);
 
+  /// Loads the current effective posted invoice state for the audited Edit Sale flow.
+  Future<Map<String, dynamic>> getSale(int saleId, {bool includeBalance = true}) {
+    return _client.get(
+      "/sales/$saleId",
+      query: {if (includeBalance) "include_balance": "1"},
+    );
+  }
+
+  /// Applies one atomic desired-state amendment to a posted sale. Existing
+  /// item versions and payment documents are preserved by the backend.
+  Future<Map<String, dynamic>> amendSale(
+    int saleId,
+    Map<String, dynamic> payload,
+  ) {
+    return _client.post("/sales/$saleId/amendments", body: payload);
+  }
+
+  /// Immutable amendment/revision history used by Sale Detail.
+  Future<Map<String, dynamic>> getAmendments(int saleId) {
+    return _client.get("/sales/$saleId/amendments");
+  }
+
+  /// Corrects a posted sale receipt without mutating it in place. The backend
+  /// reverses the original receipt/journal and optionally creates a replacement
+  /// receipt inside one database transaction.
+  Future<Map<String, dynamic>> correctSaleReceipt(
+    int saleId,
+    int receiptId,
+    Map<String, dynamic> payload,
+  ) {
+    return _client.post(
+      "/sales/$saleId/receipts/$receiptId/correct",
+      body: payload,
+    );
+  }
+
   /// Creates a sale. Encodes array params with bracketed keys expected by your API.
   ///
   /// [branchId] is required.
@@ -24,6 +60,7 @@ class SaleService {
     int? vendorId,
     int? userId,
     int? deliveryBoyId,
+    int? saleSourceId,
     String? saleType,
     List<Map<String, dynamic>> items = const [],
     List<Map<String, dynamic>> payments = const [],
@@ -44,6 +81,7 @@ class SaleService {
       vendorId: vendorId,
       userId: userId,
       deliveryBoyId: deliveryBoyId,
+      saleSourceId: saleSourceId,
       saleType: saleType,
       items: items,
       payments: payments,
@@ -86,6 +124,7 @@ class SaleService {
     int? vendorId,
     int? userId,
     int? deliveryBoyId,
+    int? saleSourceId,
     String? saleType,
     List<Map<String, dynamic>> items = const [],
     List<Map<String, dynamic>> payments = const [],
@@ -114,6 +153,7 @@ class SaleService {
       if (vendorId != null) "vendor_id": vendorId,
       if (userId != null) "salesman_id": userId,
       if (deliveryBoyId != null) "delivery_boy_id": deliveryBoyId,
+      if (saleSourceId != null) "sale_source_id": saleSourceId,
       if (saleType != null && saleType.isNotEmpty) "sale_type": saleType,
       if (meta != null) "meta": meta,
       if (clientRef != null) "client_ref": clientRef,

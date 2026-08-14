@@ -4,20 +4,22 @@ import 'package:enterprise_pos/services/app_currency.dart';
 
 class SaleItemsSection extends StatelessWidget {
   final Map<String, dynamic> sale;
-  final VoidCallback onPickVendor;
+  final VoidCallback? onPickVendor;
   final Map<String, dynamic>? selectedVendor;
-  final VoidCallback onAddItem;
-  final void Function(Map item) onEditItem;
-  final void Function(int itemId) onDeleteItem;
+  final VoidCallback? onAddItem;
+  final void Function(Map item)? onEditItem;
+  final void Function(int itemId)? onDeleteItem;
+  final bool editable;
 
   const SaleItemsSection({
     super.key,
     required this.sale,
-    required this.onPickVendor,
-    required this.selectedVendor,
-    required this.onAddItem,
-    required this.onEditItem,
-    required this.onDeleteItem,
+    this.onPickVendor,
+    this.selectedVendor,
+    this.onAddItem,
+    this.onEditItem,
+    this.onDeleteItem,
+    this.editable = true,
   });
 
   // ---- helpers ----
@@ -72,17 +74,18 @@ class SaleItemsSection extends StatelessWidget {
                 //   ),
                 // ),
                 // const SizedBox(width: 8),
-                ElevatedButton.icon(
-                  onPressed: onAddItem,
-                  icon: const Icon(Icons.add),
-                  label: const Text("Add Item"),
-                ),
+                if (editable && onAddItem != null)
+                  ElevatedButton.icon(
+                    onPressed: onAddItem,
+                    icon: const Icon(Icons.add),
+                    label: const Text("Add Item"),
+                  ),
               ],
             ),
             const SizedBox(height: 8),
 
             // ---- table header ----
-            _TableHeader(),
+            _TableHeader(editable: editable),
 
             const Divider(height: 8),
 
@@ -108,7 +111,9 @@ class SaleItemsSection extends StatelessWidget {
                 final total = _lineTotal(i);
 
                 return InkWell(
-                  onTap: () => onEditItem(i),
+                  onTap: editable && onEditItem != null
+                      ? () => onEditItem!(i)
+                      : null,
                   child: Column(
                     children: [
                       SizedBox(
@@ -219,6 +224,9 @@ class SaleItemsSection extends StatelessWidget {
 }
 
 class _TableHeader extends StatelessWidget {
+  final bool editable;
+  const _TableHeader({required this.editable});
+
   @override
   Widget build(BuildContext context) {
     final style = Theme.of(context).textTheme.labelMedium?.copyWith(
@@ -234,7 +242,7 @@ class _TableHeader extends StatelessWidget {
           Expanded(flex: 2, child: Text("Discount", style: style, textAlign: TextAlign.right)),
           Expanded(flex: 2, child: Text("Qty", style: style, textAlign: TextAlign.right)),
           Expanded(flex: 2, child: Text("Total", style: style, textAlign: TextAlign.right)),
-          const SizedBox(width: 44),
+          if (editable) const SizedBox(width: 44),
         ],
       ),
     );

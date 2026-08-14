@@ -16,6 +16,11 @@ class PartySectionCard extends StatelessWidget {
   final Map<String, dynamic>? selectedDeliveryBoy;
   final Map<String, dynamic>? selectedBranch;
   final Map<String, dynamic>? selectedVendor;
+  final List<Map<String, dynamic>> saleSources;
+  final int? selectedSaleSourceId;
+  final ValueChanged<int?> onSaleSourceChanged;
+  final VoidCallback? onManageSaleSources;
+  final bool canManageSaleSources;
 
   /// Needed to call the live, full-database search endpoints
   /// (customers/vendors/users) as the user types past whatever's in the
@@ -72,6 +77,12 @@ class PartySectionCard extends StatelessWidget {
   final bool showDeliveryBoy;
   final bool showVendor;
 
+  /// Posted-sale amendments deliberately lock customer identity. Moving an
+  /// already-posted invoice to another party changes AR/payment history and
+  /// therefore belongs to a separate controlled accounting workflow.
+  final bool customerLocked;
+  final String? customerLockMessage;
+
   const PartySectionCard({
     super.key,
     required this.isAll,
@@ -80,6 +91,11 @@ class PartySectionCard extends StatelessWidget {
     required this.selectedDeliveryBoy,
     required this.selectedBranch,
     required this.selectedVendor,
+    required this.saleSources,
+    required this.selectedSaleSourceId,
+    required this.onSaleSourceChanged,
+    this.onManageSaleSources,
+    this.canManageSaleSources = false,
     required this.token,
     required this.onPickCustomer,
     required this.onPickUser,
@@ -105,6 +121,8 @@ class PartySectionCard extends StatelessWidget {
     this.vendorController,
     this.showDeliveryBoy = true,
     this.showVendor = true,
+    this.customerLocked = false,
+    this.customerLockMessage,
   });
 
   String _customerLabel(PartyMap c) {
@@ -134,14 +152,50 @@ class PartySectionCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            showDeliveryBoy ? 'Customer, staff & delivery' : 'Customer & staff',
-            style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
-          ),
-          const SizedBox(height: 4),
-          const Text(
-            'Start typing to find someone instantly, or use the list icon to browse.',
-            style: TextStyle(fontSize: 12, color: AppTheme.textMuted),
+          LayoutBuilder(
+            builder: (context, headerConstraints) {
+              final info = Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    showDeliveryBoy ? 'Customer, staff & delivery' : 'Customer & staff',
+                    style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
+                  ),
+                  const SizedBox(height: 4),
+                  const Text(
+                    'Start typing to find someone instantly, or use the list icon to browse.',
+                    style: TextStyle(fontSize: 12, color: AppTheme.textMuted),
+                  ),
+                ],
+              );
+              final source = SizedBox(
+                width: onManageSaleSources != null && canManageSaleSources ? 270 : 230,
+                child: _SaleSourceField(
+                  items: saleSources,
+                  selectedId: selectedSaleSourceId,
+                  onChanged: onSaleSourceChanged,
+                  onManage: canManageSaleSources ? onManageSaleSources : null,
+                ),
+              );
+              if (headerConstraints.maxWidth < 610) {
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    info,
+                    const SizedBox(height: 10),
+                    Align(alignment: Alignment.centerRight, child: source),
+                  ],
+                );
+              }
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Expanded(child: info),
+                  const SizedBox(width: 14),
+                  source,
+                ],
+              );
+            },
           ),
           const SizedBox(height: 12),
           LayoutBuilder(
@@ -156,28 +210,41 @@ class PartySectionCard extends StatelessWidget {
               final userService = UsersService(token: token);
 
               final allFields = [
-                PartyAutocompleteField<PartyMap>(
-                  label: 'Customer',
-                  hintText: 'Type customer ID, name or phone…',
-                  focusNode: customerFocusNode,
-                  controller: customerController,
-                  getCachedItems: () =>
-                      CustomerPickCache.cache.peek(CustomerPickCache.keyFor())?.items ?? const [],
-                  onSearchRemote: (query) => CustomerPickCache.searchRemote(
-                    customerService,
-                    query,
-                    branchId: int.tryParse(branchId ?? ''),
+                if (customerLocked)
+                  _LockedPartyField(
+                    label: 'Customer',
+                    value: selectedCustomer != null
+                        ? _customerLabel(selectedCustomer!)
+                        : 'Walk-in customer',
+                    subtitle: selectedCustomer != null
+                        ? _customerSubtitle(selectedCustomer!)
+                        : 'Customer identity is locked for this posted invoice',
+                    message: customerLockMessage ??
+                        'Customer cannot be changed inside a posted-sale amendment because it affects accounts receivable and payment history.',
+                  )
+                else
+                  PartyAutocompleteField<PartyMap>(
+                    label: 'Customer',
+                    hintText: 'Type customer ID, name or phone…',
+                    focusNode: customerFocusNode,
+                    controller: customerController,
+                    getCachedItems: () =>
+                        CustomerPickCache.cache.peek(CustomerPickCache.keyFor())?.items ?? const [],
+                    onSearchRemote: (query) => CustomerPickCache.searchRemote(
+                      customerService,
+                      query,
+                      branchId: int.tryParse(branchId ?? ''),
+                    ),
+                    labelOf: _customerLabel,
+                    subtitleOf: _customerSubtitle,
+                    idOf: (c) => (c['id'] ?? '').toString(),
+                    selectedLabel: selectedCustomer != null ? _customerLabel(selectedCustomer!) : null,
+                    selectedSubtitle: selectedCustomer != null ? _customerSubtitle(selectedCustomer!) : null,
+                    onSelectedTap: onPickCustomer,
+                    onSelected: (c) => onApplyCustomer(c),
+                    onCleared: () => onApplyCustomer(null),
+                    onBrowseAll: onBrowseCustomerSheet,
                   ),
-                  labelOf: _customerLabel,
-                  subtitleOf: _customerSubtitle,
-                  idOf: (c) => (c['id'] ?? '').toString(),
-                  selectedLabel: selectedCustomer != null ? _customerLabel(selectedCustomer!) : null,
-                  selectedSubtitle: selectedCustomer != null ? _customerSubtitle(selectedCustomer!) : null,
-                  onSelectedTap: onPickCustomer,
-                  onSelected: (c) => onApplyCustomer(c),
-                  onCleared: () => onApplyCustomer(null),
-                  onBrowseAll: onBrowseCustomerSheet,
-                ),
                 PartyAutocompleteField<PartyMap>(
                   label: 'Salesman',
                   hintText: 'Type salesman name…',
@@ -248,8 +315,6 @@ class PartySectionCard extends StatelessWidget {
                 ),
               ];
 
-              // Filter fields based on active feature flags.
-              // Index 0 = Customer, 1 = Salesman, 2 = Delivery Boy, 3 = Vendor.
               final fields = [
                 allFields[0], // Customer — always shown
                 allFields[1], // Salesman — always shown
@@ -281,6 +346,110 @@ class PartySectionCard extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _SaleSourceField extends StatelessWidget {
+  final List<Map<String, dynamic>> items;
+  final int? selectedId;
+  final ValueChanged<int?> onChanged;
+  final VoidCallback? onManage;
+
+  const _SaleSourceField({
+    required this.items,
+    required this.selectedId,
+    required this.onChanged,
+    required this.onManage,
+  });
+
+  int? _id(dynamic value) =>
+      value is int ? value : int.tryParse(value?.toString() ?? '');
+
+  bool _active(dynamic value) =>
+      value == true || value == 1 || value?.toString().toLowerCase() == 'true';
+
+  @override
+  Widget build(BuildContext context) {
+    final selectable = items.where((e) => _active(e['is_active'])).toList();
+    final current = items.where((e) => _id(e['id']) == selectedId).toList();
+    if (selectedId != null &&
+        current.isNotEmpty &&
+        !selectable.any((e) => _id(e['id']) == selectedId)) {
+      selectable.add(current.first);
+    }
+    selectable.sort((a, b) {
+      final ao = int.tryParse(a['sort_order']?.toString() ?? '') ?? 0;
+      final bo = int.tryParse(b['sort_order']?.toString() ?? '') ?? 0;
+      if (ao != bo) return ao.compareTo(bo);
+      return (a['name'] ?? '')
+          .toString()
+          .toLowerCase()
+          .compareTo((b['name'] ?? '').toString().toLowerCase());
+    });
+
+    final dropdown = DropdownButtonFormField<int>(
+      value: selectable.any((e) => _id(e['id']) == selectedId)
+          ? selectedId
+          : null,
+      isExpanded: true,
+      decoration: const InputDecoration(
+        labelText: 'Sale From',
+        isDense: true,
+        prefixIcon: Icon(Icons.hub_outlined, size: 18),
+        border: OutlineInputBorder(),
+      ),
+      hint: Text(
+        items.isEmpty ? 'Sources unavailable' : 'Select source',
+        overflow: TextOverflow.ellipsis,
+      ),
+      items: selectable.map((source) {
+        final active = _active(source['is_active']);
+        return DropdownMenuItem<int>(
+          value: _id(source['id']),
+          child: Row(children: [
+            Expanded(
+              child: Text(
+                (source['name'] ?? '').toString(),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            if (!active)
+              const Padding(
+                padding: EdgeInsets.only(left: 6),
+                child: Text(
+                  'Inactive',
+                  style: TextStyle(fontSize: 10, color: AppTheme.textMuted),
+                ),
+              ),
+          ]),
+        );
+      }).toList(growable: false),
+      onChanged: items.isEmpty ? null : onChanged,
+    );
+
+    if (onManage == null) return dropdown;
+    return Row(
+      children: [
+        Expanded(child: dropdown),
+        const SizedBox(width: 6),
+        Tooltip(
+          message: 'Manage sale sources',
+          child: SizedBox(
+            width: 40,
+            height: 40,
+            child: OutlinedButton(
+              onPressed: onManage,
+              style: OutlinedButton.styleFrom(
+                padding: EdgeInsets.zero,
+                minimumSize: const Size(40, 40),
+              ),
+              child: const Icon(Icons.settings_outlined, size: 18),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -348,6 +517,66 @@ class SelectField extends StatelessWidget {
                 const Icon(Icons.keyboard_arrow_down_rounded, color: AppTheme.textMuted),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+
+class _LockedPartyField extends StatelessWidget {
+  final String label;
+  final String value;
+  final String subtitle;
+  final String message;
+
+  const _LockedPartyField({
+    required this.label,
+    required this.value,
+    required this.subtitle,
+    required this.message,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: message,
+      child: InputDecorator(
+        decoration: InputDecoration(
+          labelText: label,
+          isDense: true,
+          prefixIcon: const Icon(Icons.lock_outline_rounded, size: 18),
+          suffixIcon: const Icon(Icons.verified_user_outlined, size: 17),
+          filled: true,
+          fillColor: AppTheme.surfaceSoft,
+          border: const OutlineInputBorder(),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              value,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                color: AppTheme.navy,
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            if (subtitle.trim().isNotEmpty)
+              Text(
+                subtitle,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: AppTheme.textMuted,
+                  fontSize: 10.5,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+          ],
         ),
       ),
     );

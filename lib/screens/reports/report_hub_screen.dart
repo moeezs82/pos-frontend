@@ -247,6 +247,7 @@ final _enterpriseShortcuts = <_ReportShortcut>[
   _ReportShortcut(title: 'Sales Summary', icon: Icons.summarize_rounded, builder: (_) => const EnterpriseReportsWorkspaceScreen(initialReportKey: 'sales-summary')),
   _ReportShortcut(title: 'Sales Detail', icon: Icons.receipt_long_rounded, builder: (_) => const EnterpriseReportsWorkspaceScreen(initialReportKey: 'sales-detail')),
   _ReportShortcut(title: 'Sales by Product', icon: Icons.inventory_2_rounded, builder: (_) => const EnterpriseReportsWorkspaceScreen(initialReportKey: 'sales-by-product')),
+  _ReportShortcut(title: 'Sales by Source', icon: Icons.hub_outlined, builder: (_) => const EnterpriseReportsWorkspaceScreen(initialReportKey: 'sales-by-source')),
   _ReportShortcut(title: 'Purchases', icon: Icons.shopping_cart_checkout_rounded, builder: (_) => const EnterpriseReportsWorkspaceScreen(initialReportKey: 'purchase-summary')),
   _ReportShortcut(title: 'Current Stock', icon: Icons.warehouse_rounded, builder: (_) => const EnterpriseReportsWorkspaceScreen(initialReportKey: 'current-stock')),
   _ReportShortcut(title: 'Stock Valuation', icon: Icons.price_check_rounded, builder: (_) => const EnterpriseReportsWorkspaceScreen(initialReportKey: 'stock-valuation')),

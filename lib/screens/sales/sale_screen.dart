@@ -494,6 +494,8 @@ class _SalesScreenState extends State<SalesScreen> {
                                   .toString();
                               final offlineRef =
                                   (s['offline_invoice_no'] ?? '').toString();
+                              final saleSource =
+                                  (s['sale_source_name'] ?? 'Counter').toString();
                               final customer =
                                   (s['customer']?['first_name'] ?? 'Walk-in')
                                       .toString();
@@ -599,6 +601,34 @@ class _SalesScreenState extends State<SalesScreen> {
                                       ),
                                     ),
                                     const SizedBox(width: 6),
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+                                      decoration: BoxDecoration(
+                                        color: Colors.blueGrey.shade50,
+                                        borderRadius: BorderRadius.circular(999),
+                                        border: Border.all(color: Colors.blueGrey.shade100),
+                                      ),
+                                      child: Row(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          const Icon(Icons.hub_outlined, size: 11, color: Colors.blueGrey),
+                                          const SizedBox(width: 4),
+                                          ConstrainedBox(
+                                            constraints: const BoxConstraints(maxWidth: 110),
+                                            child: Tooltip(
+                                              message: saleSource,
+                                              child: Text(
+                                                saleSource,
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
+                                                style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: Colors.blueGrey),
+                                              ),
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                    const SizedBox(width: 4),
                                     _amountChip(
                                       context,
                                       "Date",

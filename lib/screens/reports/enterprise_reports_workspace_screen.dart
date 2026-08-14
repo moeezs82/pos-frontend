@@ -1,5 +1,6 @@
 import 'dart:async' show Timer;
 import 'package:enterprise_pos/api/reports_service.dart';
+import 'package:enterprise_pos/api/sale_source_service.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/providers/branch_feature_provider.dart';
 import 'package:enterprise_pos/services/report_file_saver.dart';
@@ -27,12 +28,15 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
   Timer? _searchDebounce;
 
   late ReportsService _service;
+  late SaleSourceService _saleSourceService;
   late _EnterpriseReportMeta _selectedReport;
 
   DateTime? _from;
   DateTime? _to;
   String? _status;
   String? _method;
+  int? _saleSourceId;
+  List<Map<String, dynamic>> _saleSources = const [];
   int _page = 1;
   int _perPage = 50;
 
@@ -43,6 +47,24 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
   _EnterpriseReportResponse? _result;
 
   List<_EnterpriseReportMeta> get _allReports => _enterpriseReports;
+
+  static const _saleSourceReportKeys = <String>{
+    'sales-summary',
+    'sales-detail',
+    'sales-by-product',
+    'sales-by-category',
+    'sales-by-brand',
+    'sales-by-customer',
+    'sales-by-salesman',
+    'sales-by-hour',
+    'sales-by-payment-method',
+    'sales-by-source',
+    'discount-report',
+    'tax-report',
+  };
+
+  bool get _supportsSaleSource =>
+      _saleSourceReportKeys.contains(_selectedReport.key);
 
   List<_EnterpriseReportMeta> _effectiveReports(bool deliveryEnabled) {
     if (deliveryEnabled) return _allReports;
@@ -65,6 +87,8 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final token = context.read<AuthProvider>().token!;
       _service = ReportsService(token: token);
+      _saleSourceService = SaleSourceService(token: token);
+      _loadSaleSources();
       // Branch scoping is resolved by backend from the logged-in user's active branch.
       _ready = true;
       _fetch();
@@ -79,6 +103,16 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
     super.dispose();
   }
 
+  Future<void> _loadSaleSources() async {
+    try {
+      final list = await _saleSourceService.getSaleSources();
+      if (!mounted) return;
+      setState(() => _saleSources = list);
+    } catch (_) {
+      // Report execution remains available even if reference-data loading fails.
+    }
+  }
+
   Map<String, dynamic> _filters({bool export = false}) {
     return {
       if (_from != null) 'from': _dateTimeFmt.format(_from!),
@@ -86,6 +120,8 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
       if ((_searchCtrl.text).trim().isNotEmpty) 'search': _searchCtrl.text.trim(),
       if (_status != null && _status!.isNotEmpty) 'status': _status,
       if (_method != null && _method!.isNotEmpty) 'method': _method,
+      if (_supportsSaleSource && _saleSourceId != null)
+        'sale_source_id': _saleSourceId,
       'page': export ? 1 : _page,
       'per_page': export ? 1000 : (_searchCtrl.text.trim().isNotEmpty ? 250 : _perPage),
       'direction': 'desc',
@@ -365,6 +401,52 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
           ),
         ),
       ),
+      if (_supportsSaleSource)
+        Container(
+          constraints: const BoxConstraints(minWidth: 190, maxWidth: 240),
+          padding: const EdgeInsets.symmetric(horizontal: 11),
+          decoration: BoxDecoration(
+            border: Border.all(color: Theme.of(context).dividerColor),
+            borderRadius: BorderRadius.circular(14),
+          ),
+          child: DropdownButtonHideUnderline(
+            child: DropdownButton<int>(
+              value: _saleSourceId ?? 0,
+              isExpanded: true,
+              icon: const Icon(Icons.keyboard_arrow_down_rounded),
+              items: <DropdownMenuItem<int>>[
+                const DropdownMenuItem<int>(
+                  value: 0,
+                  child: Row(children: [
+                    Icon(Icons.hub_outlined, size: 16),
+                    SizedBox(width: 7),
+                    Text('All Sale Sources'),
+                  ]),
+                ),
+                ..._saleSources.map((source) {
+                  final id = int.tryParse(source['id']?.toString() ?? '');
+                  final active = source['is_active'] == true ||
+                      source['is_active'] == 1 ||
+                      source['is_active']?.toString().toLowerCase() == 'true';
+                  return DropdownMenuItem<int>(
+                    value: id,
+                    child: Text(
+                      '${source['name'] ?? 'Source'}${active ? '' : ' (Inactive)'}',
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  );
+                }),
+              ],
+              onChanged: (value) {
+                setState(() {
+                  _saleSourceId = value == 0 ? null : value;
+                  _page = 1;
+                });
+                _fetch();
+              },
+            ),
+          ),
+        ),
       DropdownButtonHideUnderline(
         child: DropdownButton<int>(
           value: _perPage,
@@ -735,6 +817,7 @@ const _enterpriseReports = <_EnterpriseReportMeta>[
   _EnterpriseReportMeta(key: 'sales-by-salesman', title: 'Sales by Cashier', group: 'Sales', description: 'Cashier or salesman performance.', icon: Icons.badge_rounded),
   _EnterpriseReportMeta(key: 'sales-by-hour', title: 'Hourly Sales', group: 'Sales', description: 'Sales heatmap base by hour.', icon: Icons.schedule_rounded),
   _EnterpriseReportMeta(key: 'sales-by-payment-method', title: 'Payment Collection', group: 'Sales', description: 'Cash, card, bank and wallet collections.', icon: Icons.payments_rounded),
+  _EnterpriseReportMeta(key: 'sales-by-source', title: 'Sales by Source', group: 'Sales', description: 'Compare invoice volume, revenue, COGS and profit by Sale From channel.', icon: Icons.hub_outlined),
   _EnterpriseReportMeta(key: 'delivery-boy-cash', title: 'Delivery Boy Cash', group: 'Sales', description: 'Delivery boy cash received and pending.', icon: Icons.delivery_dining_rounded),
   _EnterpriseReportMeta(key: 'discount-report', title: 'Discount Report', group: 'Sales', description: 'Discounts by invoice and period.', icon: Icons.percent_rounded),
   _EnterpriseReportMeta(key: 'tax-report', title: 'Tax Report', group: 'Sales', description: 'Tax collected and taxable sales.', icon: Icons.account_balance_rounded),

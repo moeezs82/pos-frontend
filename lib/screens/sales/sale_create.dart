@@ -6,6 +6,7 @@ import 'package:enterprise_pos/api/product_service.dart';
 import 'package:enterprise_pos/models/product_unit.dart';
 import 'package:enterprise_pos/models/sale_receipt_item.dart';
 import 'package:enterprise_pos/api/sale_service.dart';
+import 'package:enterprise_pos/api/sale_source_service.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/providers/branch_feature_provider.dart';
 import 'package:enterprise_pos/providers/branch_provider.dart';
@@ -36,6 +37,7 @@ import 'package:enterprise_pos/widgets/enterprise/enterprise_panel.dart';
 import 'package:enterprise_pos/widgets/app_feedback.dart';
 import 'package:enterprise_pos/widgets/app_keyboard_shortcuts.dart';
 import 'package:enterprise_pos/widgets/sale_status_bar.dart';
+import 'package:enterprise_pos/widgets/sale_source_manager_dialog.dart';
 import 'package:flutter/material.dart';
 import 'package:enterprise_pos/services/app_currency.dart';
 import 'package:flutter/services.dart';
@@ -65,7 +67,16 @@ class _OfflineCreditDecision {
 class CreateSaleScreen extends StatefulWidget {
   final Map<String, dynamic>? initialCustomer;
 
-  const CreateSaleScreen({super.key, this.initialCustomer});
+  /// When supplied, this screen becomes the controlled posted-sale editor.
+  /// Create mode remains unchanged; edit mode loads the current invoice and
+  /// saves one audited desired-state amendment instead of POST /sales.
+  final int? editSaleId;
+
+  const CreateSaleScreen({
+    super.key,
+    this.initialCustomer,
+    this.editSaleId,
+  });
 
   @override
   State<CreateSaleScreen> createState() => _CreateSaleScreenState();
@@ -89,6 +100,8 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
   int? _selectedUserId;
   Map<String, dynamic>? _selectedDeliveryBoy;
   int? _selectedDeliveryBoyId;
+  List<Map<String, dynamic>> _saleSources = const [];
+  int? _selectedSaleSourceId;
 
   // cart & payments
   List<Map<String, dynamic>> _items = [];
@@ -146,8 +159,19 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
   bool _autoCashIfEmpty = true;
   bool _didAutoOpenPicker = false;
 
+  // Posted-sale amendment state. None of this is used by normal Create Sale.
+  bool get _isEditing => widget.editSaleId != null;
+  bool _editLoading = false;
+  String? _editLoadError;
+  Map<String, dynamic>? _editSale;
+  int _editRevision = 0;
+  double _originalTotal = 0;
+  double _existingNetPaid = 0;
+  List<Map<String, dynamic>> _originalItems = const [];
+
   late ProductService _productService;
   late SaleService _saleService;
+  late SaleSourceService _saleSourceService;
 
   @override
   void initState() {
@@ -155,6 +179,9 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     final token = Provider.of<AuthProvider>(context, listen: false).token!;
     _productService = ProductService(token: token);
     _saleService = SaleService(token: token);
+    _saleSourceService = SaleSourceService(token: token);
+    _editLoading = _isEditing;
+    _loadSaleSources();
 
     // Warm customer/salesman/delivery-boy/product caches immediately, in
     // the background, before the user taps any "Select…" button. By the
@@ -185,13 +212,16 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     _hydrateOfflinePickers(branchIdInt); // immediate, in case we're offline now
     CatalogCacheService.instance
         .refresh(token: token, branchId: branchIdInt)
-        .then((_) => _hydrateOfflinePickers(branchIdInt));
+        .then((_) {
+          _hydrateOfflinePickers(branchIdInt);
+          _loadSaleSources(preferCache: true);
+        });
 
     _barcodeFocusNode.addListener(() {
       setState(() => _scannerEnabled = _barcodeFocusNode.hasFocus);
     });
 
-    if (widget.initialCustomer != null) {
+    if (!_isEditing && widget.initialCustomer != null) {
       final customer = widget.initialCustomer!;
       _selectedCustomer = customer;
       _selectedCustomerId = customer['id']?.toString();
@@ -212,8 +242,515 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     // auto-open the picker modal. Focus the center panel search field so
     // the cashier can start typing immediately after navigation.
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _productSearchFocusNode.requestFocus();
+      if (!mounted) return;
+      if (_isEditing) {
+        _loadSaleForEdit();
+      } else {
+        _productSearchFocusNode.requestFocus();
+      }
     });
+  }
+
+
+  Future<void> _loadSaleSources({bool preferCache = false}) async {
+    List<Map<String, dynamic>> sources = const [];
+    if (!preferCache) {
+      try {
+        sources = await _saleSourceService.getSaleSources();
+      } catch (_) {
+        // Offline sale entry falls back to the catalog read replica below.
+      }
+    }
+    if (sources.isEmpty) {
+      try {
+        sources = await CatalogCacheService.instance.saleSources();
+      } catch (_) {/* best-effort local reference data */}
+    }
+    if (!mounted || sources.isEmpty) return;
+    sources = sources.toList(growable: false)
+      ..sort((a, b) {
+        final ao = int.tryParse(a['sort_order']?.toString() ?? '') ?? 0;
+        final bo = int.tryParse(b['sort_order']?.toString() ?? '') ?? 0;
+        if (ao != bo) return ao.compareTo(bo);
+        return (a['name'] ?? '').toString().toLowerCase().compareTo(
+              (b['name'] ?? '').toString().toLowerCase(),
+            );
+      });
+    int? next = _selectedSaleSourceId;
+    final validCurrent = next != null &&
+        sources.any((e) => _metaInt(e['id']) == next);
+    if (!validCurrent && !_isEditing) {
+      final counter = sources.where((e) =>
+          (e['code'] ?? '').toString().toLowerCase() == 'counter' &&
+          _sourceActive(e)).toList();
+      final active = sources.where(_sourceActive).toList();
+      next = _metaInt((counter.isNotEmpty ? counter.first : (active.isNotEmpty ? active.first : const <String, dynamic>{}))['id']);
+    }
+    setState(() {
+      _saleSources = sources;
+      if (next != null) _selectedSaleSourceId = next;
+    });
+  }
+
+  bool _sourceActive(Map<String, dynamic> source) {
+    final value = source['is_active'];
+    return value == true || value == 1 || value?.toString().toLowerCase() == 'true';
+  }
+
+  Map<String, dynamic>? get _selectedSaleSource {
+    for (final source in _saleSources) {
+      if (_metaInt(source['id']) == _selectedSaleSourceId) return source;
+    }
+    return null;
+  }
+
+  Future<void> _manageSaleSources() async {
+    final result = await showSaleSourceManagerDialog(
+      context: context,
+      service: _saleSourceService,
+      selectedId: _selectedSaleSourceId,
+    );
+    if (!mounted || result == null) return;
+    if (result.selectedId != null) {
+      setState(() => _selectedSaleSourceId = result.selectedId);
+    }
+    await _loadSaleSources();
+    if (result.changed) {
+      final branchId = int.tryParse(_effectiveBranchIdStr() ?? '');
+      final token = context.read<AuthProvider>().token!;
+      CatalogCacheService.instance
+          .refresh(token: token, branchId: branchId)
+          .then((_) => _loadSaleSources(preferCache: true));
+    }
+  }
+
+  Map<String, dynamic> _mapValue(dynamic value) {
+    if (value is Map<String, dynamic>) return value;
+    if (value is Map) {
+      return value.map((key, value) => MapEntry(key.toString(), value));
+    }
+    return <String, dynamic>{};
+  }
+
+  List<dynamic> _listValue(dynamic value) => value is List ? value : const [];
+
+  double _editNum(dynamic value) =>
+      double.tryParse(value?.toString() ?? '') ?? 0.0;
+
+  Future<void> _loadSaleForEdit() async {
+    final saleId = widget.editSaleId;
+    if (saleId == null) return;
+    setState(() {
+      _editLoading = true;
+      _editLoadError = null;
+    });
+    try {
+      final response = await _saleService.getSale(saleId, includeBalance: true);
+      final sale = _mapValue(response['data']);
+      if (sale.isEmpty) {
+        throw const FormatException('The server returned an empty sale.');
+      }
+
+      final items = <Map<String, dynamic>>[];
+      for (final raw in _listValue(sale['items'])) {
+        final line = _mapValue(raw);
+        final product = _mapValue(line['product']);
+        final productId = int.tryParse(
+              (line['product_id'] ?? product['id'] ?? '').toString(),
+            ) ??
+            0;
+        if (productId <= 0) continue;
+        final qty = _editNum(line['quantity']);
+        final price = _editNum(line['price']);
+        final discount = _editNum(line['discount']);
+        final discountType =
+            (line['discount_type'] ?? 'percentage').toString();
+        final unitCost = _editNum(line['unit_cost']);
+        items.add(<String, dynamic>{
+          ...product,
+          'sale_item_id': int.tryParse(line['id']?.toString() ?? ''),
+          'product_id': productId,
+          'name': (product['name'] ?? 'Product #$productId').toString(),
+          'secondary_name': product['secondary_name'],
+          'quantity': qty,
+          'price': price,
+          'discount_pct': discount,
+          'discount_type': discountType,
+          'total': _lineTotal(
+            price: price,
+            qty: qty,
+            discPct: discount,
+            discountType: discountType,
+          ),
+          SaleProfitCalculator.unitCostKey: unitCost,
+          SaleProfitCalculator.estimatedKey: true,
+          SaleProfitCalculator.sourceKey:
+              'Posted cost snapshot; final amendment COGS is confirmed by the server',
+        });
+      }
+      if (items.isEmpty) {
+        throw const FormatException(
+          'This invoice has no active sale items and cannot be amended here.',
+        );
+      }
+
+      final customer = _mapValue(sale['customer']);
+      final vendor = _mapValue(sale['vendor']);
+      final salesman = _mapValue(sale['salesman']);
+      final deliveryBoy = _mapValue(sale['delivery_boy']);
+      final branch = _mapValue(sale['branch']);
+      final meta = _mapValue(sale['meta']);
+      final customerSnapshot = _mapValue(meta['customer_snapshot']);
+      final customerId = int.tryParse(sale['customer_id']?.toString() ?? '');
+      final vendorId = int.tryParse(sale['vendor_id']?.toString() ?? '');
+      final salesmanId = int.tryParse(sale['salesman_id']?.toString() ?? '');
+      final deliveryBoyId =
+          int.tryParse(sale['delivery_boy_id']?.toString() ?? '');
+      final saleSourceId =
+          int.tryParse(sale['sale_source_id']?.toString() ?? '');
+
+      discountController.text = _editNum(sale['discount']).toStringAsFixed(2);
+      taxController.text = _editNum(sale['tax']).toStringAsFixed(2);
+      shippingController.text = _editNum(sale['delivery']).toStringAsFixed(2);
+
+      if (customerId != null) {
+        customerNameController.text = [
+          (customer['first_name'] ?? '').toString(),
+          (customer['last_name'] ?? '').toString(),
+        ].where((v) => v.trim().isNotEmpty).join(' ').trim();
+        customerPhoneController.text = (customer['phone'] ?? '').toString();
+        whatsappPhoneController.text = customerPhoneController.text;
+        addressController.text = (customer['address'] ?? '').toString();
+      } else {
+        customerNameController.text =
+            (customerSnapshot['name'] ?? 'Walk-in customer').toString();
+        customerPhoneController.text =
+            (customerSnapshot['phone'] ?? '').toString();
+        whatsappPhoneController.text = customerPhoneController.text;
+        addressController.text =
+            (customerSnapshot['address'] ?? '').toString();
+      }
+
+      setState(() {
+        _editSale = sale;
+        _editRevision =
+            int.tryParse(sale['revision_no']?.toString() ?? '') ?? 0;
+        _originalTotal = _editNum(sale['total']);
+        _existingNetPaid = _editNum(sale['net_paid']);
+        _items = items;
+        _originalItems = items
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList(growable: false);
+        _selectedCustomerId = customerId?.toString();
+        _selectedCustomer = customerId == null ? null : customer;
+        _selectedVendorId = vendorId;
+        _selectedVendor = vendorId == null ? null : vendor;
+        _selectedUserId = salesmanId;
+        _selectedUser = salesmanId == null ? null : salesman;
+        _selectedDeliveryBoyId = deliveryBoyId;
+        _selectedDeliveryBoy = deliveryBoyId == null ? null : deliveryBoy;
+        _selectedSaleSourceId = saleSourceId;
+        _selectedBranchId = sale['branch_id']?.toString();
+        _selectedBranch = branch.isEmpty ? null : branch;
+        _customerLocked = true;
+        _payments = const [];
+        _editLoading = false;
+      });
+      _productSearchFocusNode.requestFocus();
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _editLoading = false;
+        _editLoadError = e.message;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _editLoading = false;
+        _editLoadError = e.toString().replaceFirst('FormatException: ', '');
+      });
+    }
+  }
+
+  void _resetAmendmentDraft() {
+    if (!_isEditing || _editSale == null) return;
+    final sale = _editSale!;
+    setState(() {
+      _items = _originalItems
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList(growable: true);
+      discountController.text = _editNum(sale['discount']).toStringAsFixed(2);
+      taxController.text = _editNum(sale['tax']).toStringAsFixed(2);
+      shippingController.text = _editNum(sale['delivery']).toStringAsFixed(2);
+      _selectedVendorId = int.tryParse(sale['vendor_id']?.toString() ?? '');
+      _selectedVendor = _selectedVendorId == null
+          ? null
+          : _mapValue(sale['vendor']);
+      _selectedUserId = int.tryParse(sale['salesman_id']?.toString() ?? '');
+      _selectedUser = _selectedUserId == null
+          ? null
+          : _mapValue(sale['salesman']);
+      _selectedDeliveryBoyId =
+          int.tryParse(sale['delivery_boy_id']?.toString() ?? '');
+      _selectedDeliveryBoy = _selectedDeliveryBoyId == null
+          ? null
+          : _mapValue(sale['delivery_boy']);
+      _selectedSaleSourceId =
+          int.tryParse(sale['sale_source_id']?.toString() ?? '');
+    });
+  }
+
+  _AmendmentDiff _amendmentDiff({bool sourceChanged = false}) {
+    final beforeById = <int, Map<String, dynamic>>{};
+    for (final item in _originalItems) {
+      final id = int.tryParse(item['sale_item_id']?.toString() ?? '');
+      if (id != null) beforeById[id] = item;
+    }
+    final afterIds = <int>{};
+    var added = 0;
+    var quantityChanged = 0;
+    var priceChanged = 0;
+    var discountChanged = 0;
+    for (final item in _items) {
+      final id = int.tryParse(item['sale_item_id']?.toString() ?? '');
+      if (id == null) {
+        added++;
+        continue;
+      }
+      afterIds.add(id);
+      final old = beforeById[id];
+      if (old == null) {
+        added++;
+        continue;
+      }
+      if ((_editNum(old['quantity']) - _editNum(item['quantity'])).abs() > .0004) {
+        quantityChanged++;
+      }
+      if ((_editNum(old['price']) - _editNum(item['price'])).abs() > .0004) {
+        priceChanged++;
+      }
+      if ((_editNum(old['discount_pct']) -
+                  _editNum(item['discount_pct']))
+              .abs() >
+          .0004 ||
+          (old['discount_type'] ?? 'percentage').toString() !=
+              (item['discount_type'] ?? 'percentage').toString()) {
+        discountChanged++;
+      }
+    }
+    final removed = beforeById.keys.where((id) => !afterIds.contains(id)).length;
+    return _AmendmentDiff(
+      added: added,
+      removed: removed,
+      quantityChanged: quantityChanged,
+      priceChanged: priceChanged,
+      discountChanged: discountChanged,
+      sourceChanged: sourceChanged,
+    );
+  }
+
+  Future<void> _submitAmendment() async {
+    if (_editSale == null || widget.editSaleId == null) {
+      AppFeedback.error(context, 'The posted sale is not loaded yet.');
+      return;
+    }
+    final invoiceBranchId = int.tryParse(_selectedBranchId ?? '');
+    final workingBranchId = context.read<BranchProvider>().selectedBranchId;
+    if (invoiceBranchId == null || workingBranchId != invoiceBranchId) {
+      AppFeedback.warning(
+        context,
+        'This invoice belongs to Branch #${invoiceBranchId ?? '-'}.'
+        ' Switch back to that branch before saving this amendment.',
+      );
+      return;
+    }
+    if (_items.isEmpty) {
+      AppFeedback.warning(
+        context,
+        'A posted invoice must keep at least one item. Use the return/void workflow to reverse the entire invoice.',
+      );
+      return;
+    }
+    final quantityViolation = _firstQuantityViolation();
+    if (quantityViolation != null) {
+      AppFeedback.warning(context, quantityViolation);
+      return;
+    }
+
+    double subtotal = 0;
+    for (final item in _items) {
+      subtotal += _lineTotal(
+        price: _editNum(item['price']),
+        qty: _editNum(item['quantity']),
+        discPct: _editNum(item['discount_pct']),
+        discountType: (item['discount_type'] ?? 'percentage').toString(),
+      );
+    }
+    final discount = _toDouble(discountController);
+    final tax = _toDouble(taxController);
+    final delivery = _toDouble(shippingController);
+    final revisedTotal = subtotal - discount + tax + delivery;
+    if (revisedTotal < -0.004) {
+      AppFeedback.warning(
+        context,
+        'The revised invoice total cannot be negative. Use the return/refund workflow instead.',
+      );
+      return;
+    }
+
+    final sourceChanged =
+        int.tryParse(_editSale!['sale_source_id']?.toString() ?? '') !=
+            _selectedSaleSourceId;
+    final diff = _amendmentDiff(sourceChanged: sourceChanged);
+    final saleLevelChanged =
+        (_editNum(_editSale!['discount']) - discount).abs() > .004 ||
+            (_editNum(_editSale!['tax']) - tax).abs() > .004 ||
+            (_editNum(_editSale!['delivery']) - delivery).abs() > .004 ||
+            int.tryParse(_editSale!['vendor_id']?.toString() ?? '') !=
+                _selectedVendorId ||
+            int.tryParse(_editSale!['salesman_id']?.toString() ?? '') !=
+                _selectedUserId ||
+            int.tryParse(_editSale!['delivery_boy_id']?.toString() ?? '') !=
+                _selectedDeliveryBoyId ||
+            sourceChanged;
+    if (!diff.hasChanges && !saleLevelChanged) {
+      AppFeedback.info(context, 'There are no changes to save.');
+      return;
+    }
+
+    final profit = SaleProfitCalculator.invoice(
+      items: _items,
+      invoiceDiscount: discount,
+      shippingRevenue: delivery,
+      tax: tax,
+    );
+    final pm = context.read<PaymentMethodProvider>();
+    final paymentMethods = pm.activeMethods
+        .map((m) => _AmendmentPaymentMethod(m.method, m.displayName))
+        .toList(growable: false);
+    final decision = await showDialog<_AmendmentReviewDecision>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => _SaleAmendmentReviewDialog(
+        invoiceNo: (_editSale!['invoice_no'] ?? widget.editSaleId).toString(),
+        revision: _editRevision,
+        originalTotal: _originalTotal,
+        revisedTotal: revisedTotal,
+        netPaid: _existingNetPaid,
+        customerAttached: _selectedCustomerId != null,
+        deliverySale: _selectedDeliveryBoyId != null,
+        diff: diff,
+        profit: context.read<AuthProvider>().hasPermission('view-sale-profit')
+            ? profit
+            : null,
+        paymentMethods: paymentMethods,
+      ),
+    );
+    if (!mounted || decision == null) return;
+
+    final payload = <String, dynamic>{
+      'expected_revision': _editRevision,
+      'reason': decision.reason,
+      'items': _items.map((item) {
+        final id = int.tryParse(item['sale_item_id']?.toString() ?? '');
+        return <String, dynamic>{
+          if (id != null) 'sale_item_id': id,
+          'product_id': int.tryParse(item['product_id']?.toString() ?? '') ?? 0,
+          'quantity': _editNum(item['quantity']),
+          'price': _editNum(item['price']),
+          'discount_pct': _editNum(item['discount_pct']),
+          'discount_type':
+              (item['discount_type'] ?? 'percentage').toString(),
+        };
+      }).toList(growable: false),
+      'discount': discount,
+      'tax': tax,
+      'delivery': delivery,
+      'vendor_id': _selectedVendorId,
+      'salesman_id': _selectedUserId,
+      'delivery_boy_id': _selectedDeliveryBoyId,
+      'sale_source_id': _selectedSaleSourceId,
+      if (decision.settlementAction != 'none')
+        'settlement': <String, dynamic>{
+          'action': decision.settlementAction,
+          'amount': decision.settlementAmount,
+          'method': decision.settlementMethod,
+          if (decision.reference.trim().isNotEmpty)
+            'reference': decision.reference.trim(),
+          'note': 'Sale amendment revision ${_editRevision + 1}',
+        },
+    };
+
+    setState(() => _submitting = true);
+    Object? submitError;
+    Map<String, dynamic>? response;
+    try {
+      try {
+        response = await _saleService
+            .amendSale(widget.editSaleId!, payload)
+            .timeout(const Duration(seconds: 20));
+      } catch (e) {
+        submitError = e;
+      }
+
+      final creditIssue = submitError == null
+          ? null
+          : CreditLimitIssue.fromException(submitError!);
+      if (creditIssue != null) {
+        final auth = context.read<AuthProvider>();
+        if (!creditIssue.canOverride ||
+            !auth.hasPermission('override-party-credit-limit')) {
+          if (mounted) AppFeedback.error(context, creditIssue.summary);
+          return;
+        }
+        final overrideReason = await showCreditLimitOverrideDialog(
+          context,
+          creditIssue,
+        );
+        if (!mounted || overrideReason == null) return;
+        payload['credit_limit_override'] = {'reason': overrideReason};
+        submitError = null;
+        try {
+          response = await _saleService
+              .amendSale(widget.editSaleId!, payload)
+              .timeout(const Duration(seconds: 20));
+        } catch (e) {
+          submitError = e;
+        }
+      }
+
+      if (submitError != null) {
+        final e = submitError!;
+        if (!mounted) return;
+        if (e is ApiException && e.statusCode == 409) {
+          AppFeedback.error(
+            context,
+            'This invoice was changed on another terminal. Your draft was not saved. Reload the invoice before applying it again.',
+          );
+        } else if (e is ApiException) {
+          _applyServerLineErrors(e);
+          AppFeedback.error(context, _describeRejection(e));
+        } else {
+          AppFeedback.error(
+            context,
+            'Sale amendment was not saved. Posted-sale editing requires an online server connection. $e',
+          );
+        }
+        return;
+      }
+
+      if (!mounted) return;
+      final amendment = _mapValue(_mapValue(response?['data'])['amendment']);
+      final revision =
+          amendment['revision_no']?.toString() ?? '${_editRevision + 1}';
+      AppFeedback.success(
+        context,
+        'Sale amended successfully • Revision $revision. Original financial history was preserved.',
+      );
+      Navigator.of(context).pop(true);
+    } finally {
+      if (mounted) setState(() => _submitting = false);
+    }
   }
 
 
@@ -363,7 +900,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     setState(() {
       _selectedVendor = vendor;
       _selectedVendorId = _metaInt(vendor?['id']);
-      _items = []; // avoid cross-vendor mix
+      if (!_isEditing) _items = []; // avoid cross-vendor mix on a new sale
     });
     _restoreSaleScreenFocus();
   }
@@ -375,6 +912,12 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
   }
 
   String _effectiveBranchIdStr() {
+    // A posted invoice never changes branch. Keep all amendment pickers and
+    // product lookups pinned to the invoice branch even if Master Admin
+    // switches the app's working branch in another surface while this draft
+    // is open. The backend will still reject Save until the user switches
+    // back, so no cross-branch mutation can slip through.
+    if (_isEditing) return _selectedBranchId ?? '';
     final globalBranchId = context.read<BranchProvider>().selectedBranchId;
     return globalBranchId?.toString() ?? _selectedBranchId ?? '';
   }
@@ -955,6 +1498,11 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         _selectedVendor,
         id: _selectedVendorId,
       ),
+      if (_selectedSaleSourceId != null)
+        'sale_source_snapshot': {
+          'id': _selectedSaleSourceId,
+          'name': (_selectedSaleSource?['name'] ?? 'Counter').toString(),
+        },
       'totals_snapshot': {
         'subtotal': subtotal,
         'discount': discount,
@@ -1191,6 +1739,10 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
   }
 
   Future<void> _submitSale({bool print = true}) async {
+    if (_isEditing) {
+      await _submitAmendment();
+      return;
+    }
     if (_items.isEmpty) {
       AppFeedback.warning(context, "Add at least 1 item before creating sale.");
       return;
@@ -1370,6 +1922,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         vendorId: _selectedVendorId,
         userId: _selectedUserId,
         deliveryBoyId: _selectedDeliveryBoyId,
+        saleSourceId: _selectedSaleSourceId,
         saleType: _selectedDeliveryBoyId != null ? 'delivery' : null,
         items: _items,
         payments: paymentsToSend,
@@ -2243,6 +2796,87 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     final auth = context.watch<AuthProvider>();
     final token = auth.token!;
 
+    if (_isEditing && _editLoading) {
+      return Scaffold(
+        backgroundColor: AppTheme.bg,
+        body: Column(
+          children: [
+            const SaleStatusBar(light: true, showBackButton: true),
+            Expanded(
+              child: Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const SizedBox(
+                      width: 34,
+                      height: 34,
+                      child: CircularProgressIndicator(strokeWidth: 3),
+                    ),
+                    const SizedBox(height: 14),
+                    Text(
+                      'Loading posted invoice…',
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.w800,
+                            color: AppTheme.navy,
+                          ),
+                    ),
+                    const SizedBox(height: 5),
+                    const Text(
+                      'The latest revision, payments and current invoice items are being loaded.',
+                      style: TextStyle(color: AppTheme.textMuted, fontSize: 12),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+    if (_isEditing && _editLoadError != null) {
+      return Scaffold(
+        backgroundColor: AppTheme.bg,
+        body: Column(
+          children: [
+            const SaleStatusBar(light: true, showBackButton: true),
+            Expanded(
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 480),
+                  child: EnterprisePanel(
+                    padding: const EdgeInsets.all(24),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.cloud_off_outlined, size: 34, color: AppTheme.danger),
+                        const SizedBox(height: 12),
+                        const Text(
+                          'Unable to load posted sale',
+                          style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900, color: AppTheme.navy),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          _editLoadError!,
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(color: AppTheme.textMuted, fontSize: 12.5),
+                        ),
+                        const SizedBox(height: 16),
+                        FilledButton.icon(
+                          onPressed: _loadSaleForEdit,
+                          icon: const Icon(Icons.refresh_rounded, size: 17),
+                          label: const Text('Retry'),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
     // Feature flags — watched so the UI reacts when settings change.
     final featureProvider = context.watch<BranchFeatureProvider>();
     final deliveryEnabled = featureProvider.deliveryEnabled;
@@ -2250,7 +2884,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
 
     // Clear forbidden state when a flag is turned off while screen is open.
     // Runs in the build phase via post-frame to avoid calling setState mid-build.
-    if (!deliveryEnabled && (_selectedDeliveryBoyId != null || _selectedDeliveryBoy != null)) {
+    if (!_isEditing && !deliveryEnabled && (_selectedDeliveryBoyId != null || _selectedDeliveryBoy != null)) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
           setState(() {
@@ -2260,7 +2894,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         }
       });
     }
-    if (!saleVendorEnabled && (_selectedVendorId != null || _selectedVendor != null)) {
+    if (!_isEditing && !saleVendorEnabled && (_selectedVendorId != null || _selectedVendor != null)) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
           setState(() {
@@ -2325,9 +2959,11 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
             const SingleActivator(LogicalKeyboardKey.f2): () => _addItemManual(),
             _ctrl(LogicalKeyboardKey.keyI): () => _addItemManual(),
             _cmd(LogicalKeyboardKey.keyI): () => _addItemManual(),
-            const SingleActivator(LogicalKeyboardKey.f3): () => _pickCustomer(),
-            _ctrlShift(LogicalKeyboardKey.keyC): () => _pickCustomer(),
-            _cmdShift(LogicalKeyboardKey.keyC): () => _pickCustomer(),
+            if (!_isEditing) ...{
+              const SingleActivator(LogicalKeyboardKey.f3): () => _pickCustomer(),
+              _ctrlShift(LogicalKeyboardKey.keyC): () => _pickCustomer(),
+              _cmdShift(LogicalKeyboardKey.keyC): () => _pickCustomer(),
+            },
             // Delivery shortcuts — only active when delivery module is enabled.
             if (deliveryEnabled) ...{
               const SingleActivator(LogicalKeyboardKey.f4): () => _pickDeliveryBoy(),
@@ -2347,10 +2983,11 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
                 showAppShortcutGuide(context, includeSaleCreate: true),
             _cmd(LogicalKeyboardKey.slash): () =>
                 showAppShortcutGuide(context, includeSaleCreate: true),
-            _ctrlShift(LogicalKeyboardKey.keyU): () {
-              _customerController.clear();
-              _customerFocusNode.requestFocus();
-            },
+            if (!_isEditing)
+              _ctrlShift(LogicalKeyboardKey.keyU): () {
+                _customerController.clear();
+                _customerFocusNode.requestFocus();
+              },
             _ctrlShift(LogicalKeyboardKey.keyS): () {
               _salesmanController.clear();
               _salesmanFocusNode.requestFocus();
@@ -2409,6 +3046,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
                     children: [
                       // ── Light status bar (30 px) ──────────────────────
                       const SaleStatusBar(light: true, showBackButton: true),
+                      if (_isEditing) _buildAmendmentHeader(total),
 
                       // ── 2-panel workspace ─────────────────────────────
                       Expanded(
@@ -2506,10 +3144,22 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
             selectedDeliveryBoy: _selectedDeliveryBoy,
             selectedBranch: _selectedBranch,
             selectedVendor: _selectedVendor,
+            saleSources: _saleSources,
+            selectedSaleSourceId: _selectedSaleSourceId,
+            onSaleSourceChanged: (value) =>
+                setState(() => _selectedSaleSourceId = value),
+            canManageSaleSources:
+                context.watch<AuthProvider>().hasPermission('manage-sale-sources'),
+            onManageSaleSources: _manageSaleSources,
             branchId: _effectiveBranchIdStr(),
             token: token,
-            showDeliveryBoy: deliveryEnabled,
-            showVendor: saleVendorEnabled,
+            showDeliveryBoy:
+                deliveryEnabled || (_isEditing && _selectedDeliveryBoyId != null),
+            showVendor:
+                saleVendorEnabled || (_isEditing && _selectedVendorId != null),
+            customerLocked: _isEditing,
+            customerLockMessage:
+                'Customer identity is locked on posted invoices. Use the dedicated customer-transfer workflow when an AR party genuinely needs correction.',
             onPickCustomer: _pickCustomer,
             onPickUser: _pickUser,
             onPickDeliveryBoy: _pickDeliveryBoy,
@@ -2517,7 +3167,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
             onClearVendor: () => setState(() {
               _selectedVendor = null;
               _selectedVendorId = null;
-              _items = [];
+              if (!_isEditing) _items = [];
             }),
             onBrowseCustomerSheet: _openCustomerSheet,
             onApplyCustomer: _applyCustomerSelection,
@@ -2537,8 +3187,11 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
             vendorController: _vendorController,
           ),
 
-          // 2. FIXED — walk-in customer details (compact single-row layout)
-          _buildWalkInCompact(),
+          // 2. FIXED — walk-in/customer snapshot fields are immutable once the
+          // invoice is posted. Customer identity is already shown above in the
+          // locked party field, so hiding these edit-only inputs avoids a
+          // misleading control that would not be persisted by an amendment.
+          if (!_isEditing) _buildWalkInCompact(),
 
           const Divider(height: 1, thickness: 1, color: AppTheme.border),
 
@@ -3137,11 +3790,188 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     );
   }
 
+  Widget _buildAmendmentHeader(double revisedTotal) {
+    final sale = _editSale ?? const <String, dynamic>{};
+    final invoice = (sale['invoice_no'] ?? widget.editSaleId ?? '').toString();
+    final difference = revisedTotal - _originalTotal;
+    return Container(
+      height: 38,
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      decoration: const BoxDecoration(
+        color: Color(0xFFF8FAFC),
+        border: Border(bottom: BorderSide(color: AppTheme.border)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(
+              color: AppTheme.primary.withOpacity(.09),
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(color: AppTheme.primary.withOpacity(.18)),
+            ),
+            child: const Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.edit_note_rounded, size: 15, color: AppTheme.primary),
+                SizedBox(width: 4),
+                Text(
+                  'AUDITED EDIT',
+                  style: TextStyle(
+                    color: AppTheme.primary,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: .5,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 10),
+          Text(
+            invoice.isEmpty ? 'Posted sale' : invoice,
+            style: const TextStyle(
+              color: AppTheme.navy,
+              fontSize: 13,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(width: 7),
+          Text(
+            'Revision #$_editRevision',
+            style: const TextStyle(
+              color: AppTheme.textMuted,
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const Spacer(),
+          _AmendmentHeaderMetric(
+            label: 'Original',
+            value: AppCurrency.format(_originalTotal),
+          ),
+          const SizedBox(width: 18),
+          _AmendmentHeaderMetric(
+            label: 'Revised',
+            value: AppCurrency.format(revisedTotal),
+          ),
+          const SizedBox(width: 18),
+          _AmendmentHeaderMetric(
+            label: 'Difference',
+            value:
+                '${difference > .004 ? '+' : ''}${AppCurrency.format(difference)}',
+            valueColor: difference.abs() <= .004
+                ? AppTheme.textMuted
+                : difference > 0
+                    ? AppTheme.warning
+                    : AppTheme.success,
+          ),
+          const SizedBox(width: 12),
+          const Tooltip(
+            message:
+                'Posted-sale amendments require the server and are committed atomically with stock, COGS, ledger and audit history.',
+            child: Icon(Icons.cloud_done_outlined, size: 16, color: AppTheme.textMuted),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAmendmentBottomBar(double total) {
+    final difference = total - _originalTotal;
+    return Container(
+      height: 62,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        border: Border(top: BorderSide(color: AppTheme.border)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.history_edu_outlined, size: 18, color: AppTheme.primary),
+          const SizedBox(width: 8),
+          const Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Posted invoice amendment',
+                style: TextStyle(
+                  color: AppTheme.navy,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+              Text(
+                'Original financial documents stay preserved',
+                style: TextStyle(
+                  color: AppTheme.textMuted,
+                  fontSize: 10.5,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+          const Spacer(),
+          _AmendmentBottomMetric(
+            label: 'Original',
+            value: AppCurrency.format(_originalTotal),
+          ),
+          const SizedBox(width: 18),
+          _AmendmentBottomMetric(
+            label: 'Revised',
+            value: AppCurrency.format(total),
+          ),
+          const SizedBox(width: 18),
+          _AmendmentBottomMetric(
+            label: 'Difference',
+            value: '${difference > .004 ? '+' : ''}${AppCurrency.format(difference)}',
+            valueColor: difference.abs() <= .004
+                ? AppTheme.textMuted
+                : difference > 0
+                    ? AppTheme.warning
+                    : AppTheme.success,
+          ),
+          const SizedBox(width: 18),
+          OutlinedButton.icon(
+            onPressed: _submitting ? null : _resetAmendmentDraft,
+            icon: const Icon(Icons.restart_alt_rounded, size: 16),
+            label: const Text('Reset Changes'),
+            style: OutlinedButton.styleFrom(
+              minimumSize: const Size(0, 38),
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+            ),
+          ),
+          const SizedBox(width: 8),
+          FilledButton.icon(
+            onPressed: _submitting ? null : _submitAmendment,
+            icon: _submitting
+                ? const SizedBox(
+                    width: 14,
+                    height: 14,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
+                  )
+                : const Icon(Icons.fact_check_outlined, size: 16),
+            label: Text(_submitting ? 'Saving…' : 'Review Changes  Ctrl+↵'),
+            style: FilledButton.styleFrom(
+              minimumSize: const Size(0, 38),
+              padding: const EdgeInsets.symmetric(horizontal: 14),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   // ── Fixed bottom action bar ──────────────────────────────────────────────
   Widget _buildBottomBar({
     required double total,
     required double changeAmount,
   }) {
+    if (_isEditing) return _buildAmendmentBottomBar(total);
     final pm = context.watch<PaymentMethodProvider>();
     final methods = pm.activeMethods;
     final currentMethod = _saleMethod ?? pm.defaultMethod?.method;
@@ -3949,4 +4779,818 @@ class _CreateSaleBottomBar extends StatelessWidget {
       ),
     );
   }
+}
+
+class _AmendmentDiff {
+  final int added;
+  final int removed;
+  final int quantityChanged;
+  final int priceChanged;
+  final int discountChanged;
+  final bool sourceChanged;
+
+  const _AmendmentDiff({
+    required this.added,
+    required this.removed,
+    required this.quantityChanged,
+    required this.priceChanged,
+    required this.discountChanged,
+    required this.sourceChanged,
+  });
+
+  bool get hasChanges =>
+      added > 0 ||
+      removed > 0 ||
+      quantityChanged > 0 ||
+      priceChanged > 0 ||
+      discountChanged > 0 ||
+      sourceChanged;
+}
+
+class _AmendmentPaymentMethod {
+  final String code;
+  final String label;
+
+  const _AmendmentPaymentMethod(this.code, this.label);
+}
+
+class _AmendmentReviewDecision {
+  final String reason;
+  final String settlementAction;
+  final String settlementMethod;
+  final double settlementAmount;
+  final String reference;
+
+  const _AmendmentReviewDecision({
+    required this.reason,
+    required this.settlementAction,
+    required this.settlementMethod,
+    required this.settlementAmount,
+    required this.reference,
+  });
+}
+
+class _SaleAmendmentReviewDialog extends StatefulWidget {
+  final String invoiceNo;
+  final int revision;
+  final double originalTotal;
+  final double revisedTotal;
+  final double netPaid;
+  final bool customerAttached;
+  final bool deliverySale;
+  final _AmendmentDiff diff;
+  final SaleProfitSummary? profit;
+  final List<_AmendmentPaymentMethod> paymentMethods;
+
+  const _SaleAmendmentReviewDialog({
+    required this.invoiceNo,
+    required this.revision,
+    required this.originalTotal,
+    required this.revisedTotal,
+    required this.netPaid,
+    required this.customerAttached,
+    required this.deliverySale,
+    required this.diff,
+    required this.profit,
+    required this.paymentMethods,
+  });
+
+  @override
+  State<_SaleAmendmentReviewDialog> createState() =>
+      _SaleAmendmentReviewDialogState();
+}
+
+class _SaleAmendmentReviewDialogState
+    extends State<_SaleAmendmentReviewDialog> {
+  final _reasonController = TextEditingController();
+  final _amountController = TextEditingController();
+  final _referenceController = TextEditingController();
+  String _action = 'none';
+  late String _method;
+  String? _error;
+
+  double get _balance => widget.revisedTotal - widget.netPaid;
+  double get _requiredAmount => _balance.abs();
+
+  @override
+  void initState() {
+    super.initState();
+    _method = widget.paymentMethods.isNotEmpty
+        ? widget.paymentMethods.first.code
+        : 'cash';
+    if (!widget.customerAttached && _requiredAmount > .004) {
+      _action = _balance > 0 ? 'collect' : 'refund';
+    }
+    _amountController.text = _requiredAmount.toStringAsFixed(2);
+  }
+
+  @override
+  void dispose() {
+    _reasonController.dispose();
+    _amountController.dispose();
+    _referenceController.dispose();
+    super.dispose();
+  }
+
+  String _settlementLabel(String action) {
+    if (_balance > .004) {
+      return action == 'collect'
+          ? 'Collect now'
+          : widget.customerAttached
+              ? 'Leave as customer balance'
+              : 'Must collect now';
+    }
+    if (_balance < -.004) {
+      return action == 'refund'
+          ? 'Refund now'
+          : widget.customerAttached
+              ? 'Keep as customer credit'
+              : 'Must refund now';
+    }
+    return 'No settlement required';
+  }
+
+  void _submit() {
+    final reason = _reasonController.text.trim();
+    if (reason.length < 5) {
+      setState(() => _error = 'Enter a clear amendment reason (at least 5 characters).');
+      return;
+    }
+    var amount = 0.0;
+    if (_action != 'none') {
+      amount = double.tryParse(_amountController.text.trim()) ?? 0;
+      if (amount < .01) {
+        setState(() => _error = 'Enter a valid settlement amount.');
+        return;
+      }
+      if (!widget.customerAttached && (amount - _requiredAmount).abs() > .004) {
+        setState(() => _error =
+            'A walk-in invoice must be settled exactly (${AppCurrency.format(_requiredAmount)}).');
+        return;
+      }
+      if (amount > _requiredAmount + .004) {
+        setState(() => _error =
+            'Settlement cannot exceed ${AppCurrency.format(_requiredAmount)}.');
+        return;
+      }
+    }
+    Navigator.of(context).pop(
+      _AmendmentReviewDecision(
+        reason: reason,
+        settlementAction: _action,
+        settlementMethod: _method,
+        settlementAmount: amount,
+        reference: _referenceController.text.trim(),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final difference = widget.revisedTotal - widget.originalTotal;
+    final hasBalance = _requiredAmount > .004;
+    final settlementOptions = <DropdownMenuItem<String>>[
+      if (widget.customerAttached || !hasBalance)
+        DropdownMenuItem(
+          value: 'none',
+          child: Text(_settlementLabel('none')),
+        ),
+      if (_balance > .004)
+        DropdownMenuItem(
+          value: 'collect',
+          child: Text(_settlementLabel('collect')),
+        ),
+      if (_balance < -.004)
+        DropdownMenuItem(
+          value: 'refund',
+          child: Text(_settlementLabel('refund')),
+        ),
+    ];
+
+    return Dialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 40, vertical: 28),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 760, maxHeight: 720),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              padding: const EdgeInsets.fromLTRB(20, 16, 16, 14),
+              decoration: const BoxDecoration(
+                color: Color(0xFFF8FAFC),
+                borderRadius: BorderRadius.vertical(top: Radius.circular(14)),
+                border: Border(bottom: BorderSide(color: AppTheme.border)),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 36,
+                    height: 36,
+                    decoration: BoxDecoration(
+                      color: AppTheme.primary.withOpacity(.10),
+                      borderRadius: BorderRadius.circular(9),
+                    ),
+                    child: const Icon(
+                      Icons.fact_check_outlined,
+                      color: AppTheme.primary,
+                      size: 20,
+                    ),
+                  ),
+                  const SizedBox(width: 11),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'Review Sale Amendment',
+                          style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                                color: AppTheme.navy,
+                                fontWeight: FontWeight.w900,
+                              ),
+                        ),
+                        Text(
+                          '${widget.invoiceNo}  •  Revision ${widget.revision} → ${widget.revision + 1}',
+                          style: const TextStyle(
+                            fontSize: 11,
+                            color: AppTheme.textMuted,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'Cancel',
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: const Icon(Icons.close_rounded),
+                  ),
+                ],
+              ),
+            ),
+            Flexible(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Wrap(
+                      spacing: 10,
+                      runSpacing: 10,
+                      children: [
+                        _ReviewMetric(
+                          label: 'Original Total',
+                          value: AppCurrency.format(widget.originalTotal),
+                        ),
+                        _ReviewMetric(
+                          label: 'Revised Total',
+                          value: AppCurrency.format(widget.revisedTotal),
+                        ),
+                        _ReviewMetric(
+                          label: 'Difference',
+                          value:
+                              '${difference > .004 ? '+' : ''}${AppCurrency.format(difference)}',
+                          valueColor: difference.abs() <= .004
+                              ? AppTheme.textMuted
+                              : difference > 0
+                                  ? AppTheme.warning
+                                  : AppTheme.success,
+                        ),
+                        _ReviewMetric(
+                          label: 'Already Settled',
+                          value: AppCurrency.format(widget.netPaid),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 18),
+                    const _ReviewSectionTitle(
+                      icon: Icons.compare_arrows_rounded,
+                      title: 'Changes in this revision',
+                    ),
+                    const SizedBox(height: 9),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        _ChangeChip(
+                          icon: Icons.add_circle_outline,
+                          label: '${widget.diff.added} added',
+                          active: widget.diff.added > 0,
+                        ),
+                        _ChangeChip(
+                          icon: Icons.remove_circle_outline,
+                          label: '${widget.diff.removed} removed',
+                          active: widget.diff.removed > 0,
+                        ),
+                        _ChangeChip(
+                          icon: Icons.exposure_outlined,
+                          label: '${widget.diff.quantityChanged} quantity',
+                          active: widget.diff.quantityChanged > 0,
+                        ),
+                        _ChangeChip(
+                          icon: Icons.price_change_outlined,
+                          label: '${widget.diff.priceChanged} price',
+                          active: widget.diff.priceChanged > 0,
+                        ),
+                        _ChangeChip(
+                          icon: Icons.percent_rounded,
+                          label: '${widget.diff.discountChanged} discount',
+                          active: widget.diff.discountChanged > 0,
+                        ),
+                        _ChangeChip(
+                          icon: Icons.hub_outlined,
+                          label: 'Sale From changed',
+                          active: widget.diff.sourceChanged,
+                        ),
+                      ],
+                    ),
+                    if (widget.profit != null) ...[
+                      const SizedBox(height: 18),
+                      const _ReviewSectionTitle(
+                        icon: Icons.insights_outlined,
+                        title: 'Revised profit insight',
+                      ),
+                      const SizedBox(height: 9),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 14,
+                          vertical: 11,
+                        ),
+                        decoration: BoxDecoration(
+                          color: AppTheme.surfaceSoft,
+                          borderRadius: BorderRadius.circular(9),
+                          border: Border.all(color: AppTheme.border),
+                        ),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: _InlineReviewValue(
+                                label: 'Net Sales',
+                                value: AppCurrency.format(
+                                  widget.profit!.netSalesBeforeTax,
+                                ),
+                              ),
+                            ),
+                            Expanded(
+                              child: _InlineReviewValue(
+                                label: 'COGS',
+                                value: AppCurrency.format(
+                                  widget.profit!.costOfGoods,
+                                ),
+                              ),
+                            ),
+                            Expanded(
+                              child: _InlineReviewValue(
+                                label: widget.profit!.grossProfit < 0
+                                    ? 'Loss'
+                                    : 'Gross Profit',
+                                value: AppCurrency.format(
+                                  widget.profit!.grossProfit,
+                                ),
+                                valueColor: widget.profit!.grossProfit < 0
+                                    ? AppTheme.danger
+                                    : AppTheme.success,
+                              ),
+                            ),
+                            Expanded(
+                              child: _InlineReviewValue(
+                                label: 'Margin',
+                                value: widget.profit!.marginPercent == null
+                                    ? '—'
+                                    : '${widget.profit!.marginPercent!.toStringAsFixed(1)}%',
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 18),
+                    const _ReviewSectionTitle(
+                      icon: Icons.account_balance_wallet_outlined,
+                      title: 'Settlement after amendment',
+                    ),
+                    const SizedBox(height: 9),
+                    if (widget.deliverySale) ...[
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: AppTheme.primary.withOpacity(.06),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                            color: AppTheme.primary.withOpacity(.18),
+                          ),
+                        ),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Icon(
+                              Icons.delivery_dining_outlined,
+                              color: AppTheme.primary,
+                              size: 18,
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                _action == 'collect'
+                                    ? 'This delivery collection will be assigned to the selected rider’s custody (1210), exactly like a normal paid delivery sale. It will not be added to the cashier drawer.'
+                                    : _action == 'refund'
+                                        ? 'This refund is paid from the selected payment account. Existing rider custody is preserved because already-collected rider money is a separate historical financial movement.'
+                                        : 'Changing the invoice does not rewrite historical rider custody. Only actual new collections or refunds move money.',
+                                style: const TextStyle(
+                                  color: AppTheme.navy,
+                                  fontSize: 11.5,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                    ],
+                    DropdownButtonFormField<String>(
+                        value: _action,
+                        decoration: InputDecoration(
+                          labelText: _balance > .004
+                              ? 'Revised balance due: ${AppCurrency.format(_balance)}'
+                              : _balance < -.004
+                                  ? 'Customer credit: ${AppCurrency.format(-_balance)}'
+                                  : 'Invoice is exactly settled',
+                          border: const OutlineInputBorder(),
+                          isDense: true,
+                        ),
+                        items: settlementOptions,
+                        onChanged: hasBalance && widget.customerAttached
+                            ? (value) {
+                                if (value == null) return;
+                                setState(() {
+                                  _action = value;
+                                  _amountController.text =
+                                      _requiredAmount.toStringAsFixed(2);
+                                });
+                              }
+                            : null,
+                      ),
+                      if (_action != 'none') ...[
+                        const SizedBox(height: 10),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: TextFormField(
+                                controller: _amountController,
+                                readOnly: !widget.customerAttached,
+                                keyboardType: const TextInputType.numberWithOptions(
+                                  decimal: true,
+                                ),
+                                decoration: InputDecoration(
+                                  labelText: _action == 'refund'
+                                      ? 'Refund Amount'
+                                      : 'Collection Amount',
+                                  border: const OutlineInputBorder(),
+                                  isDense: true,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: DropdownButtonFormField<String>(
+                                value: _method,
+                                isExpanded: true,
+                                decoration: const InputDecoration(
+                                  labelText: 'Method',
+                                  border: OutlineInputBorder(),
+                                  isDense: true,
+                                ),
+                                items: widget.paymentMethods.isEmpty
+                                    ? const [
+                                        DropdownMenuItem(
+                                          value: 'cash',
+                                          child: Text('Cash'),
+                                        ),
+                                      ]
+                                    : widget.paymentMethods
+                                        .map(
+                                          (m) => DropdownMenuItem(
+                                            value: m.code,
+                                            child: Text(
+                                              m.label,
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                          ),
+                                        )
+                                        .toList(),
+                                onChanged: (value) {
+                                  if (value != null) {
+                                    setState(() => _method = value);
+                                  }
+                                },
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: TextField(
+                                controller: _referenceController,
+                                decoration: const InputDecoration(
+                                  labelText: 'Reference (optional)',
+                                  border: OutlineInputBorder(),
+                                  isDense: true,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    const SizedBox(height: 18),
+                    const _ReviewSectionTitle(
+                      icon: Icons.description_outlined,
+                      title: 'Amendment reason',
+                    ),
+                    const SizedBox(height: 9),
+                    TextField(
+                      controller: _reasonController,
+                      autofocus: true,
+                      minLines: 2,
+                      maxLines: 3,
+                      maxLength: 500,
+                      decoration: const InputDecoration(
+                        hintText:
+                            'Required — e.g. Customer changed size before delivery',
+                        border: OutlineInputBorder(),
+                        helperText:
+                            'This reason becomes part of the permanent invoice audit trail.',
+                      ),
+                    ),
+                    if (_error != null) ...[
+                      const SizedBox(height: 5),
+                      Text(
+                        _error!,
+                        style: const TextStyle(
+                          color: AppTheme.danger,
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              decoration: const BoxDecoration(
+                border: Border(top: BorderSide(color: AppTheme.border)),
+              ),
+              child: Row(
+                children: [
+                  const Expanded(
+                    child: Text(
+                      'Stock, COGS, AR, tax and ledger deltas commit together. If any validation fails, nothing is changed.',
+                      style: TextStyle(
+                        color: AppTheme.textMuted,
+                        fontSize: 10.5,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    child: const Text('Cancel'),
+                  ),
+                  const SizedBox(width: 6),
+                  FilledButton.icon(
+                    onPressed: _submit,
+                    icon: const Icon(Icons.check_circle_outline_rounded, size: 17),
+                    label: const Text('Save Amendment'),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ReviewMetric extends StatelessWidget {
+  final String label;
+  final String value;
+  final Color? valueColor;
+
+  const _ReviewMetric({
+    required this.label,
+    required this.value,
+    this.valueColor,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 166,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: AppTheme.surfaceSoft,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppTheme.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: const TextStyle(
+              color: AppTheme.textMuted,
+              fontSize: 10,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 3),
+          Text(
+            value,
+            style: TextStyle(
+              color: valueColor ?? AppTheme.navy,
+              fontSize: 15,
+              fontWeight: FontWeight.w900,
+              fontFeatures: const [FontFeature.tabularFigures()],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ReviewSectionTitle extends StatelessWidget {
+  final IconData icon;
+  final String title;
+
+  const _ReviewSectionTitle({required this.icon, required this.title});
+
+  @override
+  Widget build(BuildContext context) => Row(
+        children: [
+          Icon(icon, size: 16, color: AppTheme.primary),
+          const SizedBox(width: 6),
+          Text(
+            title,
+            style: const TextStyle(
+              color: AppTheme.navy,
+              fontSize: 12.5,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+        ],
+      );
+}
+
+class _ChangeChip extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final bool active;
+
+  const _ChangeChip({
+    required this.icon,
+    required this.label,
+    required this.active,
+  });
+
+  @override
+  Widget build(BuildContext context) => Container(
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
+        decoration: BoxDecoration(
+          color: active ? AppTheme.primary.withOpacity(.08) : AppTheme.surfaceSoft,
+          borderRadius: BorderRadius.circular(7),
+          border: Border.all(
+            color: active ? AppTheme.primary.withOpacity(.20) : AppTheme.border,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              icon,
+              size: 14,
+              color: active ? AppTheme.primary : AppTheme.textMuted,
+            ),
+            const SizedBox(width: 5),
+            Text(
+              label,
+              style: TextStyle(
+                color: active ? AppTheme.navy : AppTheme.textMuted,
+                fontSize: 10.5,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ),
+      );
+}
+
+class _InlineReviewValue extends StatelessWidget {
+  final String label;
+  final String value;
+  final Color? valueColor;
+
+  const _InlineReviewValue({
+    required this.label,
+    required this.value,
+    this.valueColor,
+  });
+
+  @override
+  Widget build(BuildContext context) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: const TextStyle(
+              color: AppTheme.textMuted,
+              fontSize: 9.5,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          Text(
+            value,
+            style: TextStyle(
+              color: valueColor ?? AppTheme.navy,
+              fontSize: 13,
+              fontWeight: FontWeight.w900,
+              fontFeatures: const [FontFeature.tabularFigures()],
+            ),
+          ),
+        ],
+      );
+}
+
+class _AmendmentHeaderMetric extends StatelessWidget {
+  final String label;
+  final String value;
+  final Color? valueColor;
+
+  const _AmendmentHeaderMetric({
+    required this.label,
+    required this.value,
+    this.valueColor,
+  });
+
+  @override
+  Widget build(BuildContext context) => Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            '$label ',
+            style: const TextStyle(
+              color: AppTheme.textMuted,
+              fontSize: 10.5,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          Text(
+            value,
+            style: TextStyle(
+              color: valueColor ?? AppTheme.navy,
+              fontSize: 11.5,
+              fontWeight: FontWeight.w900,
+              fontFeatures: const [FontFeature.tabularFigures()],
+            ),
+          ),
+        ],
+      );
+}
+
+class _AmendmentBottomMetric extends StatelessWidget {
+  final String label;
+  final String value;
+  final Color? valueColor;
+
+  const _AmendmentBottomMetric({
+    required this.label,
+    required this.value,
+    this.valueColor,
+  });
+
+  @override
+  Widget build(BuildContext context) => Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Text(
+            label,
+            style: const TextStyle(
+              color: AppTheme.textMuted,
+              fontSize: 9.5,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          Text(
+            value,
+            style: TextStyle(
+              color: valueColor ?? AppTheme.navy,
+              fontSize: 13.5,
+              fontWeight: FontWeight.w900,
+              fontFeatures: const [FontFeature.tabularFigures()],
+            ),
+          ),
+        ],
+      );
 }
