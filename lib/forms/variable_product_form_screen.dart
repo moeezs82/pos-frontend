@@ -1,10 +1,15 @@
+import 'dart:io';
+
 import 'package:enterprise_pos/api/common_service.dart';
 import 'package:enterprise_pos/api/product_group_service.dart';
+import 'package:enterprise_pos/api/product_service.dart';
 import 'package:enterprise_pos/api/unit_service.dart';
 import 'package:enterprise_pos/models/product_unit.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/app_feedback.dart';
+import 'package:enterprise_pos/widgets/reference_data_manager_dialog.dart';
 import 'package:enterprise_pos/widgets/vendor_picker_sheet.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -63,6 +68,7 @@ class _VariableProductFormScreenState extends State<VariableProductFormScreen> {
   bool _bulkBarcodeBusy = false;
 
   late ProductGroupService _groupService;
+  late ProductService _productService;
   late CommonService _commonService;
   late UnitService _unitService;
 
@@ -81,6 +87,7 @@ class _VariableProductFormScreenState extends State<VariableProductFormScreen> {
     super.initState();
     final token = Provider.of<AuthProvider>(context, listen: false).token!;
     _groupService = ProductGroupService(token: token);
+    _productService = ProductService(token: token);
     _commonService = CommonService(token: token);
     _unitService = UnitService(token: token);
 
@@ -115,17 +122,47 @@ class _VariableProductFormScreenState extends State<VariableProductFormScreen> {
 
   Future<void> _loadRefData() async {
     setState(() => _loading = true);
+    // Reference permissions are independent. Load them independently so a 403
+    // for units cannot wipe categories/brands (and vice versa).
+    await Future.wait([
+      _loadCategories(),
+      _loadBrands(),
+      _loadUnits(),
+    ]);
+    if (mounted) setState(() => _loading = false);
+  }
+
+  Future<void> _loadCategories() async {
     try {
-      final cats = await _commonService.getCategories();
+      final categories = await _commonService.getCategories();
+      if (!mounted) return;
+      setState(() => _categories = categories);
+    } catch (e) {
+      debugPrint('Error loading categories: $e');
+    }
+  }
+
+  Future<void> _loadBrands() async {
+    try {
       final brands = await _commonService.getBrands();
+      if (!mounted) return;
+      setState(() => _brands = brands);
+    } catch (e) {
+      debugPrint('Error loading brands: $e');
+    }
+  }
+
+  Future<void> _loadUnits() async {
+    try {
       final units = await _unitService.list();
       if (!mounted) return;
       setState(() {
-        _categories = cats;
-        _brands = brands;
         _units = units
-            .where((u) => u.isActive || u.id == _selectedUnitId)
+            .where((u) => u.isActive || (_isEdit && u.id == _selectedUnitId))
             .toList();
+        if (!_units.any((u) => u.id == _selectedUnitId)) {
+          _selectedUnitId = null;
+        }
         if (_selectedUnitId == null && !_isEdit && _units.isNotEmpty) {
           final piece =
               _units.where((u) => u.name.toLowerCase() == 'piece').toList();
@@ -133,10 +170,85 @@ class _VariableProductFormScreenState extends State<VariableProductFormScreen> {
         }
       });
     } catch (e) {
-      if (mounted) AppFeedback.error(context, 'Failed to load data: $e');
-    } finally {
-      if (mounted) setState(() => _loading = false);
+      debugPrint('Error loading units: $e');
     }
+  }
+
+  Future<void> _manageCategories() async {
+    final auth = context.read<AuthProvider>();
+    if (!auth.hasPermission('manage-categories')) return;
+    final result = await showNamedReferenceManagerDialog(
+      context: context,
+      title: 'Manage Categories',
+      singularLabel: 'Category',
+      icon: Icons.category_outlined,
+      selectedId: _selectedCategoryId,
+      loadItems: _commonService.getCategories,
+      createItem: _commonService.createCategory,
+      updateItem: _commonService.updateCategory,
+      deleteItem: _commonService.deleteCategory,
+      // Group update treats an omitted nullable FK as "leave unchanged".
+      // Do not offer Clear while editing until the backend clear contract is
+      // unambiguous; create mode may still leave the field unset.
+      allowClearSelection: !_isEdit,
+    );
+    if (result == null || !mounted) return;
+    await _loadCategories();
+    if (!mounted) return;
+    setState(() {
+      _selectedCategoryId =
+          _categories.any((c) => _asInt(c['id']) == result.selectedId)
+              ? result.selectedId
+              : null;
+    });
+  }
+
+  Future<void> _manageBrands() async {
+    final auth = context.read<AuthProvider>();
+    if (!auth.hasPermission('manage-brands')) return;
+    final result = await showNamedReferenceManagerDialog(
+      context: context,
+      title: 'Manage Brands',
+      singularLabel: 'Brand',
+      icon: Icons.branding_watermark_outlined,
+      selectedId: _selectedBrandId,
+      loadItems: _commonService.getBrands,
+      createItem: _commonService.createBrand,
+      updateItem: _commonService.updateBrand,
+      deleteItem: _commonService.deleteBrand,
+      allowClearSelection: !_isEdit,
+    );
+    if (result == null || !mounted) return;
+    await _loadBrands();
+    if (!mounted) return;
+    setState(() {
+      _selectedBrandId = _brands.any((b) => _asInt(b['id']) == result.selectedId)
+          ? result.selectedId
+          : null;
+    });
+  }
+
+  Future<void> _manageUnits() async {
+    final auth = context.read<AuthProvider>();
+    if (!auth.hasPermission('manage-units')) return;
+    final result = await showUnitManagerDialog(
+      context: context,
+      service: _unitService,
+      selectedId: _selectedUnitId,
+      allowClearSelection: !_isEdit,
+    );
+    if (result == null || !mounted) return;
+    if (result.selectedId != _selectedUnitId) {
+      _selectedUnitId = result.selectedId;
+    }
+    await _loadUnits();
+    if (!mounted) return;
+    setState(() {
+      if (_selectedUnitId != null &&
+          !_units.any((u) => u.id == _selectedUnitId)) {
+        _selectedUnitId = null;
+      }
+    });
   }
 
   Future<void> _pickVendor() async {
@@ -237,6 +349,13 @@ class _VariableProductFormScreenState extends State<VariableProductFormScreen> {
     if (draft.retailPrice <= 0) return 'Retail price must be greater than 0.';
     if (draft.wholesalePrice < 0 || draft.costPrice < 0) {
       return 'Price and cost values cannot be negative.';
+    }
+    if (draft.discount < 0) return 'Discount cannot be negative.';
+    if (draft.discountType == 'percentage' && draft.discount > 100) {
+      return 'Percentage discount cannot exceed 100%.';
+    }
+    if (draft.discountType == 'fixed' && draft.discount > draft.retailPrice) {
+      return 'Fixed discount cannot exceed the retail price.';
     }
     if (draft.openingStock < 0) return 'Opening stock cannot be negative.';
     if (draft.reorderLevel < 0) return 'Reorder level cannot be negative.';
@@ -380,12 +499,13 @@ class _VariableProductFormScreenState extends State<VariableProductFormScreen> {
               reorderLevel: v.reorderLevel,
               taxRate: taxRate,
               taxInclusive: _taxInclusive,
-              discountType: _discountType,
+              discount: v.discount,
+              discountType: v.discountType,
             ),
           )
           .toList();
 
-      await _groupService.createVariableProduct(
+      final created = await _groupService.createVariableProduct(
         name: _nameCtrl.text.trim(),
         secondaryName: _secondaryNameCtrl.text.trim(),
         isActive: _isActive,
@@ -399,11 +519,23 @@ class _VariableProductFormScreenState extends State<VariableProductFormScreen> {
         variants: variants,
       );
 
+      // Variant creation is atomic on the backend, while images use the
+      // existing multipart product endpoint. Match returned products by the
+      // required unique SKU (not list order) before uploading each image.
+      final failedImages = await _uploadCreatedVariantImages(created);
+
       if (mounted) {
-        AppFeedback.success(
-          context,
-          'Created ${_nameCtrl.text.trim()} with ${variants.length} variant${variants.length == 1 ? '' : 's'}.',
-        );
+        if (failedImages > 0) {
+          AppFeedback.warning(
+            context,
+            'Product created successfully, but $failedImages variant image${failedImages == 1 ? '' : 's'} could not be uploaded. Open the product family and retry the image from Edit Variant.',
+          );
+        } else {
+          AppFeedback.success(
+            context,
+            'Created ${_nameCtrl.text.trim()} with ${variants.length} variant${variants.length == 1 ? '' : 's'}.',
+          );
+        }
         Navigator.pop(context, true);
       }
     } catch (e) {
@@ -411,6 +543,43 @@ class _VariableProductFormScreenState extends State<VariableProductFormScreen> {
     } finally {
       if (mounted) setState(() => _saving = false);
     }
+  }
+
+  Future<int> _uploadCreatedVariantImages(Map<String, dynamic> created) async {
+    final rawProducts = created['products'];
+    if (rawProducts is! List) {
+      return _variants.where((v) => v.imagePath != null).length;
+    }
+
+    final productIdBySku = <String, int>{};
+    for (final raw in rawProducts) {
+      if (raw is! Map) continue;
+      final sku = (raw['sku'] ?? '').toString().trim();
+      final id = _asInt(raw['id']);
+      if (sku.isNotEmpty && id != null) productIdBySku[sku] = id;
+    }
+
+    var failed = 0;
+    for (final variant in _variants) {
+      final imagePath = variant.imagePath;
+      if (imagePath == null || imagePath.isEmpty) continue;
+      final productId = productIdBySku[variant.sku.trim()];
+      if (productId == null) {
+        failed++;
+        continue;
+      }
+      try {
+        await _productService.updateProduct(
+          productId,
+          const <String, dynamic>{},
+          imagePath: imagePath,
+        );
+      } catch (e) {
+        debugPrint('Variant image upload failed for ${variant.sku}: $e');
+        failed++;
+      }
+    }
+    return failed;
   }
 
   @override
@@ -515,6 +684,11 @@ class _VariableProductFormScreenState extends State<VariableProductFormScreen> {
   }
 
   Widget _buildGeneralCard() {
+    final auth = context.watch<AuthProvider>();
+    final canManageCategories = auth.hasPermission('manage-categories');
+    final canManageBrands = auth.hasPermission('manage-brands');
+    final canManageUnits = auth.hasPermission('manage-units');
+
     return _sectionCard(
       title: 'General Information',
       subtitle: 'Shared by every variant in this product family.',
@@ -556,50 +730,94 @@ class _VariableProductFormScreenState extends State<VariableProductFormScreen> {
               ),
               SizedBox(
                 width: width,
-                child: _dropdownField(
-                  label: 'Category',
-                  icon: Icons.category_outlined,
-                  value: _validMapSelection(_categories, _selectedCategoryId),
-                  items: _categories,
-                  onChanged: (value) =>
-                      setState(() => _selectedCategoryId = value),
-                ),
-              ),
-              SizedBox(
-                width: width,
-                child: _dropdownField(
-                  label: 'Brand',
-                  icon: Icons.branding_watermark_outlined,
-                  value: _validMapSelection(_brands, _selectedBrandId),
-                  items: _brands,
-                  onChanged: (value) =>
-                      setState(() => _selectedBrandId = value),
-                ),
-              ),
-              SizedBox(
-                width: width,
-                child: DropdownButtonFormField<int?>(
-                  value: _units.any((u) => u.id == _selectedUnitId)
-                      ? _selectedUnitId
-                      : null,
-                  decoration: _inputDecoration('Unit of Measure',
-                      icon: Icons.straighten_outlined),
-                  items: [
-                    const DropdownMenuItem<int?>(
-                      value: null,
-                      child: Text('None'),
-                    ),
-                    ..._units.map(
-                      (u) => DropdownMenuItem<int?>(
-                        value: u.id,
-                        child: Text(
-                          u.allowDecimal ? '${u.name} · decimals allowed' : u.name,
-                        ),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: _dropdownField(
+                        label: 'Category',
+                        icon: Icons.category_outlined,
+                        value: _validMapSelection(_categories, _selectedCategoryId),
+                        items: _categories,
+                        onChanged: (value) =>
+                            setState(() => _selectedCategoryId = value),
                       ),
                     ),
+                    if (canManageCategories) ...[
+                      const SizedBox(width: 4),
+                      IconButton(
+                        tooltip: 'Manage categories',
+                        onPressed: _saving ? null : _manageCategories,
+                        icon: const Icon(Icons.tune_rounded, color: AppTheme.primary),
+                      ),
+                    ],
                   ],
-                  onChanged: (value) =>
-                      setState(() => _selectedUnitId = value),
+                ),
+              ),
+              SizedBox(
+                width: width,
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: _dropdownField(
+                        label: 'Brand',
+                        icon: Icons.branding_watermark_outlined,
+                        value: _validMapSelection(_brands, _selectedBrandId),
+                        items: _brands,
+                        onChanged: (value) =>
+                            setState(() => _selectedBrandId = value),
+                      ),
+                    ),
+                    if (canManageBrands) ...[
+                      const SizedBox(width: 4),
+                      IconButton(
+                        tooltip: 'Manage brands',
+                        onPressed: _saving ? null : _manageBrands,
+                        icon: const Icon(Icons.tune_rounded, color: AppTheme.primary),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              SizedBox(
+                width: width,
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: DropdownButtonFormField<int?>(
+                        value: _units.any((u) => u.id == _selectedUnitId)
+                            ? _selectedUnitId
+                            : null,
+                        decoration: _inputDecoration('Unit of Measure',
+                            icon: Icons.straighten_outlined),
+                        items: [
+                          const DropdownMenuItem<int?>(
+                            value: null,
+                            child: Text('None'),
+                          ),
+                          ..._units.map(
+                            (u) => DropdownMenuItem<int?>(
+                              value: u.id,
+                              child: Text(
+                                u.allowDecimal
+                                    ? '${u.name} · decimals allowed'
+                                    : u.name,
+                              ),
+                            ),
+                          ),
+                        ],
+                        onChanged: (value) =>
+                            setState(() => _selectedUnitId = value),
+                      ),
+                    ),
+                    if (canManageUnits) ...[
+                      const SizedBox(width: 4),
+                      IconButton(
+                        tooltip: 'Manage units',
+                        onPressed: _saving ? null : _manageUnits,
+                        icon: const Icon(Icons.tune_rounded, color: AppTheme.primary),
+                      ),
+                    ],
+                  ],
                 ),
               ),
               SizedBox(width: width, child: _vendorField()),
@@ -794,6 +1012,7 @@ class _VariableProductFormScreenState extends State<VariableProductFormScreen> {
           headingRowColor:
               MaterialStateProperty.all(const Color(0xFFF3F6FA)),
           columns: const [
+            DataColumn(label: _TableHeading('IMAGE')),
             DataColumn(label: _TableHeading('SIZE')),
             DataColumn(label: _TableHeading('COLOR')),
             DataColumn(label: _TableHeading('SKU')),
@@ -801,6 +1020,7 @@ class _VariableProductFormScreenState extends State<VariableProductFormScreen> {
             DataColumn(label: _TableHeading('RETAIL'), numeric: true),
             DataColumn(label: _TableHeading('WHOLESALE'), numeric: true),
             DataColumn(label: _TableHeading('COST'), numeric: true),
+            DataColumn(label: _TableHeading('DISCOUNT')),
             DataColumn(label: _TableHeading('OPENING'), numeric: true),
             DataColumn(label: _TableHeading('REORDER'), numeric: true),
             DataColumn(label: _TableHeading('ACTIONS')),
@@ -809,6 +1029,7 @@ class _VariableProductFormScreenState extends State<VariableProductFormScreen> {
             final v = _variants[index];
             return DataRow(
               cells: [
+                DataCell(_draftImageThumb(v.imagePath)),
                 DataCell(_tableText(v.size.isEmpty ? '—' : v.size,
                     strong: true)),
                 DataCell(_tableText(v.color.isEmpty ? '—' : v.color,
@@ -820,6 +1041,7 @@ class _VariableProductFormScreenState extends State<VariableProductFormScreen> {
                 DataCell(_tableText(_fmtMoney(v.retailPrice), strong: true)),
                 DataCell(_tableText(_fmtMoney(v.wholesalePrice))),
                 DataCell(_tableText(_fmtMoney(v.costPrice))),
+                DataCell(_tableText(_discountLabel(v.discount, v.discountType))),
                 DataCell(_tableText(_fmtQty(v.openingStock))),
                 DataCell(_tableText(v.reorderLevel.toString())),
                 DataCell(
@@ -847,6 +1069,43 @@ class _VariableProductFormScreenState extends State<VariableProductFormScreen> {
         ),
       ),
     );
+  }
+
+  Widget _draftImageThumb(String? path) {
+    if (path == null || path.isEmpty) {
+      return Container(
+        width: 38,
+        height: 38,
+        decoration: BoxDecoration(
+          color: AppTheme.surfaceSoft,
+          borderRadius: BorderRadius.circular(7),
+          border: Border.all(color: AppTheme.border),
+        ),
+        child: const Icon(Icons.image_outlined, size: 17, color: AppTheme.textMuted),
+      );
+    }
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(7),
+      child: Image.file(
+        File(path),
+        width: 38,
+        height: 38,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => Container(
+          width: 38,
+          height: 38,
+          color: AppTheme.surfaceSoft,
+          child: const Icon(Icons.broken_image_outlined,
+              size: 17, color: AppTheme.textMuted),
+        ),
+      ),
+    );
+  }
+
+  String _discountLabel(double value, String type) {
+    if (value <= 0) return '—';
+    if (type == 'fixed') return '${_fmtMoney(value)} fixed';
+    return '${_fmtQty(value)}%';
   }
 
   Widget _buildFooterActions() {
@@ -1289,6 +1548,9 @@ class _VariantEditorDialogState extends State<_VariantEditorDialog> {
   late final TextEditingController _costCtrl;
   late final TextEditingController _stockCtrl;
   late final TextEditingController _reorderCtrl;
+  late final TextEditingController _discountCtrl;
+  late String _discountType;
+  String? _imagePath;
 
   bool _skuBusy = false;
   bool _barcodeBusy = false;
@@ -1313,6 +1575,9 @@ class _VariantEditorDialogState extends State<_VariantEditorDialog> {
     _reorderCtrl = TextEditingController(
       text: seed.reorderLevel == 0 ? '0' : seed.reorderLevel.toString(),
     );
+    _discountCtrl = TextEditingController(text: _numberText(seed.discount));
+    _discountType = seed.discountType == 'fixed' ? 'fixed' : 'percentage';
+    _imagePath = seed.imagePath;
   }
 
   @override
@@ -1327,7 +1592,107 @@ class _VariantEditorDialogState extends State<_VariantEditorDialog> {
     _costCtrl.dispose();
     _stockCtrl.dispose();
     _reorderCtrl.dispose();
+    _discountCtrl.dispose();
     super.dispose();
+  }
+
+  Future<void> _pickImage() async {
+    if (_submitting) return;
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: const ['jpg', 'jpeg', 'png', 'webp'],
+    );
+    if (result == null || result.files.single.path == null) return;
+    final file = result.files.single;
+    if (file.size > 2 * 1024 * 1024) {
+      if (mounted) {
+        AppFeedback.error(context, 'Product images must be 2 MB or smaller.');
+      }
+      return;
+    }
+    if (mounted) setState(() => _imagePath = file.path);
+  }
+
+  Widget _buildImagePicker() {
+    final path = _imagePath;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Container(
+          height: 150,
+          decoration: BoxDecoration(
+            color: AppTheme.surfaceSoft,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: AppTheme.border),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: path == null || path.isEmpty
+              ? const Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.add_photo_alternate_outlined,
+                          size: 34, color: AppTheme.textMuted),
+                      SizedBox(height: 6),
+                      Text(
+                        'No variant image selected',
+                        style: TextStyle(
+                          fontSize: 11.5,
+                          color: AppTheme.textMuted,
+                        ),
+                      ),
+                    ],
+                  ),
+                )
+              : Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    Image.file(
+                      File(path),
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => const Center(
+                        child: Icon(Icons.broken_image_outlined,
+                            color: AppTheme.textMuted),
+                      ),
+                    ),
+                    Positioned(
+                      right: 8,
+                      top: 8,
+                      child: CircleAvatar(
+                        radius: 15,
+                        backgroundColor: Colors.black54,
+                        child: IconButton(
+                          tooltip: 'Remove image',
+                          padding: EdgeInsets.zero,
+                          iconSize: 16,
+                          onPressed: _submitting
+                              ? null
+                              : () => setState(() => _imagePath = null),
+                          icon: const Icon(Icons.close_rounded,
+                              color: Colors.white),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+        ),
+        const SizedBox(height: 8),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: OutlinedButton.icon(
+            onPressed: _submitting ? null : _pickImage,
+            icon: const Icon(Icons.image_outlined, size: 17),
+            label: Text(path == null || path.isEmpty
+                ? 'Choose Image'
+                : 'Replace Image'),
+          ),
+        ),
+        const Text(
+          'JPG, PNG, or WebP · maximum 2 MB',
+          style: TextStyle(fontSize: 10.5, color: AppTheme.textMuted),
+        ),
+      ],
+    );
   }
 
   Future<void> _generateSku() async {
@@ -1383,8 +1748,11 @@ class _VariantEditorDialogState extends State<_VariantEditorDialog> {
       retailPrice: _parseDouble(_retailCtrl.text),
       wholesalePrice: _parseDouble(_wholesaleCtrl.text),
       costPrice: _parseDouble(_costCtrl.text),
+      discount: _parseDouble(_discountCtrl.text),
+      discountType: _discountType,
       openingStock: _parseDouble(_stockCtrl.text),
       reorderLevel: _parseInt(_reorderCtrl.text),
+      imagePath: _imagePath,
     );
 
     final error = widget.validateDraft(draft);
@@ -1456,6 +1824,10 @@ class _VariantEditorDialogState extends State<_VariantEditorDialog> {
                         'Secondary Name',
                         hint: 'Optional local-language name for this variant',
                       ),
+                      const SizedBox(height: 22),
+                      _sectionTitle('Product Image'),
+                      const SizedBox(height: 10),
+                      _buildImagePicker(),
                       const SizedBox(height: 22),
                       _sectionTitle('Identification'),
                       const SizedBox(height: 10),
@@ -1537,6 +1909,60 @@ class _VariantEditorDialogState extends State<_VariantEditorDialog> {
                               _reorderCtrl,
                               'Reorder Level',
                               numeric: true,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _field(
+                              _discountCtrl,
+                              _discountType == 'fixed'
+                                  ? 'Discount (Fixed Amount)'
+                                  : 'Discount (%)',
+                              numeric: true,
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: DropdownButtonFormField<String>(
+                              value: _discountType,
+                              decoration: InputDecoration(
+                                labelText: 'Discount Type',
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(9),
+                                ),
+                                enabledBorder: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(9),
+                                  borderSide:
+                                      const BorderSide(color: AppTheme.border),
+                                ),
+                                focusedBorder: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(9),
+                                  borderSide: const BorderSide(
+                                      color: AppTheme.primary, width: 1.5),
+                                ),
+                                isDense: true,
+                              ),
+                              items: const [
+                                DropdownMenuItem(
+                                  value: 'percentage',
+                                  child: Text('Percentage (%)'),
+                                ),
+                                DropdownMenuItem(
+                                  value: 'fixed',
+                                  child: Text('Fixed Amount'),
+                                ),
+                              ],
+                              onChanged: _submitting
+                                  ? null
+                                  : (value) {
+                                      if (value != null) {
+                                        setState(() => _discountType = value);
+                                      }
+                                    },
                             ),
                           ),
                         ],
@@ -1735,8 +2161,11 @@ class _VariantDraft {
   double retailPrice;
   double wholesalePrice;
   double costPrice;
+  double discount;
+  String discountType;
   double openingStock;
   int reorderLevel;
+  String? imagePath;
 
   _VariantDraft({
     required this.id,
@@ -1748,8 +2177,11 @@ class _VariantDraft {
     this.retailPrice = 0,
     this.wholesalePrice = 0,
     this.costPrice = 0,
+    this.discount = 0,
+    this.discountType = 'percentage',
     this.openingStock = 0,
     this.reorderLevel = 0,
+    this.imagePath,
   });
 
   _VariantDraft copy() => _VariantDraft(
@@ -1762,8 +2194,11 @@ class _VariantDraft {
         retailPrice: retailPrice,
         wholesalePrice: wholesalePrice,
         costPrice: costPrice,
+        discount: discount,
+        discountType: discountType,
         openingStock: openingStock,
         reorderLevel: reorderLevel,
+        imagePath: imagePath,
       );
 
   _VariantDraft copyForNext({required int id}) => _VariantDraft(
@@ -1772,7 +2207,12 @@ class _VariantDraft {
         retailPrice: retailPrice,
         wholesalePrice: wholesalePrice,
         costPrice: costPrice,
+        discount: discount,
+        discountType: discountType,
         reorderLevel: reorderLevel,
+        // Never copy an image into the next variant automatically; colors and
+        // sizes often have different product photos.
+        imagePath: null,
       );
 }
 

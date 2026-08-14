@@ -1,4 +1,7 @@
+import 'dart:io';
+
 import 'package:enterprise_pos/api/product_group_service.dart';
+import 'package:enterprise_pos/api/product_service.dart';
 import 'package:enterprise_pos/forms/variable_product_form_screen.dart';
 import 'package:enterprise_pos/models/printer_config.dart';
 import 'package:enterprise_pos/providers/branch_provider.dart';
@@ -9,6 +12,7 @@ import 'package:enterprise_pos/widgets/app_feedback.dart';
 import 'package:enterprise_pos/widgets/barcode_print_dialog.dart';
 import 'package:enterprise_pos/widgets/variant_barcode_print_dialog.dart';
 import 'package:enterprise_pos/widgets/enterprise/enterprise_ui.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/auth_provider.dart';
@@ -37,12 +41,14 @@ class _ProductGroupDetailScreenState extends State<ProductGroupDetailScreen> {
   bool _changed = false;
 
   late ProductGroupService _service;
+  late ProductService _productService;
 
   @override
   void initState() {
     super.initState();
     final token = Provider.of<AuthProvider>(context, listen: false).token!;
     _service = ProductGroupService(token: token);
+    _productService = ProductService(token: token);
     _load();
   }
 
@@ -172,6 +178,119 @@ class _ProductGroupDetailScreenState extends State<ProductGroupDetailScreen> {
     }
   }
 
+  Future<String?> _pickVariantImage(BuildContext feedbackContext) async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: const ['jpg', 'jpeg', 'png', 'webp'],
+    );
+    if (result == null || result.files.single.path == null) return null;
+    final file = result.files.single;
+    if (file.size > 2 * 1024 * 1024) {
+      if (feedbackContext.mounted) {
+        AppFeedback.error(feedbackContext, 'Product images must be 2 MB or smaller.');
+      }
+      return null;
+    }
+    return file.path;
+  }
+
+  Widget _variantImageEditor({
+    required String? pickedPath,
+    required String? currentUrl,
+    required bool removeCurrent,
+    required VoidCallback? onPick,
+    required VoidCallback? onRemove,
+  }) {
+    final hasPicked = pickedPath != null && pickedPath.isNotEmpty;
+    final hasCurrent =
+        !hasPicked && !removeCurrent && currentUrl != null && currentUrl.isNotEmpty;
+
+    Widget preview;
+    if (hasPicked) {
+      preview = Image.file(
+        File(pickedPath!),
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => const Center(
+          child: Icon(Icons.broken_image_outlined, color: AppTheme.textMuted),
+        ),
+      );
+    } else if (hasCurrent) {
+      preview = Image.network(
+        currentUrl!,
+        fit: BoxFit.cover,
+        loadingBuilder: (_, child, progress) => progress == null
+            ? child
+            : const Center(child: CircularProgressIndicator(strokeWidth: 2)),
+        errorBuilder: (_, __, ___) => const Center(
+          child: Icon(Icons.broken_image_outlined, color: AppTheme.textMuted),
+        ),
+      );
+    } else {
+      preview = const Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.add_photo_alternate_outlined,
+                size: 32, color: AppTheme.textMuted),
+            SizedBox(height: 5),
+            Text('No variant image',
+                style: TextStyle(fontSize: 11, color: AppTheme.textMuted)),
+          ],
+        ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Container(
+          height: 145,
+          decoration: BoxDecoration(
+            color: AppTheme.surfaceSoft,
+            borderRadius: BorderRadius.circular(9),
+            border: Border.all(color: AppTheme.border),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              preview,
+              if (hasPicked || hasCurrent)
+                Positioned(
+                  right: 8,
+                  top: 8,
+                  child: CircleAvatar(
+                    radius: 15,
+                    backgroundColor: Colors.black54,
+                    child: IconButton(
+                      tooltip: 'Remove image',
+                      padding: EdgeInsets.zero,
+                      iconSize: 16,
+                      onPressed: onRemove,
+                      icon: const Icon(Icons.close_rounded, color: Colors.white),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 8),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: OutlinedButton.icon(
+            onPressed: onPick,
+            icon: const Icon(Icons.image_outlined, size: 17),
+            label: Text(hasPicked || hasCurrent ? 'Replace Image' : 'Choose Image'),
+          ),
+        ),
+        const Text(
+          'JPG, PNG, or WebP · maximum 2 MB',
+          style: TextStyle(fontSize: 10.5, color: AppTheme.textMuted),
+        ),
+      ],
+    );
+  }
+
   // ── Add Variant dialog ────────────────────────────────────────────────────
 
   Future<bool?> _showAddVariantDialog() async {
@@ -184,11 +303,15 @@ class _ProductGroupDetailScreenState extends State<ProductGroupDetailScreen> {
     final costCtrl = TextEditingController();
     final stockCtrl = TextEditingController();
     final wholesaleCtrl = TextEditingController();
+    final discountCtrl = TextEditingController();
     final skuCtrl = TextEditingController();
     final barcodeCtrl = TextEditingController();
     final reorderCtrl = TextEditingController(text: '0');
     bool skuBusy = false;
     bool barcodeBusy = false;
+    bool saving = false;
+    String discountType = 'percentage';
+    String? imagePath;
     final groupName = _group?['name']?.toString() ?? widget.groupName;
 
     final result = await showDialog<bool>(
@@ -196,26 +319,22 @@ class _ProductGroupDetailScreenState extends State<ProductGroupDetailScreen> {
       barrierDismissible: false,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setSt) => Dialog(
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          insetPadding:
-              const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(16),
+          ),
+          insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
           child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 540),
+            constraints: const BoxConstraints(maxWidth: 580, maxHeight: 780),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                // Dialog header
                 Container(
                   padding: const EdgeInsets.fromLTRB(20, 18, 14, 16),
                   decoration: const BoxDecoration(
                     color: AppTheme.surfaceSoft,
-                    borderRadius:
-                        BorderRadius.vertical(top: Radius.circular(16)),
-                    border: Border(
-                      bottom: BorderSide(color: AppTheme.border),
-                    ),
+                    borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+                    border: Border(bottom: BorderSide(color: AppTheme.border)),
                   ),
                   child: Row(
                     children: [
@@ -226,139 +345,228 @@ class _ProductGroupDetailScreenState extends State<ProductGroupDetailScreen> {
                           color: AppTheme.primarySoft,
                           borderRadius: BorderRadius.circular(10),
                         ),
-                        child: const Icon(Icons.add_rounded,
-                            size: 19, color: AppTheme.primary),
+                        child: const Icon(
+                          Icons.add_rounded,
+                          size: 19,
+                          color: AppTheme.primary,
+                        ),
                       ),
                       const SizedBox(width: 10),
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text('Add Variant',
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'Add Variant',
                               style: TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.w900,
-                                  color: AppTheme.navy)),
-                          Text('Add one sellable SKU to $groupName',
+                                fontSize: 16,
+                                fontWeight: FontWeight.w900,
+                                color: AppTheme.navy,
+                              ),
+                            ),
+                            Text(
+                              'Add one sellable SKU to $groupName',
                               style: const TextStyle(
-                                  fontSize: 11.5,
-                                  color: AppTheme.textMuted,
-                                  fontWeight: FontWeight.w600)),
-                        ],
+                                fontSize: 11.5,
+                                color: AppTheme.textMuted,
+                                fontWeight: FontWeight.w600,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ],
+                        ),
                       ),
-                      const Spacer(),
                       IconButton(
-                        icon: const Icon(Icons.close_rounded,
-                            color: AppTheme.textMuted, size: 18),
-                        onPressed: () => Navigator.pop(ctx, false),
+                        icon: const Icon(
+                          Icons.close_rounded,
+                          color: AppTheme.textMuted,
+                          size: 18,
+                        ),
+                        onPressed: saving ? null : () => Navigator.pop(ctx, false),
                         padding: EdgeInsets.zero,
-                        constraints: const BoxConstraints(
-                            minWidth: 32, minHeight: 32),
+                        constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
                         splashRadius: 16,
                       ),
                     ],
                   ),
                 ),
-                // Body
-                SingleChildScrollView(
-                  padding: const EdgeInsets.fromLTRB(20, 18, 20, 4),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      _dlgLabel('Dimensions'),
-                      const SizedBox(height: 8),
-                      Row(children: [
-                        Expanded(
-                            child: _dlgField(sizeCtrl,
-                                'Size (e.g. S, M, XL)')),
-                        const SizedBox(width: 10),
-                        Expanded(
-                            child: _dlgField(colorCtrl,
-                                'Color (e.g. Black)')),
-                      ]),
-                      const SizedBox(height: 10),
-                      _dlgField(
-                        secondaryNameCtrl,
-                        'Secondary Name',
-                      ),
-                      const SizedBox(height: 16),
-                      _dlgLabel('Pricing'),
-                      const SizedBox(height: 8),
-                      Row(children: [
-                        Expanded(
-                            child: _dlgField(priceCtrl, 'Retail Price *',
-                                numeric: true, required: true)),
-                        const SizedBox(width: 10),
-                        Expanded(
-                            child: _dlgField(
-                                wholesaleCtrl, 'Wholesale Price',
-                                numeric: true)),
-                      ]),
-                      const SizedBox(height: 10),
-                      Row(children: [
-                        Expanded(
-                            child: _dlgField(costCtrl, 'Cost Price',
-                                numeric: true)),
-                        const SizedBox(width: 10),
-                        Expanded(
-                            child: _dlgField(stockCtrl, 'Opening Stock',
-                                numeric: true)),
-                      ]),
-                      const SizedBox(height: 10),
-                      _dlgField(reorderCtrl, 'Reorder Level', numeric: true),
-                      const SizedBox(height: 16),
-                      _dlgLabel('Identification'),
-                      const SizedBox(height: 8),
-                      Row(children: [
-                        Expanded(child: _dlgField(skuCtrl, 'SKU *', required: true)),
-                        const SizedBox(width: 8),
-                        _genBtn(
-                          label: 'Auto SKU',
-                          icon: Icons.auto_awesome_rounded,
-                          busy: skuBusy,
-                          onTap: () async {
-                            setSt(() => skuBusy = true);
-                            try {
-                              final sku = await _service.generateSKU(
-                                groupName: groupName,
-                                size: sizeCtrl.text.trim(),
-                                color: colorCtrl.text.trim(),
-                              );
-                              skuCtrl.text = sku;
-                            } catch (e) {
-                              if (ctx.mounted)
-                                AppFeedback.error(ctx, 'SKU generation failed: $e');
-                            }
-                            setSt(() => skuBusy = false);
-                          },
+                Flexible(
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.fromLTRB(20, 18, 20, 8),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        _dlgLabel('Dimensions'),
+                        const SizedBox(height: 8),
+                        Row(
+                          children: [
+                            Expanded(child: _dlgField(sizeCtrl, 'Size (e.g. S, M, XL)')),
+                            const SizedBox(width: 10),
+                            Expanded(child: _dlgField(colorCtrl, 'Color (e.g. Black)')),
+                          ],
                         ),
-                      ]),
-                      const SizedBox(height: 10),
-                      Row(children: [
-                        Expanded(
-                            child: _dlgField(barcodeCtrl, 'Barcode')),
-                        const SizedBox(width: 8),
-                        _genBtn(
-                          label: 'Auto',
-                          icon: Icons.qr_code_2_rounded,
-                          busy: barcodeBusy,
-                          onTap: () async {
-                            setSt(() => barcodeBusy = true);
-                            try {
-                              final bc = await _service.generateBarcode();
-                              barcodeCtrl.text = bc;
-                            } catch (e) {
-                              if (ctx.mounted)
-                                AppFeedback.error(ctx, 'Barcode generation failed: $e');
-                            }
-                            setSt(() => barcodeBusy = false);
-                          },
+                        const SizedBox(height: 10),
+                        _dlgField(secondaryNameCtrl, 'Secondary Name'),
+                        const SizedBox(height: 16),
+                        _dlgLabel('Product Image'),
+                        const SizedBox(height: 8),
+                        _variantImageEditor(
+                          pickedPath: imagePath,
+                          currentUrl: null,
+                          removeCurrent: false,
+                          onPick: saving
+                              ? null
+                              : () async {
+                                  final picked = await _pickVariantImage(ctx);
+                                  if (picked != null && ctx.mounted) {
+                                    setSt(() => imagePath = picked);
+                                  }
+                                },
+                          onRemove: saving
+                              ? null
+                              : () => setSt(() => imagePath = null),
                         ),
-                      ]),
-                      const SizedBox(height: 20),
-                    ],
+                        const SizedBox(height: 16),
+                        _dlgLabel('Pricing'),
+                        const SizedBox(height: 8),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: _dlgField(
+                                priceCtrl,
+                                'Retail Price *',
+                                numeric: true,
+                                required: true,
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: _dlgField(
+                                wholesaleCtrl,
+                                'Wholesale Price',
+                                numeric: true,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 10),
+                        Row(
+                          children: [
+                            Expanded(child: _dlgField(costCtrl, 'Cost Price', numeric: true)),
+                            const SizedBox(width: 10),
+                            Expanded(child: _dlgField(stockCtrl, 'Opening Stock', numeric: true)),
+                          ],
+                        ),
+                        const SizedBox(height: 10),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: _dlgField(
+                                discountCtrl,
+                                discountType == 'fixed'
+                                    ? 'Discount (Fixed Amount)'
+                                    : 'Discount (%)',
+                                numeric: true,
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: DropdownButtonFormField<String>(
+                                value: discountType,
+                                decoration: const InputDecoration(
+                                  labelText: 'Discount Type',
+                                  border: OutlineInputBorder(),
+                                  isDense: true,
+                                ),
+                                items: const [
+                                  DropdownMenuItem(
+                                    value: 'percentage',
+                                    child: Text('Percentage (%)'),
+                                  ),
+                                  DropdownMenuItem(
+                                    value: 'fixed',
+                                    child: Text('Fixed Amount'),
+                                  ),
+                                ],
+                                onChanged: saving
+                                    ? null
+                                    : (value) {
+                                        if (value != null) {
+                                          setSt(() => discountType = value);
+                                        }
+                                      },
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 10),
+                        _dlgField(reorderCtrl, 'Reorder Level', numeric: true),
+                        const SizedBox(height: 16),
+                        _dlgLabel('Identification'),
+                        const SizedBox(height: 8),
+                        Row(
+                          children: [
+                            Expanded(child: _dlgField(skuCtrl, 'SKU *', required: true)),
+                            const SizedBox(width: 8),
+                            _genBtn(
+                              label: 'Auto SKU',
+                              icon: Icons.auto_awesome_rounded,
+                              busy: skuBusy,
+                              onTap: saving
+                                  ? null
+                                  : () async {
+                                      setSt(() => skuBusy = true);
+                                      try {
+                                        final sku = await _service.generateSKU(
+                                          groupName: groupName,
+                                          size: sizeCtrl.text.trim(),
+                                          color: colorCtrl.text.trim(),
+                                        );
+                                        if (ctx.mounted) skuCtrl.text = sku;
+                                      } catch (e) {
+                                        if (ctx.mounted) {
+                                          AppFeedback.error(ctx, 'SKU generation failed: $e');
+                                        }
+                                      } finally {
+                                        if (ctx.mounted) setSt(() => skuBusy = false);
+                                      }
+                                    },
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 10),
+                        Row(
+                          children: [
+                            Expanded(child: _dlgField(barcodeCtrl, 'Barcode')),
+                            const SizedBox(width: 8),
+                            _genBtn(
+                              label: 'Auto',
+                              icon: Icons.qr_code_2_rounded,
+                              busy: barcodeBusy,
+                              onTap: saving
+                                  ? null
+                                  : () async {
+                                      setSt(() => barcodeBusy = true);
+                                      try {
+                                        final barcode = await _service.generateBarcode();
+                                        if (ctx.mounted) barcodeCtrl.text = barcode;
+                                      } catch (e) {
+                                        if (ctx.mounted) {
+                                          AppFeedback.error(ctx, 'Barcode generation failed: $e');
+                                        }
+                                      } finally {
+                                        if (ctx.mounted) setSt(() => barcodeBusy = false);
+                                      }
+                                    },
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                      ],
+                    ),
                   ),
                 ),
-                // Actions
                 Container(
                   padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
                   decoration: const BoxDecoration(
@@ -368,87 +576,154 @@ class _ProductGroupDetailScreenState extends State<ProductGroupDetailScreen> {
                     mainAxisAlignment: MainAxisAlignment.end,
                     children: [
                       OutlinedButton(
-                        onPressed: () => Navigator.pop(ctx, false),
+                        onPressed: saving ? null : () => Navigator.pop(ctx, false),
                         style: OutlinedButton.styleFrom(
                           side: const BorderSide(color: AppTheme.border),
                           foregroundColor: AppTheme.textMuted,
                           minimumSize: const Size(90, 40),
                           shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(8)),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
                         ),
                         child: const Text('Cancel'),
                       ),
                       const SizedBox(width: 10),
                       FilledButton.icon(
-                        onPressed: () async {
-                          final price =
-                              double.tryParse(priceCtrl.text) ?? 0;
-                          if (price <= 0) {
-                            AppFeedback.error(
-                                ctx, 'Price must be greater than 0.');
-                            return;
-                          }
-                          final size = sizeCtrl.text.trim();
-                          final color = colorCtrl.text.trim();
-                          final sku = skuCtrl.text.trim();
-                          final stock = double.tryParse(stockCtrl.text) ?? 0.0;
-                          final cost = double.tryParse(costCtrl.text) ?? 0.0;
-                          final reorder = int.tryParse(reorderCtrl.text.trim()) ?? 0;
-                          if (size.isEmpty && color.isEmpty) {
-                            AppFeedback.error(
-                                ctx, 'Set at least a size or a color.');
-                            return;
-                          }
-                          if (sku.isEmpty) {
-                            AppFeedback.error(ctx, 'SKU is required.');
-                            return;
-                          }
-                          if (stock < 0) {
-                            AppFeedback.error(ctx, 'Opening stock cannot be negative.');
-                            return;
-                          }
-                          if (stock > 0 && cost <= 0) {
-                            AppFeedback.error(ctx,
-                                'Opening stock requires a cost price greater than 0.');
-                            return;
-                          }
-                          if (reorder < 0) {
-                            AppFeedback.error(ctx, 'Reorder level cannot be negative.');
-                            return;
-                          }
-                          try {
-                            await _service.addVariant(
-                              widget.groupId,
-                              VariantInput(
-                                size: size,
-                                color: color,
-                                secondaryName: secondaryNameCtrl.text.trim(),
-                                sku: sku,
-                                barcode: barcodeCtrl.text.trim(),
-                                price: price,
-                                wholesalePrice: double.tryParse(
-                                        wholesaleCtrl.text) ??
-                                    0.0,
-                                costPrice: cost,
-                                stock: stock,
-                                reorderLevel: reorder,
-                              ),
-                            );
-                            if (ctx.mounted) Navigator.pop(ctx, true);
-                          } catch (e) {
-                            if (ctx.mounted)
-                              AppFeedback.error(
-                                  ctx, 'Failed to add variant: $e');
-                          }
-                        },
-                        icon: const Icon(Icons.add_rounded, size: 16),
-                        label: const Text('Add Variant',
-                            style: TextStyle(fontWeight: FontWeight.w700)),
+                        onPressed: saving
+                            ? null
+                            : () async {
+                                final price = double.tryParse(priceCtrl.text) ?? 0;
+                                final wholesale =
+                                    double.tryParse(wholesaleCtrl.text) ?? 0;
+                                final stock = double.tryParse(stockCtrl.text) ?? 0;
+                                final cost = double.tryParse(costCtrl.text) ?? 0;
+                                final discount =
+                                    double.tryParse(discountCtrl.text) ?? 0;
+                                final reorder =
+                                    int.tryParse(reorderCtrl.text.trim()) ?? 0;
+                                final size = sizeCtrl.text.trim();
+                                final color = colorCtrl.text.trim();
+                                final sku = skuCtrl.text.trim();
+
+                                if (price <= 0) {
+                                  AppFeedback.error(ctx, 'Retail price must be greater than 0.');
+                                  return;
+                                }
+                                if (size.isEmpty && color.isEmpty) {
+                                  AppFeedback.error(ctx, 'Set at least a size or a color.');
+                                  return;
+                                }
+                                if (sku.isEmpty) {
+                                  AppFeedback.error(ctx, 'SKU is required.');
+                                  return;
+                                }
+                                if (wholesale < 0 || cost < 0 || stock < 0 || discount < 0) {
+                                  AppFeedback.error(
+                                    ctx,
+                                    'Price, cost, stock, and discount values cannot be negative.',
+                                  );
+                                  return;
+                                }
+                                if (stock > 0 && cost <= 0) {
+                                  AppFeedback.error(
+                                    ctx,
+                                    'Opening stock requires a cost price greater than 0.',
+                                  );
+                                  return;
+                                }
+                                if (reorder < 0) {
+                                  AppFeedback.error(ctx, 'Reorder level cannot be negative.');
+                                  return;
+                                }
+                                if (discountType == 'percentage' && discount > 100) {
+                                  AppFeedback.error(
+                                    ctx,
+                                    'Percentage discount cannot exceed 100%.',
+                                  );
+                                  return;
+                                }
+                                if (discountType == 'fixed' && discount > price) {
+                                  AppFeedback.error(
+                                    ctx,
+                                    'Fixed discount cannot exceed the retail price.',
+                                  );
+                                  return;
+                                }
+
+                                setSt(() => saving = true);
+                                try {
+                                  final created = await _service.addVariant(
+                                    widget.groupId,
+                                    VariantInput(
+                                      size: size,
+                                      color: color,
+                                      secondaryName: secondaryNameCtrl.text.trim(),
+                                      sku: sku,
+                                      barcode: barcodeCtrl.text.trim(),
+                                      price: price,
+                                      wholesalePrice: wholesale,
+                                      costPrice: cost,
+                                      stock: stock,
+                                      reorderLevel: reorder,
+                                      discount: discount,
+                                      discountType: discountType,
+                                    ),
+                                  );
+
+                                  var imageFailed = false;
+                                  if (imagePath != null && imagePath!.isNotEmpty) {
+                                    final productId = int.tryParse(created['id']?.toString() ?? '');
+                                    if (productId == null) {
+                                      imageFailed = true;
+                                    } else {
+                                      try {
+                                        await _productService.updateProduct(
+                                          productId,
+                                          const <String, dynamic>{},
+                                          imagePath: imagePath,
+                                        );
+                                      } catch (e) {
+                                        debugPrint('Variant image upload failed: $e');
+                                        imageFailed = true;
+                                      }
+                                    }
+                                  }
+
+                                  if (!ctx.mounted) return;
+                                  if (imageFailed) {
+                                    AppFeedback.warning(
+                                      ctx,
+                                      'Variant was added, but its image could not be uploaded. Retry the image from Edit Variant.',
+                                    );
+                                  }
+                                  Navigator.pop(ctx, true);
+                                } catch (e) {
+                                  if (ctx.mounted) {
+                                    setSt(() => saving = false);
+                                    AppFeedback.error(ctx, 'Failed to add variant: $e');
+                                  }
+                                }
+                              },
+                        icon: saving
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Colors.white,
+                                ),
+                              )
+                            : const Icon(Icons.add_rounded, size: 16),
+                        label: const Text(
+                          'Add Variant',
+                          style: TextStyle(fontWeight: FontWeight.w700),
+                        ),
                         style: FilledButton.styleFrom(
                           backgroundColor: AppTheme.primary,
                           minimumSize: const Size(120, 40),
                           shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(8)),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
                         ),
                       ),
                     ],
@@ -469,10 +744,12 @@ class _ProductGroupDetailScreenState extends State<ProductGroupDetailScreen> {
       costCtrl.dispose();
       stockCtrl.dispose();
       wholesaleCtrl.dispose();
+      discountCtrl.dispose();
       skuCtrl.dispose();
       barcodeCtrl.dispose();
       reorderCtrl.dispose();
     });
+
     return result;
   }
 
@@ -485,6 +762,8 @@ class _ProductGroupDetailScreenState extends State<ProductGroupDetailScreen> {
         text: (variant['wholesale_price'] ?? '').toString());
     final costCtrl = TextEditingController(
         text: (variant['cost_price'] ?? '').toString());
+    final discountCtrl = TextEditingController(
+        text: (variant['discount'] ?? 0).toString());
     final secondaryNameCtrl = TextEditingController(
         text: (variant['secondary_name'] ?? '').toString());
     final skuCtrl =
@@ -497,290 +776,498 @@ class _ProductGroupDetailScreenState extends State<ProductGroupDetailScreen> {
     double? currentStock;
     final stocks = variant['stocks'];
     if (stocks is List && stocks.isNotEmpty) {
-      currentStock = double.tryParse(
-          stocks.first['quantity']?.toString() ?? '');
+      currentStock = double.tryParse(stocks.first['quantity']?.toString() ?? '');
     }
     final avgCostRaw = variant['avg_cost'] ?? variant['cost_price'];
-    final avgCost = avgCostRaw != null
-        ? double.tryParse(avgCostRaw.toString())
-        : null;
+    final avgCost =
+        avgCostRaw != null ? double.tryParse(avgCostRaw.toString()) : null;
 
-    final productId = variant['id'] as int;
+    final productId = int.tryParse(variant['id']?.toString() ?? '');
+    if (productId == null || productId <= 0) {
+      if (mounted) {
+        AppFeedback.error(context, 'This variant has an invalid product ID.');
+      }
+      return;
+    }
+
     final variantName = variant['name']?.toString() ?? '';
     final size = (variant['variant_size'] ?? '').toString();
     final color = (variant['variant_color'] ?? '').toString();
     final groupName = _group?['name']?.toString() ?? widget.groupName;
+    final currentImageUrl = variant['image_url']?.toString();
+
+    String discountType =
+        variant['discount_type']?.toString().toLowerCase() == 'fixed'
+            ? 'fixed'
+            : 'percentage';
+    String? pickedImagePath;
+    bool removeCurrentImage = false;
+    bool skuBusy = false;
+    bool barcodeBusy = false;
+    bool saving = false;
 
     final saved = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
-      builder: (ctx) => Dialog(
-        shape:
-            RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        insetPadding:
-            const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 500),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // Header
-              Container(
-                padding: const EdgeInsets.fromLTRB(20, 18, 14, 16),
-                decoration: const BoxDecoration(
-                  color: AppTheme.surfaceSoft,
-                  borderRadius:
-                      BorderRadius.vertical(top: Radius.circular(16)),
-                  border: Border(
-                    bottom: BorderSide(color: AppTheme.border),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSt) => Dialog(
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          insetPadding:
+              const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 560, maxHeight: 780),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Container(
+                  padding: const EdgeInsets.fromLTRB(20, 18, 14, 16),
+                  decoration: const BoxDecoration(
+                    color: AppTheme.surfaceSoft,
+                    borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+                    border: Border(bottom: BorderSide(color: AppTheme.border)),
+                  ),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 36,
+                        height: 36,
+                        decoration: BoxDecoration(
+                          color: AppTheme.primarySoft,
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: const Icon(Icons.edit_outlined,
+                            size: 18, color: AppTheme.primary),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text('Edit Variant',
+                                style: TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w900,
+                                    color: AppTheme.navy)),
+                            Text(variantName,
+                                style: const TextStyle(
+                                    fontSize: 11.5,
+                                    color: AppTheme.textMuted,
+                                    fontWeight: FontWeight.w600),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis),
+                          ],
+                        ),
+                      ),
+                      if (size.isNotEmpty || color.isNotEmpty) ...[
+                        if (size.isNotEmpty)
+                          _dimPill(Icons.straighten_rounded, size),
+                        if (size.isNotEmpty && color.isNotEmpty)
+                          const SizedBox(width: 4),
+                        if (color.isNotEmpty)
+                          _dimPill(Icons.palette_rounded, color),
+                      ],
+                      const SizedBox(width: 4),
+                      IconButton(
+                        icon: const Icon(Icons.close_rounded,
+                            color: AppTheme.textMuted, size: 18),
+                        onPressed:
+                            saving ? null : () => Navigator.pop(ctx, false),
+                        padding: EdgeInsets.zero,
+                        constraints:
+                            const BoxConstraints(minWidth: 32, minHeight: 32),
+                        splashRadius: 16,
+                      ),
+                    ],
                   ),
                 ),
-                child: Row(
-                  children: [
-                    Container(
-                      width: 36,
-                      height: 36,
-                      decoration: BoxDecoration(
-                        color: AppTheme.primarySoft,
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: const Icon(Icons.edit_outlined,
-                          size: 18, color: AppTheme.primary),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text('Edit Variant',
-                              style: TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.w900,
-                                  color: AppTheme.navy)),
-                          Text(variantName,
-                              style: const TextStyle(
-                                  fontSize: 11.5,
-                                  color: AppTheme.textMuted,
-                                  fontWeight: FontWeight.w600),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis),
-                        ],
-                      ),
-                    ),
-                    // Dimension pills
-                    if (size.isNotEmpty || color.isNotEmpty) ...[
-                      if (size.isNotEmpty)
-                        _dimPill(Icons.straighten_rounded, size),
-                      if (size.isNotEmpty && color.isNotEmpty)
-                        const SizedBox(width: 4),
-                      if (color.isNotEmpty)
-                        _dimPill(Icons.palette_rounded, color),
-                    ],
-                    const SizedBox(width: 4),
-                    IconButton(
-                      icon: const Icon(Icons.close_rounded,
-                          color: AppTheme.textMuted, size: 18),
-                      onPressed: () => Navigator.pop(ctx, false),
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(
-                          minWidth: 32, minHeight: 32),
-                      splashRadius: 16,
-                    ),
-                  ],
-                ),
-              ),
-              // Stock + Avg Cost info strip
-              Container(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 20, vertical: 12),
-                decoration: const BoxDecoration(
-                  color: AppTheme.surfaceSoft,
-                  border: Border(
-                      bottom: BorderSide(color: AppTheme.border)),
-                ),
-                child: Row(
-                  children: [
-                    _infoBadge('Current Stock',
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                  decoration: const BoxDecoration(
+                    color: AppTheme.surfaceSoft,
+                    border: Border(bottom: BorderSide(color: AppTheme.border)),
+                  ),
+                  child: Row(
+                    children: [
+                      _infoBadge(
+                        'Current Stock',
                         currentStock != null ? _fmtQty(currentStock) : '—',
                         Icons.inventory_2_rounded,
                         color: currentStock == null
                             ? AppTheme.textMuted
                             : currentStock <= 0
                                 ? AppTheme.danger
-                                : AppTheme.success),
-                    const SizedBox(width: 8),
-                    Container(
-                        width: 1, height: 36, color: AppTheme.border),
-                    const SizedBox(width: 8),
-                    _infoBadge(
+                                : AppTheme.success,
+                      ),
+                      const SizedBox(width: 8),
+                      Container(width: 1, height: 36, color: AppTheme.border),
+                      const SizedBox(width: 8),
+                      _infoBadge(
                         'Avg Cost',
-                        avgCost != null
-                            ? AppCurrency.format(avgCost)
-                            : '—',
+                        avgCost != null ? AppCurrency.format(avgCost) : '—',
                         Icons.price_change_rounded,
-                        color: AppTheme.textMuted),
-                    const Spacer(),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 7, vertical: 3),
-                      decoration: BoxDecoration(
-                        color: AppTheme.primarySoft,
-                        borderRadius: BorderRadius.circular(4),
-                        border: Border.all(
-                            color: AppTheme.primary.withOpacity(0.4)),
+                        color: AppTheme.textMuted,
                       ),
-                      child: const Text('Read Only',
-                          style: TextStyle(
-                              fontSize: 9,
-                              fontWeight: FontWeight.w800,
-                              color: AppTheme.primary,
-                              letterSpacing: 0.3)),
-                    ),
-                  ],
+                      const Spacer(),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 7, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: AppTheme.primarySoft,
+                          borderRadius: BorderRadius.circular(4),
+                          border: Border.all(
+                              color: AppTheme.primary.withOpacity(0.4)),
+                        ),
+                        child: const Text('Stock Read Only',
+                            style: TextStyle(
+                                fontSize: 9,
+                                fontWeight: FontWeight.w800,
+                                color: AppTheme.primary,
+                                letterSpacing: 0.3)),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-              // Fields
-              SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(20, 16, 20, 4),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    _dlgLabel('Pricing'),
-                    const SizedBox(height: 8),
-                    Row(children: [
-                      Expanded(
-                          child: _dlgField(priceCtrl, 'Retail Price *',
-                              numeric: true, required: true)),
+                Flexible(
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.fromLTRB(20, 16, 20, 6),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        _dlgLabel('Product Image'),
+                        const SizedBox(height: 8),
+                        _variantImageEditor(
+                          pickedPath: pickedImagePath,
+                          currentUrl: currentImageUrl,
+                          removeCurrent: removeCurrentImage,
+                          onPick: saving
+                              ? null
+                              : () async {
+                                  final path = await _pickVariantImage(ctx);
+                                  if (path != null && ctx.mounted) {
+                                    setSt(() {
+                                      pickedImagePath = path;
+                                      removeCurrentImage = false;
+                                    });
+                                  }
+                                },
+                          onRemove: saving
+                              ? null
+                              : () {
+                                  setSt(() {
+                                    pickedImagePath = null;
+                                    removeCurrentImage = currentImageUrl != null &&
+                                        currentImageUrl.isNotEmpty;
+                                  });
+                                },
+                        ),
+                        const SizedBox(height: 18),
+                        _dlgLabel('Pricing'),
+                        const SizedBox(height: 8),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: _dlgField(priceCtrl, 'Retail Price *',
+                                  numeric: true, required: true),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: _dlgField(
+                                  wholesaleCtrl, 'Wholesale Price',
+                                  numeric: true),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 10),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: _dlgField(costCtrl, 'Reference Cost',
+                                  numeric: true),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: _dlgField(
+                                discountCtrl,
+                                discountType == 'fixed'
+                                    ? 'Discount (Fixed Amount)'
+                                    : 'Discount (%)',
+                                numeric: true,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 10),
+                        DropdownButtonFormField<String>(
+                          value: discountType,
+                          decoration: const InputDecoration(
+                            labelText: 'Discount Type',
+                            border: OutlineInputBorder(),
+                            isDense: true,
+                          ),
+                          items: const [
+                            DropdownMenuItem(
+                              value: 'percentage',
+                              child: Text('Percentage (%)'),
+                            ),
+                            DropdownMenuItem(
+                              value: 'fixed',
+                              child: Text('Fixed Amount'),
+                            ),
+                          ],
+                          onChanged: saving
+                              ? null
+                              : (value) {
+                                  if (value != null) {
+                                    setSt(() => discountType = value);
+                                  }
+                                },
+                        ),
+                        const SizedBox(height: 10),
+                        _dlgField(secondaryNameCtrl, 'Secondary Name'),
+                        const SizedBox(height: 18),
+                        _dlgLabel('Identification'),
+                        const SizedBox(height: 8),
+                        Row(
+                          children: [
+                            Expanded(
+                                child: _dlgField(skuCtrl, 'SKU *', required: true)),
+                            const SizedBox(width: 8),
+                            _genBtn(
+                              label: 'Auto SKU',
+                              icon: Icons.auto_awesome_rounded,
+                              busy: skuBusy,
+                              onTap: saving
+                                  ? null
+                                  : () async {
+                                      setSt(() => skuBusy = true);
+                                      try {
+                                        final sku = await _service.generateSKU(
+                                          groupName: groupName,
+                                          size: size,
+                                          color: color,
+                                        );
+                                        if (ctx.mounted) skuCtrl.text = sku;
+                                      } catch (e) {
+                                        if (ctx.mounted) {
+                                          AppFeedback.error(ctx,
+                                              'SKU generation failed: $e');
+                                        }
+                                      } finally {
+                                        if (ctx.mounted) {
+                                          setSt(() => skuBusy = false);
+                                        }
+                                      }
+                                    },
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 10),
+                        Row(
+                          children: [
+                            Expanded(child: _dlgField(barcodeCtrl, 'Barcode')),
+                            const SizedBox(width: 8),
+                            _genBtn(
+                              label: 'Auto',
+                              icon: Icons.qr_code_2_rounded,
+                              busy: barcodeBusy,
+                              onTap: saving
+                                  ? null
+                                  : () async {
+                                      setSt(() => barcodeBusy = true);
+                                      try {
+                                        final barcode =
+                                            await _service.generateBarcode();
+                                        if (ctx.mounted) barcodeCtrl.text = barcode;
+                                      } catch (e) {
+                                        if (ctx.mounted) {
+                                          AppFeedback.error(ctx,
+                                              'Barcode generation failed: $e');
+                                        }
+                                      } finally {
+                                        if (ctx.mounted) {
+                                          setSt(() => barcodeBusy = false);
+                                        }
+                                      }
+                                    },
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 10),
+                        _dlgField(reorderCtrl, 'Reorder Level', numeric: true),
+                        const SizedBox(height: 12),
+                      ],
+                    ),
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+                  decoration: const BoxDecoration(
+                    border: Border(top: BorderSide(color: AppTheme.border)),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      OutlinedButton(
+                        onPressed:
+                            saving ? null : () => Navigator.pop(ctx, false),
+                        style: OutlinedButton.styleFrom(
+                          side: const BorderSide(color: AppTheme.border),
+                          foregroundColor: AppTheme.textMuted,
+                          minimumSize: const Size(90, 40),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8)),
+                        ),
+                        child: const Text('Cancel'),
+                      ),
                       const SizedBox(width: 10),
-                      Expanded(
-                          child: _dlgField(
-                              wholesaleCtrl, 'Wholesale Price',
-                              numeric: true)),
-                    ]),
-                    const SizedBox(height: 10),
-                    _dlgField(costCtrl, 'Reference Cost', numeric: true),
-                    const SizedBox(height: 10),
-                    _dlgField(secondaryNameCtrl, 'Secondary Name'),
-                    const SizedBox(height: 16),
-                    _dlgLabel('Identification'),
-                    const SizedBox(height: 8),
-                    Row(children: [
-                      Expanded(child: _dlgField(skuCtrl, 'SKU *', required: true)),
-                      const SizedBox(width: 8),
-                      OutlinedButton.icon(
-                        onPressed: () async {
-                          try {
-                            skuCtrl.text = await _service.generateSKU(
-                              groupName: groupName,
-                              size: size,
-                              color: color,
-                            );
-                          } catch (e) {
-                            if (ctx.mounted) {
-                              AppFeedback.error(ctx, 'SKU generation failed: $e');
-                            }
-                          }
-                        },
-                        icon: const Icon(Icons.auto_awesome_rounded, size: 15),
-                        label: const Text('Generate'),
+                      FilledButton.icon(
+                        onPressed: saving
+                            ? null
+                            : () async {
+                                final price = double.tryParse(priceCtrl.text);
+                                final wholesale = double.tryParse(
+                                        wholesaleCtrl.text.trim().isEmpty
+                                            ? '0'
+                                            : wholesaleCtrl.text.trim()) ??
+                                    -1;
+                                final cost = double.tryParse(
+                                        costCtrl.text.trim().isEmpty
+                                            ? '0'
+                                            : costCtrl.text.trim()) ??
+                                    -1;
+                                final discount = double.tryParse(
+                                        discountCtrl.text.trim().isEmpty
+                                            ? '0'
+                                            : discountCtrl.text.trim()) ??
+                                    -1;
+                                final reorder = double.tryParse(
+                                        reorderCtrl.text.trim().isEmpty
+                                            ? '0'
+                                            : reorderCtrl.text.trim()) ??
+                                    -1;
+
+                                if (price == null || price <= 0) {
+                                  AppFeedback.error(ctx,
+                                      'Retail price must be greater than 0.');
+                                  return;
+                                }
+                                if (skuCtrl.text.trim().isEmpty) {
+                                  AppFeedback.error(ctx, 'SKU is required.');
+                                  return;
+                                }
+                                if (wholesale < 0) {
+                                  AppFeedback.error(ctx,
+                                      'Wholesale price cannot be negative.');
+                                  return;
+                                }
+                                if (cost < 0) {
+                                  AppFeedback.error(
+                                      ctx, 'Reference cost cannot be negative.');
+                                  return;
+                                }
+                                if (discount < 0) {
+                                  AppFeedback.error(
+                                      ctx, 'Discount cannot be negative.');
+                                  return;
+                                }
+                                if (discountType == 'percentage' &&
+                                    discount > 100) {
+                                  AppFeedback.error(ctx,
+                                      'Percentage discount cannot exceed 100%.');
+                                  return;
+                                }
+                                if (discountType == 'fixed' &&
+                                    discount > price) {
+                                  AppFeedback.error(ctx,
+                                      'Fixed discount cannot exceed the retail price.');
+                                  return;
+                                }
+                                if (reorder < 0) {
+                                  AppFeedback.error(ctx,
+                                      'Reorder level cannot be negative.');
+                                  return;
+                                }
+
+                                setSt(() => saving = true);
+                                try {
+                                  await _service.updateVariant(
+                                    widget.groupId,
+                                    productId,
+                                    <String, dynamic>{
+                                      'price': price,
+                                      'wholesale_price': wholesale,
+                                      'cost_price': cost,
+                                      'discount': discount,
+                                      'discount_type': discountType,
+                                      'secondary_name':
+                                          secondaryNameCtrl.text.trim(),
+                                      'sku': skuCtrl.text.trim(),
+                                      'barcode': barcodeCtrl.text.trim(),
+                                      'reorder_level': reorder,
+                                    },
+                                  );
+
+                                  String? imageError;
+                                  if (pickedImagePath != null ||
+                                      removeCurrentImage) {
+                                    try {
+                                      await _productService.updateProduct(
+                                        productId,
+                                        const <String, dynamic>{},
+                                        imagePath: pickedImagePath,
+                                        removeImage: removeCurrentImage,
+                                      );
+                                    } catch (e) {
+                                      imageError = e.toString();
+                                    }
+                                  }
+
+                                  if (!ctx.mounted) return;
+                                  if (imageError != null) {
+                                    AppFeedback.warning(
+                                      ctx,
+                                      'Variant changes were saved, but the image could not be updated. '
+                                      'Open Edit Variant and retry the image. ($imageError)',
+                                    );
+                                  } else {
+                                    AppFeedback.success(
+                                        ctx, 'Variant updated successfully.');
+                                  }
+                                  Navigator.pop(ctx, true);
+                                } catch (e) {
+                                  if (ctx.mounted) {
+                                    setSt(() => saving = false);
+                                    AppFeedback.error(
+                                        ctx, 'Failed to save variant: $e');
+                                  }
+                                }
+                              },
+                        icon: saving
+                            ? const SizedBox(
+                                width: 15,
+                                height: 15,
+                                child: CircularProgressIndicator(
+                                    strokeWidth: 2, color: Colors.white),
+                              )
+                            : const Icon(Icons.save_rounded, size: 17),
+                        label: Text(saving ? 'Saving...' : 'Save Changes',
+                            style:
+                                const TextStyle(fontWeight: FontWeight.w700)),
+                        style: FilledButton.styleFrom(
+                          backgroundColor: AppTheme.primary,
+                          minimumSize: const Size(118, 40),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8)),
+                        ),
                       ),
-                    ]),
-                    const SizedBox(height: 10),
-                    Row(children: [
-                      Expanded(child: _dlgField(barcodeCtrl, 'Barcode')),
-                      const SizedBox(width: 8),
-                      OutlinedButton.icon(
-                        onPressed: () async {
-                          try {
-                            barcodeCtrl.text = await _service.generateBarcode();
-                          } catch (e) {
-                            if (ctx.mounted) {
-                              AppFeedback.error(ctx, 'Barcode generation failed: $e');
-                            }
-                          }
-                        },
-                        icon: const Icon(Icons.qr_code_2_rounded, size: 16),
-                        label: const Text('Generate'),
-                      ),
-                    ]),
-                    const SizedBox(height: 10),
-                    _dlgField(reorderCtrl, 'Reorder Level', numeric: true),
-                    const SizedBox(height: 20),
-                  ],
+                    ],
+                  ),
                 ),
-              ),
-              // Actions
-              Container(
-                padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
-                decoration: const BoxDecoration(
-                  border: Border(top: BorderSide(color: AppTheme.border)),
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    OutlinedButton(
-                      onPressed: () => Navigator.pop(ctx, false),
-                      style: OutlinedButton.styleFrom(
-                        side: const BorderSide(color: AppTheme.border),
-                        foregroundColor: AppTheme.textMuted,
-                        minimumSize: const Size(90, 40),
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8)),
-                      ),
-                      child: const Text('Cancel'),
-                    ),
-                    const SizedBox(width: 10),
-                    FilledButton(
-                      onPressed: () async {
-                        final price = double.tryParse(priceCtrl.text);
-                        if (price == null || price <= 0) {
-                          AppFeedback.error(
-                              ctx, 'Retail price must be greater than 0.');
-                          return;
-                        }
-                        if (skuCtrl.text.trim().isEmpty) {
-                          AppFeedback.error(ctx, 'SKU is required.');
-                          return;
-                        }
-                        final changes = <String, dynamic>{
-                          'price': price,
-                          if (wholesaleCtrl.text.isNotEmpty)
-                            'wholesale_price':
-                                double.tryParse(wholesaleCtrl.text) ?? 0.0,
-                          if (costCtrl.text.isNotEmpty)
-                            'cost_price':
-                                double.tryParse(costCtrl.text) ?? 0.0,
-                          'secondary_name': secondaryNameCtrl.text.trim(),
-                          'sku': skuCtrl.text.trim(),
-                          'barcode': barcodeCtrl.text.trim(),
-                          if (reorderCtrl.text.isNotEmpty)
-                            'reorder_level':
-                                double.tryParse(reorderCtrl.text) ?? 0.0,
-                        };
-                        try {
-                          await _service.updateVariant(
-                              widget.groupId, productId, changes);
-                          if (ctx.mounted) Navigator.pop(ctx, true);
-                        } catch (e) {
-                          if (ctx.mounted)
-                            AppFeedback.error(ctx, 'Failed to save: $e');
-                        }
-                      },
-                      style: FilledButton.styleFrom(
-                        backgroundColor: AppTheme.primary,
-                        minimumSize: const Size(100, 40),
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8)),
-                      ),
-                      child: const Text('Save Changes',
-                          style:
-                              TextStyle(fontWeight: FontWeight.w700)),
-                    ),
-                  ],
-                ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -795,6 +1282,7 @@ class _ProductGroupDetailScreenState extends State<ProductGroupDetailScreen> {
       priceCtrl.dispose();
       wholesaleCtrl.dispose();
       costCtrl.dispose();
+      discountCtrl.dispose();
       secondaryNameCtrl.dispose();
       skuCtrl.dispose();
       barcodeCtrl.dispose();
@@ -1396,6 +1884,7 @@ class _ProductGroupDetailScreenState extends State<ProductGroupDetailScreen> {
                 ),
               ),
               children: [
+                hdr('IMAGE'),
                 if (hasSize) hdr('SIZE'),
                 if (hasColor) hdr('COLOR'),
                 if (hasSku) hdr('SKU'),
@@ -1404,6 +1893,7 @@ class _ProductGroupDetailScreenState extends State<ProductGroupDetailScreen> {
                 hdr('AVG COST', right: true),
                 hdr('RETAIL', right: true),
                 hdr('WHOLESALE', right: true),
+                hdr('DISCOUNT', right: true),
                 hdr('STATUS'),
                 if (canManage || canPrintBarcodes) hdr(''),
               ],
@@ -1454,6 +1944,10 @@ class _ProductGroupDetailScreenState extends State<ProductGroupDetailScreen> {
                         ? rowBg
                         : AppTheme.surfaceSoft.withOpacity(0.4)),
                 children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 8, 4, 8),
+                    child: _variantTableThumbnail(v['image_url']?.toString()),
+                  ),
                   if (hasSize)
                     cell(
                       (v['variant_size'] ?? '').toString().isEmpty
@@ -1527,6 +2021,19 @@ class _ProductGroupDetailScreenState extends State<ProductGroupDetailScreen> {
                     right: true,
                     style: const TextStyle(
                         fontSize: 12, color: AppTheme.textMuted),
+                  ),
+                  cell(
+                    _variantDiscountLabel(v),
+                    right: true,
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: _dbl(v['discount']) > 0
+                          ? FontWeight.w700
+                          : FontWeight.w500,
+                      color: _dbl(v['discount']) > 0
+                          ? AppTheme.primary
+                          : AppTheme.textMuted,
+                    ),
                   ),
                   // Status
                   Padding(
@@ -1636,6 +2143,42 @@ class _ProductGroupDetailScreenState extends State<ProductGroupDetailScreen> {
     );
   }
 
+  Widget _variantTableThumbnail(String? imageUrl) {
+    final url = imageUrl?.trim() ?? '';
+    return Container(
+      width: 42,
+      height: 42,
+      decoration: BoxDecoration(
+        color: AppTheme.surfaceSoft,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppTheme.border),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: url.isEmpty
+          ? const Icon(Icons.image_outlined,
+              size: 18, color: AppTheme.textMuted)
+          : Image.network(
+              url,
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) => const Icon(
+                  Icons.broken_image_outlined,
+                  size: 18,
+                  color: AppTheme.textMuted),
+            ),
+    );
+  }
+
+  String _variantDiscountLabel(Map<String, dynamic> variant) {
+    final discount = _dbl(variant['discount']);
+    if (discount <= 0) return '—';
+    final type = variant['discount_type']?.toString().toLowerCase();
+    if (type == 'fixed') return AppCurrency.format(discount);
+    final formatted = discount == discount.roundToDouble()
+        ? discount.toInt().toString()
+        : discount.toStringAsFixed(2).replaceFirst(RegExp(r'\.?0+$'), '');
+    return '$formatted%';
+  }
+
   PopupMenuItem<String> _menuItem(
       String value, IconData icon, String label, Color color) {
     return PopupMenuItem(
@@ -1706,7 +2249,7 @@ class _ProductGroupDetailScreenState extends State<ProductGroupDetailScreen> {
     required String label,
     required IconData icon,
     required bool busy,
-    required VoidCallback onTap,
+    required VoidCallback? onTap,
   }) {
     return OutlinedButton.icon(
       onPressed: busy ? null : onTap,

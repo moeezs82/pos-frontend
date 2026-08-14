@@ -4,6 +4,8 @@ import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
 
+import '../config/backend_config.dart';
+
 class BackendStartupException implements Exception {
   final String message;
 
@@ -13,20 +15,51 @@ class BackendStartupException implements Exception {
   String toString() => message;
 }
 
-/// Ensures the local CounterIQ backend is available before Flutter starts
-/// authentication or other API bootstrap work.
+/// Ensures the backend selected for this CounterIQ build is available before
+/// Flutter starts authentication or other API bootstrap work.
+///
+/// Local builds may start the bundled Windows backend sidecar. Server builds
+/// only check the remote server and never search for or launch a local backend.
 class BackendStartupService {
-  static final Uri _healthUri = Uri.parse('https://145.223.118.86:18443/up');
-  // static final Uri _healthUri = Uri.parse('http://127.0.0.1:8080/up');
+  static final Uri _healthUri = Uri.parse(BackendConfig.healthUrl);
 
-  static const Duration _healthRequestTimeout = Duration(seconds: 1);
+  static const Duration _healthRequestTimeout = BackendConfig.isServer
+      ? Duration(seconds: 5)
+      : Duration(seconds: 1);
   static const Duration _startupTimeout = Duration(seconds: 45);
   static const Duration _pollInterval = Duration(milliseconds: 300);
 
   const BackendStartupService._();
 
   static Future<void> ensureReady() async {
-    // Reuse an already-running backend. This also avoids duplicate sidecars.
+    try {
+      BackendConfig.validate();
+    } on StateError catch (error) {
+      throw BackendStartupException(error.message.toString());
+    }
+
+    if (BackendConfig.isServer) {
+      await _ensureServerReady();
+      return;
+    }
+
+    await _ensureLocalReady();
+  }
+
+  static Future<void> _ensureServerReady() async {
+    if (await _isHealthy()) return;
+
+    throw BackendStartupException(
+      'CounterIQ could not connect to the server.\n\n'
+      'Server: ${BackendConfig.origin}\n\n'
+      'Check the internet connection and make sure the CounterIQ server is running, '
+      'then try again.',
+    );
+  }
+
+  static Future<void> _ensureLocalReady() async {
+    // Reuse an already-running local backend. This also avoids duplicate
+    // sidecars when CounterIQ is opened more than once.
     if (await _isHealthy()) return;
 
     if (!Platform.isWindows) {
@@ -68,7 +101,7 @@ class BackendStartupService {
     }
 
     throw const BackendStartupException(
-      'CounterIQ backend did not become ready in time. '
+      'CounterIQ local backend did not become ready in time. '
       'Close CounterIQ and try again.',
     );
   }

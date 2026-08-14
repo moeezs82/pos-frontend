@@ -2,6 +2,9 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 import 'package:http/http.dart' as http;
+import 'package:flutter/foundation.dart';
+
+import '../../config/backend_config.dart';
 
 /// A non-2xx HTTP response surfaced as a typed error.
 ///
@@ -60,10 +63,10 @@ class ApiDownloadResponse {
 }
 
 class ApiClient {
-  // static const String baseUrl = "http://127.0.0.1:8003/api/v1";
-  // static const String baseUrl = "http://localhost/pos-backend/public/api/v1";
-  // static const String baseUrl = "http://127.0.0.1:8080/api/v1";
-  static const String baseUrl = "https://145.223.118.86:18443/api/v1";
+  /// Selected at build time by [BackendConfig]. Existing API callers can keep
+  /// using ApiClient.baseUrl without knowing whether this is a local or server
+  /// distribution.
+  static const String baseUrl = BackendConfig.apiBaseUrl;
   final String? token;
 
   /// Set this callback in main.dart to be notified whenever any API call
@@ -174,11 +177,11 @@ class ApiClient {
   }
 
   /// Sends a multipart/form-data request with form fields and an optional
-  /// file attachment.  Supports both POST (create) and PUT (update).
+  /// file attachment. Supports POST (create) and real PUT/PATCH requests.
   ///
-  /// PHP does not parse multipart bodies on PUT/PATCH requests, so when
-  /// [method] is 'PUT' or 'PATCH' this sends a POST with a `_method` spoof
-  /// field — Laravel's FormMethod middleware converts it transparently.
+  /// CounterIQ's current Go API routes multipart product updates directly on
+  /// PUT, so do not use Laravel/PHP `_method` spoofing here. Go's
+  /// ParseMultipartForm handles multipart bodies for PUT correctly.
   ///
   /// Null values in [fields] are omitted from the request (the server treats
   /// missing fields as "not provided", honouring its `sometimes` rules).
@@ -191,16 +194,9 @@ class ApiClient {
     required Map<String, String?> fields,
   }) async {
     final uri = Uri.parse("$baseUrl$path");
-    // PHP only parses $_FILES on POST — use method spoofing for PUT/PATCH.
-    final httpMethod =
-        (method == 'PUT' || method == 'PATCH') ? 'POST' : method;
-    final request = http.MultipartRequest(httpMethod, uri);
+    final request = http.MultipartRequest(method, uri);
     request.headers['Accept'] = 'application/json';
     if (token != null) request.headers['Authorization'] = 'Bearer $token';
-
-    if (method == 'PUT' || method == 'PATCH') {
-      request.fields['_method'] = method;
-    }
 
     for (final entry in fields.entries) {
       if (entry.value != null) request.fields[entry.key] = entry.value!;

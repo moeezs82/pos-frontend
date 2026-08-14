@@ -60,12 +60,16 @@ class UnitService {
     int id, {
     String? name,
     String? shortName,
+    bool clearShortName = false,
     bool? allowDecimal,
     bool? isActive,
   }) async {
     final res = await _client.put('/units/$id', body: {
       if (name != null) 'name': name,
-      if (shortName != null) 'short_name': shortName.trim(),
+      if (clearShortName)
+        'short_name': null
+      else if (shortName != null)
+        'short_name': shortName.trim(),
       if (allowDecimal != null) 'allow_decimal': allowDecimal,
       if (isActive != null) 'is_active': isActive,
     });

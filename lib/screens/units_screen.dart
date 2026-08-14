@@ -110,6 +110,7 @@ class _UnitsScreenState extends State<UnitsScreen> {
         unit.id,
         name: result.name,
         shortName: result.shortName,
+        clearShortName: result.shortName == null && unit.shortName != null,
         allowDecimal: result.allowDecimal,
         isActive: result.isActive,
       );

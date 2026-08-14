@@ -13,8 +13,11 @@ import 'providers/payment_method_provider.dart';
 import 'providers/branch_feature_provider.dart';
 import 'screens/login_screen.dart';
 import 'screens/home_screen.dart';
+import 'screens/licensing/activation_screen.dart';
 import 'services/connectivity_auto_sync_service.dart';
 import 'services/backend_startup_service.dart';
+import 'services/offline_license_service.dart';
+import 'config/backend_config.dart';
 import 'services/party_pick_caches.dart';
 import 'theme/app_theme.dart';
 import 'services/app_navigator.dart';
@@ -43,19 +46,63 @@ class CounterIQBootstrap extends StatefulWidget {
 
 class _CounterIQBootstrapState extends State<CounterIQBootstrap> {
   bool _ready = false;
-  bool _starting = true;
+  bool _checkingLicense = true;
+  bool _licensed = false;
+  bool _starting = false;
+  String? _licenseMessage;
   String? _error;
 
   @override
   void initState() {
     super.initState();
-    _startBackend();
+    _initialize();
+  }
+
+  Future<void> _initialize() async {
+    if (mounted) {
+      setState(() {
+        _checkingLicense = true;
+        _licensed = false;
+        _ready = false;
+        _error = null;
+        _licenseMessage = null;
+      });
+    }
+
+    final check = await OfflineLicenseService.checkInstalledLicense();
+    if (!mounted) return;
+
+    if (!check.isValid) {
+      setState(() {
+        _checkingLicense = false;
+        _licensed = false;
+        _licenseMessage = check.message;
+      });
+      return;
+    }
+
+    setState(() {
+      _checkingLicense = false;
+      _licensed = true;
+    });
+    await _startBackend();
+  }
+
+  Future<void> _onActivated() async {
+    if (!mounted) return;
+    setState(() {
+      _licensed = true;
+      _licenseMessage = null;
+      _error = null;
+    });
+    await _startBackend();
   }
 
   Future<void> _startBackend() async {
     if (mounted) {
       setState(() {
         _starting = true;
+        _ready = false;
         _error = null;
       });
     }
@@ -78,10 +125,48 @@ class _CounterIQBootstrapState extends State<CounterIQBootstrap> {
 
   @override
   Widget build(BuildContext context) {
-    // Do not build MyApp until the backend is healthy. AuthProvider's
-    // tryAutoLogin() is created inside MyApp, so no auth/API request can
-    // race the bundled backend startup.
+    // Licensing is deliberately checked before backend startup. An unlicensed
+    // copy cannot reach authentication, the local Go sidecar, or the remote
+    // CounterIQ API. Once a valid machine-bound license is installed, normal
+    // backend bootstrap continues exactly as before.
     if (_ready) return const MyApp();
+
+    if (_checkingLicense) {
+      return MaterialApp(
+        debugShowCheckedModeBanner: false,
+        title: 'CounterIQ',
+        theme: AppTheme.light,
+        home: const Scaffold(
+          body: Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.verified_user_rounded, size: 58),
+                SizedBox(height: 20),
+                CircularProgressIndicator(),
+                SizedBox(height: 16),
+                Text(
+                  'Checking CounterIQ activation...',
+                  textAlign: TextAlign.center,
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
+
+    if (!_licensed) {
+      return MaterialApp(
+        debugShowCheckedModeBanner: false,
+        title: 'CounterIQ Activation',
+        theme: AppTheme.light,
+        home: ActivationScreen(
+          initialMessage: _licenseMessage,
+          onActivated: _onActivated,
+        ),
+      );
+    }
 
     return MaterialApp(
       debugShowCheckedModeBanner: false,
@@ -110,7 +195,7 @@ class _CounterIQBootstrapState extends State<CounterIQBootstrap> {
                     const CircularProgressIndicator(),
                     const SizedBox(height: 16),
                     const Text(
-                      'Preparing the local database and services...',
+                      BackendConfig.startupMessage,
                       textAlign: TextAlign.center,
                     ),
                   ] else ...[

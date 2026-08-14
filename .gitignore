@@ -48,3 +48,13 @@ app.*.map.json
 windows/signing/*.pfx
 
 *.zip
+
+# CounterIQ licensing secrets
+*.pfx
+*.pem
+*.key
+*.ciqlic
+
+# Optional: local secret notes
+*license-password*
+*private-key*

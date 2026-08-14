@@ -18,6 +18,17 @@ class CommonService {
     return res["data"]["category"] ?? res["data"];
   }
 
+  /// Update an existing category.
+  Future<Map<String, dynamic>> updateCategory(int id, String name) async {
+    final res = await _client.put("/categories/$id", body: {"name": name});
+    return res["data"]["category"] ?? res["data"];
+  }
+
+  /// Delete an existing category.
+  Future<void> deleteCategory(int id) async {
+    await _client.delete("/categories/$id");
+  }
+
   /// Get all brands
   Future<List<Map<String, dynamic>>> getBrands() async {
     final res = await _client.get("/brands");
@@ -29,6 +40,17 @@ class CommonService {
   Future<Map<String, dynamic>> createBrand(String name) async {
     final res = await _client.post("/brands", body: {"name": name});
     return res["data"]["brand"] ?? res["data"];
+  }
+
+  /// Update an existing brand.
+  Future<Map<String, dynamic>> updateBrand(int id, String name) async {
+    final res = await _client.put("/brands/$id", body: {"name": name});
+    return res["data"]["brand"] ?? res["data"];
+  }
+
+  /// Delete an existing brand.
+  Future<void> deleteBrand(int id) async {
+    await _client.delete("/brands/$id");
   }
 
   /// Get all branches

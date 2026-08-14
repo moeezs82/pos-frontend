@@ -3,8 +3,8 @@ import 'package:enterprise_pos/api/common_service.dart';
 import 'package:enterprise_pos/api/product_service.dart';
 import 'package:enterprise_pos/api/unit_service.dart';
 import 'package:enterprise_pos/models/product_unit.dart';
-import 'package:enterprise_pos/screens/units_screen.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
+import 'package:enterprise_pos/widgets/reference_data_manager_dialog.dart';
 import 'package:enterprise_pos/widgets/vendor_picker_sheet.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -57,7 +57,6 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
   /// this product — see QuantityRule.
   int?               _selectedUnitId;
   List<ProductUnit>  _units = [];
-  late String        _token;
   late UnitService   _unitService;
 
   // ── Image state ──────────────────────────────────────────────────────────────
@@ -117,7 +116,6 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
   void initState() {
     super.initState();
     final token = Provider.of<AuthProvider>(context, listen: false).token!;
-    _token          = token;
     _productService = ProductService(token: token);
     _commonService  = CommonService(token: token);
     _unitService    = UnitService(token: token);
@@ -180,17 +178,34 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
   }
 
   Future<void> _loadInitialData() async {
+    // Load each reference list independently. A user can legitimately have
+    // access to categories but not brands/units (or vice versa), and one 403
+    // must never blank the other dropdowns.
+    await Future.wait([
+      _loadCategories(),
+      _loadBrands(),
+      _loadUnits(),
+    ]);
+  }
+
+  Future<void> _loadCategories() async {
     try {
-      final cats   = await _commonService.getCategories();
-      final brands = await _commonService.getBrands();
-      setState(() {
-        _categories = cats;
-        _brands     = brands;
-      });
+      final categories = await _commonService.getCategories();
+      if (!mounted) return;
+      setState(() => _categories = categories);
     } catch (e) {
-      debugPrint('Error loading initial data: $e');
+      debugPrint('Error loading categories: $e');
     }
-    await _loadUnits();
+  }
+
+  Future<void> _loadBrands() async {
+    try {
+      final brands = await _commonService.getBrands();
+      if (!mounted) return;
+      setState(() => _brands = brands);
+    } catch (e) {
+      debugPrint('Error loading brands: $e');
+    }
   }
 
   /// Loads units separately from categories/brands so that a user WITHOUT the
@@ -202,9 +217,15 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
       final units = await _unitService.list();
       if (!mounted) return;
       setState(() {
-        _units = units.where((u) => u.isActive || u.id == _selectedUnitId).toList();
-        // Creating a product: default to the only unit, or to Piece, so the
-        // field is never silently empty.
+        _units = units
+            .where((u) => u.isActive || (_isEdit && u.id == _selectedUnitId))
+            .toList();
+        if (!_units.any((u) => u.id == _selectedUnitId)) {
+          _selectedUnitId = null;
+        }
+        // Creating a product: default to Piece (when available) or the first
+        // active unit. An inactive unit can remain visible only on an existing
+        // product that already uses it.
         if (_selectedUnitId == null && !_isEdit && _units.isNotEmpty) {
           final piece = _units.where((u) => u.name.toLowerCase() == 'piece');
           _selectedUnitId = piece.isNotEmpty ? piece.first.id : _units.first.id;
@@ -405,22 +426,72 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
     }
   }
 
-  Future<String?> _showAddDialog(String type) async {
-    final controller = TextEditingController();
-    return showDialog<String>(
+  Future<void> _manageCategories() async {
+    final auth = context.read<AuthProvider>();
+    if (!auth.hasPermission('manage-categories')) return;
+    final result = await showNamedReferenceManagerDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text('Add $type'),
-        content: TextField(controller: controller, decoration: InputDecoration(hintText: '$type Name')),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
-            child: const Text('Add'),
-          ),
-        ],
-      ),
+      title: 'Manage Categories',
+      singularLabel: 'Category',
+      icon: Icons.category_outlined,
+      selectedId: _selectedCategoryId,
+      loadItems: _commonService.getCategories,
+      createItem: _commonService.createCategory,
+      updateItem: _commonService.updateCategory,
+      deleteItem: _commonService.deleteCategory,
     );
+    if (result == null || !mounted) return;
+    await _loadCategories();
+    if (!mounted) return;
+    setState(() {
+      _selectedCategoryId = _categories.any((c) => c['id'] == result.selectedId)
+          ? result.selectedId
+          : null;
+    });
+  }
+
+  Future<void> _manageBrands() async {
+    final auth = context.read<AuthProvider>();
+    if (!auth.hasPermission('manage-brands')) return;
+    final result = await showNamedReferenceManagerDialog(
+      context: context,
+      title: 'Manage Brands',
+      singularLabel: 'Brand',
+      icon: Icons.branding_watermark_outlined,
+      selectedId: _selectedBrandId,
+      loadItems: _commonService.getBrands,
+      createItem: _commonService.createBrand,
+      updateItem: _commonService.updateBrand,
+      deleteItem: _commonService.deleteBrand,
+    );
+    if (result == null || !mounted) return;
+    await _loadBrands();
+    if (!mounted) return;
+    setState(() {
+      _selectedBrandId = _brands.any((b) => b['id'] == result.selectedId)
+          ? result.selectedId
+          : null;
+    });
+  }
+
+  Future<void> _manageUnits() async {
+    final auth = context.read<AuthProvider>();
+    if (!auth.hasPermission('manage-units')) return;
+    final result = await showUnitManagerDialog(
+      context: context,
+      service: _unitService,
+      selectedId: _selectedUnitId,
+      allowClearSelection: false,
+    );
+    if (result == null || !mounted) return;
+    await _loadUnits();
+    if (!mounted) return;
+    setState(() {
+      if (result.selectedId != null &&
+          _units.any((u) => u.id == result.selectedId)) {
+        _selectedUnitId = result.selectedId;
+      }
+    });
   }
 
   // ── Save ──────────────────────────────────────────────────────────────────────
@@ -484,6 +555,11 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final auth = context.watch<AuthProvider>();
+    final canManageCategories = auth.hasPermission('manage-categories');
+    final canManageBrands = auth.hasPermission('manage-brands');
+    final canManageUnits = auth.hasPermission('manage-units');
+
     final fixedVendorId      = widget.vendorId;
     final productVendorId    = widget.product?['vendor_id'];
     final showReadOnlyVendor = _isEdit || fixedVendorId != null;
@@ -598,19 +674,12 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
                       onChanged: (val) => setState(() => _selectedCategoryId = val),
                     ),
                   ),
-                  IconButton(
-                    icon: const Icon(Icons.add_circle, color: Colors.green),
-                    onPressed: () async {
-                      final name = await _showAddDialog('Category');
-                      if (name != null && name.isNotEmpty) {
-                        final newCat = await _commonService.createCategory(name);
-                        setState(() {
-                          _categories.add(newCat);
-                          _selectedCategoryId = newCat['id'];
-                        });
-                      }
-                    },
-                  ),
+                  if (canManageCategories)
+                    IconButton(
+                      tooltip: 'Manage categories',
+                      icon: const Icon(Icons.tune_rounded, color: AppTheme.primary),
+                      onPressed: _loading ? null : _manageCategories,
+                    ),
                 ],
               ),
               const SizedBox(height: 12),
@@ -631,19 +700,12 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
                       onChanged: (val) => setState(() => _selectedBrandId = val),
                     ),
                   ),
-                  IconButton(
-                    icon: const Icon(Icons.add_circle, color: Colors.green),
-                    onPressed: () async {
-                      final name = await _showAddDialog('Brand');
-                      if (name != null && name.isNotEmpty) {
-                        final newBrand = await _commonService.createBrand(name);
-                        setState(() {
-                          _brands.add(newBrand);
-                          _selectedBrandId = newBrand['id'];
-                        });
-                      }
-                    },
-                  ),
+                  if (canManageBrands)
+                    IconButton(
+                      tooltip: 'Manage brands',
+                      icon: const Icon(Icons.tune_rounded, color: AppTheme.primary),
+                      onPressed: _loading ? null : _manageBrands,
+                    ),
                 ],
               ),
               const SizedBox(height: 12),
@@ -677,21 +739,12 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
                       onChanged: (val) => setState(() => _selectedUnitId = val),
                     ),
                   ),
-                  IconButton(
-                    tooltip: 'Manage units',
-                    icon: const Icon(Icons.settings, color: Colors.blueGrey),
-                    onPressed: () async {
-                      await Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => UnitsScreen(token: _token),
-                        ),
-                      );
-                      // A unit may have been renamed, added or deleted while we
-                      // were away, so reload rather than trusting the old list.
-                      await _loadUnits();
-                    },
-                  ),
+                  if (canManageUnits)
+                    IconButton(
+                      tooltip: 'Manage units',
+                      icon: const Icon(Icons.tune_rounded, color: AppTheme.primary),
+                      onPressed: _loading ? null : _manageUnits,
+                    ),
                 ],
               ),
               const SizedBox(height: 12),
