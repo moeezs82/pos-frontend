@@ -102,6 +102,8 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
   int? _selectedDeliveryBoyId;
   List<Map<String, dynamic>> _saleSources = const [];
   int? _selectedSaleSourceId;
+  int? _saleSourcesBranchId;
+  bool _saleSourcesReloadScheduled = false;
 
   // cart & payments
   List<Map<String, dynamic>> _items = [];
@@ -253,6 +255,24 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
 
 
   Future<void> _loadSaleSources({bool preferCache = false}) async {
+    final branchId = int.tryParse(_effectiveBranchIdStr());
+    if (branchId != null && _saleSourcesBranchId != branchId && mounted) {
+      setState(() {
+        _saleSources = const [];
+        _selectedSaleSourceId = null;
+        _saleSourcesBranchId = branchId;
+      });
+    }
+    if (branchId == null) {
+      if (mounted) {
+        setState(() {
+          _saleSources = const [];
+          _selectedSaleSourceId = null;
+          _saleSourcesBranchId = null;
+        });
+      }
+      return;
+    }
     List<Map<String, dynamic>> sources = const [];
     if (!preferCache) {
       try {
@@ -263,7 +283,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     }
     if (sources.isEmpty) {
       try {
-        sources = await CatalogCacheService.instance.saleSources();
+        sources = await CatalogCacheService.instance.saleSources(branchId: branchId);
       } catch (_) {/* best-effort local reference data */}
     }
     if (!mounted || sources.isEmpty) return;
@@ -281,19 +301,24 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         sources.any((e) => _metaInt(e['id']) == next);
     if (!validCurrent && !_isEditing) {
       final counter = sources.where((e) =>
-          (e['code'] ?? '').toString().toLowerCase() == 'counter' &&
-          _sourceActive(e)).toList();
+          _sourceDefault(e) && _sourceActive(e)).toList();
       final active = sources.where(_sourceActive).toList();
       next = _metaInt((counter.isNotEmpty ? counter.first : (active.isNotEmpty ? active.first : const <String, dynamic>{}))['id']);
     }
     setState(() {
       _saleSources = sources;
+      _saleSourcesBranchId = branchId;
       if (next != null) _selectedSaleSourceId = next;
     });
   }
 
   bool _sourceActive(Map<String, dynamic> source) {
     final value = source['is_active'];
+    return value == true || value == 1 || value?.toString().toLowerCase() == 'true';
+  }
+
+  bool _sourceDefault(Map<String, dynamic> source) {
+    final value = source['is_default'];
     return value == true || value == 1 || value?.toString().toLowerCase() == 'true';
   }
 
@@ -2795,6 +2820,17 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     final isAll = context.watch<BranchProvider>().isAll;
     final auth = context.watch<AuthProvider>();
     final token = auth.token!;
+    final activeBranchId = context.watch<BranchProvider>().selectedBranchId;
+    if (!_isEditing &&
+        activeBranchId != _saleSourcesBranchId &&
+        !_saleSourcesReloadScheduled) {
+      _saleSourcesReloadScheduled = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        _saleSourcesReloadScheduled = false;
+        if (!mounted) return;
+        await _loadSaleSources();
+      });
+    }
 
     if (_isEditing && _editLoading) {
       return Scaffold(

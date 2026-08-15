@@ -61,7 +61,7 @@ class CatalogCacheService {
     final path = p.join(dbPath, 'catalog_cache.db');
     return openDatabase(
       path,
-      version: 10,
+      version: 11,
       // v1 → v2 adds the unit columns. ADDITIVE ONLY, and deliberately not a
       // table rebuild or a cache wipe: this database is a read replica, but a
       // "just delete and re-download" upgrade would strand a till that is
@@ -194,8 +194,8 @@ class CatalogCacheService {
           );
         }
         // v9 → v10: managed Sale From/source reference data. Sources are
-        // global master data, not branch-owned rows, so every catalog refresh
-        // replaces this small table with the authoritative server list.
+        // initial Sale Source cache introduced before branch ownership was enforced.
+        // v11 below upgrades this replica to strict branch scope.
         if (oldVersion < 10) {
           await db.execute('''
             CREATE TABLE IF NOT EXISTS sale_sources (
@@ -208,6 +208,20 @@ class CatalogCacheService {
           ''');
           await db.execute(
               'CREATE INDEX IF NOT EXISTS idx_sale_sources_active_sort ON sale_sources(is_active, sort_order, id)');
+          await db.delete(
+            'sync_meta',
+            where: 'key LIKE ? OR key LIKE ?',
+            whereArgs: const ['catalog_version:%', 'last_synced_at:%'],
+          );
+        }
+        // v10 → v11: Sale Sources are branch-owned. The v10 replica had no
+        // tenant key, so a cached source from Branch A could appear in Branch B.
+        if (oldVersion < 11) {
+          await db.execute('ALTER TABLE sale_sources ADD COLUMN branch_id INTEGER');
+          await db.execute('ALTER TABLE sale_sources ADD COLUMN is_default INTEGER NOT NULL DEFAULT 0');
+          await db.delete('sale_sources');
+          await db.execute(
+              'CREATE INDEX IF NOT EXISTS idx_sale_sources_branch_active_sort ON sale_sources(branch_id, is_active, sort_order, id)');
           await db.delete(
             'sync_meta',
             where: 'key LIKE ? OR key LIKE ?',
@@ -281,13 +295,15 @@ class CatalogCacheService {
         await db.execute('''
           CREATE TABLE sale_sources (
             id INTEGER PRIMARY KEY,
+            branch_id INTEGER NOT NULL,
             code TEXT,
             name TEXT NOT NULL,
             is_active INTEGER NOT NULL DEFAULT 1,
+            is_default INTEGER NOT NULL DEFAULT 0,
             sort_order INTEGER NOT NULL DEFAULT 0
           )
         ''');
-        await db.execute('CREATE INDEX idx_sale_sources_active_sort ON sale_sources(is_active, sort_order, id)');
+        await db.execute('CREATE INDEX idx_sale_sources_branch_active_sort ON sale_sources(branch_id, is_active, sort_order, id)');
 
         await db.execute('''
           CREATE TABLE sync_meta (
@@ -375,16 +391,24 @@ class CatalogCacheService {
         }
 
         if (data.containsKey('sale_sources')) {
-          await txn.delete('sale_sources');
+          if (branchId != null) {
+            await txn.delete('sale_sources', where: 'branch_id = ?', whereArgs: [branchId]);
+          }
           for (final raw in saleSources) {
             final src = raw as Map;
+            final sourceBranchId = src['branch_id'] != null
+                ? _asInt(src['branch_id'])
+                : branchId;
+            if (sourceBranchId == null || sourceBranchId != branchId) continue;
             await txn.insert(
               'sale_sources',
               {
                 'id': _asInt(src['id']),
+                'branch_id': sourceBranchId,
                 'code': src['code']?.toString(),
                 'name': (src['name'] ?? '').toString(),
                 'is_active': _asBoolInt(src['is_active'], defaultTrue: true),
+                'is_default': _asBoolInt(src['is_default']),
                 'sort_order': _asInt(src['sort_order']),
               },
               conflictAlgorithm: ConflictAlgorithm.replace,
@@ -557,19 +581,26 @@ class CatalogCacheService {
   /// Managed Sale From values cached by the catalog feed for offline sale
   /// entry. Inactive rows remain available to display historical invoices but
   /// are excluded from new-sale pickers when [activeOnly] is true.
-  Future<List<Map<String, dynamic>>> saleSources({bool activeOnly = false}) async {
+  Future<List<Map<String, dynamic>>> saleSources({required int? branchId, bool activeOnly = false}) async {
+    if (branchId == null) return const [];
     final db = await _database;
+    final where = <String>['branch_id = ?'];
+    final args = <Object?>[branchId];
+    if (activeOnly) where.add('is_active = 1');
     final rows = await db.query(
       'sale_sources',
-      where: activeOnly ? 'is_active = 1' : null,
+      where: where.join(' AND '),
+      whereArgs: args,
       orderBy: 'sort_order ASC, name COLLATE NOCASE ASC, id ASC',
     );
     return rows
         .map((row) => <String, dynamic>{
               'id': row['id'],
+              'branch_id': row['branch_id'],
               'code': row['code'],
               'name': row['name'],
               'is_active': row['is_active'] == 1,
+              'is_default': row['is_default'] == 1,
               'sort_order': row['sort_order'],
               '_offline': true,
             })

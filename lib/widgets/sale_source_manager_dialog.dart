@@ -117,8 +117,8 @@ class _SaleSourceManagerDialogState extends State<_SaleSourceManagerDialog> {
   Future<void> _toggle(Map<String, dynamic> item, bool value) async {
     final id = _id(item['id']);
     if (id == null) return;
-    if ((item['code'] ?? '').toString() == 'counter' && !value) {
-      AppFeedback.warning(context, 'Counter is the default source and must remain active.');
+    if (_isDefault(item) && !value) {
+      AppFeedback.warning(context, 'The branch default sale source must remain active.');
       return;
     }
     setState(() => _busy = true);
@@ -177,6 +177,11 @@ class _SaleSourceManagerDialogState extends State<_SaleSourceManagerDialog> {
 
   int _order(Map<String, dynamic> item) =>
       int.tryParse(item['sort_order']?.toString() ?? '') ?? 0;
+
+  bool _isDefault(Map<String, dynamic> item) {
+    final value = item['is_default'];
+    return value == true || value == 1 || value?.toString().toLowerCase() == 'true';
+  }
 
   Future<String?> _nameDialog(String title, {String initial = ''}) async {
     final ctrl = TextEditingController(text: initial);
@@ -250,7 +255,7 @@ class _SaleSourceManagerDialogState extends State<_SaleSourceManagerDialog> {
                   children: [
                     Text('Sale Sources', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800, color: AppTheme.navy)),
                     SizedBox(height: 2),
-                    Text('Add future sales channels without changing the software.', style: TextStyle(fontSize: 12, color: AppTheme.textMuted)),
+                    Text('Manage sales channels for this branch only.', style: TextStyle(fontSize: 12, color: AppTheme.textMuted)),
                   ],
                 )),
                 IconButton(

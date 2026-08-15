@@ -3,6 +3,7 @@ import 'package:enterprise_pos/api/reports_service.dart';
 import 'package:enterprise_pos/api/sale_source_service.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/providers/branch_feature_provider.dart';
+import 'package:enterprise_pos/providers/branch_provider.dart';
 import 'package:enterprise_pos/services/report_file_saver.dart';
 import 'package:enterprise_pos/services/app_currency.dart';
 import 'package:flutter/material.dart';
@@ -37,6 +38,8 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
   String? _method;
   int? _saleSourceId;
   List<Map<String, dynamic>> _saleSources = const [];
+  int? _observedBranchId;
+  bool _branchRefreshScheduled = false;
   int _page = 1;
   int _perPage = 50;
 
@@ -93,6 +96,28 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
       _ready = true;
       _fetch();
     });
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final branchId = context.watch<BranchProvider>().selectedBranchId;
+    if (_observedBranchId == branchId) return;
+    _observedBranchId = branchId;
+    _saleSourceId = null;
+    _saleSources = const [];
+    if (_ready && !_branchRefreshScheduled) {
+      _branchRefreshScheduled = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        _branchRefreshScheduled = false;
+        if (!mounted) return;
+        await _loadSaleSources();
+        if (mounted) {
+          _page = 1;
+          await _fetch();
+        }
+      });
+    }
   }
 
   @override
