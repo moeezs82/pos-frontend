@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:enterprise_pos/models/invoice_template.dart';
 import 'package:enterprise_pos/models/sale_receipt_item.dart';
 import 'package:enterprise_pos/services/pdf_arabic_font_loader.dart';
+import 'package:enterprise_pos/utils/customer_phone_utils.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
@@ -254,6 +255,8 @@ class ReceiptPreviewService {
     final cName = _customerDisplayName(snap);
     final cPhone = (snap["phone"] ?? "").toString().trim();
     final cAddr = (snap["address"] ?? "").toString().trim();
+    final cOtherPhones =
+        CustomerPhoneUtils.printableSecondaryPhones(meta, snap);
 
     final delivery = (meta?["delivery"] is num)
         ? (meta!["delivery"] as num).toDouble()
@@ -432,8 +435,11 @@ class ReceiptPreviewService {
             ],
           );
 
-          final bool hasCustomerInfo =
-              sections.customer && (cName.isNotEmpty || cPhone.isNotEmpty || cAddr.isNotEmpty);
+          final bool hasCustomerInfo = sections.customer &&
+              (cName.isNotEmpty ||
+                  cPhone.isNotEmpty ||
+                  cOtherPhones.isNotEmpty ||
+                  cAddr.isNotEmpty);
 
           final activeFooterLines = sections.footer
               ? footerLines.where((l) => l.trim().isNotEmpty).toList()
@@ -492,6 +498,11 @@ class ReceiptPreviewService {
               if (hasCustomerInfo) ...[
                 if (cName.isNotEmpty) pw.Text("Customer: $cName", style: normal),
                 if (cPhone.isNotEmpty) pw.Text("Phone: $cPhone", style: small),
+                if (cOtherPhones.isNotEmpty)
+                  pw.Text(
+                    "Other phones: ${cOtherPhones.join(', ')}",
+                    style: small,
+                  ),
                 if (cAddr.isNotEmpty) pw.Text("Address: $cAddr", style: small),
                 divider(),
               ],
@@ -720,6 +731,8 @@ class ReceiptPreviewService {
         : <String, dynamic>{};
     final customerName = _customerDisplayName(customer);
     final customerPhone = (customer['phone'] ?? '').toString().trim();
+    final customerOtherPhones =
+        CustomerPhoneUtils.printableSecondaryPhones(meta, customer);
     final customerAddress = (customer['address'] ?? '').toString().trim();
 
     double numericMeta(String key) {
@@ -752,8 +765,12 @@ class ReceiptPreviewService {
       final hasArabic = item.effectiveSecondaryName.isNotEmpty;
       return sum + (is58 ? (hasArabic ? 20 : 15) : (hasArabic ? 16 : 12));
     });
-    final customerHeight = customerName.isNotEmpty || customerPhone.isNotEmpty || customerAddress.isNotEmpty
-        ? (is58 ? 25.0 : 20.0)
+    final customerHeight = customerName.isNotEmpty ||
+            customerPhone.isNotEmpty ||
+            customerOtherPhones.isNotEmpty ||
+            customerAddress.isNotEmpty
+        ? (is58 ? 25.0 : 20.0) +
+            (customerOtherPhones.isNotEmpty ? (is58 ? 8.0 : 6.0) : 0.0)
         : 0.0;
     final paymentHeight = payments.isEmpty ? 0.0 : 13.0 + payments.length * 6.0;
     final qrHeight = showQr && _validQrUrl(qrUrl) ? (is58 ? 35.0 : 40.0) : 0.0;
@@ -923,7 +940,10 @@ class ReceiptPreviewService {
                   ],
                 ),
               ),
-            if (customerName.isNotEmpty || customerPhone.isNotEmpty || customerAddress.isNotEmpty) ...[
+            if (customerName.isNotEmpty ||
+                customerPhone.isNotEmpty ||
+                customerOtherPhones.isNotEmpty ||
+                customerAddress.isNotEmpty) ...[
               divider(),
               valueRow(
                 'العميل',
@@ -932,6 +952,12 @@ class ReceiptPreviewService {
                 strong: true,
               ),
               if (customerPhone.isNotEmpty) valueRow('الهاتف', 'Phone', customerPhone),
+              if (customerOtherPhones.isNotEmpty)
+                valueRow(
+                  'هواتف إضافية',
+                  'Other phones',
+                  customerOtherPhones.join(', '),
+                ),
               if (customerAddress.isNotEmpty) valueRow('العنوان', 'Address', customerAddress),
             ],
             divider(),
@@ -1101,6 +1127,8 @@ class ReceiptPreviewService {
         : <String, dynamic>{};
     final customerName = _customerDisplayName(customer);
     final customerPhone = (customer['phone'] ?? '').toString().trim();
+    final customerOtherPhones =
+        CustomerPhoneUtils.printableSecondaryPhones(meta, customer);
     final customerAddress = (customer['address'] ?? '').toString().trim();
     final effectiveCustomer = customerName.isEmpty ? 'Walk-in Customer' : customerName;
 
@@ -1384,6 +1412,12 @@ class ReceiptPreviewService {
               children: [
                 singleValueRow('العميل', 'Customer', effectiveCustomer, strong: true),
                 if (customerPhone.isNotEmpty) singleValueRow('الهاتف', 'Phone', customerPhone),
+                if (customerOtherPhones.isNotEmpty)
+                  singleValueRow(
+                    'هواتف إضافية',
+                    'Other phones',
+                    customerOtherPhones.join(', '),
+                  ),
                 if (customerAddress.isNotEmpty) singleValueRow('العنوان', 'Address', customerAddress),
               ],
             ),
@@ -1611,6 +1645,8 @@ class ReceiptPreviewService {
         : <String, dynamic>{};
     final customerName = _customerDisplayName(customer);
     final customerPhone = (customer['phone'] ?? '').toString().trim();
+    final customerOtherPhones =
+        CustomerPhoneUtils.printableSecondaryPhones(meta, customer);
     final customerAddress = (customer['address'] ?? '').toString().trim();
     final effectiveCustomer = customerName.isEmpty ? 'Walk-in Customer' : customerName;
 
@@ -1726,7 +1762,7 @@ class ReceiptPreviewService {
           children: [
             pw.Text(parts.first, style: textStyle(isA5 ? 7.7 : 8.8, bold: true)),
             pw.SizedBox(height: 1.5),
-            pw.Text(parts.skip(1).join(' • '), style: textStyle(isA5 ? 6.8 : 7.8, color: muted)),
+            pw.Text(parts.skip(1).join(' / '), style: textStyle(isA5 ? 6.8 : 7.8, color: muted)),
           ],
         ),
       );
@@ -1841,6 +1877,14 @@ class ReceiptPreviewService {
                 pw.SizedBox(height: 4),
                 pw.Text(effectiveCustomer, style: textStyle(isA5 ? 9.5 : 10.5, bold: true)),
                 if (customerPhone.isNotEmpty) pw.Padding(padding: const pw.EdgeInsets.only(top: 2), child: pw.Text('Phone: $customerPhone', style: textStyle(isA5 ? 7.5 : 8.5, color: muted))),
+                if (customerOtherPhones.isNotEmpty)
+                  pw.Padding(
+                    padding: const pw.EdgeInsets.only(top: 2),
+                    child: pw.Text(
+                      'Other phones: ${customerOtherPhones.join(', ')}',
+                      style: textStyle(isA5 ? 7.5 : 8.5, color: muted),
+                    ),
+                  ),
                 if (customerAddress.isNotEmpty) pw.Padding(padding: const pw.EdgeInsets.only(top: 2), child: pw.Text('Address: $customerAddress', style: textStyle(isA5 ? 7.5 : 8.5, color: muted))),
               ],
             ),

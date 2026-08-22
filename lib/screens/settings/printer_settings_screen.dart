@@ -5,6 +5,7 @@ import 'package:enterprise_pos/api/common_service.dart';
 import 'package:enterprise_pos/api/printer_config_service.dart';
 import 'package:enterprise_pos/models/invoice_template.dart';
 import 'package:enterprise_pos/models/printer_config.dart';
+import 'package:enterprise_pos/models/whatsapp_invoice_format.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/providers/printer_config_provider.dart';
 import 'package:enterprise_pos/screens/settings/invoice_template_preview_screen.dart';
@@ -79,6 +80,7 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
   bool _printLogoEnabled = false;
   String? _printLogoData;
   bool _qrCodeEnabled = false;
+  WhatsAppInvoiceFormat _whatsAppInvoiceFormat = WhatsAppInvoiceFormat.pdf;
   InvoiceTemplate _secondaryTemplate = InvoiceTemplate.kitchen;
   List<InvoiceTemplate> _templates = InvoiceTemplate.values;
 
@@ -236,6 +238,7 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
       _qrCodeEnabled = config.qrCodeEnabled;
       _qrUrlCtrl.text = config.qrCodeUrl ?? '';
       _qrCaptionCtrl.text = config.qrCodeCaption;
+      _whatsAppInvoiceFormat = config.whatsappInvoiceFormat;
       _secondaryTemplate = config.secondaryInvoiceTemplate.isSecondaryEligible
           ? config.secondaryInvoiceTemplate
           : InvoiceTemplate.kitchen;
@@ -480,6 +483,7 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
         qrCodeEnabled: _qrCodeEnabled,
         qrCodeUrl: _qrUrlCtrl.text.trim().isEmpty ? null : _qrUrlCtrl.text.trim(),
         qrCodeCaption: _qrCaptionCtrl.text.trim(),
+        whatsappInvoiceFormat: _whatsAppInvoiceFormat,
         secondaryPrintEnabled: _secondaryEnabled,
         secondaryNetworkIp: _secondaryNetworkIpCtrl.text.trim().isEmpty ? null : _secondaryNetworkIpCtrl.text.trim(),
         secondaryNetworkPort: int.tryParse(_secondaryNetworkPortCtrl.text.trim()) ?? 9100,
@@ -845,6 +849,8 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
                   _buildTemplatePanel(),
                   const SizedBox(height: 14),
                   _buildInvoiceBrandingPanel(),
+                  const SizedBox(height: 14),
+                  _buildWhatsAppInvoicePanel(),
                   const SizedBox(height: 14),
                   _buildFooterLinesPanel(),
                   const SizedBox(height: 14),
@@ -1226,6 +1232,76 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
               ),
             ),
           ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildWhatsAppInvoicePanel() {
+    return EnterprisePanel(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const EnterpriseSectionHeader(
+            title: 'WhatsApp invoice attachment',
+            subtitle:
+                'Choose the file format prepared after a sale when WhatsApp invoice is selected.',
+            icon: Icons.chat_rounded,
+            color: Color(0xFF128C7E),
+          ),
+          const SizedBox(height: 14),
+          SegmentedButton<WhatsAppInvoiceFormat>(
+            segments: const [
+              ButtonSegment(
+                value: WhatsAppInvoiceFormat.pdf,
+                label: Text('PDF'),
+                icon: Icon(Icons.picture_as_pdf_rounded),
+              ),
+              ButtonSegment(
+                value: WhatsAppInvoiceFormat.jpg,
+                label: Text('JPG'),
+                icon: Icon(Icons.image_rounded),
+              ),
+            ],
+            selected: {_whatsAppInvoiceFormat},
+            onSelectionChanged: (selection) {
+              if (selection.isEmpty) return;
+              setState(() => _whatsAppInvoiceFormat = selection.first);
+            },
+          ),
+          const SizedBox(height: 10),
+          Text(
+            _whatsAppInvoiceFormat == WhatsAppInvoiceFormat.pdf
+                ? 'PDF keeps the original invoice file exactly as generated.'
+                : 'JPG uses the same invoice renderer and converts each PDF page to a high-quality image. Multi-page invoices create one JPG per page.',
+            style: const TextStyle(
+              color: AppTheme.textMuted,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 8),
+          const Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(
+                Icons.cloud_done_rounded,
+                size: 16,
+                color: AppTheme.textMuted,
+              ),
+              SizedBox(width: 7),
+              Expanded(
+                child: Text(
+                  'Saved with this business printer configuration. Every CounterIQ client using this business will use the same WhatsApp invoice format.',
+                  style: TextStyle(
+                    color: AppTheme.textMuted,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
         ],
       ),
     );

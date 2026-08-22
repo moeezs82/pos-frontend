@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:enterprise_pos/models/invoice_template.dart';
 import 'package:enterprise_pos/models/sale_receipt_item.dart';
 import 'package:enterprise_pos/services/receipt_preview_service.dart';
+import 'package:enterprise_pos/utils/customer_phone_utils.dart';
 import 'package:esc_pos_printer_plus/esc_pos_printer_plus.dart';
 import 'package:esc_pos_utils_plus/esc_pos_utils_plus.dart';
 import 'package:image/image.dart' as img;
@@ -373,6 +374,8 @@ class ThermalPrinterService {
     final snap = (snapRaw is Map) ? snapRaw.cast<String, dynamic>() : <String, dynamic>{};
     final cName = _customerDisplayName(snap);
     final cPhone = (snap['phone'] ?? '').toString().trim();
+    final cOtherPhones =
+        CustomerPhoneUtils.printableSecondaryPhones(meta, snap);
 
     final delivery = (meta?['delivery'] is num)
         ? (meta!['delivery'] as num).toDouble()
@@ -415,9 +418,13 @@ class ThermalPrinterService {
     printer.text(_fmtDate(dateTime), styles: const PosStyles(align: PosAlign.center));
     printer.hr();
 
-    if (sections.customer && (cName.isNotEmpty || cPhone.isNotEmpty)) {
+    if (sections.customer &&
+        (cName.isNotEmpty || cPhone.isNotEmpty || cOtherPhones.isNotEmpty)) {
       if (cName.isNotEmpty) printer.text('Customer: $cName');
       if (cPhone.isNotEmpty) printer.text('Phone: $cPhone');
+      if (cOtherPhones.isNotEmpty) {
+        printer.text('Other phones: ${cOtherPhones.join(', ')}');
+      }
       printer.hr();
     }
 

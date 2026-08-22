@@ -61,7 +61,7 @@ class CatalogCacheService {
     final path = p.join(dbPath, 'catalog_cache.db');
     return openDatabase(
       path,
-      version: 11,
+      version: 12,
       // v1 → v2 adds the unit columns. ADDITIVE ONLY, and deliberately not a
       // table rebuild or a cache wipe: this database is a read replica, but a
       // "just delete and re-download" upgrade would strand a till that is
@@ -228,6 +228,18 @@ class CatalogCacheService {
             whereArgs: const ['catalog_version:%', 'last_synced_at:%'],
           );
         }
+        // v11 → v12: optional customer secondary phones. They are cached for
+        // sale snapshots/printing only and intentionally excluded from
+        // search_blob so offline search keeps using the primary phone.
+        if (oldVersion < 12) {
+          await db.execute(
+              'ALTER TABLE customers ADD COLUMN phone_numbers TEXT');
+          await db.delete(
+            'sync_meta',
+            where: 'key LIKE ? OR key LIKE ?',
+            whereArgs: const ['catalog_version:%', 'last_synced_at:%'],
+          );
+        }
       },
       onCreate: (db, version) async {
         await db.execute('''
@@ -278,6 +290,7 @@ class CatalogCacheService {
             first_name TEXT,
             last_name TEXT,
             phone TEXT,
+            phone_numbers TEXT,
             email TEXT,
             address TEXT,
             status TEXT,
@@ -686,6 +699,7 @@ class CatalogCacheService {
       'first_name': raw['first_name']?.toString(),
       'last_name': raw['last_name']?.toString(),
       'phone': raw['phone']?.toString(),
+      'phone_numbers': jsonEncode(_secondaryPhones(raw['phone_numbers'])),
       'email': raw['email']?.toString(),
       'address': raw['address']?.toString(),
       'status': raw['status']?.toString(),
@@ -740,6 +754,7 @@ class CatalogCacheService {
           .join(' ')
           .trim(),
       'phone': row['phone'],
+      'phone_numbers': _secondaryPhones(row['phone_numbers']),
       'email': row['email'],
       'address': row['address'],
       'status': row['status'],
@@ -800,6 +815,25 @@ class CatalogCacheService {
     if (v is int) return v;
     if (v is num) return v.toInt();
     return int.tryParse(v?.toString() ?? '') ?? 0;
+  }
+
+  static List<String> _secondaryPhones(dynamic raw) {
+    dynamic value = raw;
+    if (value is String) {
+      final text = value.trim();
+      if (text.isEmpty) return const [];
+      try {
+        value = jsonDecode(text);
+      } catch (_) {
+        return const [];
+      }
+    }
+    if (value is! List) return const [];
+    return value
+        .map((e) => (e ?? '').toString().trim())
+        .where((e) => e.isNotEmpty)
+        .take(4)
+        .toList(growable: false);
   }
 
   static double _asDouble(dynamic v) {

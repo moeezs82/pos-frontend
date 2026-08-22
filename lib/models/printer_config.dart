@@ -1,4 +1,5 @@
 import 'invoice_template.dart';
+import 'whatsapp_invoice_format.dart';
 
 class PrinterConfig {
   final int? branchId;
@@ -30,6 +31,7 @@ class PrinterConfig {
   final bool qrCodeEnabled;
   final String? qrCodeUrl;
   final String qrCodeCaption;
+  final WhatsAppInvoiceFormat whatsappInvoiceFormat;
 
   /// Optional second receipt destination. The backend still accepts and emits
   /// kitchen_* aliases so older application builds remain compatible.
@@ -85,6 +87,7 @@ class PrinterConfig {
     this.qrCodeEnabled = false,
     this.qrCodeUrl,
     this.qrCodeCaption = 'Scan to review us',
+    this.whatsappInvoiceFormat = WhatsAppInvoiceFormat.pdf,
     this.secondaryPrintEnabled = false,
     this.secondaryNetworkIp,
     this.secondaryNetworkPort = 9100,
@@ -186,6 +189,8 @@ class PrinterConfig {
       qrCodeEnabled: _bool(json['qr_code_enabled']),
       qrCodeUrl: json['qr_code_url']?.toString(),
       qrCodeCaption: (json['qr_code_caption'] ?? 'Scan to review us').toString(),
+      whatsappInvoiceFormat:
+          whatsAppInvoiceFormatFromValue(json['whatsapp_invoice_format']?.toString()),
       secondaryPrintEnabled:
           _bool(preferred('secondary_print_enabled', 'kitchen_print_enabled')),
       secondaryNetworkIp:
@@ -246,6 +251,7 @@ class PrinterConfig {
         'qr_code_enabled': qrCodeEnabled,
         'qr_code_url': qrCodeUrl,
         'qr_code_caption': qrCodeCaption,
+        'whatsapp_invoice_format': whatsappInvoiceFormat.value,
         'secondary_print_enabled': secondaryPrintEnabled,
         'secondary_network_ip': secondaryNetworkIp,
         'secondary_network_port': secondaryNetworkPort,
@@ -295,6 +301,7 @@ class PrinterConfig {
     String? qrCodeUrl,
     bool clearQrCodeUrl = false,
     String? qrCodeCaption,
+    WhatsAppInvoiceFormat? whatsappInvoiceFormat,
     bool? secondaryPrintEnabled,
     String? secondaryNetworkIp,
     int? secondaryNetworkPort,
@@ -342,6 +349,8 @@ class PrinterConfig {
       qrCodeEnabled: qrCodeEnabled ?? this.qrCodeEnabled,
       qrCodeUrl: clearQrCodeUrl ? null : (qrCodeUrl ?? this.qrCodeUrl),
       qrCodeCaption: qrCodeCaption ?? this.qrCodeCaption,
+      whatsappInvoiceFormat:
+          whatsappInvoiceFormat ?? this.whatsappInvoiceFormat,
       secondaryPrintEnabled:
           secondaryPrintEnabled ?? this.secondaryPrintEnabled,
       secondaryNetworkIp: secondaryNetworkIp ?? this.secondaryNetworkIp,

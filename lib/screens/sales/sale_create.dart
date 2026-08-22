@@ -18,6 +18,7 @@ import 'package:enterprise_pos/services/offline_invoice_seq_service.dart';
 import 'package:enterprise_pos/services/offline_sales_queue_service.dart';
 import 'package:enterprise_pos/utils/line_errors.dart';
 import 'package:enterprise_pos/utils/network_failure.dart';
+import 'package:enterprise_pos/utils/customer_phone_utils.dart';
 import 'package:uuid/uuid.dart';
 import 'package:enterprise_pos/screens/sales/parts/create_sale_items_section.dart';
 import 'package:enterprise_pos/screens/sales/parts/sale_product_panel.dart';
@@ -45,6 +46,7 @@ import 'package:provider/provider.dart';
 import 'package:enterprise_pos/services/thermal_printer_service.dart';
 import 'package:enterprise_pos/services/local_printer_service.dart';
 import 'package:enterprise_pos/services/receipt_preview_service.dart';
+import 'package:enterprise_pos/models/whatsapp_invoice_format.dart';
 import 'package:enterprise_pos/services/whatsapp_invoice_service.dart';
 
 // local widgets split into small files
@@ -94,6 +96,17 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
 
   String get _selectedCustomerType =>
       SalePricing.normalizeCustomerType(_selectedCustomer?['customer_type']);
+
+  List<String> get _selectedCustomerSecondaryPhones =>
+      CustomerPhoneUtils.secondaryPhones(_selectedCustomer?['phone_numbers']);
+
+  String _whatsAppDestinationPhone() {
+    if (_selectedCustomerId != null) {
+      final primary = (_selectedCustomer?['phone'] ?? '').toString().trim();
+      if (primary.isNotEmpty) return primary;
+    }
+    return customerPhoneController.text.trim();
+  }
   Map<String, dynamic>? _selectedVendor;
   int? _selectedVendorId;
   Map<String, dynamic>? _selectedUser;
@@ -123,10 +136,8 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
   final TextEditingController addressController = TextEditingController();
   final TextEditingController customerNameController = TextEditingController();
   final TextEditingController customerPhoneController = TextEditingController();
-  final TextEditingController whatsappPhoneController = TextEditingController();
   bool _customerLocked = false;
   bool _sendInvoiceOnWhatsApp = false;
-  bool _whatsappPhoneEdited = false;
 
   // barcode (kept intact)
   final _barcodeController = TextEditingController();
@@ -229,7 +240,6 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       _selectedCustomerId = customer['id']?.toString();
       customerNameController.text = (customer['first_name'] ?? customer['name'] ?? '').toString();
       customerPhoneController.text = (customer['phone'] ?? '').toString();
-      whatsappPhoneController.text = customerPhoneController.text;
       addressController.text = (customer['address'] ?? '').toString();
       _customerLocked = _selectedCustomerId != null;
     }
@@ -444,17 +454,23 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
           (customer['last_name'] ?? '').toString(),
         ].where((v) => v.trim().isNotEmpty).join(' ').trim();
         customerPhoneController.text = (customer['phone'] ?? '').toString();
-        whatsappPhoneController.text = customerPhoneController.text;
         addressController.text = (customer['address'] ?? '').toString();
       } else {
         customerNameController.text =
             (customerSnapshot['name'] ?? 'Walk-in customer').toString();
         customerPhoneController.text =
             (customerSnapshot['phone'] ?? '').toString();
-        whatsappPhoneController.text = customerPhoneController.text;
         addressController.text =
             (customerSnapshot['address'] ?? '').toString();
       }
+
+      final selectedCustomerForEdit = customerId == null
+          ? null
+          : <String, dynamic>{
+              ...customer,
+              if (customerSnapshot.containsKey('phone_numbers'))
+                'phone_numbers': customerSnapshot['phone_numbers'],
+            };
 
       setState(() {
         _editSale = sale;
@@ -467,7 +483,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
             .map((e) => Map<String, dynamic>.from(e))
             .toList(growable: false);
         _selectedCustomerId = customerId?.toString();
-        _selectedCustomer = customerId == null ? null : customer;
+        _selectedCustomer = selectedCustomerForEdit;
         _selectedVendorId = vendorId;
         _selectedVendor = vendorId == null ? null : vendor;
         _selectedUserId = salesmanId;
@@ -810,7 +826,6 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     addressController.dispose();
     customerNameController.dispose();
     customerPhoneController.dispose();
-    whatsappPhoneController.dispose();
     _customerFocusNode.dispose();
     _salesmanFocusNode.dispose();
     _deliveryBoyFocusNode.dispose();
@@ -870,8 +885,6 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         // Option A: clear on unselect
         customerNameController.text = "";
         customerPhoneController.text = "";
-        whatsappPhoneController.text = "";
-        _whatsappPhoneEdited = false;
         addressController.text = "";
       });
     } else {
@@ -883,8 +896,6 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         _selectedCustomerId = customer['id'].toString();
         customerNameController.text = name;
         customerPhoneController.text = phone;
-        whatsappPhoneController.text = phone;
-        _whatsappPhoneEdited = false;
         addressController.text = address;
 
         _customerLocked = true; // lock editing when customer picked
@@ -905,8 +916,6 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       _customerLocked = false;
       customerNameController.text = "";
       customerPhoneController.text = "";
-      whatsappPhoneController.text = "";
-      _whatsappPhoneEdited = false;
       addressController.text = "";
     });
   }
@@ -1469,6 +1478,15 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       };
     }).toList(growable: false);
 
+    final snapshotPrimaryPhone = _selectedCustomerId != null
+        ? (_selectedCustomer?['phone'] ?? customerPhoneController.text)
+            .toString()
+            .trim()
+        : customerPhoneController.text.trim();
+    final snapshotSecondaryPhones = _selectedCustomerId != null
+        ? _selectedCustomerSecondaryPhones
+        : const <String>[];
+
     final customerSnapshot = <String, dynamic>{
       if (_selectedCustomerId != null) 'id': _selectedCustomerId,
       if ((_selectedCustomer?['customer_code'] ?? '').toString().trim().isNotEmpty)
@@ -1485,7 +1503,8 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
           : (customerNameController.text.trim().isEmpty
               ? 'Walk-in customer'
               : customerNameController.text.trim()),
-      'phone': customerPhoneController.text.trim(),
+      'phone': snapshotPrimaryPhone,
+      'phone_numbers': snapshotSecondaryPhones,
       'address': addressController.text.trim(),
       if (_selectedCustomer != null &&
           _selectedCustomer!.containsKey('credit_limit'))
@@ -1501,6 +1520,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
 
     final meta = <String, dynamic>{
       'customer_snapshot': customerSnapshot,
+      'print_customer_phone_numbers': snapshotSecondaryPhones.isNotEmpty,
       'branch_snapshot': {
         if (effectiveBranchId != null && effectiveBranchId.isNotEmpty)
           'id': effectiveBranchId,
@@ -1785,7 +1805,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     if (_sendInvoiceOnWhatsApp) {
       try {
         WhatsAppInvoiceService.instance.normalizePhone(
-          whatsappPhoneController.text,
+          _whatsAppDestinationPhone(),
         );
       } on FormatException catch (e) {
         AppFeedback.warning(context, e.message.toString());
@@ -2299,13 +2319,16 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
 
       if (_sendInvoiceOnWhatsApp && !queuedOffline) {
         try {
+          final whatsappFormat = printerConfig.whatsappInvoiceFormat;
           final whatsappMessage = <String>[
             'Thank you for your purchase.',
             '',
             'Invoice: $receiptNo',
             'Total: ${AppCurrency.format(total)}',
             '',
-            'Your invoice PDF is attached.',
+            whatsappFormat == WhatsAppInvoiceFormat.jpg
+                ? 'Your invoice is attached as JPG.'
+                : 'Your invoice PDF is attached.',
           ].join('\n');
           final pdfBytes = await ReceiptPreviewService.instance.buildReceiptPdf(
             shopName: effectiveShopName,
@@ -2334,8 +2357,9 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
               await WhatsAppInvoiceService.instance.prepareAndOpen(
             pdfBytes: pdfBytes,
             receiptNo: receiptNo,
-            phone: whatsappPhoneController.text,
+            phone: _whatsAppDestinationPhone(),
             message: whatsappMessage,
+            format: whatsappFormat,
           );
           if (mounted) {
             await _showWhatsAppInvoiceReady(
@@ -2394,9 +2418,10 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     required WhatsAppInvoicePreparation prepared,
     required String message,
   }) async {
+    final attachmentDescription = prepared.attachmentDescription;
     var clipboardStatus = prepared.copiedToClipboard
-        ? 'PDF copied to clipboard. Press "Open WhatsApp", then Ctrl+V and Send.'
-        : 'PDF saved. Windows could not copy it automatically — use Open Folder and attach it manually.';
+        ? '$attachmentDescription copied to clipboard. Press "Open WhatsApp", then Ctrl+V and Send.'
+        : '$attachmentDescription saved. Windows could not copy it automatically - use Open Folder and attach it manually.';
     await showDialog<void>(
       context: context,
       barrierDismissible: false,
@@ -2416,6 +2441,11 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text('WhatsApp: +${prepared.normalizedPhone}'),
+                const SizedBox(height: 4),
+                Text(
+                  'Attachment: $attachmentDescription',
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
                 const SizedBox(height: 8),
                 Text(
                   clipboardStatus,
@@ -2423,8 +2453,11 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
                 ),
                 const SizedBox(height: 12),
                 SelectableText(
-                  prepared.pdfPath,
-                  style: const TextStyle(fontSize: 11, color: AppTheme.textMuted),
+                  prepared.attachmentPaths.join('\n'),
+                  style: const TextStyle(
+                    fontSize: 11,
+                    color: AppTheme.textMuted,
+                  ),
                 ),
               ],
             ),
@@ -2432,22 +2465,25 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
           actions: [
             TextButton.icon(
               onPressed: () async {
-                setDialogState(() => clipboardStatus = 'Copying invoice PDF...');
+                setDialogState(
+                  () => clipboardStatus =
+                      'Copying $attachmentDescription to clipboard...',
+                );
                 final copied = await WhatsAppInvoiceService.instance
-                    .copyPdfToClipboard(prepared.pdfPath);
+                    .copyFilesToClipboard(prepared.attachmentPaths);
                 if (!dialogContext.mounted) return;
                 setDialogState(() {
                   clipboardStatus = copied
-                      ? 'PDF copied successfully. Press Ctrl+V in WhatsApp, then Send.'
-                      : 'Copy failed. Use Open Folder and attach the PDF manually.';
+                      ? '$attachmentDescription copied successfully. Press Ctrl+V in WhatsApp, then Send.'
+                      : 'Copy failed. Use Open Folder and attach $attachmentDescription manually.';
                 });
               },
               icon: const Icon(Icons.copy_rounded),
-              label: const Text('Copy PDF again'),
+              label: Text('Copy ${prepared.formatLabel} again'),
             ),
             TextButton.icon(
               onPressed: () => WhatsAppInvoiceService.instance
-                  .openInvoiceFolder(prepared.pdfPath),
+                  .openInvoiceFolder(prepared.primaryPath),
               icon: const Icon(Icons.folder_open_rounded),
               label: const Text('Open folder'),
             ),
@@ -2462,7 +2498,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
                   if (!dialogContext.mounted) return;
                   setDialogState(() {
                     clipboardStatus =
-                        'WhatsApp opened. Press Ctrl+V to attach the copied PDF, then Send.';
+                        'WhatsApp opened. Press Ctrl+V to attach the copied $attachmentDescription, then Send.';
                   });
                 } catch (e) {
                   if (!dialogContext.mounted) return;
@@ -2502,9 +2538,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       _selectedDeliveryBoyId = null;
       _autoCashIfEmpty = true;
       _sendInvoiceOnWhatsApp = false;
-      _whatsappPhoneEdited = false;
       _showProfitInsight = false;
-      whatsappPhoneController.clear();
 
       if (!keepInitialCustomer) {
         _selectedCustomer = null;
@@ -3363,11 +3397,6 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
                     controller: customerPhoneController,
                     focusNode: _walkInPhoneFocusNode,
                     keyboardType: TextInputType.phone,
-                    onChanged: (value) {
-                      if (_sendInvoiceOnWhatsApp && !_whatsappPhoneEdited) {
-                        whatsappPhoneController.text = value;
-                      }
-                    },
                     decoration: inputDecoration.copyWith(hintText: 'Phone'),
                     style: const TextStyle(fontSize: 12),
                   ),
@@ -3417,70 +3446,112 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
               // toggle is hidden and _sendInvoiceOnWhatsApp stays false, so the
               // normal thermal/PDF printing path is completely unaffected.
               if (context.watch<AuthProvider>().hasAddon('whatsapp_invoice')) ...[
-              const SizedBox(width: 8),
-              Tooltip(
-                message: 'Prepare this receipt for WhatsApp after the sale is saved',
-                child: InkWell(
-                  onTap: _submitting
-                      ? null
-                      : () => setState(() {
-                            _sendInvoiceOnWhatsApp = !_sendInvoiceOnWhatsApp;
-                            if (_sendInvoiceOnWhatsApp) {
-                              whatsappPhoneController.text =
-                                  customerPhoneController.text.trim();
-                              _whatsappPhoneEdited = false;
-                            }
-                          }),
-                  borderRadius: BorderRadius.circular(6),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Checkbox(
-                        value: _sendInvoiceOnWhatsApp,
-                        onChanged: _submitting
-                            ? null
-                            : (value) => setState(() {
-                                  _sendInvoiceOnWhatsApp = value ?? false;
-                                  if (_sendInvoiceOnWhatsApp) {
-                                    whatsappPhoneController.text =
-                                        customerPhoneController.text.trim();
-                                    _whatsappPhoneEdited = false;
-                                  }
-                                }),
-                        visualDensity: VisualDensity.compact,
-                      ),
-                      const Text(
-                        'WhatsApp invoice',
-                        style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
-                      ),
-                    ],
+                const SizedBox(width: 8),
+                Tooltip(
+                  message:
+                      'Prepare this receipt for WhatsApp after the sale is saved. Registered customers always use their primary phone.',
+                  child: InkWell(
+                    onTap: _submitting
+                        ? null
+                        : () => setState(() {
+                              _sendInvoiceOnWhatsApp =
+                                  !_sendInvoiceOnWhatsApp;
+                            }),
+                    borderRadius: BorderRadius.circular(6),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Checkbox(
+                          value: _sendInvoiceOnWhatsApp,
+                          onChanged: _submitting
+                              ? null
+                              : (value) => setState(() {
+                                    _sendInvoiceOnWhatsApp = value ?? false;
+                                  }),
+                          visualDensity: VisualDensity.compact,
+                        ),
+                        const Text(
+                          'WhatsApp invoice',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
-              ),
               ], // end whatsapp_invoice addon gate
               if (_sendInvoiceOnWhatsApp) ...[
                 const SizedBox(width: 6),
-                SizedBox(
-                  width: 175,
+                Container(
+                  constraints: const BoxConstraints(maxWidth: 230),
                   height: 40,
-                  child: TextFormField(
-                    controller: whatsappPhoneController,
-                    keyboardType: TextInputType.phone,
-                    onChanged: (_) => _whatsappPhoneEdited = true,
-                    decoration: inputDecoration.copyWith(
-                      hintText: '+965XXXXXXXX',
-                      prefixIcon: const Icon(
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  decoration: BoxDecoration(
+                    border: Border.all(color: AppTheme.border),
+                    borderRadius: BorderRadius.circular(6),
+                    color: AppTheme.surfaceSoft,
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(
                         Icons.chat_rounded,
                         size: 14,
                         color: Color(0xFF128C7E),
                       ),
-                    ),
-                    style: const TextStyle(fontSize: 12),
+                      const SizedBox(width: 6),
+                      Flexible(
+                        child: Text(
+                          _whatsAppDestinationPhone().isEmpty
+                              ? 'Primary phone required'
+                              : 'To: ${_whatsAppDestinationPhone()}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: AppTheme.textMuted,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ],
             ],
           ),
+          if (_selectedCustomerId != null &&
+              _selectedCustomerSecondaryPhones.isNotEmpty) ...[
+            const SizedBox(height: 4),
+            Row(
+              children: [
+                const Icon(
+                  Icons.print_outlined,
+                  size: 14,
+                  color: AppTheme.textMuted,
+                ),
+                const SizedBox(width: 6),
+                const Text(
+                  'Invoice phones:',
+                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    _selectedCustomerSecondaryPhones.join(' • '),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 10,
+                      color: AppTheme.textMuted,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
         ],
       ),
     );

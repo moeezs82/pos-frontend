@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/invoice_template.dart';
 import '../models/printer_config.dart';
+import '../models/whatsapp_invoice_format.dart';
 
 /// Branch-aware printer configuration.
 ///
@@ -54,6 +55,8 @@ class PrinterConfigProvider extends ChangeNotifier {
   bool get qrCodeEnabled => _config.qrCodeEnabled;
   String? get qrCodeUrl => _config.qrCodeUrl;
   String get qrCodeCaption => _config.qrCodeCaption;
+  WhatsAppInvoiceFormat get whatsappInvoiceFormat =>
+      _config.whatsappInvoiceFormat;
   String get mainPaperCode => _config.mainPaperCode;
   InvoiceTemplate get secondaryInvoiceTemplate =>
       _config.secondaryInvoiceTemplate;

@@ -1,6 +1,7 @@
 import 'package:enterprise_pos/api/customer_service.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
+import 'package:enterprise_pos/utils/customer_phone_utils.dart';
 import 'package:enterprise_pos/widgets/app_feedback.dart';
 import 'package:enterprise_pos/widgets/enterprise/enterprise_panel.dart';
 import 'package:enterprise_pos/widgets/enterprise/enterprise_ui.dart';
@@ -22,6 +23,7 @@ class _CustomerFormScreenState extends State<CustomerFormScreen> {
   final _lastNameController = TextEditingController();
   final _emailController = TextEditingController();
   final _phoneController = TextEditingController();
+  final List<TextEditingController> _secondaryPhoneControllers = [];
   final _addressController = TextEditingController();
   final _creditLimitController = TextEditingController();
 
@@ -53,6 +55,9 @@ class _CustomerFormScreenState extends State<CustomerFormScreen> {
       _lastNameController.text = (c['last_name'] ?? '').toString();
       _emailController.text = (c['email'] ?? '').toString();
       _phoneController.text = (c['phone'] ?? '').toString();
+      for (final phone in CustomerPhoneUtils.secondaryPhones(c['phone_numbers'])) {
+        _secondaryPhoneControllers.add(TextEditingController(text: phone));
+      }
       _addressController.text = (c['address'] ?? '').toString();
       _status = (c['status'] ?? 'active').toString();
       final rawCreditLimit = c['credit_limit'];
@@ -72,6 +77,9 @@ class _CustomerFormScreenState extends State<CustomerFormScreen> {
     _lastNameController.dispose();
     _emailController.dispose();
     _phoneController.dispose();
+    for (final controller in _secondaryPhoneControllers) {
+      controller.dispose();
+    }
     _addressController.dispose();
     _creditLimitController.dispose();
     _openingBalanceController.dispose();
@@ -91,6 +99,10 @@ class _CustomerFormScreenState extends State<CustomerFormScreen> {
       'last_name': _lastNameController.text.trim(),
       'email': _emailController.text.trim(),
       'phone': _phoneController.text.trim(),
+      'phone_numbers': _secondaryPhoneControllers
+          .map((controller) => controller.text.trim())
+          .where((phone) => phone.isNotEmpty)
+          .toList(growable: false),
       'address': _addressController.text.trim(),
       'status': _status,
       'credit_limit': _unlimitedCredit
@@ -159,6 +171,46 @@ class _CustomerFormScreenState extends State<CustomerFormScreen> {
       ),
       validator: validator,
     );
+  }
+
+  String? _primaryPhoneValidator(String? value) {
+    final phone = (value ?? '').trim();
+    if (phone.isEmpty) return 'Phone is required';
+    if (phone.length > 20) return 'Phone must be 20 characters or fewer';
+    return null;
+  }
+
+  String? _secondaryPhoneValidator(int index, String? value) {
+    final phone = (value ?? '').trim();
+    if (phone.isEmpty) return 'Enter a phone number or remove this row';
+    if (phone.length > 20) return 'Phone must be 20 characters or fewer';
+
+    final key = CustomerPhoneUtils.compareKey(phone);
+    if (key == CustomerPhoneUtils.compareKey(_phoneController.text)) {
+      return 'Secondary phone cannot match the primary phone';
+    }
+    for (var i = 0; i < _secondaryPhoneControllers.length; i++) {
+      if (i == index) continue;
+      final other = _secondaryPhoneControllers[i].text.trim();
+      if (other.isNotEmpty && CustomerPhoneUtils.compareKey(other) == key) {
+        return 'Duplicate secondary phone number';
+      }
+    }
+    return null;
+  }
+
+  void _addSecondaryPhone() {
+    if (_secondaryPhoneControllers.length >= 4) return;
+    setState(() {
+      _secondaryPhoneControllers.add(TextEditingController());
+    });
+  }
+
+  void _removeSecondaryPhone(int index) {
+    if (index < 0 || index >= _secondaryPhoneControllers.length) return;
+    final controller = _secondaryPhoneControllers.removeAt(index);
+    controller.dispose();
+    setState(() {});
   }
 
   @override
@@ -230,7 +282,7 @@ class _CustomerFormScreenState extends State<CustomerFormScreen> {
                       ),
                       SizedBox(width: 360, child: _field(controller: _firstNameController, label: 'First Name *', icon: Icons.person_outline_rounded, validator: (v) => v == null || v.trim().isEmpty ? 'First name is required' : null)),
                       SizedBox(width: 360, child: _field(controller: _lastNameController, label: 'Last Name', icon: Icons.person_outline_rounded)),
-                      SizedBox(width: 360, child: _field(controller: _phoneController, label: 'Phone *', icon: Icons.call_outlined, keyboardType: TextInputType.phone, validator: (v) => v == null || v.trim().isEmpty ? 'Phone is required' : null)),
+                      SizedBox(width: 360, child: _field(controller: _phoneController, label: 'Primary Phone *', icon: Icons.call_outlined, keyboardType: TextInputType.phone, validator: _primaryPhoneValidator)),
                       SizedBox(width: 360, child: _field(controller: _emailController, label: 'Email', icon: Icons.mail_outline_rounded, keyboardType: TextInputType.emailAddress)),
                       SizedBox(width: 360, child: DropdownButtonFormField<String>(
                         value: _status,
@@ -279,6 +331,71 @@ class _CustomerFormScreenState extends State<CustomerFormScreen> {
                       ],
                       SizedBox(width: 736, child: _field(controller: _addressController, label: 'Address', icon: Icons.location_on_outlined, maxLines: 2)),
                     ],
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            EnterprisePanel(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const EnterpriseSectionHeader(
+                    title: 'Additional phone numbers',
+                    subtitle: 'Optional. Add up to 4 secondary numbers. The primary phone remains the customer identity and WhatsApp destination.',
+                    icon: Icons.contact_phone_outlined,
+                  ),
+                  const SizedBox(height: 12),
+                  if (_secondaryPhoneControllers.isEmpty)
+                    const Text(
+                      'No secondary phone numbers added.',
+                      style: TextStyle(color: AppTheme.textMuted),
+                    )
+                  else
+                    Wrap(
+                      spacing: 12,
+                      runSpacing: 12,
+                      children: List.generate(_secondaryPhoneControllers.length, (index) {
+                        final controller = _secondaryPhoneControllers[index];
+                        return SizedBox(
+                          width: 360,
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Expanded(
+                                child: _field(
+                                  controller: controller,
+                                  label: 'Secondary Phone ${index + 1}',
+                                  icon: Icons.phone_in_talk_outlined,
+                                  keyboardType: TextInputType.phone,
+                                  validator: (value) => _secondaryPhoneValidator(index, value),
+                                ),
+                              ),
+                              const SizedBox(width: 6),
+                              Padding(
+                                padding: const EdgeInsets.only(top: 6),
+                                child: IconButton(
+                                  tooltip: 'Remove phone',
+                                  onPressed: _saving ? null : () => _removeSecondaryPhone(index),
+                                  icon: const Icon(Icons.delete_outline_rounded),
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      }),
+                    ),
+                  const SizedBox(height: 10),
+                  OutlinedButton.icon(
+                    onPressed: _saving || _secondaryPhoneControllers.length >= 4
+                        ? null
+                        : _addSecondaryPhone,
+                    icon: const Icon(Icons.add),
+                    label: Text(
+                      _secondaryPhoneControllers.length >= 4
+                          ? 'Maximum 5 total phone numbers reached'
+                          : 'Add secondary phone',
+                    ),
                   ),
                 ],
               ),

@@ -2,6 +2,7 @@ import 'package:enterprise_pos/api/core/api_client.dart';
 
 import '../models/invoice_template.dart';
 import '../models/printer_config.dart';
+import '../models/whatsapp_invoice_format.dart';
 
 class PrinterConfigService {
   final ApiClient _client;
@@ -78,6 +79,7 @@ class PrinterConfigService {
     bool qrCodeEnabled = false,
     String? qrCodeUrl,
     String qrCodeCaption = 'Scan to review us',
+    WhatsAppInvoiceFormat whatsappInvoiceFormat = WhatsAppInvoiceFormat.pdf,
     bool secondaryPrintEnabled = false,
     String? secondaryNetworkIp,
     int secondaryNetworkPort = 9100,
@@ -120,6 +122,7 @@ class PrinterConfigService {
       'qr_code_enabled': qrCodeEnabled,
       'qr_code_url': qrCodeUrl,
       'qr_code_caption': qrCodeCaption,
+      'whatsapp_invoice_format': whatsappInvoiceFormat.value,
       'secondary_print_enabled': secondaryPrintEnabled,
       'secondary_network_ip': secondaryNetworkIp,
       'secondary_network_port': secondaryNetworkPort,
