@@ -9,9 +9,106 @@ import 'package:printing/printing.dart';
 
 typedef ReceiptItem = SaleReceiptItem;
 
+class _ReceiptTextPart {
+  final String text;
+  final bool isArabic;
+
+  const _ReceiptTextPart(this.text, this.isArabic);
+}
+
 class ReceiptPreviewService {
   ReceiptPreviewService._();
   static final instance = ReceiptPreviewService._();
+
+  static final RegExp _arabicTextPattern = RegExp(
+    r'[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]',
+  );
+
+  bool _containsArabic(String value) => _arabicTextPattern.hasMatch(value);
+
+  /// Splits configured bilingual text on `|` and orders the language segments
+  /// for the active template. The separator is a configuration delimiter, not
+  /// printable content. A single-language value is preserved as-is.
+  List<_ReceiptTextPart> _configuredTextParts(
+    String raw, {
+    required bool arabicFirst,
+  }) {
+    final values = raw
+        .split('|')
+        .map((part) => part.trim())
+        .where((part) => part.isNotEmpty)
+        .toList();
+    if (values.isEmpty) return const <_ReceiptTextPart>[];
+
+    final parts = values
+        .map((part) => _ReceiptTextPart(part, _containsArabic(part)))
+        .toList();
+    if (parts.length < 2) return parts;
+
+    final hasArabic = parts.any((part) => part.isArabic);
+    final hasOther = parts.any((part) => !part.isArabic);
+    if (!hasArabic || !hasOther) return parts;
+
+    final arabic = parts.where((part) => part.isArabic);
+    final other = parts.where((part) => !part.isArabic);
+    return arabicFirst
+        ? <_ReceiptTextPart>[...arabic, ...other]
+        : <_ReceiptTextPart>[...other, ...arabic];
+  }
+
+  String? _configuredLanguagePart(String raw, {required bool arabic}) {
+    for (final part in _configuredTextParts(raw, arabicFirst: arabic)) {
+      if (part.isArabic == arabic) return part.text;
+    }
+    return null;
+  }
+
+  pw.Widget _configuredPdfText(
+    String raw, {
+    required ArabicPdfFonts fonts,
+    required bool arabicFirst,
+    required double fontSize,
+    bool bold = false,
+    PdfColor? color,
+    pw.TextAlign align = pw.TextAlign.center,
+    double lineGap = 1,
+  }) {
+    final parts = _configuredTextParts(raw, arabicFirst: arabicFirst);
+    if (parts.isEmpty) return pw.SizedBox();
+
+    final textStyle = pw.TextStyle(
+      font: bold ? fonts.bold : fonts.regular,
+      fontSize: fontSize,
+      color: color ?? PdfColors.black,
+    );
+
+    pw.Widget partWidget(_ReceiptTextPart part) => pw.Text(
+          part.text,
+          style: textStyle,
+          textDirection:
+              part.isArabic ? pw.TextDirection.rtl : pw.TextDirection.ltr,
+          textAlign: align,
+        );
+
+    if (parts.length == 1) return partWidget(parts.first);
+
+    final children = <pw.Widget>[];
+    for (var i = 0; i < parts.length; i++) {
+      if (i > 0 && lineGap > 0) children.add(pw.SizedBox(height: lineGap));
+      children.add(partWidget(parts[i]));
+    }
+
+    final crossAxisAlignment = switch (align) {
+      pw.TextAlign.left => pw.CrossAxisAlignment.start,
+      pw.TextAlign.right => pw.CrossAxisAlignment.end,
+      _ => pw.CrossAxisAlignment.center,
+    };
+
+    return pw.Column(
+      crossAxisAlignment: crossAxisAlignment,
+      children: children,
+    );
+  }
 
   String _customerDisplayName(
     Map<String, dynamic> customer, {
@@ -732,10 +829,14 @@ class ReceiptPreviewService {
             crossAxisAlignment: pw.CrossAxisAlignment.center,
             children: [
               pw.Expanded(
-                child: pw.Text(
+                child: _configuredPdfText(
                   value,
-                  style: style(is58 ? 7.2 : 8.2, bold: strong),
-                  textAlign: pw.TextAlign.left,
+                  fonts: fonts,
+                  arabicFirst: true,
+                  fontSize: is58 ? 7.2 : 8.2,
+                  bold: strong,
+                  align: pw.TextAlign.left,
+                  lineGap: .6,
                 ),
               ),
               pw.SizedBox(width: 6),
@@ -769,18 +870,27 @@ class ReceiptPreviewService {
               ),
               pw.SizedBox(height: 3),
             ],
-            pw.Text(
+            _configuredPdfText(
               shopName,
-              style: style(is58 ? 12 : 14, bold: true, color: accent),
-              textAlign: pw.TextAlign.center,
+              fonts: fonts,
+              arabicFirst: true,
+              fontSize: is58 ? 12 : 14,
+              bold: true,
+              color: accent,
+              align: pw.TextAlign.center,
+              lineGap: 1.2,
             ),
             if ((shopAddress ?? '').trim().isNotEmpty)
               pw.Padding(
                 padding: const pw.EdgeInsets.only(top: 2),
-                child: pw.Text(
+                child: _configuredPdfText(
                   shopAddress!.trim(),
-                  style: style(is58 ? 6.6 : 7.6, color: muted),
-                  textAlign: pw.TextAlign.center,
+                  fonts: fonts,
+                  arabicFirst: true,
+                  fontSize: is58 ? 6.6 : 7.6,
+                  color: muted,
+                  align: pw.TextAlign.center,
+                  lineGap: .8,
                 ),
               ),
             if ((shopPhone ?? '').trim().isNotEmpty)
@@ -912,10 +1022,14 @@ class ReceiptPreviewService {
               pw.SizedBox(height: 3),
               arText('امسح للمراجعة', size: is58 ? 7 : 8, bold: true, color: accent, align: pw.TextAlign.center),
               if (qrCaption.trim().isNotEmpty)
-                pw.Text(
+                _configuredPdfText(
                   qrCaption.trim(),
-                  style: style(is58 ? 6 : 7, color: muted),
-                  textAlign: pw.TextAlign.center,
+                  fonts: fonts,
+                  arabicFirst: true,
+                  fontSize: is58 ? 6 : 7,
+                  color: muted,
+                  align: pw.TextAlign.center,
+                  lineGap: .6,
                 ),
             ],
             if (activeFooterLines.isNotEmpty) ...[
@@ -923,7 +1037,14 @@ class ReceiptPreviewService {
               ...activeFooterLines.map(
                 (line) => pw.Padding(
                   padding: const pw.EdgeInsets.only(bottom: 2),
-                  child: pw.Text(line.trim(), style: style(is58 ? 6.4 : 7.3), textAlign: pw.TextAlign.center),
+                  child: _configuredPdfText(
+                    line.trim(),
+                    fonts: fonts,
+                    arabicFirst: true,
+                    fontSize: is58 ? 6.4 : 7.3,
+                    align: pw.TextAlign.center,
+                    lineGap: .6,
+                  ),
                 ),
               ),
             ],
@@ -1072,14 +1193,15 @@ class ReceiptPreviewService {
             crossAxisAlignment: pw.CrossAxisAlignment.center,
             children: [
               pw.Expanded(
-                child: pw.Text(
+                child: _configuredPdfText(
                   value,
-                  style: style(
-                    isA5 ? 7.5 : 8.8,
-                    bold: strong || accentValue,
-                    color: accentValue ? accent : ink,
-                  ),
-                  textAlign: pw.TextAlign.left,
+                  fonts: fonts,
+                  arabicFirst: true,
+                  fontSize: isA5 ? 7.5 : 8.8,
+                  bold: strong || accentValue,
+                  color: accentValue ? accent : ink,
+                  align: pw.TextAlign.left,
+                  lineGap: .7,
                 ),
               ),
               pw.SizedBox(width: isA5 ? 7 : 10),
@@ -1138,8 +1260,14 @@ class ReceiptPreviewService {
       );
     }
 
-    final headingEn = invoiceHeading.trim().isEmpty ? 'SALES INVOICE' : invoiceHeading.trim();
-    final headingAr = _arabicInvoiceHeading(headingEn);
+    final configuredHeading =
+        invoiceHeading.trim().isEmpty ? 'SALES INVOICE' : invoiceHeading.trim();
+    final headingEn =
+        _configuredLanguagePart(configuredHeading, arabic: false) ??
+        'SALES INVOICE';
+    final headingAr =
+        _configuredLanguagePart(configuredHeading, arabic: true) ??
+        _arabicInvoiceHeading(headingEn);
     final activeFooterLines = footerLines.where((line) => line.trim().isNotEmpty).toList();
 
     doc.addPage(
@@ -1181,15 +1309,28 @@ class ReceiptPreviewService {
                 ),
                 pw.SizedBox(height: 4),
               ],
-              pw.Text(
+              _configuredPdfText(
                 shopName,
-                style: style(isA5 ? 13 : 16, bold: true, color: accent),
-                textAlign: pw.TextAlign.center,
+                fonts: fonts,
+                arabicFirst: true,
+                fontSize: isA5 ? 13 : 16,
+                bold: true,
+                color: accent,
+                align: pw.TextAlign.center,
+                lineGap: 1.4,
               ),
               if ((shopAddress ?? '').trim().isNotEmpty)
                 pw.Padding(
                   padding: const pw.EdgeInsets.only(top: 2),
-                  child: pw.Text(shopAddress!.trim(), style: style(isA5 ? 6.4 : 7.4, color: muted), textAlign: pw.TextAlign.center),
+                  child: _configuredPdfText(
+                    shopAddress!.trim(),
+                    fonts: fonts,
+                    arabicFirst: true,
+                    fontSize: isA5 ? 6.4 : 7.4,
+                    color: muted,
+                    align: pw.TextAlign.center,
+                    lineGap: .8,
+                  ),
                 ),
               if ((shopPhone ?? '').trim().isNotEmpty)
                 pw.Padding(
@@ -1382,7 +1523,15 @@ class ReceiptPreviewService {
                     children: [
                       arText('امسح للمراجعة', size: isA5 ? 6.6 : 7.6, bold: true, color: accent),
                       if (qrCaption.trim().isNotEmpty)
-                        pw.Text(qrCaption.trim(), style: style(isA5 ? 5.6 : 6.5, color: muted)),
+                        _configuredPdfText(
+                          qrCaption.trim(),
+                          fonts: fonts,
+                          arabicFirst: true,
+                          fontSize: isA5 ? 5.6 : 6.5,
+                          color: muted,
+                          align: pw.TextAlign.left,
+                          lineGap: .6,
+                        ),
                     ],
                   ),
                 ],
@@ -1401,7 +1550,15 @@ class ReceiptPreviewService {
                     children: activeFooterLines
                         .map((line) => pw.Padding(
                               padding: const pw.EdgeInsets.only(top: 2),
-                              child: pw.Text(line.trim(), style: style(isA5 ? 5.5 : 6.4, color: muted), textAlign: pw.TextAlign.right),
+                              child: _configuredPdfText(
+                                line.trim(),
+                                fonts: fonts,
+                                arabicFirst: true,
+                                fontSize: isA5 ? 5.5 : 6.4,
+                                color: muted,
+                                align: pw.TextAlign.right,
+                                lineGap: .5,
+                              ),
                             ))
                         .toList(),
                   ),
@@ -1457,6 +1614,16 @@ class ReceiptPreviewService {
     final customerAddress = (customer['address'] ?? '').toString().trim();
     final effectiveCustomer = customerName.isEmpty ? 'Walk-in Customer' : customerName;
 
+    final brandingNeedsArabic = <String>[
+      shopName,
+      shopAddress ?? '',
+      invoiceHeading,
+      qrCaption,
+      ...footerLines,
+    ].any(_containsArabic);
+    final ArabicPdfFonts? brandingFonts =
+        brandingNeedsArabic ? await _loadArabicFonts() : null;
+
     double numericMeta(String key) {
       final raw = meta?[key];
       if (raw is num) return raw.toDouble();
@@ -1490,6 +1657,32 @@ class ReceiptPreviewService {
           color: color ?? ink,
           fontWeight: bold ? pw.FontWeight.bold : pw.FontWeight.normal,
         );
+
+    pw.Widget brandedText(
+      String value, {
+      required double size,
+      bool bold = false,
+      PdfColor? color,
+      pw.TextAlign align = pw.TextAlign.left,
+    }) {
+      if (brandingFonts != null && _containsArabic(value)) {
+        return _configuredPdfText(
+          value,
+          fonts: brandingFonts,
+          arabicFirst: false,
+          fontSize: size,
+          bold: bold,
+          color: color ?? ink,
+          align: align,
+          lineGap: .8,
+        );
+      }
+      return pw.Text(
+        value,
+        style: textStyle(size, bold: bold, color: color),
+        textAlign: align,
+      );
+    }
 
     pw.Widget labelValue(String label, String value, {bool strong = false, bool accentValue = false}) {
       return pw.Padding(
@@ -1575,10 +1768,20 @@ class ReceiptPreviewService {
                 child: pw.Column(
                   crossAxisAlignment: pw.CrossAxisAlignment.start,
                   children: [
-                    pw.Text(shopName, style: textStyle(isA5 ? 15 : 18, bold: true)),
+                    brandedText(
+                      shopName,
+                      size: isA5 ? 15 : 18,
+                      bold: true,
+                      align: pw.TextAlign.left,
+                    ),
                     if ((shopAddress ?? '').trim().isNotEmpty) ...[
                       pw.SizedBox(height: 3),
-                      pw.Text(shopAddress!.trim(), style: textStyle(isA5 ? 7.5 : 8.5, color: muted)),
+                      brandedText(
+                        shopAddress!.trim(),
+                        size: isA5 ? 7.5 : 8.5,
+                        color: muted,
+                        align: pw.TextAlign.left,
+                      ),
                     ],
                     if ((shopPhone ?? '').trim().isNotEmpty) ...[
                       pw.SizedBox(height: 2),
@@ -1599,7 +1802,13 @@ class ReceiptPreviewService {
                 child: pw.Column(
                   crossAxisAlignment: pw.CrossAxisAlignment.stretch,
                   children: [
-                    pw.Text(heading, style: textStyle(isA5 ? 11 : 13, bold: true, color: accent), textAlign: pw.TextAlign.right),
+                    brandedText(
+                      heading,
+                      size: isA5 ? 11 : 13,
+                      bold: true,
+                      color: accent,
+                      align: pw.TextAlign.right,
+                    ),
                     pw.SizedBox(height: 6),
                     labelValue('Invoice No.', receiptNo, strong: true),
                     labelValue('Date', dateOnly(dateTime)),
@@ -1707,7 +1916,12 @@ class ReceiptPreviewService {
                       pw.SizedBox(height: payments.isEmpty ? 0 : 10),
                       ...activeFooterLines.map((line) => pw.Padding(
                             padding: const pw.EdgeInsets.only(bottom: 3),
-                            child: pw.Text(line.trim(), style: textStyle(isA5 ? 7.5 : 8.5, color: muted)),
+                            child: brandedText(
+                              line.trim(),
+                              size: isA5 ? 7.5 : 8.5,
+                              color: muted,
+                              align: pw.TextAlign.left,
+                            ),
                           )),
                     ],
                     if (showQr && _validQrUrl(qrUrl)) ...[
@@ -1723,7 +1937,15 @@ class ReceiptPreviewService {
                           ),
                           if (qrCaption.trim().isNotEmpty) ...[
                             pw.SizedBox(width: 8),
-                            pw.Expanded(child: pw.Text(qrCaption.trim(), style: textStyle(isA5 ? 7.5 : 8.5, bold: true, color: accent))),
+                            pw.Expanded(
+                              child: brandedText(
+                                qrCaption.trim(),
+                                size: isA5 ? 7.5 : 8.5,
+                                bold: true,
+                                color: accent,
+                                align: pw.TextAlign.left,
+                              ),
+                            ),
                           ],
                         ],
                       ),

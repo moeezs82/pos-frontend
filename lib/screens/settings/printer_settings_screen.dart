@@ -918,12 +918,20 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
           const SizedBox(height: 14),
           TextFormField(
             controller: _shopNameCtrl,
-            decoration: const InputDecoration(labelText: 'Shop name', prefixIcon: Icon(Icons.badge_rounded)),
+            decoration: const InputDecoration(
+              labelText: 'Shop name',
+              prefixIcon: Icon(Icons.badge_rounded),
+              helperText: 'Bilingual supported: English | العربية',
+            ),
           ),
           const SizedBox(height: 12),
           TextFormField(
             controller: _shopAddressCtrl,
-            decoration: const InputDecoration(labelText: 'Address', prefixIcon: Icon(Icons.location_on_rounded)),
+            decoration: const InputDecoration(
+              labelText: 'Address',
+              prefixIcon: Icon(Icons.location_on_rounded),
+              helperText: 'Use | to separate English and Arabic when both are needed.',
+            ),
           ),
           const SizedBox(height: 12),
           TextFormField(
@@ -1329,7 +1337,7 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
             }),
           const SizedBox(height: 4),
           const Text(
-            'Tip: you can add your WiFi password, social media handles, or any message for your customers.',
+            'Tip: footer lines also support English | العربية. Arabic templates print Arabic first; standard paged invoices print English first.',
             style: TextStyle(color: AppTheme.textMuted, fontSize: 11.5, fontWeight: FontWeight.w500),
           ),
         ],
