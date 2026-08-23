@@ -131,6 +131,17 @@ class OfflineSalesQueueService {
     return _db!;
   }
 
+  /// Flushes and closes the local queue database for the few milliseconds in
+  /// which Backup & Restore copies/replaces its file. The next queue operation
+  /// reopens it lazily.
+  Future<void> closeForBackupRestore() async {
+    final db = _db;
+    _db = null;
+    if (db != null) {
+      await db.close();
+    }
+  }
+
   Future<Database> _open() async {
     // Use the OS-stable app support directory so the queue database persists
     // across app restarts regardless of the process working directory.

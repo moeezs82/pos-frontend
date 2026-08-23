@@ -4,7 +4,9 @@ import 'dart:typed_data';
 import 'package:enterprise_pos/api/common_service.dart';
 import 'package:enterprise_pos/api/printer_config_service.dart';
 import 'package:enterprise_pos/models/invoice_template.dart';
+import 'package:enterprise_pos/models/item_discount_display.dart';
 import 'package:enterprise_pos/models/printer_config.dart';
+import 'package:enterprise_pos/models/receipt_footer_style.dart';
 import 'package:enterprise_pos/models/whatsapp_invoice_format.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/providers/printer_config_provider.dart';
@@ -12,7 +14,9 @@ import 'package:enterprise_pos/screens/settings/invoice_template_preview_screen.
 import 'package:enterprise_pos/services/barcode_label_printer_service.dart';
 import 'package:enterprise_pos/services/local_printer_service.dart';
 import 'package:enterprise_pos/services/thermal_printer_service.dart';
+import 'package:enterprise_pos/services/whatsapp_message_template_service.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
+import 'package:enterprise_pos/utils/print_text_utils.dart';
 import 'package:enterprise_pos/widgets/enterprise/enterprise_panel.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -61,6 +65,9 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
   final _invoiceHeadingCtrl = TextEditingController(text: 'SALES INVOICE');
   final _qrUrlCtrl = TextEditingController();
   final _qrCaptionCtrl = TextEditingController(text: 'Scan to review us');
+  final _whatsAppMessageCtrl = TextEditingController(
+    text: WhatsAppMessageTemplateService.defaultTemplate,
+  );
 
   String _activeConnection = 'none';
   bool _secondaryEnabled = false;
@@ -81,11 +88,14 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
   String? _printLogoData;
   bool _qrCodeEnabled = false;
   WhatsAppInvoiceFormat _whatsAppInvoiceFormat = WhatsAppInvoiceFormat.pdf;
+  ItemDiscountDisplay _itemDiscountDisplay = ItemDiscountDisplay.compact;
+  bool _whatsAppShowCustomerBalance = false;
   InvoiceTemplate _secondaryTemplate = InvoiceTemplate.kitchen;
   List<InvoiceTemplate> _templates = InvoiceTemplate.values;
 
   // Footer lines — each string is one printed line
   final List<TextEditingController> _footerCtrls = [];
+  final List<ReceiptFooterStyle> _footerStyles = [];
 
   @override
   void initState() {
@@ -132,6 +142,7 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
     _invoiceHeadingCtrl.dispose();
     _qrUrlCtrl.dispose();
     _qrCaptionCtrl.dispose();
+    _whatsAppMessageCtrl.dispose();
     for (final c in _footerCtrls) {
       c.dispose();
     }
@@ -210,8 +221,10 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
       c.dispose();
     }
     _footerCtrls.clear();
-    for (final line in config.footerLines) {
-      _footerCtrls.add(TextEditingController(text: line));
+    _footerStyles.clear();
+    for (var i = 0; i < config.footerLines.length; i++) {
+      _footerCtrls.add(TextEditingController(text: config.footerLines[i]));
+      _footerStyles.add(config.footerStyleAt(i));
     }
 
     setState(() {
@@ -239,6 +252,9 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
       _qrUrlCtrl.text = config.qrCodeUrl ?? '';
       _qrCaptionCtrl.text = config.qrCodeCaption;
       _whatsAppInvoiceFormat = config.whatsappInvoiceFormat;
+      _itemDiscountDisplay = config.itemDiscountDisplay;
+      _whatsAppMessageCtrl.text = config.whatsappMessageTemplate;
+      _whatsAppShowCustomerBalance = config.whatsappShowCustomerBalance;
       _secondaryTemplate = config.secondaryInvoiceTemplate.isSecondaryEligible
           ? config.secondaryInvoiceTemplate
           : InvoiceTemplate.kitchen;
@@ -349,8 +365,20 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
     );
   }
 
+  List<int> get _activeFooterIndexes => [
+        for (var i = 0; i < _footerCtrls.length; i++)
+          if (_footerCtrls[i].text.trim().isNotEmpty) i,
+      ];
+
   List<String> get _currentFooterLines =>
-      _footerCtrls.map((c) => c.text.trim()).where((s) => s.isNotEmpty).toList();
+      _activeFooterIndexes.map((i) => _footerCtrls[i].text.trim()).toList();
+
+  List<ReceiptFooterStyle> get _currentFooterStyles =>
+      _activeFooterIndexes.map((i) => _footerStyles[i]).toList();
+
+  bool get _footerHasUnsupportedEmoji => _footerCtrls.any(
+        (controller) => PrintTextUtils.containsUnsupportedEmoji(controller.text),
+      );
 
   String get _selectedBranchCurrency {
     if (_selectedBranchId == null) return 'KD';
@@ -379,13 +407,27 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
   }
 
   void _addFooterLine() {
-    setState(() => _footerCtrls.add(TextEditingController()));
+    setState(() {
+      _footerCtrls.add(TextEditingController());
+      _footerStyles.add(const ReceiptFooterStyle());
+    });
   }
 
   void _removeFooterLine(int index) {
     setState(() {
       _footerCtrls[index].dispose();
       _footerCtrls.removeAt(index);
+      _footerStyles.removeAt(index);
+    });
+  }
+
+  void _reorderFooterLine(int oldIndex, int newIndex) {
+    setState(() {
+      if (newIndex > oldIndex) newIndex--;
+      final controller = _footerCtrls.removeAt(oldIndex);
+      final style = _footerStyles.removeAt(oldIndex);
+      _footerCtrls.insert(newIndex, controller);
+      _footerStyles.insert(newIndex, style);
     });
   }
 
@@ -470,6 +512,7 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
         shopAddress: _shopAddressCtrl.text.trim(),
         shopPhone: _shopPhoneCtrl.text.trim(),
         footerLines: _currentFooterLines,
+        footerLineStyles: _currentFooterStyles,
         activeConnection: _activeConnection,
         networkIp: _networkIpCtrl.text.trim().isEmpty ? null : _networkIpCtrl.text.trim(),
         networkPort: int.tryParse(_networkPortCtrl.text.trim()) ?? 9100,
@@ -484,6 +527,11 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
         qrCodeUrl: _qrUrlCtrl.text.trim().isEmpty ? null : _qrUrlCtrl.text.trim(),
         qrCodeCaption: _qrCaptionCtrl.text.trim(),
         whatsappInvoiceFormat: _whatsAppInvoiceFormat,
+        itemDiscountDisplay: _itemDiscountDisplay,
+        whatsappMessageTemplate: _whatsAppMessageCtrl.text.trim().isEmpty
+            ? WhatsAppMessageTemplateService.defaultTemplate
+            : _whatsAppMessageCtrl.text.trim(),
+        whatsappShowCustomerBalance: _whatsAppShowCustomerBalance,
         secondaryPrintEnabled: _secondaryEnabled,
         secondaryNetworkIp: _secondaryNetworkIpCtrl.text.trim().isEmpty ? null : _secondaryNetworkIpCtrl.text.trim(),
         secondaryNetworkPort: int.tryParse(_secondaryNetworkPortCtrl.text.trim()) ?? 9100,
@@ -565,7 +613,10 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
           showQr: _qrCodeEnabled && _mainTemplate.isCustomerFacing,
           qrUrl: _qrUrlCtrl.text.trim().isEmpty ? null : _qrUrlCtrl.text.trim(),
           qrCaption: _qrCaptionCtrl.text.trim(),
+          footerLines: _currentFooterLines,
+          footerLineStyles: _currentFooterStyles,
           template: _mainTemplate,
+          itemDiscountDisplay: _itemDiscountDisplay,
         );
       } else {
         final printerName = _localPrinterCtrl.text.trim();
@@ -580,6 +631,7 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
           sections: _mainTemplate.sections,
           paperWidth: _mainPaperCode,
           footerLines: _currentFooterLines,
+          footerLineStyles: _currentFooterStyles,
           copyLabel: 'RECEIPT PRINTER TEST',
           invoiceHeading: _invoiceHeadingCtrl.text.trim().isEmpty ? 'SALES INVOICE' : _invoiceHeadingCtrl.text.trim(),
           showLogo: _printLogoEnabled && _mainTemplate.isCustomerFacing,
@@ -588,6 +640,7 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
           qrUrl: _qrUrlCtrl.text.trim().isEmpty ? null : _qrUrlCtrl.text.trim(),
           qrCaption: _qrCaptionCtrl.text.trim(),
           template: _mainTemplate,
+          itemDiscountDisplay: _itemDiscountDisplay,
         );
       }
       _showMessage(_mainTemplate.isPaged ? 'Test invoice sent — check the printer.' : 'Test ticket sent — check the printer.');
@@ -627,6 +680,9 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
           receiptHeader: _secondaryHeaderCtrl.text.trim().isEmpty
               ? 'KITCHEN COPY'
               : _secondaryHeaderCtrl.text.trim(),
+          footerLines: _currentFooterLines,
+          footerLineStyles: _currentFooterStyles,
+          itemDiscountDisplay: _itemDiscountDisplay,
         );
       } else {
         final printerName = _secondaryLocalPrinterCtrl.text.trim();
@@ -645,10 +701,12 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
           sections: _secondaryTemplate.sections,
           paperWidth: _secondaryTemplate.paperWidthCode,
           footerLines: _currentFooterLines,
+          footerLineStyles: _currentFooterStyles,
           receiptHeader: _secondaryHeaderCtrl.text.trim().isEmpty
               ? 'KITCHEN COPY'
               : _secondaryHeaderCtrl.text.trim(),
           copyLabel: 'SECONDARY PRINTER TEST',
+          itemDiscountDisplay: _itemDiscountDisplay,
         );
       }
       _showMessage('Secondary printer test ticket sent.');
@@ -793,6 +851,7 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
           shopAddress: _shopAddressCtrl.text.trim().isEmpty ? null : _shopAddressCtrl.text.trim(),
           shopPhone: _shopPhoneCtrl.text.trim().isEmpty ? null : _shopPhoneCtrl.text.trim(),
           footerLines: _currentFooterLines,
+          footerLineStyles: _currentFooterStyles,
           receiptHeader: receiptHeader,
           invoicePaperSize: _invoicePaperSize,
           thermalPaperSize: _thermalPaperSize,
@@ -802,6 +861,7 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
           showQr: _qrCodeEnabled && template.isCustomerFacing,
           qrUrl: _qrUrlCtrl.text.trim().isEmpty ? null : _qrUrlCtrl.text.trim(),
           qrCaption: _qrCaptionCtrl.text.trim(),
+          itemDiscountDisplay: _itemDiscountDisplay,
         ),
       ),
     );
@@ -924,6 +984,7 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
           const SizedBox(height: 14),
           TextFormField(
             controller: _shopNameCtrl,
+            onChanged: (_) => setState(() {}),
             decoration: const InputDecoration(
               labelText: 'Shop name',
               prefixIcon: Icon(Icons.badge_rounded),
@@ -1237,19 +1298,61 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
     );
   }
 
+  void _insertWhatsAppField(String placeholder) {
+    final text = _whatsAppMessageCtrl.text;
+    final selection = _whatsAppMessageCtrl.selection;
+    final start = selection.start >= 0 ? selection.start : text.length;
+    final end = selection.end >= 0 ? selection.end : start;
+    final next = text.replaceRange(start, end, placeholder);
+    _whatsAppMessageCtrl.value = TextEditingValue(
+      text: next,
+      selection: TextSelection.collapsed(offset: start + placeholder.length),
+    );
+    setState(() {});
+  }
+
+  String get _whatsAppMessagePreview {
+    final shopName = _shopNameCtrl.text.trim().isEmpty
+        ? 'Sample Store'
+        : _shopNameCtrl.text.trim();
+    return WhatsAppMessageTemplateService.render(
+      template: _whatsAppMessageCtrl.text,
+      showCustomerBalance: _whatsAppShowCustomerBalance,
+      values: {
+        'customer_name': 'Aziz',
+        'customer_code': 'C.4421',
+        'invoice_no': 'INV-20260823-0001',
+        'invoice_amount': '1,000.00',
+        'amount_paid': '0.00',
+        'invoice_balance': '1,000.00',
+        'customer_balance': '1,000.00',
+        'business_name': shopName,
+        'date': '23/08/2026',
+        'currency': _selectedBranchCurrency,
+        'attachment_format': _whatsAppInvoiceFormat.label,
+      },
+    );
+  }
+
   Widget _buildWhatsAppInvoicePanel() {
+    final scheme = Theme.of(context).colorScheme;
     return EnterprisePanel(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const EnterpriseSectionHeader(
-            title: 'WhatsApp invoice attachment',
+            title: 'WhatsApp invoice',
             subtitle:
-                'Choose the file format prepared after a sale when WhatsApp invoice is selected.',
+                'Configure the attachment and customer message for this business.',
             icon: Icons.chat_rounded,
             color: Color(0xFF128C7E),
           ),
           const SizedBox(height: 14),
+          const Text(
+            'Attachment format',
+            style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
+          ),
+          const SizedBox(height: 8),
           SegmentedButton<WhatsAppInvoiceFormat>(
             segments: const [
               ButtonSegment(
@@ -1280,19 +1383,98 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
               fontWeight: FontWeight.w600,
             ),
           ),
+          const SizedBox(height: 18),
+          const Divider(height: 1),
+          const SizedBox(height: 16),
+          const Text(
+            'Message template',
+            style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
+          ),
+          const SizedBox(height: 5),
+          const Text(
+            'Write the message once and insert fields where CounterIQ should add sale or customer values automatically.',
+            style: TextStyle(
+              color: AppTheme.textMuted,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 10),
+          TextFormField(
+            controller: _whatsAppMessageCtrl,
+            minLines: 8,
+            maxLines: 14,
+            maxLength: 4000,
+            onChanged: (_) => setState(() {}),
+            decoration: const InputDecoration(
+              hintText: 'Enter the WhatsApp invoice message...',
+              alignLabelWithHint: true,
+            ),
+          ),
           const SizedBox(height: 8),
+          const Text(
+            'Insert field',
+            style: TextStyle(fontWeight: FontWeight.w800, fontSize: 12),
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 7,
+            runSpacing: 7,
+            children: WhatsAppMessageTemplateService.supportedFields
+                .map(
+                  (field) => ActionChip(
+                    label: Text(field.label),
+                    onPressed: () => _insertWhatsAppField(field.placeholder),
+                  ),
+                )
+                .toList(growable: false),
+          ),
+          const SizedBox(height: 14),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            value: _whatsAppShowCustomerBalance,
+            onChanged: (value) =>
+                setState(() => _whatsAppShowCustomerBalance = value),
+            title: const Text(
+              'Show customer balance',
+              style: TextStyle(fontWeight: FontWeight.w800),
+            ),
+            subtitle: const Text(
+              'When enabled, {{customer_balance}} uses the customer\'s authoritative trade-ledger balance after the sale. When disabled, any line containing that field is removed from the WhatsApp message.',
+            ),
+          ),
+          const SizedBox(height: 12),
+          const Text(
+            'Message preview',
+            style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13),
+          ),
+          const SizedBox(height: 8),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: scheme.surfaceContainerHighest.withValues(alpha: .45),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                color: scheme.outlineVariant.withValues(alpha: .75),
+              ),
+            ),
+            child: SelectableText(
+              _whatsAppMessagePreview.isEmpty
+                  ? 'Your configured WhatsApp message will appear here.'
+                  : _whatsAppMessagePreview,
+              style: const TextStyle(fontSize: 12.5, height: 1.45),
+            ),
+          ),
+          const SizedBox(height: 10),
           const Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(
-                Icons.cloud_done_rounded,
-                size: 16,
-                color: AppTheme.textMuted,
-              ),
+              Icon(Icons.cloud_done_rounded, size: 16, color: AppTheme.textMuted),
               SizedBox(width: 7),
               Expanded(
                 child: Text(
-                  'Saved with this business printer configuration. Every CounterIQ client using this business will use the same WhatsApp invoice format.',
+                  'The attachment format, message template and balance privacy choice are saved per business. Every CounterIQ client using this business uses the same WhatsApp configuration.',
                   style: TextStyle(
                     color: AppTheme.textMuted,
                     fontSize: 12,
@@ -1325,6 +1507,23 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
                 onSelected: () => setState(() => _mainTemplate = t),
                 onPreview: () => _openPreview(t),
               )),
+          const SizedBox(height: 12),
+          DropdownButtonFormField<ItemDiscountDisplay>(
+            value: _itemDiscountDisplay,
+            decoration: const InputDecoration(
+              labelText: 'Item discount display',
+              helperText: 'Compact keeps thermal receipts short. Detailed adds a separate discount line. Hidden prints only the final line amount.',
+            ),
+            items: ItemDiscountDisplay.values
+                .map((mode) => DropdownMenuItem(
+                      value: mode,
+                      child: Text(mode.label),
+                    ))
+                .toList(),
+            onChanged: (value) {
+              if (value != null) setState(() => _itemDiscountDisplay = value);
+            },
+          ),
           if (_mainTemplate.usesConfigurableThermalWidth) ...[
             const SizedBox(height: 12),
             DropdownButtonFormField<String>(
@@ -1349,17 +1548,40 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
   }
 
   Widget _buildFooterLinesPanel() {
+    String alignmentLabel(ReceiptFooterAlignment value) {
+      switch (value) {
+        case ReceiptFooterAlignment.left:
+          return 'Left';
+        case ReceiptFooterAlignment.center:
+          return 'Center';
+        case ReceiptFooterAlignment.right:
+          return 'Right';
+      }
+    }
+
+    String sizeLabel(ReceiptFooterTextSize value) {
+      switch (value) {
+        case ReceiptFooterTextSize.small:
+          return 'Small';
+        case ReceiptFooterTextSize.normal:
+          return 'Normal';
+        case ReceiptFooterTextSize.large:
+          return 'Large';
+      }
+    }
+
     return EnterprisePanel(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           EnterpriseSectionHeader(
             title: 'Receipt footer',
-            subtitle: 'Each line prints centred at the bottom of every receipt.',
-            icon: Icons.format_align_center_rounded,
+            subtitle:
+                'Format each line independently. Drag rows to control the print order.',
+            icon: Icons.notes_rounded,
             color: AppTheme.navy,
             trailing: TextButton.icon(
-              onPressed: _addFooterLine,
+              onPressed: _footerCtrls.length >= 10 ? null : _addFooterLine,
               icon: const Icon(Icons.add_rounded, size: 18),
               label: const Text('Add line'),
             ),
@@ -1375,46 +1597,183 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
               ),
               child: const Row(
                 children: [
-                  Icon(Icons.info_outline_rounded, size: 16, color: AppTheme.textMuted),
+                  Icon(Icons.info_outline_rounded,
+                      size: 16, color: AppTheme.textMuted),
                   SizedBox(width: 8),
-                  Text('No footer lines — tap "Add line" to add one.',
-                      style: TextStyle(color: AppTheme.textMuted, fontSize: 13, fontWeight: FontWeight.w600)),
+                  Text(
+                    'No footer lines — tap "Add line" to add one.',
+                    style: TextStyle(
+                      color: AppTheme.textMuted,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
                 ],
               ),
             )
           else
-            ...List.generate(_footerCtrls.length, (i) {
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: Row(
-                  children: [
-                    const Icon(Icons.drag_handle_rounded, color: AppTheme.textMuted, size: 20),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: TextFormField(
-                        controller: _footerCtrls[i],
-                        decoration: InputDecoration(
-                          labelText: 'Line ${i + 1}',
-                          hintText: 'e.g. Thank you, visit again!',
-                          prefixIcon: const Icon(Icons.short_text_rounded),
-                          isDense: true,
+            ReorderableListView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              buildDefaultDragHandles: false,
+              itemCount: _footerCtrls.length,
+              onReorder: _reorderFooterLine,
+              itemBuilder: (context, i) {
+                final style = _footerStyles[i];
+                return Container(
+                  key: ObjectKey(_footerCtrls[i]),
+                  margin: const EdgeInsets.only(bottom: 9),
+                  padding: const EdgeInsets.fromLTRB(9, 9, 7, 9),
+                  decoration: BoxDecoration(
+                    color: AppTheme.surface,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: AppTheme.border),
+                  ),
+                  child: Column(
+                    children: [
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          ReorderableDragStartListener(
+                            index: i,
+                            child: const Padding(
+                              padding: EdgeInsets.symmetric(horizontal: 3),
+                              child: Icon(
+                                Icons.drag_handle_rounded,
+                                color: AppTheme.textMuted,
+                                size: 20,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 7),
+                          Expanded(
+                            child: TextFormField(
+                              controller: _footerCtrls[i],
+                              maxLength: 100,
+                              onChanged: (_) => setState(() {}),
+                              decoration: InputDecoration(
+                                labelText: 'Line ${i + 1}',
+                                hintText: 'e.g. Thank you, visit again!',
+                                counterText: '',
+                                isDense: true,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 5),
+                          IconButton(
+                            onPressed: () => _removeFooterLine(i),
+                            icon: const Icon(
+                              Icons.remove_circle_outline_rounded,
+                              color: AppTheme.danger,
+                            ),
+                            tooltip: 'Remove this line',
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Padding(
+                        padding: const EdgeInsets.only(left: 30, right: 4),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: DropdownButtonFormField<ReceiptFooterAlignment>(
+                                value: style.alignment,
+                                isDense: true,
+                                decoration: const InputDecoration(
+                                  labelText: 'Alignment',
+                                  isDense: true,
+                                ),
+                                items: ReceiptFooterAlignment.values
+                                    .map(
+                                      (value) => DropdownMenuItem(
+                                        value: value,
+                                        child: Text(alignmentLabel(value)),
+                                      ),
+                                    )
+                                    .toList(),
+                                onChanged: (value) {
+                                  if (value == null) return;
+                                  setState(() {
+                                    _footerStyles[i] = style.copyWith(
+                                      alignment: value,
+                                    );
+                                  });
+                                },
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: DropdownButtonFormField<ReceiptFooterTextSize>(
+                                value: style.size,
+                                isDense: true,
+                                decoration: const InputDecoration(
+                                  labelText: 'Text size',
+                                  isDense: true,
+                                ),
+                                items: ReceiptFooterTextSize.values
+                                    .map(
+                                      (value) => DropdownMenuItem(
+                                        value: value,
+                                        child: Text(sizeLabel(value)),
+                                      ),
+                                    )
+                                    .toList(),
+                                onChanged: (value) {
+                                  if (value == null) return;
+                                  setState(() {
+                                    _footerStyles[i] = style.copyWith(size: value);
+                                  });
+                                },
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            FilterChip(
+                              label: const Text('Bold'),
+                              selected: style.bold,
+                              onSelected: (selected) {
+                                setState(() {
+                                  _footerStyles[i] = style.copyWith(bold: selected);
+                                });
+                              },
+                            ),
+                          ],
                         ),
                       ),
-                    ),
-                    const SizedBox(width: 6),
-                    IconButton(
-                      onPressed: () => _removeFooterLine(i),
-                      icon: const Icon(Icons.remove_circle_outline_rounded, color: AppTheme.danger),
-                      tooltip: 'Remove this line',
-                    ),
-                  ],
+                    ],
+                  ),
+                );
+              },
+            ),
+          if (_footerHasUnsupportedEmoji) ...[
+            const SizedBox(height: 3),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              decoration: BoxDecoration(
+                color: AppTheme.warning.withValues(alpha: .08),
+                border: Border.all(
+                  color: AppTheme.warning.withValues(alpha: .3),
                 ),
-              );
-            }),
-          const SizedBox(height: 4),
+                borderRadius: BorderRadius.circular(9),
+              ),
+              child: const Text(
+                'Emoji detected. Thermal/PDF receipt fonts may not support emoji, so CounterIQ removes those symbols when printing to prevent square boxes.',
+                style: TextStyle(
+                  color: AppTheme.warning,
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+          const SizedBox(height: 5),
           const Text(
-            'Tip: footer lines also support English | العربية. Arabic templates print Arabic first; standard paged invoices print English first.',
-            style: TextStyle(color: AppTheme.textMuted, fontSize: 11.5, fontWeight: FontWeight.w500),
+            'English and Arabic text are preserved. Alignment, bold and size apply to the matching footer line on receipt and invoice templates.',
+            style: TextStyle(
+              color: AppTheme.textMuted,
+              fontSize: 11.5,
+              fontWeight: FontWeight.w500,
+            ),
           ),
         ],
       ),

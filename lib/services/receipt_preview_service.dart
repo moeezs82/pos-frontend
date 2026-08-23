@@ -1,9 +1,12 @@
 import 'dart:convert';
 import 'dart:typed_data';
 import 'package:enterprise_pos/models/invoice_template.dart';
+import 'package:enterprise_pos/models/item_discount_display.dart';
+import 'package:enterprise_pos/models/receipt_footer_style.dart';
 import 'package:enterprise_pos/models/sale_receipt_item.dart';
 import 'package:enterprise_pos/services/pdf_arabic_font_loader.dart';
 import 'package:enterprise_pos/utils/customer_phone_utils.dart';
+import 'package:enterprise_pos/utils/print_text_utils.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
@@ -17,6 +20,13 @@ class _ReceiptTextPart {
   const _ReceiptTextPart(this.text, this.isArabic);
 }
 
+class _ReceiptFooterRenderLine {
+  final String text;
+  final ReceiptFooterStyle style;
+
+  const _ReceiptFooterRenderLine(this.text, this.style);
+}
+
 class ReceiptPreviewService {
   ReceiptPreviewService._();
   static final instance = ReceiptPreviewService._();
@@ -26,6 +36,55 @@ class ReceiptPreviewService {
   );
 
   bool _containsArabic(String value) => _arabicTextPattern.hasMatch(value);
+
+  List<_ReceiptFooterRenderLine> _footerRenderLines(
+    List<String> lines,
+    List<ReceiptFooterStyle> styles, {
+    bool enabled = true,
+  }) {
+    if (!enabled) return const <_ReceiptFooterRenderLine>[];
+    final out = <_ReceiptFooterRenderLine>[];
+    for (var i = 0; i < lines.length; i++) {
+      final text = PrintTextUtils.sanitizeFooterText(lines[i]);
+      if (text.isEmpty) continue;
+      final style = i < styles.length ? styles[i] : const ReceiptFooterStyle();
+      out.add(_ReceiptFooterRenderLine(text, style));
+    }
+    return out;
+  }
+
+  pw.TextAlign _footerPdfTextAlign(ReceiptFooterAlignment alignment) {
+    switch (alignment) {
+      case ReceiptFooterAlignment.left:
+        return pw.TextAlign.left;
+      case ReceiptFooterAlignment.right:
+        return pw.TextAlign.right;
+      case ReceiptFooterAlignment.center:
+        return pw.TextAlign.center;
+    }
+  }
+
+  pw.Alignment _footerPdfAlignment(ReceiptFooterAlignment alignment) {
+    switch (alignment) {
+      case ReceiptFooterAlignment.left:
+        return pw.Alignment.centerLeft;
+      case ReceiptFooterAlignment.right:
+        return pw.Alignment.centerRight;
+      case ReceiptFooterAlignment.center:
+        return pw.Alignment.center;
+    }
+  }
+
+  double _footerFontSize(double normalSize, ReceiptFooterTextSize size) {
+    switch (size) {
+      case ReceiptFooterTextSize.small:
+        return normalSize * .84;
+      case ReceiptFooterTextSize.large:
+        return normalSize * 1.22;
+      case ReceiptFooterTextSize.normal:
+        return normalSize;
+    }
+  }
 
   /// Splits configured bilingual text on `|` and orders the language segments
   /// for the active template. The separator is a configuration delimiter, not
@@ -156,7 +215,7 @@ class ReceiptPreviewService {
   /// Renders exactly what [sections] says to show — same section toggles
   /// the real ESC/POS print uses, so a PDF preview never shows something
   /// that wouldn't actually print.
-  Future<void> previewReceipt({
+  Future<Uint8List> previewReceipt({
     required String shopName,
     String? shopAddress,
     String? shopPhone,
@@ -176,6 +235,7 @@ class ReceiptPreviewService {
     ),
     String paperWidth = 'mm80',
     List<String> footerLines = const [],
+    List<ReceiptFooterStyle> footerLineStyles = const [],
     String? receiptHeader,
     String invoiceHeading = 'SALES INVOICE',
     bool showLogo = false,
@@ -201,6 +261,7 @@ class ReceiptPreviewService {
       sections: sections,
       paperWidth: paperWidth,
       footerLines: footerLines,
+      footerLineStyles: footerLineStyles,
       receiptHeader: receiptHeader,
       invoiceHeading: invoiceHeading,
       showLogo: showLogo,
@@ -219,6 +280,7 @@ class ReceiptPreviewService {
         onLayout: (_) async => bytes,
       );
     }
+    return bytes;
   }
 
   /// Same renderer as [previewReceipt] but just returns the bytes, for the
@@ -239,6 +301,7 @@ class ReceiptPreviewService {
     required InvoiceSections sections,
     String paperWidth = 'mm80',
     List<String> footerLines = const [],
+    List<ReceiptFooterStyle> footerLineStyles = const [],
     String? receiptHeader,
     String invoiceHeading = 'SALES INVOICE',
     bool showLogo = false,
@@ -273,6 +336,9 @@ class ReceiptPreviewService {
     final paymentsSnap = (meta?["payments_snapshot"] is List)
         ? (meta!["payments_snapshot"] as List)
         : (meta?["payments"] is List ? (meta!["payments"] as List) : const []);
+    final itemDiscountDisplay = itemDiscountDisplayFromValue(
+      meta?["item_discount_display"]?.toString(),
+    );
 
     if (template == InvoiceTemplate.arabicStandardInvoice) {
       return _buildArabicStandardInvoicePdf(
@@ -289,6 +355,7 @@ class ReceiptPreviewService {
         meta: meta,
         paperWidth: paperWidth,
         footerLines: footerLines,
+        footerLineStyles: footerLineStyles,
         invoiceHeading: invoiceHeading,
         showLogo: showLogo,
         logoData: logoData,
@@ -313,6 +380,7 @@ class ReceiptPreviewService {
         meta: meta,
         paperWidth: paperWidth,
         footerLines: footerLines,
+        footerLineStyles: footerLineStyles,
         showLogo: showLogo,
         logoData: logoData,
         showQr: showQr,
@@ -337,6 +405,7 @@ class ReceiptPreviewService {
         meta: meta,
         paperWidth: paperWidth,
         footerLines: footerLines,
+        footerLineStyles: footerLineStyles,
         invoiceHeading: invoiceHeading,
         showLogo: showLogo,
         logoData: logoData,
@@ -346,7 +415,21 @@ class ReceiptPreviewService {
       );
     }
 
-    final doc = pw.Document();
+    // PDF's built-in Type1 fonts (Courier/Helvetica/Times) are not Unicode
+    // fonts. Use an installed Windows TrueType font as the document-wide
+    // theme so customer/product/configured text cannot trigger
+    // "Courier has no Unicode support" when it contains non-ASCII glyphs.
+    // Footer emoji are still sanitized separately because normal desktop
+    // fonts/thermal printers do not reliably support color emoji.
+    final unicodeFonts = await loadSystemArabicPdfFonts();
+    final doc = unicodeFonts == null
+        ? pw.Document()
+        : pw.Document(
+            theme: pw.ThemeData.withFont(
+              base: unicodeFonts.regular,
+              bold: unicodeFonts.bold,
+            ),
+          );
     final pageFormat = pageFormatForPaperWidth(paperWidth);
     final is58mm = paperWidth == 'mm58';
 
@@ -441,9 +524,11 @@ class ReceiptPreviewService {
                   cOtherPhones.isNotEmpty ||
                   cAddr.isNotEmpty);
 
-          final activeFooterLines = sections.footer
-              ? footerLines.where((l) => l.trim().isNotEmpty).toList()
-              : <String>[];
+          final activeFooterLines = _footerRenderLines(
+            footerLines,
+            footerLineStyles,
+            enabled: sections.footer,
+          );
 
           return pw.Column(
             crossAxisAlignment: pw.CrossAxisAlignment.stretch,
@@ -538,7 +623,9 @@ class ReceiptPreviewService {
                             children: [
                               pw.Expanded(
                                 child: pw.Text(
-                                  '${_q(it.qty)} x ${_m(it.price)}',
+                                  itemDiscountDisplay == ItemDiscountDisplay.compact && it.hasDiscount
+                                      ? '${_q(it.qty)} x ${_m(it.price)}  ${it.compactDiscountLabel()}'
+                                      : '${_q(it.qty)} x ${_m(it.price)}',
                                   style: small,
                                 ),
                               ),
@@ -547,6 +634,22 @@ class ReceiptPreviewService {
                             ],
                           ),
                         ),
+                        if (itemDiscountDisplay == ItemDiscountDisplay.detailed && it.hasDiscount)
+                          pw.Padding(
+                            padding: pw.EdgeInsets.only(left: detailLeftInset, top: 1),
+                            child: pw.Row(
+                              children: [
+                                pw.Expanded(
+                                  child: pw.Text(
+                                    it.detailedDiscountLabel(),
+                                    style: small,
+                                  ),
+                                ),
+                                pw.SizedBox(width: is58mm ? 3 : 4),
+                                rightMoney('-${_m(it.discountAmount)}', small),
+                              ],
+                            ),
+                          ),
                       ],
                     ),
                   ),
@@ -622,10 +725,18 @@ class ReceiptPreviewService {
               if (activeFooterLines.isNotEmpty) ...[
                 divider(),
                 ...activeFooterLines.map(
-                  (line) => pw.Center(
-                    child: pw.Padding(
-                      padding: const pw.EdgeInsets.only(top: 2),
-                      child: pw.Text(line, style: bold, textAlign: pw.TextAlign.center),
+                  (line) => pw.Container(
+                    width: double.infinity,
+                    alignment: _footerPdfAlignment(line.style.alignment),
+                    padding: const pw.EdgeInsets.only(top: 2),
+                    child: pw.Text(
+                      line.text,
+                      style: pw.TextStyle(
+                        fontSize: _footerFontSize(9, line.style.size),
+                        fontWeight:
+                            line.style.bold ? pw.FontWeight.bold : null,
+                      ),
+                      textAlign: _footerPdfTextAlign(line.style.alignment),
                     ),
                   ),
                 ),
@@ -710,6 +821,7 @@ class ReceiptPreviewService {
     Map<String, dynamic>? meta,
     required String paperWidth,
     required List<String> footerLines,
+    required List<ReceiptFooterStyle> footerLineStyles,
     required bool showLogo,
     String? logoData,
     required bool showQr,
@@ -717,7 +829,9 @@ class ReceiptPreviewService {
     required String qrCaption,
   }) async {
     final fonts = await _loadArabicFonts();
-    final doc = pw.Document();
+    final doc = pw.Document(
+      theme: pw.ThemeData.withFont(base: fonts.regular, bold: fonts.bold),
+    );
     final is58 = paperWidth.toLowerCase() == 'mm58';
     final widthMm = is58 ? 58.0 : 80.0;
     final accent = PdfColor.fromInt(0xFF0F766E);
@@ -734,6 +848,9 @@ class ReceiptPreviewService {
     final customerOtherPhones =
         CustomerPhoneUtils.printableSecondaryPhones(meta, customer);
     final customerAddress = (customer['address'] ?? '').toString().trim();
+    final itemDiscountDisplay = itemDiscountDisplayFromValue(
+      meta?['item_discount_display']?.toString(),
+    );
 
     double numericMeta(String key) {
       final raw = meta?[key];
@@ -774,7 +891,7 @@ class ReceiptPreviewService {
         : 0.0;
     final paymentHeight = payments.isEmpty ? 0.0 : 13.0 + payments.length * 6.0;
     final qrHeight = showQr && _validQrUrl(qrUrl) ? (is58 ? 35.0 : 40.0) : 0.0;
-    final footerHeight = footerLines.where((e) => e.trim().isNotEmpty).length * 5.0 + 14.0;
+    final footerHeight = _footerRenderLines(footerLines, footerLineStyles).length * 5.0 + 14.0;
     final estimatedHeightMm = (92.0 + customerHeight + itemHeightMm + 50.0 + paymentHeight + qrHeight + footerHeight)
         .clamp(150.0, 3000.0)
         .toDouble();
@@ -869,7 +986,7 @@ class ReceiptPreviewService {
         '${dateTime.day.toString().padLeft(2, '0')}/${dateTime.month.toString().padLeft(2, '0')}/${dateTime.year}';
     final timeText =
         '${dateTime.hour.toString().padLeft(2, '0')}:${dateTime.minute.toString().padLeft(2, '0')}';
-    final activeFooterLines = footerLines.where((e) => e.trim().isNotEmpty).toList();
+    final activeFooterLines = _footerRenderLines(footerLines, footerLineStyles);
 
     doc.addPage(
       pw.Page(
@@ -992,12 +1109,19 @@ class ReceiptPreviewService {
                           child: bilingualLabel('السعر', 'Price', arSize: 7.2, enSize: 5.8),
                         ),
                         pw.Text(_m(item.price), style: style(is58 ? 7 : 8, bold: true)),
+                        if (itemDiscountDisplay == ItemDiscountDisplay.compact && item.hasDiscount) ...[
+                          pw.SizedBox(width: 7),
+                          pw.Text(
+                            item.compactDiscountLabel(),
+                            style: style(is58 ? 6.6 : 7.6, bold: true, color: accent),
+                          ),
+                        ],
                       ],
                     ),
-                    if (item.discountAmount > 0)
+                    if (itemDiscountDisplay == ItemDiscountDisplay.detailed && item.hasDiscount)
                       pw.Padding(
                         padding: const pw.EdgeInsets.only(top: 2),
-                        child: valueRow('الخصم', 'Discount', _m(item.discountAmount)),
+                        child: valueRow('الخصم', 'Discount', '-${_m(item.discountAmount)}'),
                       ),
                     pw.Padding(
                       padding: const pw.EdgeInsets.only(top: 1),
@@ -1061,14 +1185,20 @@ class ReceiptPreviewService {
             if (activeFooterLines.isNotEmpty) ...[
               divider(),
               ...activeFooterLines.map(
-                (line) => pw.Padding(
+                (line) => pw.Container(
+                  width: double.infinity,
+                  alignment: _footerPdfAlignment(line.style.alignment),
                   padding: const pw.EdgeInsets.only(bottom: 2),
                   child: _configuredPdfText(
-                    line.trim(),
+                    line.text,
                     fonts: fonts,
                     arabicFirst: true,
-                    fontSize: is58 ? 6.4 : 7.3,
-                    align: pw.TextAlign.center,
+                    fontSize: _footerFontSize(
+                      is58 ? 6.4 : 7.3,
+                      line.style.size,
+                    ),
+                    bold: line.style.bold,
+                    align: _footerPdfTextAlign(line.style.alignment),
                     lineGap: .6,
                   ),
                 ),
@@ -1103,6 +1233,7 @@ class ReceiptPreviewService {
     Map<String, dynamic>? meta,
     required String paperWidth,
     required List<String> footerLines,
+    required List<ReceiptFooterStyle> footerLineStyles,
     required String invoiceHeading,
     required bool showLogo,
     String? logoData,
@@ -1111,7 +1242,9 @@ class ReceiptPreviewService {
     required String qrCaption,
   }) async {
     final fonts = await _loadArabicFonts();
-    final doc = pw.Document();
+    final doc = pw.Document(
+      theme: pw.ThemeData.withFont(base: fonts.regular, bold: fonts.bold),
+    );
     final format = pageFormatForPaperWidth(paperWidth);
     final isA5 = paperWidth.toLowerCase() == 'a5';
     final accent = PdfColor.fromInt(0xFF0F766E);
@@ -1131,6 +1264,9 @@ class ReceiptPreviewService {
         CustomerPhoneUtils.printableSecondaryPhones(meta, customer);
     final customerAddress = (customer['address'] ?? '').toString().trim();
     final effectiveCustomer = customerName.isEmpty ? 'Walk-in Customer' : customerName;
+    final itemDiscountDisplay = itemDiscountDisplayFromValue(
+      meta?['item_discount_display']?.toString(),
+    );
 
     double numericMeta(String key) {
       final raw = meta?[key];
@@ -1296,7 +1432,7 @@ class ReceiptPreviewService {
     final headingAr =
         _configuredLanguagePart(configuredHeading, arabic: true) ??
         _arabicInvoiceHeading(headingEn);
-    final activeFooterLines = footerLines.where((line) => line.trim().isNotEmpty).toList();
+    final activeFooterLines = _footerRenderLines(footerLines, footerLineStyles);
 
     doc.addPage(
       pw.MultiPage(
@@ -1429,15 +1565,24 @@ class ReceiptPreviewService {
               horizontalInside: pw.BorderSide(color: border, width: .35),
               bottom: pw.BorderSide(color: border, width: .6),
             ),
-            columnWidths: {
-              0: const pw.FixedColumnWidth(20),
-              1: const pw.FlexColumnWidth(3.9),
-              2: const pw.FlexColumnWidth(1.05),
-              3: const pw.FlexColumnWidth(.85),
-              4: const pw.FlexColumnWidth(1.45),
-              5: const pw.FlexColumnWidth(1.25),
-              6: const pw.FlexColumnWidth(1.45),
-            },
+            columnWidths: itemDiscountDisplay == ItemDiscountDisplay.hidden
+                ? {
+                    0: const pw.FixedColumnWidth(20),
+                    1: const pw.FlexColumnWidth(3.9),
+                    2: const pw.FlexColumnWidth(1.05),
+                    3: const pw.FlexColumnWidth(.85),
+                    4: const pw.FlexColumnWidth(1.45),
+                    5: const pw.FlexColumnWidth(1.45),
+                  }
+                : {
+                    0: const pw.FixedColumnWidth(20),
+                    1: const pw.FlexColumnWidth(3.9),
+                    2: const pw.FlexColumnWidth(1.05),
+                    3: const pw.FlexColumnWidth(.85),
+                    4: const pw.FlexColumnWidth(1.45),
+                    5: const pw.FlexColumnWidth(1.25),
+                    6: const pw.FlexColumnWidth(1.45),
+                  },
             children: [
               pw.TableRow(
                 decoration: pw.BoxDecoration(color: accent),
@@ -1447,7 +1592,8 @@ class ReceiptPreviewService {
                   tableHeader('الوحدة', 'Unit'),
                   tableHeader('الكمية', 'Qty'),
                   tableHeader('سعر الوحدة', 'Unit Price'),
-                  tableHeader('الخصم', 'Discount'),
+                  if (itemDiscountDisplay != ItemDiscountDisplay.hidden)
+                    tableHeader('الخصم', 'Discount'),
                   tableHeader('المبلغ', 'Amount'),
                 ],
               ),
@@ -1460,7 +1606,11 @@ class ReceiptPreviewService {
                     tableValue(item.unitName.isEmpty ? '-' : item.unitName),
                     tableValue(_q(item.qty)),
                     tableValue(_m(item.price), align: pw.TextAlign.right),
-                    tableValue(_m(item.discountAmount), align: pw.TextAlign.right),
+                    if (itemDiscountDisplay != ItemDiscountDisplay.hidden)
+                      tableValue(
+                        item.hasDiscount ? item.compactDiscountLabel() : '-',
+                        align: pw.TextAlign.right,
+                      ),
                     tableValue(_m(item.total), align: pw.TextAlign.right, bold: true),
                   ],
                 );
@@ -1579,22 +1729,34 @@ class ReceiptPreviewService {
                 ),
                 if (activeFooterLines.isNotEmpty) ...[
                   pw.Spacer(),
-                  pw.Column(
-                    crossAxisAlignment: pw.CrossAxisAlignment.end,
-                    children: activeFooterLines
-                        .map((line) => pw.Padding(
-                              padding: const pw.EdgeInsets.only(top: 2),
-                              child: _configuredPdfText(
-                                line.trim(),
-                                fonts: fonts,
-                                arabicFirst: true,
-                                fontSize: isA5 ? 5.5 : 6.4,
-                                color: muted,
-                                align: pw.TextAlign.right,
-                                lineGap: .5,
-                              ),
-                            ))
-                        .toList(),
+                  pw.SizedBox(
+                    width: isA5 ? 125 : 175,
+                    child: pw.Column(
+                      crossAxisAlignment: pw.CrossAxisAlignment.stretch,
+                      children: activeFooterLines
+                          .map((line) => pw.Container(
+                                alignment: _footerPdfAlignment(
+                                  line.style.alignment,
+                                ),
+                                padding: const pw.EdgeInsets.only(top: 2),
+                                child: _configuredPdfText(
+                                  line.text,
+                                  fonts: fonts,
+                                  arabicFirst: true,
+                                  fontSize: _footerFontSize(
+                                    isA5 ? 5.5 : 6.4,
+                                    line.style.size,
+                                  ),
+                                  bold: line.style.bold,
+                                  color: muted,
+                                  align: _footerPdfTextAlign(
+                                    line.style.alignment,
+                                  ),
+                                  lineGap: .5,
+                                ),
+                              ))
+                          .toList(),
+                    ),
                   ),
                 ],
               ],
@@ -1622,6 +1784,7 @@ class ReceiptPreviewService {
     Map<String, dynamic>? meta,
     required String paperWidth,
     required List<String> footerLines,
+    required List<ReceiptFooterStyle> footerLineStyles,
     required String invoiceHeading,
     required bool showLogo,
     String? logoData,
@@ -1629,7 +1792,15 @@ class ReceiptPreviewService {
     String? qrUrl,
     required String qrCaption,
   }) async {
-    final doc = pw.Document();
+    final unicodeFonts = await loadSystemArabicPdfFonts();
+    final doc = unicodeFonts == null
+        ? pw.Document()
+        : pw.Document(
+            theme: pw.ThemeData.withFont(
+              base: unicodeFonts.regular,
+              bold: unicodeFonts.bold,
+            ),
+          );
     final format = pageFormatForPaperWidth(paperWidth);
     final isA5 = paperWidth.toLowerCase() == 'a5';
     final accent = PdfColor.fromInt(0xFF0F766E);
@@ -1649,6 +1820,9 @@ class ReceiptPreviewService {
         CustomerPhoneUtils.printableSecondaryPhones(meta, customer);
     final customerAddress = (customer['address'] ?? '').toString().trim();
     final effectiveCustomer = customerName.isEmpty ? 'Walk-in Customer' : customerName;
+    final itemDiscountDisplay = itemDiscountDisplayFromValue(
+      meta?['item_discount_display']?.toString(),
+    );
 
     final brandingNeedsArabic = <String>[
       shopName,
@@ -1657,8 +1831,9 @@ class ReceiptPreviewService {
       qrCaption,
       ...footerLines,
     ].any(_containsArabic);
-    final ArabicPdfFonts? brandingFonts =
-        brandingNeedsArabic ? await _loadArabicFonts() : null;
+    final ArabicPdfFonts? brandingFonts = brandingNeedsArabic
+        ? (unicodeFonts ?? await _loadArabicFonts())
+        : null;
 
     double numericMeta(String key) {
       final raw = meta?[key];
@@ -1769,7 +1944,7 @@ class ReceiptPreviewService {
     }
 
     final heading = invoiceHeading.trim().isEmpty ? 'SALES INVOICE' : invoiceHeading.trim();
-    final activeFooterLines = footerLines.where((line) => line.trim().isNotEmpty).toList();
+    final activeFooterLines = _footerRenderLines(footerLines, footerLineStyles);
 
     doc.addPage(
       pw.MultiPage(
@@ -1895,15 +2070,24 @@ class ReceiptPreviewService {
               horizontalInside: pw.BorderSide(color: border, width: .45),
               bottom: pw.BorderSide(color: border, width: .7),
             ),
-            columnWidths: {
-              0: const pw.FixedColumnWidth(22),
-              1: const pw.FlexColumnWidth(4.4),
-              2: const pw.FlexColumnWidth(1.1),
-              3: const pw.FlexColumnWidth(.9),
-              4: const pw.FlexColumnWidth(1.5),
-              5: const pw.FlexColumnWidth(1.35),
-              6: const pw.FlexColumnWidth(1.65),
-            },
+            columnWidths: itemDiscountDisplay == ItemDiscountDisplay.hidden
+                ? {
+                    0: const pw.FixedColumnWidth(22),
+                    1: const pw.FlexColumnWidth(4.4),
+                    2: const pw.FlexColumnWidth(1.1),
+                    3: const pw.FlexColumnWidth(.9),
+                    4: const pw.FlexColumnWidth(1.5),
+                    5: const pw.FlexColumnWidth(1.65),
+                  }
+                : {
+                    0: const pw.FixedColumnWidth(22),
+                    1: const pw.FlexColumnWidth(4.4),
+                    2: const pw.FlexColumnWidth(1.1),
+                    3: const pw.FlexColumnWidth(.9),
+                    4: const pw.FlexColumnWidth(1.5),
+                    5: const pw.FlexColumnWidth(1.35),
+                    6: const pw.FlexColumnWidth(1.65),
+                  },
             children: [
               pw.TableRow(
                 decoration: pw.BoxDecoration(color: accent),
@@ -1913,7 +2097,8 @@ class ReceiptPreviewService {
                   tableCell('UNIT', header: true, align: pw.TextAlign.center),
                   tableCell('QTY', header: true, align: pw.TextAlign.right),
                   tableCell('UNIT PRICE', header: true, align: pw.TextAlign.right),
-                  tableCell('DISCOUNT', header: true, align: pw.TextAlign.right),
+                  if (itemDiscountDisplay != ItemDiscountDisplay.hidden)
+                    tableCell('DISCOUNT', header: true, align: pw.TextAlign.right),
                   tableCell('AMOUNT', header: true, align: pw.TextAlign.right),
                 ],
               ),
@@ -1926,7 +2111,11 @@ class ReceiptPreviewService {
                     tableCell(item.unitName.isEmpty ? '-' : item.unitName, align: pw.TextAlign.center),
                     tableCell(_q(item.qty), align: pw.TextAlign.right),
                     tableCell(_m(item.price), align: pw.TextAlign.right),
-                    tableCell(_m(item.discountAmount), align: pw.TextAlign.right),
+                    if (itemDiscountDisplay != ItemDiscountDisplay.hidden)
+                      tableCell(
+                        item.hasDiscount ? item.compactDiscountLabel() : '-',
+                        align: pw.TextAlign.right,
+                      ),
                     tableCell(_m(item.total), align: pw.TextAlign.right),
                   ],
                 );
@@ -1958,13 +2147,19 @@ class ReceiptPreviewService {
                     ],
                     if (activeFooterLines.isNotEmpty) ...[
                       pw.SizedBox(height: payments.isEmpty ? 0 : 10),
-                      ...activeFooterLines.map((line) => pw.Padding(
+                      ...activeFooterLines.map((line) => pw.Container(
+                            width: double.infinity,
+                            alignment: _footerPdfAlignment(line.style.alignment),
                             padding: const pw.EdgeInsets.only(bottom: 3),
                             child: brandedText(
-                              line.trim(),
-                              size: isA5 ? 7.5 : 8.5,
+                              line.text,
+                              size: _footerFontSize(
+                                isA5 ? 7.5 : 8.5,
+                                line.style.size,
+                              ),
                               color: muted,
-                              align: pw.TextAlign.left,
+                              align: _footerPdfTextAlign(line.style.alignment),
+                              bold: line.style.bold,
                             ),
                           )),
                     ],

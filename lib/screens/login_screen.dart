@@ -1,4 +1,11 @@
+import 'dart:io';
+
+import 'package:enterprise_pos/api/backup_service.dart';
+import 'package:enterprise_pos/config/backend_config.dart';
+import 'package:enterprise_pos/services/backend_startup_service.dart';
+import 'package:enterprise_pos/services/local_backup_client_state_service.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/auth_provider.dart';
@@ -16,13 +23,114 @@ class _LoginScreenState extends State<LoginScreen> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   bool _loading = false;
+  bool _checkingRecovery = false;
+  bool _recoveryAvailable = false;
   String? _error;
+  String? _notice;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkRecoveryAvailability();
+  }
 
   @override
   void dispose() {
     _emailController.dispose();
     _passwordController.dispose();
     super.dispose();
+  }
+
+  Future<void> _checkRecoveryAvailability() async {
+    if (!BackendConfig.isLocalHost || !Platform.isWindows) return;
+    if (mounted) setState(() => _checkingRecovery = true);
+    try {
+      final available = await BackupService().recoveryAvailable();
+      if (mounted) setState(() => _recoveryAvailable = available);
+    } catch (_) {
+      // Login must remain usable even if the optional recovery probe fails.
+    } finally {
+      if (mounted) setState(() => _checkingRecovery = false);
+    }
+  }
+
+  Future<void> _restoreFreshInstallation() async {
+    if (!_recoveryAvailable || _loading) return;
+    final picked = await FilePicker.platform.pickFiles(
+      dialogTitle: 'Select CounterIQ backup',
+      type: FileType.custom,
+      allowedExtensions: const ['ciqbak'],
+      allowMultiple: false,
+    );
+    final path = picked?.files.single.path;
+    if (path == null || !mounted) return;
+
+    setState(() {
+      _loading = true;
+      _error = null;
+      _notice = null;
+    });
+    try {
+      final service = BackupService();
+      final uploaded = await service.uploadRecoveryBackup(path);
+      final uploadToken = uploaded['upload_token']?.toString().trim() ?? '';
+      final manifest = uploaded['manifest'] is Map<String, dynamic>
+          ? uploaded['manifest'] as Map<String, dynamic>
+          : <String, dynamic>{};
+      if (uploadToken.isEmpty) {
+        throw Exception('CounterIQ did not return a valid recovery token.');
+      }
+      if (!mounted) return;
+      final counts = manifest['counts'] is Map ? manifest['counts'] as Map : const {};
+      final branches = (manifest['branches'] as List?)?.map((e) => e.toString()).join(', ') ?? '';
+      final confirmed = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) => AlertDialog(
+          icon: const Icon(Icons.restore_rounded, color: AppTheme.warning, size: 44),
+          title: const Text('Restore CounterIQ from backup?'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'This fresh installation will be replaced with the complete data from the selected backup.',
+                style: TextStyle(fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: 12),
+              Text('Customers: ${counts['customers'] ?? 0}'),
+              Text('Products: ${counts['products'] ?? 0}'),
+              Text('Sales: ${counts['sales'] ?? 0}'),
+              if (branches.isNotEmpty) Text('Businesses: $branches'),
+              const SizedBox(height: 12),
+              const Text('After recovery, sign in using a user account contained in the restored backup.'),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancel')),
+            FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Restore Backup')),
+          ],
+        ),
+      );
+      if (confirmed != true) return;
+
+      await service.restoreRecoveryUpload(uploadToken);
+      await BackendStartupService.waitForRestoreRestart();
+      final clientResult = await LocalBackupClientStateService.instance.applyPendingRestore();
+      if (!mounted) return;
+      setState(() {
+        _recoveryAvailable = false;
+        _notice = clientResult.licenseNote == null
+            ? 'Backup restored successfully. Sign in using an account from the restored CounterIQ database.'
+            : 'Backup restored successfully. ${clientResult.licenseNote}';
+      });
+    } catch (error) {
+      if (mounted) {
+        setState(() => _error = error.toString().replaceFirst('Exception: ', ''));
+      }
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
   }
 
   Future<void> _submit() async {
@@ -102,6 +210,18 @@ class _LoginScreenState extends State<LoginScreen> {
                         ),
                       ],
                     ),
+                    if (_notice != null) ...[
+                      const SizedBox(height: 18),
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: AppTheme.success.withOpacity(.08),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: AppTheme.success.withOpacity(.16)),
+                        ),
+                        child: Text(_notice!, style: const TextStyle(color: AppTheme.success, fontWeight: FontWeight.w700)),
+                      ),
+                    ],
                     if (_error != null) ...[
                       const SizedBox(height: 18),
                       Container(
@@ -147,6 +267,23 @@ class _LoginScreenState extends State<LoginScreen> {
                           : const Icon(Icons.login_rounded),
                       label: Text(_loading ? 'Signing in...' : 'Login'),
                     ),
+                    if (BackendConfig.isLocalHost && (_recoveryAvailable || _checkingRecovery)) ...[
+                      const SizedBox(height: 12),
+                      TextButton.icon(
+                        onPressed: _loading || _checkingRecovery || !_recoveryAvailable
+                            ? null
+                            : _restoreFreshInstallation,
+                        icon: _checkingRecovery
+                            ? const SizedBox(height: 16, width: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                            : const Icon(Icons.restore_rounded),
+                        label: const Text('Restore CounterIQ Backup'),
+                      ),
+                      const Text(
+                        'Available on a fresh local installation before the first user is created.',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(fontSize: 12, color: AppTheme.textMuted),
+                      ),
+                    ],
                   ],
                 ),
               ),

@@ -59,6 +59,17 @@ class OfflineInvoiceSeqService {
     return _db!;
   }
 
+  /// Flushes and closes the sequence database so Backup & Restore can take or
+  /// install an exact file copy. The next sequence request reopens it lazily.
+  Future<void> closeForBackupRestore() async {
+    final db = _db;
+    _db = null;
+    _deviceKey = null;
+    if (db != null) {
+      await db.close();
+    }
+  }
+
   Future<Database> _open() async {
     if (_testDbPath != null) {
       return openDatabase(

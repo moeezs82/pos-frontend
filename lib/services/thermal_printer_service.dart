@@ -1,9 +1,12 @@
 import 'dart:convert';
 
 import 'package:enterprise_pos/models/invoice_template.dart';
+import 'package:enterprise_pos/models/item_discount_display.dart';
+import 'package:enterprise_pos/models/receipt_footer_style.dart';
 import 'package:enterprise_pos/models/sale_receipt_item.dart';
 import 'package:enterprise_pos/services/receipt_preview_service.dart';
 import 'package:enterprise_pos/utils/customer_phone_utils.dart';
+import 'package:enterprise_pos/utils/print_text_utils.dart';
 import 'package:esc_pos_printer_plus/esc_pos_printer_plus.dart';
 import 'package:esc_pos_utils_plus/esc_pos_utils_plus.dart';
 import 'package:image/image.dart' as img;
@@ -49,6 +52,7 @@ class ThermalPrinterService {
     InvoiceSections sections = _defaultSections,
     String paperWidth = 'mm80',
     List<String> footerLines = const [],
+    List<ReceiptFooterStyle> footerLineStyles = const [],
     String? receiptHeader,
     bool showLogo = false,
     String? logoData,
@@ -90,6 +94,7 @@ class ThermalPrinterService {
           meta: meta,
           paperWidth: paperWidth,
           footerLines: footerLines,
+          footerLineStyles: footerLineStyles,
           showLogo: showLogo,
           logoData: logoData,
           showQr: showQr,
@@ -127,6 +132,7 @@ class ThermalPrinterService {
         meta: meta,
         sections: sections,
         footerLines: footerLines,
+        footerLineStyles: footerLineStyles,
         receiptHeader: receiptHeader,
         showQr: showQr,
         qrUrl: qrUrl,
@@ -150,7 +156,10 @@ class ThermalPrinterService {
     bool showQr = false,
     String? qrUrl,
     String qrCaption = 'Scan to review us',
+    List<String> footerLines = const [],
+    List<ReceiptFooterStyle> footerLineStyles = const [],
     InvoiceTemplate? template,
+    ItemDiscountDisplay itemDiscountDisplay = ItemDiscountDisplay.compact,
   }) async {
     final profile = await CapabilityProfile.load();
     final paper = paperWidth == 'mm58' ? PaperSize.mm58 : PaperSize.mm80;
@@ -192,14 +201,19 @@ class ThermalPrinterService {
           grandTotal: 1200,
           cashReceived: 1200,
           changeAmount: 0,
-          meta: const <String, dynamic>{
+          meta: <String, dynamic>{
             'customer_snapshot': {'name': 'Walk-in Customer'},
             'payments_snapshot': [
               {'method': 'cash', 'label': 'Cash', 'amount': 1200},
             ],
+            'item_discount_display': itemDiscountDisplay.value,
           },
           paperWidth: paperWidth,
-          footerLines: const ['Printer connection successful'],
+          footerLines: [...footerLines, 'Printer connection successful'],
+          footerLineStyles: [
+            ...footerLineStyles,
+            const ReceiptFooterStyle(),
+          ],
           showLogo: showLogo,
           logoData: logoData,
           showQr: showQr,
@@ -250,6 +264,12 @@ class ThermalPrinterService {
           printer.text(qrCaption.trim(), styles: const PosStyles(align: PosAlign.center));
         }
       }
+      final testFooterLines = [...footerLines, 'Printer connection successful'];
+      final testFooterStyles = [
+        ...footerLineStyles,
+        const ReceiptFooterStyle(),
+      ];
+      _writeFooterLines(printer, testFooterLines, testFooterStyles);
       printer.feed(2);
       printer.cut();
     } finally {
@@ -274,6 +294,7 @@ class ThermalPrinterService {
     Map<String, dynamic>? meta,
     required String paperWidth,
     required List<String> footerLines,
+    required List<ReceiptFooterStyle> footerLineStyles,
     required bool showLogo,
     String? logoData,
     required bool showQr,
@@ -306,6 +327,7 @@ class ThermalPrinterService {
       sections: InvoiceTemplate.arabicThermal.sections,
       paperWidth: paperWidth,
       footerLines: footerLines,
+      footerLineStyles: footerLineStyles,
       showLogo: showLogo,
       logoData: logoData,
       showQr: showQr,
@@ -364,6 +386,7 @@ class ThermalPrinterService {
     Map<String, dynamic>? meta,
     required InvoiceSections sections,
     List<String> footerLines = const [],
+    List<ReceiptFooterStyle> footerLineStyles = const [],
     String? receiptHeader,
     bool showQr = false,
     String? qrUrl,
@@ -376,6 +399,9 @@ class ThermalPrinterService {
     final cPhone = (snap['phone'] ?? '').toString().trim();
     final cOtherPhones =
         CustomerPhoneUtils.printableSecondaryPhones(meta, snap);
+    final itemDiscountDisplay = itemDiscountDisplayFromValue(
+      meta?['item_discount_display']?.toString(),
+    );
 
     final delivery = (meta?['delivery'] is num)
         ? (meta!['delivery'] as num).toDouble()
@@ -440,11 +466,24 @@ class ThermalPrinterService {
 
       for (final it in items) {
         printer.text(it.name);
+        final compactDiscount = itemDiscountDisplay == ItemDiscountDisplay.compact
+            ? it.compactDiscountLabel()
+            : '';
+        final detailText = compactDiscount.isEmpty
+            ? ' ${_q(it.qty)} x ${_m(it.price)}'
+            : ' ${_q(it.qty)} x ${_m(it.price)}  $compactDiscount';
         printer.row([
-          PosColumn(text: ' ${_q(it.qty)} x ${_m(it.price)}', width: 8),
+          PosColumn(text: detailText, width: 8),
           PosColumn(text: _m(it.total), width: 3, styles: const PosStyles(align: PosAlign.right)),
           PosColumn(text: '', width: 1),
         ]);
+        if (itemDiscountDisplay == ItemDiscountDisplay.detailed && it.hasDiscount) {
+          printer.row([
+            PosColumn(text: ' ${it.detailedDiscountLabel()}', width: 8),
+            PosColumn(text: '-${_m(it.discountAmount)}', width: 3, styles: const PosStyles(align: PosAlign.right)),
+            PosColumn(text: '', width: 1),
+          ]);
+        }
       }
     } else {
       printer.text('ITEMS', styles: const PosStyles(bold: true));
@@ -548,15 +587,52 @@ class ThermalPrinterService {
     }
 
     if (sections.footer) {
-      final lines = footerLines.where((l) => l.trim().isNotEmpty).toList();
-      for (final line in lines) {
-        printer.text(line, styles: const PosStyles(align: PosAlign.center, bold: true));
-      }
-      if (lines.isNotEmpty) printer.feed(1);
+      _writeFooterLines(printer, footerLines, footerLineStyles);
     }
 
     printer.feed(2);
     printer.cut();
+  }
+
+  void _writeFooterLines(
+    NetworkPrinter printer,
+    List<String> footerLines,
+    List<ReceiptFooterStyle> footerLineStyles,
+  ) {
+    var printed = false;
+    for (var i = 0; i < footerLines.length; i++) {
+      final text = PrintTextUtils.sanitizeFooterText(footerLines[i]);
+      if (text.isEmpty) continue;
+      final style = i < footerLineStyles.length
+          ? footerLineStyles[i]
+          : const ReceiptFooterStyle();
+      final isLarge = style.size == ReceiptFooterTextSize.large;
+      printer.text(
+        text,
+        styles: PosStyles(
+          align: _posAlign(style.alignment),
+          bold: style.bold,
+          height: isLarge ? PosTextSize.size2 : PosTextSize.size1,
+          width: isLarge ? PosTextSize.size2 : PosTextSize.size1,
+          fontType: style.size == ReceiptFooterTextSize.small
+              ? PosFontType.fontB
+              : PosFontType.fontA,
+        ),
+      );
+      printed = true;
+    }
+    if (printed) printer.feed(1);
+  }
+
+  PosAlign _posAlign(ReceiptFooterAlignment alignment) {
+    switch (alignment) {
+      case ReceiptFooterAlignment.left:
+        return PosAlign.left;
+      case ReceiptFooterAlignment.right:
+        return PosAlign.right;
+      case ReceiptFooterAlignment.center:
+        return PosAlign.center;
+    }
   }
 
   static img.Image? _decodeLogoImage(String? data, int maxWidth) {

@@ -1,5 +1,8 @@
 import 'invoice_template.dart';
+import 'item_discount_display.dart';
+import 'receipt_footer_style.dart';
 import 'whatsapp_invoice_format.dart';
+import '../services/whatsapp_message_template_service.dart';
 
 class PrinterConfig {
   final int? branchId;
@@ -8,6 +11,7 @@ class PrinterConfig {
   final String? shopAddress;
   final String? shopPhone;
   final List<String> footerLines;
+  final List<ReceiptFooterStyle> footerLineStyles;
 
   /// Main receipt/invoice printer: 'network' | 'local' | 'none'.
   final String activeConnection;
@@ -32,6 +36,9 @@ class PrinterConfig {
   final String? qrCodeUrl;
   final String qrCodeCaption;
   final WhatsAppInvoiceFormat whatsappInvoiceFormat;
+  final String whatsappMessageTemplate;
+  final ItemDiscountDisplay itemDiscountDisplay;
+  final bool whatsappShowCustomerBalance;
 
   /// Optional second receipt destination. The backend still accepts and emits
   /// kitchen_* aliases so older application builds remain compatible.
@@ -74,6 +81,7 @@ class PrinterConfig {
     this.shopAddress,
     this.shopPhone,
     this.footerLines = const [],
+    this.footerLineStyles = const [],
     this.activeConnection = 'none',
     this.networkIp,
     this.networkPort = 9100,
@@ -88,6 +96,9 @@ class PrinterConfig {
     this.qrCodeUrl,
     this.qrCodeCaption = 'Scan to review us',
     this.whatsappInvoiceFormat = WhatsAppInvoiceFormat.pdf,
+    this.whatsappMessageTemplate = WhatsAppMessageTemplateService.defaultTemplate,
+    this.itemDiscountDisplay = ItemDiscountDisplay.compact,
+    this.whatsappShowCustomerBalance = false,
     this.secondaryPrintEnabled = false,
     this.secondaryNetworkIp,
     this.secondaryNetworkPort = 9100,
@@ -144,6 +155,18 @@ class PrinterConfig {
     return str.split('\n').where((s) => s.trim().isNotEmpty).toList();
   }
 
+  static List<ReceiptFooterStyle> _parseFooterLineStyles(dynamic raw) {
+    if (raw is! List) return const [];
+    return raw.map(ReceiptFooterStyle.fromJson).toList(growable: false);
+  }
+
+  ReceiptFooterStyle footerStyleAt(int index) {
+    if (index >= 0 && index < footerLineStyles.length) {
+      return footerLineStyles[index];
+    }
+    return const ReceiptFooterStyle();
+  }
+
   static bool _bool(dynamic value, {bool fallback = false}) {
     if (value == null) return fallback;
     if (value is bool) return value;
@@ -175,6 +198,7 @@ class PrinterConfig {
       shopAddress: json['shop_address']?.toString(),
       shopPhone: json['shop_phone']?.toString(),
       footerLines: _parseFooterLines(json['footer_lines']),
+      footerLineStyles: _parseFooterLineStyles(json['footer_line_styles']),
       activeConnection: (json['active_connection'] ?? 'none').toString(),
       networkIp: json['network_ip']?.toString(),
       networkPort: toInt(json['network_port'], 9100),
@@ -191,6 +215,14 @@ class PrinterConfig {
       qrCodeCaption: (json['qr_code_caption'] ?? 'Scan to review us').toString(),
       whatsappInvoiceFormat:
           whatsAppInvoiceFormatFromValue(json['whatsapp_invoice_format']?.toString()),
+      whatsappMessageTemplate:
+          (json['whatsapp_message_template']?.toString().trim().isNotEmpty ?? false)
+              ? json['whatsapp_message_template'].toString()
+              : WhatsAppMessageTemplateService.defaultTemplate,
+      itemDiscountDisplay:
+          itemDiscountDisplayFromValue(json['item_discount_display']?.toString()),
+      whatsappShowCustomerBalance:
+          _bool(json['whatsapp_show_customer_balance']),
       secondaryPrintEnabled:
           _bool(preferred('secondary_print_enabled', 'kitchen_print_enabled')),
       secondaryNetworkIp:
@@ -238,6 +270,7 @@ class PrinterConfig {
         'shop_address': shopAddress,
         'shop_phone': shopPhone,
         'footer_lines': footerLines,
+        'footer_line_styles': footerLineStyles.map((style) => style.toJson()).toList(),
         'active_connection': activeConnection,
         'network_ip': networkIp,
         'network_port': networkPort,
@@ -252,6 +285,9 @@ class PrinterConfig {
         'qr_code_url': qrCodeUrl,
         'qr_code_caption': qrCodeCaption,
         'whatsapp_invoice_format': whatsappInvoiceFormat.value,
+        'whatsapp_message_template': whatsappMessageTemplate,
+        'item_discount_display': itemDiscountDisplay.value,
+        'whatsapp_show_customer_balance': whatsappShowCustomerBalance,
         'secondary_print_enabled': secondaryPrintEnabled,
         'secondary_network_ip': secondaryNetworkIp,
         'secondary_network_port': secondaryNetworkPort,
@@ -286,6 +322,7 @@ class PrinterConfig {
     String? shopAddress,
     String? shopPhone,
     List<String>? footerLines,
+    List<ReceiptFooterStyle>? footerLineStyles,
     String? activeConnection,
     String? networkIp,
     int? networkPort,
@@ -302,6 +339,9 @@ class PrinterConfig {
     bool clearQrCodeUrl = false,
     String? qrCodeCaption,
     WhatsAppInvoiceFormat? whatsappInvoiceFormat,
+    String? whatsappMessageTemplate,
+    ItemDiscountDisplay? itemDiscountDisplay,
+    bool? whatsappShowCustomerBalance,
     bool? secondaryPrintEnabled,
     String? secondaryNetworkIp,
     int? secondaryNetworkPort,
@@ -335,6 +375,7 @@ class PrinterConfig {
       shopAddress: shopAddress ?? this.shopAddress,
       shopPhone: shopPhone ?? this.shopPhone,
       footerLines: footerLines ?? this.footerLines,
+      footerLineStyles: footerLineStyles ?? this.footerLineStyles,
       activeConnection: activeConnection ?? this.activeConnection,
       networkIp: networkIp ?? this.networkIp,
       networkPort: networkPort ?? this.networkPort,
@@ -351,6 +392,11 @@ class PrinterConfig {
       qrCodeCaption: qrCodeCaption ?? this.qrCodeCaption,
       whatsappInvoiceFormat:
           whatsappInvoiceFormat ?? this.whatsappInvoiceFormat,
+      whatsappMessageTemplate:
+          whatsappMessageTemplate ?? this.whatsappMessageTemplate,
+      itemDiscountDisplay: itemDiscountDisplay ?? this.itemDiscountDisplay,
+      whatsappShowCustomerBalance:
+          whatsappShowCustomerBalance ?? this.whatsappShowCustomerBalance,
       secondaryPrintEnabled:
           secondaryPrintEnabled ?? this.secondaryPrintEnabled,
       secondaryNetworkIp: secondaryNetworkIp ?? this.secondaryNetworkIp,

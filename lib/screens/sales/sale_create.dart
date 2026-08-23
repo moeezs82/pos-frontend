@@ -1,10 +1,12 @@
 import 'dart:async' show Timer;
+import 'dart:typed_data';
 import 'dart:ui' show FontFeature;
 
 import 'package:enterprise_pos/api/core/api_client.dart' show ApiException;
 import 'package:enterprise_pos/api/product_service.dart';
 import 'package:enterprise_pos/models/product_unit.dart';
 import 'package:enterprise_pos/models/sale_receipt_item.dart';
+import 'package:enterprise_pos/models/item_discount_display.dart';
 import 'package:enterprise_pos/api/sale_service.dart';
 import 'package:enterprise_pos/api/sale_source_service.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
@@ -48,6 +50,7 @@ import 'package:enterprise_pos/services/local_printer_service.dart';
 import 'package:enterprise_pos/services/receipt_preview_service.dart';
 import 'package:enterprise_pos/models/whatsapp_invoice_format.dart';
 import 'package:enterprise_pos/services/whatsapp_invoice_service.dart';
+import 'package:enterprise_pos/services/whatsapp_message_template_service.dart';
 
 // local widgets split into small files
 import 'package:enterprise_pos/screens/sales/parts/sale_party_section.dart';
@@ -2135,6 +2138,9 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
           total: lineTotal,
           unitName: unitName,
           discountAmount: lineDiscount,
+          discountType: (i['discount_type'] ?? 'percentage').toString(),
+          discountValue:
+              double.tryParse(i['discount_pct']?.toString() ?? '') ?? 0.0,
         );
       }).toList();
       final printerConfig = context.read<PrinterConfigProvider>();
@@ -2158,10 +2164,16 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
           ? 'KITCHEN COPY'
           : printerConfig.secondaryReceiptHeader.trim();
       final footerLines = printerConfig.footerLines;
+      final footerLineStyles = printerConfig.footerLineStyles;
+      final printMeta = <String, dynamic>{
+        ...meta,
+        'item_discount_display': printerConfig.itemDiscountDisplay.value,
+      };
 
       debugPrint('Active printer connection: ${printerConfig.activeConnection}, template: ${mainTemplate.value}');
 
       var printedToHardware = false;
+      Uint8List? customerInvoicePdfBytes;
       if (printerConfig.isNetworkPrinter && mainTemplate.supportsRawNetwork && (printerConfig.networkIp ?? '').trim().isNotEmpty) {
         try {
           await ThermalPrinterService.instance.printSaleReceiptNetwork(
@@ -2179,10 +2191,11 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
             grandTotal: total,
             cashReceived: cashReceived,
             changeAmount: changeAmount,
-            meta: meta,
+            meta: printMeta,
             sections: mainTemplate.sections,
             paperWidth: printerConfig.mainPaperCode,
             footerLines: footerLines,
+            footerLineStyles: footerLineStyles,
             showLogo: printerConfig.printLogoEnabled && mainTemplate.isCustomerFacing,
             logoData: printerConfig.printLogoData,
             showQr: printerConfig.qrCodeEnabled && mainTemplate.isCustomerFacing,
@@ -2208,10 +2221,11 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
               grandTotal: total,
               cashReceived: cashReceived,
               changeAmount: changeAmount,
-              meta: meta,
+              meta: printMeta,
               sections: secondaryTemplate.sections,
               paperWidth: secondaryTemplate.paperWidthCode,
               footerLines: footerLines,
+              footerLineStyles: footerLineStyles,
               receiptHeader: secondaryHeader,
               template: secondaryTemplate,
             );
@@ -2241,10 +2255,11 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
             grandTotal: total,
             cashReceived: cashReceived,
             changeAmount: changeAmount,
-            meta: meta,
+            meta: printMeta,
             sections: mainTemplate.sections,
             paperWidth: printerConfig.mainPaperCode,
             footerLines: footerLines,
+            footerLineStyles: footerLineStyles,
             invoiceHeading: printerConfig.invoiceHeading,
             showLogo: printerConfig.printLogoEnabled && mainTemplate.isCustomerFacing,
             logoData: printerConfig.printLogoData,
@@ -2271,10 +2286,11 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
               grandTotal: total,
               cashReceived: cashReceived,
               changeAmount: changeAmount,
-              meta: meta,
+              meta: printMeta,
               sections: secondaryTemplate.sections,
               paperWidth: secondaryTemplate.paperWidthCode,
               footerLines: footerLines,
+              footerLineStyles: footerLineStyles,
               receiptHeader: secondaryHeader,
               template: secondaryTemplate,
               jobName: 'Secondary Copy $receiptNo',
@@ -2292,7 +2308,8 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       }
 
       if (!printedToHardware) {
-        await ReceiptPreviewService.instance.previewReceipt(
+        customerInvoicePdfBytes =
+            await ReceiptPreviewService.instance.previewReceipt(
           shopName: effectiveShopName,
           shopAddress: effectiveShopAddress,
           shopPhone: effectiveShopPhone,
@@ -2303,12 +2320,14 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
           discount: discount,
           tax: tax,
           grandTotal: total,
-          meta: meta,
+          meta: printMeta,
           sections: mainTemplate.sections,
           paperWidth: printerConfig.mainPaperCode,
           footerLines: footerLines,
+          footerLineStyles: footerLineStyles,
           invoiceHeading: printerConfig.invoiceHeading,
-          showLogo: printerConfig.printLogoEnabled && mainTemplate.isCustomerFacing,
+          showLogo:
+              printerConfig.printLogoEnabled && mainTemplate.isCustomerFacing,
           logoData: printerConfig.printLogoData,
           showQr: printerConfig.qrCodeEnabled && mainTemplate.isCustomerFacing,
           qrUrl: printerConfig.qrCodeUrl,
@@ -2320,39 +2339,59 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       if (_sendInvoiceOnWhatsApp && !queuedOffline) {
         try {
           final whatsappFormat = printerConfig.whatsappInvoiceFormat;
-          final whatsappMessage = <String>[
-            'Thank you for your purchase.',
-            '',
-            'Invoice: $receiptNo',
-            'Total: ${AppCurrency.format(total)}',
-            '',
-            whatsappFormat == WhatsAppInvoiceFormat.jpg
-                ? 'Your invoice is attached as JPG.'
-                : 'Your invoice PDF is attached.',
-          ].join('\n');
-          final pdfBytes = await ReceiptPreviewService.instance.buildReceiptPdf(
-            shopName: effectiveShopName,
-            shopAddress: effectiveShopAddress,
-            shopPhone: effectiveShopPhone,
-            receiptNo: receiptNo,
-            dateTime: DateTime.now(),
-            items: receiptItems,
-            subtotal: subtotal,
-            discount: discount,
-            tax: tax,
-            grandTotal: total,
-            meta: meta,
-            sections: mainTemplate.sections,
-            paperWidth: printerConfig.mainPaperCode,
-            footerLines: footerLines,
-            invoiceHeading: printerConfig.invoiceHeading,
-            showLogo: printerConfig.printLogoEnabled && mainTemplate.isCustomerFacing,
-            logoData: printerConfig.printLogoData,
-            showQr: printerConfig.qrCodeEnabled && mainTemplate.isCustomerFacing,
-            qrUrl: printerConfig.qrCodeUrl,
-            qrCaption: printerConfig.qrCodeCaption,
-            template: mainTemplate,
+          final customerSnapshotRaw = meta['customer_snapshot'];
+          final customerSnapshot = customerSnapshotRaw is Map
+              ? Map<String, dynamic>.from(customerSnapshotRaw)
+              : const <String, dynamic>{};
+          final rawCustomerBalance = res?['data']?['customer_balance'];
+          final whatsappMessage = WhatsAppMessageTemplateService.render(
+            template: printerConfig.whatsappMessageTemplate,
+            showCustomerBalance: printerConfig.whatsappShowCustomerBalance,
+            values: {
+              'customer_name': _metaText(customerSnapshot['name']),
+              'customer_code': _metaText(customerSnapshot['customer_code']),
+              'invoice_no': receiptNo,
+              'invoice_amount': total.toStringAsFixed(2),
+              'amount_paid': paid.toStringAsFixed(2),
+              'invoice_balance': balance.toStringAsFixed(2),
+              'customer_balance': rawCustomerBalance == null
+                  ? ''
+                  : _metaNum(rawCustomerBalance).toStringAsFixed(2),
+              'business_name': effectiveShopName,
+              'date': '${occurredAt.day.toString().padLeft(2, '0')}/'
+                  '${occurredAt.month.toString().padLeft(2, '0')}/'
+                  '${occurredAt.year}',
+              'currency': AppCurrency.currency,
+              'attachment_format': whatsappFormat.label,
+            },
           );
+          final pdfBytes = customerInvoicePdfBytes ??
+              await ReceiptPreviewService.instance.buildReceiptPdf(
+                shopName: effectiveShopName,
+                shopAddress: effectiveShopAddress,
+                shopPhone: effectiveShopPhone,
+                receiptNo: receiptNo,
+                dateTime: DateTime.now(),
+                items: receiptItems,
+                subtotal: subtotal,
+                discount: discount,
+                tax: tax,
+                grandTotal: total,
+                meta: printMeta,
+                sections: mainTemplate.sections,
+                paperWidth: printerConfig.mainPaperCode,
+                footerLines: footerLines,
+                footerLineStyles: footerLineStyles,
+                invoiceHeading: printerConfig.invoiceHeading,
+                showLogo: printerConfig.printLogoEnabled &&
+                    mainTemplate.isCustomerFacing,
+                logoData: printerConfig.printLogoData,
+                showQr: printerConfig.qrCodeEnabled &&
+                    mainTemplate.isCustomerFacing,
+                qrUrl: printerConfig.qrCodeUrl,
+                qrCaption: printerConfig.qrCodeCaption,
+                template: mainTemplate,
+              );
           final prepared =
               await WhatsAppInvoiceService.instance.prepareAndOpen(
             pdfBytes: pdfBytes,

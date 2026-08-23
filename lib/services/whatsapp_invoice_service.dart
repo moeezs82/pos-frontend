@@ -7,6 +7,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:printing/printing.dart';
 
 import '../models/whatsapp_invoice_format.dart';
+import 'windows_file_clipboard.dart';
 
 class WhatsAppInvoicePreparation {
   final List<String> attachmentPaths;
@@ -176,29 +177,7 @@ class WhatsAppInvoiceService {
     }
     if (existing.length != filePaths.length) return false;
 
-    final addFileCommands = existing.map((path) {
-      final escapedPath = path.replaceAll("'", "''");
-      return "[void]\$files.Add('$escapedPath')";
-    }).join('; ');
-
-    final script = <String>[
-      'Add-Type -AssemblyName System.Windows.Forms',
-      r'$files = New-Object System.Collections.Specialized.StringCollection',
-      addFileCommands,
-      r'$data = New-Object System.Windows.Forms.DataObject',
-      r'$data.SetFileDropList($files)',
-      // The second argument persists clipboard data after PowerShell exits.
-      r'[System.Windows.Forms.Clipboard]::SetDataObject($data, $true)',
-    ].join('; ');
-
-    final result = await Process.run('powershell.exe', [
-      '-NoProfile',
-      '-NonInteractive',
-      '-STA',
-      '-Command',
-      script,
-    ], runInShell: false);
-    return result.exitCode == 0;
+    return WindowsFileClipboard.copyFiles(existing);
   }
 
   Future<void> openChat({
@@ -212,18 +191,12 @@ class WhatsAppInvoiceService {
       // explorer.exe treats some HTTPS URLs as filesystem locations. Use the
       // Windows URL protocol handler so the default browser/WhatsApp handoff
       // receives the URL instead.
-      final result = await Process.run('rundll32.exe', [
-        'url.dll,FileProtocolHandler',
-        uri.toString(),
-      ], runInShell: false);
-      if (result.exitCode != 0) {
-        throw ProcessException(
-          'rundll32.exe',
-          ['url.dll,FileProtocolHandler', uri.toString()],
-          'Windows could not open WhatsApp.',
-          result.exitCode,
-        );
-      }
+      await Process.start(
+        'rundll32.exe',
+        ['url.dll,FileProtocolHandler', uri.toString()],
+        runInShell: false,
+        mode: ProcessStartMode.detached,
+      );
       return;
     }
     if (Platform.isMacOS) {

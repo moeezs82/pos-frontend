@@ -1,4 +1,5 @@
 import 'package:enterprise_pos/screens/account_screen.dart';
+import 'package:enterprise_pos/config/backend_config.dart';
 import 'package:enterprise_pos/services/app_navigator.dart';
 import 'package:enterprise_pos/providers/branch_provider.dart';
 import 'package:enterprise_pos/providers/subscription_provider.dart';
@@ -21,6 +22,7 @@ import 'package:enterprise_pos/screens/sales/sale_create.dart';
 // import 'package:enterprise_pos/screens/sales/sale_returns_screen.dart';
 import 'package:enterprise_pos/screens/sales/sale_screen.dart';
 import 'package:enterprise_pos/screens/settings/printer_settings_screen.dart';
+import 'package:enterprise_pos/screens/settings/backup_restore_screen.dart';
 import 'package:enterprise_pos/screens/stock_screen.dart';
 import 'package:enterprise_pos/screens/subscription/branch_lock_screen.dart';
 import 'package:enterprise_pos/screens/subscription/subscription_management_screen.dart';
@@ -212,6 +214,17 @@ class HomeScreen extends StatelessWidget {
       if (auth.hasPermission('view-purchases')) _Tile(icon: Icons.shopping_cart_rounded, title: 'Purchases', shortcut: 'Ctrl+Shift+O', subtitle: 'Bills and payments', color: AppTheme.primaryDark, onTap: () => PosNavigation.openSingleton(routeId: PosRouteIds.purchases, builder: (_) => const PurchasesScreen())),
       if (auth.hasPermission('manage-purchases')) _Tile(icon: Icons.assignment_return_outlined, title: 'Purchase Claim', subtitle: 'Damage/shortage claims', color: AppTheme.warning, onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PurchaseClaimsScreen()))),
       if (auth.hasPermission('view-users')) _Tile(icon: Icons.manage_accounts_rounded, title: 'Users', shortcut: 'Ctrl+U', subtitle: 'Staff and role access', color: AppTheme.info, onTap: () => PosNavigation.openSingleton(routeId: PosRouteIds.users, builder: (_) => const UsersScreen())),
+      if (BackendConfig.isLocal && auth.hasAnyPermission(const ['create-backups', 'restore-backups']))
+        _Tile(
+          icon: Icons.backup_rounded,
+          title: 'Backup & Restore',
+          subtitle: 'Protect and recover complete local business data',
+          color: AppTheme.navy,
+          onTap: () => Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const BackupRestoreScreen()),
+          ),
+        ),
       // Chart of Accounts is Master-Admin only (backend enforces; this hides the
       // affordance so ordinary users never see or reach it).
       if (auth.isMasterAdmin)

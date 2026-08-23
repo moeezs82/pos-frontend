@@ -4,6 +4,7 @@ import 'dart:ui' show FontFeature;
 import 'package:enterprise_pos/api/core/api_client.dart';
 import 'package:enterprise_pos/api/sale_service.dart';
 import 'package:enterprise_pos/models/sale_receipt_item.dart';
+import 'package:enterprise_pos/models/item_discount_display.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/providers/printer_config_provider.dart';
 import 'package:enterprise_pos/providers/payment_method_provider.dart';
@@ -360,6 +361,8 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
         total: lineTotal,
         unitName: unitName,
         discountAmount: lineDiscount,
+        discountType: (m['discount_type'] ?? 'percentage').toString(),
+        discountValue: _d(m['discount']),
       );
     }).toList();
 
@@ -384,6 +387,8 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
         ? 'KITCHEN COPY'
         : printerConfig.secondaryReceiptHeader.trim();
     final footerLines = printerConfig.footerLines;
+    final footerLineStyles = printerConfig.footerLineStyles;
+    printMeta['item_discount_display'] = printerConfig.itemDiscountDisplay.value;
 
     debugPrint('Active printer connection: ${printerConfig.activeConnection}, template: ${mainTemplate.value}');
 
@@ -409,6 +414,7 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
           sections: mainTemplate.sections,
           paperWidth: printerConfig.mainPaperCode,
           footerLines: footerLines,
+          footerLineStyles: footerLineStyles,
           showLogo: printerConfig.printLogoEnabled && mainTemplate.isCustomerFacing,
           logoData: printerConfig.printLogoData,
           showQr: printerConfig.qrCodeEnabled && mainTemplate.isCustomerFacing,
@@ -438,6 +444,7 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
             sections: secondaryTemplate.sections,
             paperWidth: secondaryTemplate.paperWidthCode,
             footerLines: footerLines,
+            footerLineStyles: footerLineStyles,
             receiptHeader: secondaryHeader,
             template: secondaryTemplate,
           );
@@ -471,6 +478,7 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
           sections: mainTemplate.sections,
           paperWidth: printerConfig.mainPaperCode,
           footerLines: footerLines,
+          footerLineStyles: footerLineStyles,
           invoiceHeading: printerConfig.invoiceHeading,
           showLogo: printerConfig.printLogoEnabled && mainTemplate.isCustomerFacing,
           logoData: printerConfig.printLogoData,
@@ -501,6 +509,7 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
             sections: secondaryTemplate.sections,
             paperWidth: secondaryTemplate.paperWidthCode,
             footerLines: footerLines,
+            footerLineStyles: footerLineStyles,
             receiptHeader: secondaryHeader,
             template: secondaryTemplate,
             jobName: 'Secondary Copy $receiptNo',
@@ -533,6 +542,7 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
         sections: mainTemplate.sections,
         paperWidth: printerConfig.mainPaperCode,
         footerLines: footerLines,
+        footerLineStyles: footerLineStyles,
         invoiceHeading: printerConfig.invoiceHeading,
         showLogo: printerConfig.printLogoEnabled && mainTemplate.isCustomerFacing,
         logoData: printerConfig.printLogoData,

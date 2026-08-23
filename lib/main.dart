@@ -17,6 +17,7 @@ import 'screens/licensing/activation_screen.dart';
 import 'services/connectivity_auto_sync_service.dart';
 import 'services/backend_startup_service.dart';
 import 'services/offline_license_service.dart';
+import 'services/local_backup_client_state_service.dart';
 import 'config/backend_config.dart';
 import 'services/party_pick_caches.dart';
 import 'theme/app_theme.dart';
@@ -109,6 +110,13 @@ class _CounterIQBootstrapState extends State<CounterIQBootstrap> {
 
     try {
       await BackendStartupService.ensureReady();
+      // A restore may have completed while the Flutter process was closed or
+      // Windows was restarted. Frontend-owned offline queue/sequence state is
+      // staged by the backend and is safe to apply after the local sidecar is
+      // healthy, before authentication begins.
+      if (BackendConfig.isLocalHost) {
+        await LocalBackupClientStateService.instance.applyPendingRestore();
+      }
       if (!mounted) return;
       setState(() {
         _ready = true;

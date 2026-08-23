@@ -1,7 +1,9 @@
 import 'package:enterprise_pos/api/core/api_client.dart';
 
 import '../models/invoice_template.dart';
+import '../models/item_discount_display.dart';
 import '../models/printer_config.dart';
+import '../models/receipt_footer_style.dart';
 import '../models/whatsapp_invoice_format.dart';
 
 class PrinterConfigService {
@@ -66,6 +68,7 @@ class PrinterConfigService {
     String? shopAddress,
     String? shopPhone,
     List<String> footerLines = const [],
+    List<ReceiptFooterStyle> footerLineStyles = const [],
     required String activeConnection,
     String? networkIp,
     int networkPort = 9100,
@@ -80,6 +83,9 @@ class PrinterConfigService {
     String? qrCodeUrl,
     String qrCodeCaption = 'Scan to review us',
     WhatsAppInvoiceFormat whatsappInvoiceFormat = WhatsAppInvoiceFormat.pdf,
+    String whatsappMessageTemplate = '',
+    ItemDiscountDisplay itemDiscountDisplay = ItemDiscountDisplay.compact,
+    bool whatsappShowCustomerBalance = false,
     bool secondaryPrintEnabled = false,
     String? secondaryNetworkIp,
     int secondaryNetworkPort = 9100,
@@ -109,6 +115,7 @@ class PrinterConfigService {
       'shop_address': shopAddress,
       'shop_phone': shopPhone,
       'footer_lines': footerLines,
+      'footer_line_styles': footerLineStyles.map((style) => style.toJson()).toList(),
       'active_connection': activeConnection,
       'network_ip': networkIp,
       'network_port': networkPort,
@@ -123,6 +130,9 @@ class PrinterConfigService {
       'qr_code_url': qrCodeUrl,
       'qr_code_caption': qrCodeCaption,
       'whatsapp_invoice_format': whatsappInvoiceFormat.value,
+      'whatsapp_message_template': whatsappMessageTemplate,
+      'item_discount_display': itemDiscountDisplay.value,
+      'whatsapp_show_customer_balance': whatsappShowCustomerBalance,
       'secondary_print_enabled': secondaryPrintEnabled,
       'secondary_network_ip': secondaryNetworkIp,
       'secondary_network_port': secondaryNetworkPort,

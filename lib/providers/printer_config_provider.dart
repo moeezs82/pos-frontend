@@ -6,7 +6,9 @@ import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/invoice_template.dart';
+import '../models/item_discount_display.dart';
 import '../models/printer_config.dart';
+import '../models/receipt_footer_style.dart';
 import '../models/whatsapp_invoice_format.dart';
 
 /// Branch-aware printer configuration.
@@ -57,6 +59,10 @@ class PrinterConfigProvider extends ChangeNotifier {
   String get qrCodeCaption => _config.qrCodeCaption;
   WhatsAppInvoiceFormat get whatsappInvoiceFormat =>
       _config.whatsappInvoiceFormat;
+  String get whatsappMessageTemplate => _config.whatsappMessageTemplate;
+  ItemDiscountDisplay get itemDiscountDisplay => _config.itemDiscountDisplay;
+  bool get whatsappShowCustomerBalance =>
+      _config.whatsappShowCustomerBalance;
   String get mainPaperCode => _config.mainPaperCode;
   InvoiceTemplate get secondaryInvoiceTemplate =>
       _config.secondaryInvoiceTemplate;
@@ -74,6 +80,7 @@ class PrinterConfigProvider extends ChangeNotifier {
   String get barcodeOrientation => _config.barcodeOrientation;
   String get barcodeCurrency => _config.barcodeCurrency;
   List<String> get footerLines => _config.footerLines;
+  List<ReceiptFooterStyle> get footerLineStyles => _config.footerLineStyles;
 
   // Compatibility getters for receipt code compiled during a rolling update.
   String? get kitchenPrinterName => secondaryPrinterName;

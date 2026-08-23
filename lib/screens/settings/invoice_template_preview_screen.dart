@@ -1,6 +1,8 @@
 import 'dart:typed_data';
 
 import 'package:enterprise_pos/models/invoice_template.dart';
+import 'package:enterprise_pos/models/item_discount_display.dart';
+import 'package:enterprise_pos/models/receipt_footer_style.dart';
 import 'package:enterprise_pos/services/receipt_preview_service.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:flutter/material.dart';
@@ -16,6 +18,7 @@ class InvoiceTemplatePreviewScreen extends StatefulWidget {
   final String? shopAddress;
   final String? shopPhone;
   final List<String> footerLines;
+  final List<ReceiptFooterStyle> footerLineStyles;
   final String? receiptHeader;
   final String invoicePaperSize;
   final String thermalPaperSize;
@@ -25,6 +28,7 @@ class InvoiceTemplatePreviewScreen extends StatefulWidget {
   final bool showQr;
   final String? qrUrl;
   final String qrCaption;
+  final ItemDiscountDisplay itemDiscountDisplay;
 
   const InvoiceTemplatePreviewScreen({
     super.key,
@@ -37,6 +41,7 @@ class InvoiceTemplatePreviewScreen extends StatefulWidget {
       'Thank you, visit again!',
       'Follow us on Instagram @myshop',
     ],
+    this.footerLineStyles = const [],
     this.receiptHeader,
     this.invoicePaperSize = 'a4',
     this.thermalPaperSize = 'mm80',
@@ -46,6 +51,7 @@ class InvoiceTemplatePreviewScreen extends StatefulWidget {
     this.showQr = false,
     this.qrUrl,
     this.qrCaption = 'Scan to review us',
+    this.itemDiscountDisplay = ItemDiscountDisplay.compact,
   });
 
   @override
@@ -77,6 +83,8 @@ class _InvoiceTemplatePreviewScreenState
           price: 1250,
           qty: 1,
           discountAmount: 50,
+          discountType: 'percentage',
+          discountValue: 4,
           total: 1200,
         ),
         ReceiptItem(
@@ -111,7 +119,7 @@ class _InvoiceTemplatePreviewScreenState
       discount: 50,
       tax: 0,
       grandTotal: 1910,
-      meta: const {
+      meta: {
         'customer_snapshot': {
           'name': 'Walk-in Customer',
           'phone': '0300-1234567',
@@ -122,10 +130,12 @@ class _InvoiceTemplatePreviewScreenState
         ],
         'cash_received': 1000,
         'change_amount': 0,
+        'item_discount_display': widget.itemDiscountDisplay.value,
       },
       sections: _selected.sections,
       paperWidth: _paperCode,
       footerLines: widget.footerLines,
+      footerLineStyles: widget.footerLineStyles,
       receiptHeader: widget.receiptHeader,
       invoiceHeading: widget.invoiceHeading,
       showLogo: widget.showLogo && _selected.isCustomerFacing,

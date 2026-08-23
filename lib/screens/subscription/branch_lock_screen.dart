@@ -1,7 +1,9 @@
+import 'package:enterprise_pos/config/backend_config.dart';
 import 'package:enterprise_pos/models/subscription_status.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/providers/subscription_provider.dart';
 import 'package:enterprise_pos/screens/login_screen.dart';
+import 'package:enterprise_pos/screens/settings/backup_restore_screen.dart';
 import 'package:enterprise_pos/screens/subscription/subscription_management_screen.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/branch_select_sheet.dart';
@@ -133,6 +135,27 @@ class BranchLockScreen extends StatelessWidget {
                     ),
                   ),
                 const SizedBox(height: 10),
+
+                // Backup/recovery is deliberately still available on a locked
+                // local installation. A subscription problem must never stop an
+                // authorized user from protecting or recovering business data.
+                if (BackendConfig.isLocal &&
+                    auth.hasAnyPermission(const ['create-backups', 'restore-backups'])) ...[
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      icon: const Icon(Icons.backup_rounded),
+                      label: const Text('Backup & Restore'),
+                      onPressed: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const BackupRestoreScreen(),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                ],
 
                 // ── Owner management link ───────────────────────────────────
                 if (auth.isMasterAdmin) ...[

@@ -1,4 +1,6 @@
 import 'package:enterprise_pos/models/invoice_template.dart';
+import 'package:enterprise_pos/models/item_discount_display.dart';
+import 'package:enterprise_pos/models/receipt_footer_style.dart';
 import 'package:enterprise_pos/models/sale_receipt_item.dart';
 import 'package:enterprise_pos/services/receipt_preview_service.dart';
 import 'package:pdf/pdf.dart';
@@ -16,12 +18,17 @@ class LocalPrinterService {
   Future<List<Printer>> listInstalledPrinters() => Printing.listPrinters();
 
   Future<Printer> requirePrinter(String printerName) async {
+    final sw = Stopwatch()..start();
+    print('[LOCAL-PRINT-TIMING] requirePrinter start printer=$printerName');
     final wanted = printerName.trim();
     if (wanted.isEmpty) {
       throw Exception('Select an installed printer first.');
     }
 
     final printers = await Printing.listPrinters();
+    print(
+      '[LOCAL-PRINT-TIMING] Printing.listPrinters completed in ${sw.elapsedMilliseconds}ms count=${printers.length}',
+    );
     final wantedLower = wanted.toLowerCase();
     for (final printer in printers) {
       if (printer.name.trim().toLowerCase() == wantedLower) {
@@ -53,6 +60,7 @@ class LocalPrinterService {
     required InvoiceSections sections,
     String paperWidth = 'mm80',
     List<String> footerLines = const [],
+    List<ReceiptFooterStyle> footerLineStyles = const [],
     String? receiptHeader,
     String invoiceHeading = 'SALES INVOICE',
     bool showLogo = false,
@@ -63,13 +71,19 @@ class LocalPrinterService {
     InvoiceTemplate? template,
     String? jobName,
   }) async {
+    final totalTiming = Stopwatch()..start();
+    print('[LOCAL-PRINT-TIMING] printSaleReceipt start receipt=$receiptNo');
     final printer = await requirePrinter(printerName);
+    print(
+      '[LOCAL-PRINT-TIMING] printer resolved +${totalTiming.elapsedMilliseconds}ms name=${printer.name}',
+    );
     final effectiveMeta = <String, dynamic>{
       ...?meta,
       'cash_received': cashReceived,
       'change_amount': changeAmount,
     };
 
+    final pdfTiming = Stopwatch()..start();
     final bytes = await ReceiptPreviewService.instance.buildReceiptPdf(
       shopName: shopName,
       shopAddress: shopAddress,
@@ -85,6 +99,7 @@ class LocalPrinterService {
       sections: sections,
       paperWidth: paperWidth,
       footerLines: footerLines,
+      footerLineStyles: footerLineStyles,
       receiptHeader: receiptHeader,
       invoiceHeading: invoiceHeading,
       showLogo: showLogo,
@@ -94,8 +109,13 @@ class LocalPrinterService {
       qrCaption: qrCaption,
       template: template,
     );
+    print(
+      '[LOCAL-PRINT-TIMING] PDF built in ${pdfTiming.elapsedMilliseconds}ms bytes=${bytes.length}',
+    );
 
     final format = _pageFormat(paperWidth);
+    final directPrintTiming = Stopwatch()..start();
+    print('[LOCAL-PRINT-TIMING] Printing.directPrintPdf starting');
     final printed = await Printing.directPrintPdf(
       printer: printer,
       name: jobName ?? 'Receipt $receiptNo',
@@ -107,6 +127,9 @@ class LocalPrinterService {
       // narrower/offset from the nominal 58 mm or 80 mm roll.
       usePrinterSettings: paperWidth == 'mm58' || paperWidth == 'mm80',
       onLayout: (_) async => bytes,
+    );
+    print(
+      '[LOCAL-PRINT-TIMING] Printing.directPrintPdf completed in ${directPrintTiming.elapsedMilliseconds}ms printed=$printed total=${totalTiming.elapsedMilliseconds}ms',
     );
 
     if (!printed) {
@@ -122,6 +145,7 @@ class LocalPrinterService {
     required InvoiceSections sections,
     String paperWidth = 'mm80',
     List<String> footerLines = const [],
+    List<ReceiptFooterStyle> footerLineStyles = const [],
     String? receiptHeader,
     String copyLabel = 'LOCAL PRINTER TEST',
     String invoiceHeading = 'SALES INVOICE',
@@ -131,6 +155,7 @@ class LocalPrinterService {
     String? qrUrl,
     String qrCaption = 'Scan to review us',
     InvoiceTemplate? template,
+    ItemDiscountDisplay itemDiscountDisplay = ItemDiscountDisplay.compact,
   }) {
     final now = DateTime.now();
     return printSaleReceipt(
@@ -157,17 +182,22 @@ class LocalPrinterService {
       grandTotal: 1200,
       cashReceived: 0,
       changeAmount: 0,
-      meta: const <String, dynamic>{
+      meta: <String, dynamic>{
         'customer_snapshot': {'name': 'Walk-in Customer'},
         'payments_snapshot': [
           {'method': 'cash', 'label': 'Cash', 'amount': 1200},
         ],
+        'item_discount_display': itemDiscountDisplay.value,
       },
       sections: sections,
       paperWidth: paperWidth,
       footerLines: [
         ...footerLines,
         'Printer connection successful',
+      ],
+      footerLineStyles: [
+        ...footerLineStyles,
+        const ReceiptFooterStyle(),
       ],
       receiptHeader: receiptHeader,
       invoiceHeading: invoiceHeading,
