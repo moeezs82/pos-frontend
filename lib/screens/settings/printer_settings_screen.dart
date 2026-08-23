@@ -9,6 +9,7 @@ import 'package:enterprise_pos/models/printer_config.dart';
 import 'package:enterprise_pos/models/receipt_footer_style.dart';
 import 'package:enterprise_pos/models/whatsapp_invoice_format.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
+import 'package:enterprise_pos/providers/branch_provider.dart';
 import 'package:enterprise_pos/providers/printer_config_provider.dart';
 import 'package:enterprise_pos/screens/settings/invoice_template_preview_screen.dart';
 import 'package:enterprise_pos/services/barcode_label_printer_service.dart';
@@ -72,6 +73,7 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
   String _activeConnection = 'none';
   bool _secondaryEnabled = false;
   bool _barcodeAddonActive = false;
+  bool _barcodePermissionGranted = false;
   String _barcodeConnection = 'dialog';
   String _barcodeLanguage = 'driver';
   int _barcodeDpi = 203;
@@ -105,11 +107,15 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
     _service = PrinterConfigService(token: token);
     _common = CommonService(token: token);
     _loadTemplates();
+    _loadInstalledPrinters();
     if (auth.isMasterAdmin) {
       _loadBranches();
-      _loadInstalledPrinters();
     } else {
       _loadingBranches = false;
+      _selectedBranchId = auth.activeBranchId;
+      if (_selectedBranchId != null) {
+        _loadConfigFor(_selectedBranchId);
+      }
     }
   }
 
@@ -191,23 +197,33 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
   Future<void> _loadConfigFor(int? branchId) async {
     setState(() => _loadingConfig = true);
     try {
-      final all = await _service.getAllPrinterSettings();
-      final match = all.where((c) => c.branchId == branchId).toList();
-      final config = match.isNotEmpty ? match.first : const PrinterConfig();
-      _applyToForm(config.copyWith(
-        barcodeAddonActive: _selectedBranchHasBarcodeAddon,
-        barcodePermissionGranted: true,
-        barcodeAccessGranted: _selectedBranchHasBarcodeAddon,
-      ));
+      final auth = context.read<AuthProvider>();
+      if (auth.isMasterAdmin) {
+        final all = await _service.getAllPrinterSettings();
+        final match = all.where((c) => c.branchId == branchId).toList();
+        final config = match.isNotEmpty ? match.first : const PrinterConfig();
+        _applyToForm(config.copyWith(
+          barcodeAddonActive: _selectedBranchHasBarcodeAddon,
+          barcodePermissionGranted: true,
+          barcodeAccessGranted: _selectedBranchHasBarcodeAddon,
+        ));
+      } else {
+        if (branchId == null || branchId != auth.activeBranchId) {
+          throw Exception('You can only manage printer settings for your own business.');
+        }
+        final config = await _service.getPrinterConfig();
+        _applyToForm(config);
+      }
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Could not load settings: ${e.toString().replaceFirst('Exception: ', '')}')),
       );
+      final auth = context.read<AuthProvider>();
       _applyToForm(PrinterConfig(
-        barcodeAddonActive: _selectedBranchHasBarcodeAddon,
-        barcodePermissionGranted: true,
-        barcodeAccessGranted: _selectedBranchHasBarcodeAddon,
+        barcodeAddonActive: auth.isMasterAdmin && _selectedBranchHasBarcodeAddon,
+        barcodePermissionGranted: auth.isMasterAdmin,
+        barcodeAccessGranted: auth.isMasterAdmin && _selectedBranchHasBarcodeAddon,
       ));
     } finally {
       if (mounted) setState(() => _loadingConfig = false);
@@ -259,6 +275,7 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
           ? config.secondaryInvoiceTemplate
           : InvoiceTemplate.kitchen;
       _barcodeAddonActive = config.barcodeAddonActive;
+      _barcodePermissionGranted = config.barcodePermissionGranted;
       _barcodeConnection = config.barcodeConnection;
       _barcodeLocalPrinterCtrl.text = config.barcodeLocalPrinterName ?? '';
       _barcodeNetworkIpCtrl.text = config.barcodeNetworkIp ?? '';
@@ -382,6 +399,10 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
 
   String get _selectedBranchCurrency {
     if (_selectedBranchId == null) return 'KD';
+    final auth = context.read<AuthProvider>();
+    if (!auth.isMasterAdmin) {
+      return context.read<BranchProvider>().currency;
+    }
     for (final branch in _branches) {
       if (branch['id'] == _selectedBranchId) {
         final value = branch['currency']?.toString().trim();
@@ -432,6 +453,11 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
   }
 
   Future<void> _save() async {
+    final auth = context.read<AuthProvider>();
+    if (!auth.hasPermission('manage-printer-settings')) {
+      _showMessage('You do not have permission to manage printer settings.');
+      return;
+    }
     final selectedBranchId = _selectedBranchId;
     if (selectedBranchId == null) {
       _showMessage('Select a business before saving printer settings.');
@@ -746,6 +772,10 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
   }
 
   Future<void> _testBarcodePrint() async {
+    if (!_barcodePermissionGranted) {
+      _showMessage('You need Print Barcode Labels permission to configure or test barcode printing.');
+      return;
+    }
     if (!_barcodeAddonActive) {
       _showMessage('Activate the Barcode Label Printing add-on for this branch first.');
       return;
@@ -770,6 +800,10 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
   }
 
   Future<void> _previewBarcodeLabel() async {
+    if (!_barcodePermissionGranted) {
+      _showMessage('You need Print Barcode Labels permission to configure barcode printing.');
+      return;
+    }
     if (!_barcodeAddonActive) {
       _showMessage('Activate the Barcode Label Printing add-on for this branch first.');
       return;
@@ -871,14 +905,14 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
   Widget build(BuildContext context) {
     final auth = context.watch<AuthProvider>();
 
-    if (!auth.isMasterAdmin) {
+    if (!auth.hasPermission('manage-printer-settings')) {
       return Scaffold(
         appBar: AppBar(title: const Text('Printer Settings')),
         body: const Center(
           child: Padding(
             padding: EdgeInsets.all(24),
             child: Text(
-              'Only master admin can manage printer settings.',
+              'You do not have permission to manage printer settings.',
               textAlign: TextAlign.center,
               style: TextStyle(color: AppTheme.textMuted, fontWeight: FontWeight.w700),
             ),
@@ -894,7 +928,7 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
           : ListView(
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
               children: [
-                _buildBranchPicker(),
+                auth.isMasterAdmin ? _buildBranchPicker() : _buildOwnBusinessPanel(),
                 const SizedBox(height: 14),
                 if (_loadingConfig)
                   const Padding(
@@ -931,6 +965,31 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
                 ],
               ],
             ),
+    );
+  }
+
+  Widget _buildOwnBusinessPanel() {
+    final branch = context.watch<BranchProvider>();
+    return EnterprisePanel(
+      elevated: true,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const EnterpriseSectionHeader(
+            title: 'Business printer settings',
+            subtitle: 'You can configure printer and invoice settings only for your assigned business.',
+            icon: Icons.store_rounded,
+            color: AppTheme.primary,
+          ),
+          const SizedBox(height: 14),
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(Icons.storefront_rounded),
+            title: Text(branch.label, style: const TextStyle(fontWeight: FontWeight.w800)),
+            subtitle: Text('Currency: ${branch.currency}'),
+          ),
+        ],
+      ),
     );
   }
 
@@ -1917,6 +1976,44 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
                         color: AppTheme.textMuted,
                         fontWeight: FontWeight.w600,
                       ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (!_barcodePermissionGranted) {
+      return EnterprisePanel(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const EnterpriseSectionHeader(
+              title: 'Barcode Printer',
+              subtitle: 'Barcode Label Printing is active for this business.',
+              icon: Icons.qr_code_2_rounded,
+              color: AppTheme.purple,
+            ),
+            const SizedBox(height: 12),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: AppTheme.warning.withOpacity(.08),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: AppTheme.warning.withOpacity(.3)),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.lock_outline_rounded, color: AppTheme.warning),
+                  SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'You need Print Barcode Labels permission to configure barcode-printer settings.',
+                      style: TextStyle(color: AppTheme.textMuted, fontWeight: FontWeight.w600),
                     ),
                   ),
                 ],

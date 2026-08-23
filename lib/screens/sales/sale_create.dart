@@ -272,7 +272,11 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     if (branchId != null && _saleSourcesBranchId != branchId && mounted) {
       setState(() {
         _saleSources = const [];
-        _selectedSaleSourceId = null;
+        // On a posted-sale amendment the saved source belongs to the sale
+        // being loaded. Keep that id while the branch-scoped source list is
+        // refreshed so the dropdown can restore the historical selection.
+        // New-sale branch changes should still clear their old selection.
+        if (!_isEditing) _selectedSaleSourceId = null;
         _saleSourcesBranchId = branchId;
       });
     }
@@ -280,7 +284,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       if (mounted) {
         setState(() {
           _saleSources = const [];
-          _selectedSaleSourceId = null;
+          if (!_isEditing) _selectedSaleSourceId = null;
           _saleSourcesBranchId = null;
         });
       }
@@ -498,8 +502,16 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         _selectedBranch = branch.isEmpty ? null : branch;
         _customerLocked = true;
         _payments = const [];
-        _editLoading = false;
       });
+
+      // Sale sources are branch-owned. initState cannot load them for an
+      // amendment because the invoice branch is not known until the sale has
+      // been fetched above. Load them now, after both the branch and the saved
+      // sale_source_id are established, so "Sale From" is auto-selected
+      // deterministically instead of depending on the catalog-refresh race.
+      await _loadSaleSources();
+      if (!mounted) return;
+      setState(() => _editLoading = false);
       _productSearchFocusNode.requestFocus();
     } on ApiException catch (e) {
       if (!mounted) return;

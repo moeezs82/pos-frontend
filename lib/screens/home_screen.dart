@@ -88,7 +88,7 @@ class HomeScreen extends StatelessWidget {
 
     final quickActions = <_Tile>[
       if (auth.isMasterAdmin) branchControlTile(),
-      if (auth.isMasterAdmin)
+      if (auth.hasPermission('manage-printer-settings'))
         _Tile(
           icon: Icons.print_rounded,
           title: 'Printer Settings',
