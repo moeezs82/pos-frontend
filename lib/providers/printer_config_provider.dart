@@ -59,11 +59,14 @@ class PrinterConfigProvider extends ChangeNotifier {
   String get qrCodeCaption => _config.qrCodeCaption;
   WhatsAppInvoiceFormat get whatsappInvoiceFormat =>
       _config.whatsappInvoiceFormat;
+  InvoiceTemplate get whatsappInvoiceTemplate =>
+      _config.whatsappInvoiceTemplate;
   String get whatsappMessageTemplate => _config.whatsappMessageTemplate;
   ItemDiscountDisplay get itemDiscountDisplay => _config.itemDiscountDisplay;
   bool get whatsappShowCustomerBalance =>
       _config.whatsappShowCustomerBalance;
   String get mainPaperCode => _config.mainPaperCode;
+  String get whatsappPaperCode => _config.whatsappPaperCode;
   InvoiceTemplate get secondaryInvoiceTemplate =>
       _config.secondaryInvoiceTemplate;
   String get secondaryReceiptHeader => _config.secondaryReceiptHeader;

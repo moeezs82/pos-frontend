@@ -63,6 +63,35 @@ class WhatsAppInvoiceService {
     return digits;
   }
 
+  /// Generates and saves the configured attachment without touching the
+  /// clipboard or opening another application. This is the fast POS path: the
+  /// cashier can continue the next sale while the file is prepared, and the
+  /// clipboard/WhatsApp hand-off only happens after an explicit Open action.
+  Future<WhatsAppInvoicePreparation> prepareAttachment({
+    required Uint8List pdfBytes,
+    required String receiptNo,
+    required String phone,
+    WhatsAppInvoiceFormat format = WhatsAppInvoiceFormat.pdf,
+  }) async {
+    final totalTiming = Stopwatch()..start();
+    final normalizedPhone = normalizePhone(phone);
+    final saveTiming = Stopwatch()..start();
+    final attachmentPaths = format == WhatsAppInvoiceFormat.jpg
+        ? await saveJpgPages(pdfBytes: pdfBytes, receiptNo: receiptNo)
+        : <String>[
+            await savePdf(pdfBytes: pdfBytes, receiptNo: receiptNo),
+          ];
+    print(
+      '[WHATSAPP-TIMING] ${format.label} file generation ${saveTiming.elapsedMilliseconds}ms total=${totalTiming.elapsedMilliseconds}ms',
+    );
+    return WhatsAppInvoicePreparation(
+      attachmentPaths: attachmentPaths,
+      normalizedPhone: normalizedPhone,
+      copiedToClipboard: false,
+      format: format,
+    );
+  }
+
   /// Prepare the configured WhatsApp attachment and copy it to the Windows
   /// file clipboard. The invoice has one source renderer: callers always pass
   /// the existing PDF bytes; JPG mode rasterises those exact PDF page(s).
@@ -77,32 +106,38 @@ class WhatsAppInvoiceService {
     required String message,
     WhatsAppInvoiceFormat format = WhatsAppInvoiceFormat.pdf,
   }) async {
-    final normalizedPhone = normalizePhone(phone);
-    final attachmentPaths = format == WhatsAppInvoiceFormat.jpg
-        ? await saveJpgPages(pdfBytes: pdfBytes, receiptNo: receiptNo)
-        : <String>[
-            await savePdf(pdfBytes: pdfBytes, receiptNo: receiptNo),
-          ];
-    final copied = await copyFilesToClipboard(attachmentPaths);
-    // await openChat(phone: normalizedPhone, message: message);
-
-    return WhatsAppInvoicePreparation(
-      attachmentPaths: attachmentPaths,
-      normalizedPhone: normalizedPhone,
-      copiedToClipboard: copied,
+    final totalTiming = Stopwatch()..start();
+    final prepared = await prepareAttachment(
+      pdfBytes: pdfBytes,
+      receiptNo: receiptNo,
+      phone: phone,
       format: format,
+    );
+    final clipboardTiming = Stopwatch()..start();
+    final copied = await copyFilesToClipboard(prepared.attachmentPaths);
+    print(
+      '[WHATSAPP-TIMING] clipboard ${clipboardTiming.elapsedMilliseconds}ms total=${totalTiming.elapsedMilliseconds}ms',
+    );
+    return WhatsAppInvoicePreparation(
+      attachmentPaths: prepared.attachmentPaths,
+      normalizedPhone: prepared.normalizedPhone,
+      copiedToClipboard: copied,
+      format: prepared.format,
     );
   }
 
   Future<Directory> _invoiceDirectory() async {
-    final documents = await getApplicationDocumentsDirectory();
+    // Documents is frequently redirected through OneDrive on customer PCs.
+    // WhatsApp attachments are generated working files, so AppData is both
+    // faster and less likely to trigger cloud-sync latency.
+    final appSupport = await getApplicationSupportDirectory();
     final now = DateTime.now();
     final dateFolder =
         '${now.year.toString().padLeft(4, '0')}-'
         '${now.month.toString().padLeft(2, '0')}-'
         '${now.day.toString().padLeft(2, '0')}';
     final directory = Directory(
-      p.join(documents.path, 'Enterprise POS', 'Invoices', dateFolder),
+      p.join(appSupport.path, 'CounterIQ', 'WhatsApp Invoices', dateFolder),
     );
     await directory.create(recursive: true);
     return directory;
@@ -137,13 +172,13 @@ class WhatsAppInvoiceService {
     required String receiptNo,
   }) async {
     final encodedPages = <List<int>>[];
-    await for (final page in Printing.raster(pdfBytes, dpi: 180)) {
+    await for (final page in Printing.raster(pdfBytes, dpi: 150)) {
       final pngBytes = await page.toPng();
       final decoded = img.decodePng(pngBytes);
       if (decoded == null) {
         throw Exception('Could not rasterise the invoice for JPG sharing.');
       }
-      encodedPages.add(img.encodeJpg(decoded, quality: 92));
+      encodedPages.add(img.encodeJpg(decoded, quality: 90));
     }
 
     if (encodedPages.isEmpty) {

@@ -55,6 +55,8 @@ windows/signing/*.pfx
 *.key
 *.ciqlic
 
+installer/output
+
 # Optional: local secret notes
 *license-password*
 *private-key*

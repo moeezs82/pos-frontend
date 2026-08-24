@@ -36,6 +36,7 @@ class PrinterConfig {
   final String? qrCodeUrl;
   final String qrCodeCaption;
   final WhatsAppInvoiceFormat whatsappInvoiceFormat;
+  final InvoiceTemplate whatsappInvoiceTemplate;
   final String whatsappMessageTemplate;
   final ItemDiscountDisplay itemDiscountDisplay;
   final bool whatsappShowCustomerBalance;
@@ -96,6 +97,7 @@ class PrinterConfig {
     this.qrCodeUrl,
     this.qrCodeCaption = 'Scan to review us',
     this.whatsappInvoiceFormat = WhatsAppInvoiceFormat.pdf,
+    this.whatsappInvoiceTemplate = InvoiceTemplate.standard,
     this.whatsappMessageTemplate = WhatsAppMessageTemplateService.defaultTemplate,
     this.itemDiscountDisplay = ItemDiscountDisplay.compact,
     this.whatsappShowCustomerBalance = false,
@@ -131,11 +133,14 @@ class PrinterConfig {
   bool get isConfigured => activeConnection != 'none';
   bool get isBarcodeConfigured => barcodeAccessGranted && barcodePrintEnabled;
   bool get isPagedInvoice => mainInvoiceTemplate.isPaged;
-  String get mainPaperCode {
-    if (mainInvoiceTemplate.isPaged) return invoicePaperSize;
-    if (mainInvoiceTemplate.usesConfigurableThermalWidth) return thermalPaperSize;
-    return mainInvoiceTemplate.paperWidthCode;
+  String paperCodeForTemplate(InvoiceTemplate template) {
+    if (template.isPaged) return invoicePaperSize;
+    if (template.usesConfigurableThermalWidth) return thermalPaperSize;
+    return template.paperWidthCode;
   }
+
+  String get mainPaperCode => paperCodeForTemplate(mainInvoiceTemplate);
+  String get whatsappPaperCode => paperCodeForTemplate(whatsappInvoiceTemplate);
 
   // Source compatibility for receipt-printing code during rolling upgrades.
   bool get kitchenPrintEnabled => secondaryPrintEnabled;
@@ -215,6 +220,10 @@ class PrinterConfig {
       qrCodeCaption: (json['qr_code_caption'] ?? 'Scan to review us').toString(),
       whatsappInvoiceFormat:
           whatsAppInvoiceFormatFromValue(json['whatsapp_invoice_format']?.toString()),
+      whatsappInvoiceTemplate: InvoiceTemplate.fromValue(
+        (json['whatsapp_invoice_template'] ?? json['main_invoice_template'])
+            ?.toString(),
+      ),
       whatsappMessageTemplate:
           (json['whatsapp_message_template']?.toString().trim().isNotEmpty ?? false)
               ? json['whatsapp_message_template'].toString()
@@ -285,6 +294,7 @@ class PrinterConfig {
         'qr_code_url': qrCodeUrl,
         'qr_code_caption': qrCodeCaption,
         'whatsapp_invoice_format': whatsappInvoiceFormat.value,
+        'whatsapp_invoice_template': whatsappInvoiceTemplate.value,
         'whatsapp_message_template': whatsappMessageTemplate,
         'item_discount_display': itemDiscountDisplay.value,
         'whatsapp_show_customer_balance': whatsappShowCustomerBalance,
@@ -339,6 +349,7 @@ class PrinterConfig {
     bool clearQrCodeUrl = false,
     String? qrCodeCaption,
     WhatsAppInvoiceFormat? whatsappInvoiceFormat,
+    InvoiceTemplate? whatsappInvoiceTemplate,
     String? whatsappMessageTemplate,
     ItemDiscountDisplay? itemDiscountDisplay,
     bool? whatsappShowCustomerBalance,
@@ -392,6 +403,8 @@ class PrinterConfig {
       qrCodeCaption: qrCodeCaption ?? this.qrCodeCaption,
       whatsappInvoiceFormat:
           whatsappInvoiceFormat ?? this.whatsappInvoiceFormat,
+      whatsappInvoiceTemplate:
+          whatsappInvoiceTemplate ?? this.whatsappInvoiceTemplate,
       whatsappMessageTemplate:
           whatsappMessageTemplate ?? this.whatsappMessageTemplate,
       itemDiscountDisplay: itemDiscountDisplay ?? this.itemDiscountDisplay,

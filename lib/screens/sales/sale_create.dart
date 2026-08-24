@@ -1,4 +1,4 @@
-import 'dart:async' show Timer;
+import 'dart:async' show Timer, unawaited;
 import 'dart:typed_data';
 import 'dart:ui' show FontFeature;
 
@@ -55,6 +55,22 @@ import 'package:enterprise_pos/services/whatsapp_message_template_service.dart';
 // local widgets split into small files
 import 'package:enterprise_pos/screens/sales/parts/sale_party_section.dart';
 
+
+class _PendingWhatsAppTask {
+  final String id;
+  final String receiptNo;
+  final WhatsAppInvoicePreparation prepared;
+  final String message;
+  bool opening;
+
+  _PendingWhatsAppTask({
+    required this.id,
+    required this.receiptNo,
+    required this.prepared,
+    required this.message,
+    this.opening = false,
+  });
+}
 
 class _OfflineCreditDecision {
   final bool allowed;
@@ -174,6 +190,12 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
   bool _submitting = false;
   bool _autoCashIfEmpty = true;
   bool _didAutoOpenPicker = false;
+
+  // WhatsApp invoice preparation is intentionally non-blocking. Completed
+  // attachments stay here until the cashier explicitly opens/dismisses them;
+  // appearing tasks never steal keyboard focus from the next sale.
+  final List<_PendingWhatsAppTask> _pendingWhatsAppTasks = [];
+  int _postSaleTaskSequence = 0;
 
   // Posted-sale amendment state. None of this is used by normal Create Sale.
   bool get _isEditing => widget.editSaleId != null;
@@ -2171,6 +2193,8 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       final effectiveShopAddress = printerConfig.shopAddress.isNotEmpty ? printerConfig.shopAddress : null;
       final effectiveShopPhone = printerConfig.shopPhone.isNotEmpty ? printerConfig.shopPhone : null;
       final mainTemplate = printerConfig.mainInvoiceTemplate;
+      final whatsappTemplate = printerConfig.whatsappInvoiceTemplate;
+      final whatsappPaperCode = printerConfig.whatsappPaperCode;
       final secondaryTemplate = printerConfig.secondaryInvoiceTemplate;
       final secondaryHeader = printerConfig.secondaryReceiptHeader.trim().isEmpty
           ? 'KITCHEN COPY'
@@ -2181,6 +2205,68 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         ...meta,
         'item_discount_display': printerConfig.itemDiscountDisplay.value,
       };
+      final receiptPrintTime = DateTime.now();
+
+      Future<Uint8List> buildWhatsappPdf() {
+        return ReceiptPreviewService.instance.buildReceiptPdf(
+          shopName: effectiveShopName,
+          shopAddress: effectiveShopAddress,
+          shopPhone: effectiveShopPhone,
+          receiptNo: receiptNo,
+          dateTime: receiptPrintTime,
+          items: receiptItems,
+          subtotal: subtotal,
+          discount: discount,
+          tax: tax,
+          grandTotal: total,
+          meta: printMeta,
+          sections: whatsappTemplate.sections,
+          paperWidth: whatsappPaperCode,
+          footerLines: footerLines,
+          footerLineStyles: footerLineStyles,
+          invoiceHeading: printerConfig.invoiceHeading,
+          showLogo: printerConfig.printLogoEnabled &&
+              whatsappTemplate.isCustomerFacing,
+          logoData: printerConfig.printLogoData,
+          showQr: printerConfig.qrCodeEnabled &&
+              whatsappTemplate.isCustomerFacing,
+          qrUrl: printerConfig.qrCodeUrl,
+          qrCaption: printerConfig.qrCodeCaption,
+          template: whatsappTemplate,
+        );
+      }
+
+      final mainRawNetworkWillPrint = printerConfig.isNetworkPrinter &&
+          mainTemplate.supportsRawNetwork &&
+          (printerConfig.networkIp ?? '').trim().isNotEmpty;
+      final whatsappUsesDifferentPdf = whatsappTemplate != mainTemplate ||
+          whatsappPaperCode != printerConfig.mainPaperCode;
+
+      // Build an independently configured WhatsApp document while the physical
+      // receipt is printing. Previously this second PDF was generated only
+      // after printing completed, making WhatsApp feel unnecessarily slow.
+      // When a local Primary print uses the exact same PDF we instead reuse the
+      // bytes returned by LocalPrinterService and avoid the second render.
+      Future<Uint8List?>? whatsappPdfFuture;
+      Object? whatsappPdfError;
+      StackTrace? whatsappPdfStackTrace;
+      if (_sendInvoiceOnWhatsApp &&
+          !queuedOffline &&
+          (whatsappUsesDifferentPdf || mainRawNetworkWillPrint)) {
+        final timing = Stopwatch()..start();
+        whatsappPdfFuture = buildWhatsappPdf().then<Uint8List?>((bytes) {
+          debugPrint(
+            '[WHATSAPP-TIMING] PDF ready in ${timing.elapsedMilliseconds}ms bytes=${bytes.length}',
+          );
+          return bytes;
+        }).catchError((Object error, StackTrace stackTrace) {
+          // Capture the error now so an independently generated PDF cannot
+          // become an unhandled asynchronous error while the printer is busy.
+          whatsappPdfError = error;
+          whatsappPdfStackTrace = stackTrace;
+          return null;
+        });
+      }
 
       debugPrint('Active printer connection: ${printerConfig.activeConnection}, template: ${mainTemplate.value}');
 
@@ -2195,7 +2281,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
             shopAddress: effectiveShopAddress,
             shopPhone: effectiveShopPhone,
             receiptNo: receiptNo,
-            dateTime: DateTime.now(),
+            dateTime: receiptPrintTime,
             items: receiptItems,
             subtotal: subtotal,
             discount: discount,
@@ -2225,7 +2311,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
               shopAddress: effectiveShopAddress,
               shopPhone: effectiveShopPhone,
               receiptNo: receiptNo,
-              dateTime: DateTime.now(),
+              dateTime: receiptPrintTime,
               items: receiptItems,
               subtotal: subtotal,
               discount: discount,
@@ -2253,13 +2339,14 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         }
       } else if (printerConfig.isLocalPrinter && (printerConfig.localPrinterName ?? '').trim().isNotEmpty) {
         try {
-          await LocalPrinterService.instance.printSaleReceipt(
+          customerInvoicePdfBytes =
+              await LocalPrinterService.instance.printSaleReceipt(
             printerName: printerConfig.localPrinterName!.trim(),
             shopName: effectiveShopName,
             shopAddress: effectiveShopAddress,
             shopPhone: effectiveShopPhone,
             receiptNo: receiptNo,
-            dateTime: DateTime.now(),
+            dateTime: receiptPrintTime,
             items: receiptItems,
             subtotal: subtotal,
             discount: discount,
@@ -2290,7 +2377,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
               shopAddress: effectiveShopAddress,
               shopPhone: effectiveShopPhone,
               receiptNo: receiptNo,
-              dateTime: DateTime.now(),
+              dateTime: receiptPrintTime,
               items: receiptItems,
               subtotal: subtotal,
               discount: discount,
@@ -2326,7 +2413,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
           shopAddress: effectiveShopAddress,
           shopPhone: effectiveShopPhone,
           receiptNo: receiptNo,
-          dateTime: DateTime.now(),
+          dateTime: receiptPrintTime,
           items: receiptItems,
           subtotal: subtotal,
           discount: discount,
@@ -2349,85 +2436,94 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       }
 
       if (_sendInvoiceOnWhatsApp && !queuedOffline) {
-        try {
-          final whatsappFormat = printerConfig.whatsappInvoiceFormat;
-          final customerSnapshotRaw = meta['customer_snapshot'];
-          final customerSnapshot = customerSnapshotRaw is Map
-              ? Map<String, dynamic>.from(customerSnapshotRaw)
-              : const <String, dynamic>{};
-          final rawCustomerBalance = res?['data']?['customer_balance'];
-          final whatsappMessage = WhatsAppMessageTemplateService.render(
-            template: printerConfig.whatsappMessageTemplate,
-            showCustomerBalance: printerConfig.whatsappShowCustomerBalance,
-            values: {
-              'customer_name': _metaText(customerSnapshot['name']),
-              'customer_code': _metaText(customerSnapshot['customer_code']),
-              'invoice_no': receiptNo,
-              'invoice_amount': total.toStringAsFixed(2),
-              'amount_paid': paid.toStringAsFixed(2),
-              'invoice_balance': balance.toStringAsFixed(2),
-              'customer_balance': rawCustomerBalance == null
-                  ? ''
-                  : _metaNum(rawCustomerBalance).toStringAsFixed(2),
-              'business_name': effectiveShopName,
-              'date': '${occurredAt.day.toString().padLeft(2, '0')}/'
-                  '${occurredAt.month.toString().padLeft(2, '0')}/'
-                  '${occurredAt.year}',
-              'currency': AppCurrency.currency,
-              'attachment_format': whatsappFormat.label,
-            },
-          );
-          final pdfBytes = customerInvoicePdfBytes ??
-              await ReceiptPreviewService.instance.buildReceiptPdf(
-                shopName: effectiveShopName,
-                shopAddress: effectiveShopAddress,
-                shopPhone: effectiveShopPhone,
-                receiptNo: receiptNo,
-                dateTime: DateTime.now(),
-                items: receiptItems,
-                subtotal: subtotal,
-                discount: discount,
-                tax: tax,
-                grandTotal: total,
-                meta: printMeta,
-                sections: mainTemplate.sections,
-                paperWidth: printerConfig.mainPaperCode,
-                footerLines: footerLines,
-                footerLineStyles: footerLineStyles,
-                invoiceHeading: printerConfig.invoiceHeading,
-                showLogo: printerConfig.printLogoEnabled &&
-                    mainTemplate.isCustomerFacing,
-                logoData: printerConfig.printLogoData,
-                showQr: printerConfig.qrCodeEnabled &&
-                    mainTemplate.isCustomerFacing,
-                qrUrl: printerConfig.qrCodeUrl,
-                qrCaption: printerConfig.qrCodeCaption,
-                template: mainTemplate,
-              );
-          final prepared =
-              await WhatsAppInvoiceService.instance.prepareAndOpen(
-            pdfBytes: pdfBytes,
-            receiptNo: receiptNo,
-            phone: _whatsAppDestinationPhone(),
-            message: whatsappMessage,
-            format: whatsappFormat,
-          );
-          if (mounted) {
-            await _showWhatsAppInvoiceReady(
+        final whatsappFormat = printerConfig.whatsappInvoiceFormat;
+        final customerSnapshotRaw = meta['customer_snapshot'];
+        final customerSnapshot = customerSnapshotRaw is Map
+            ? Map<String, dynamic>.from(customerSnapshotRaw)
+            : const <String, dynamic>{};
+        final rawCustomerBalance = res?['data']?['customer_balance'];
+        final whatsappMessage = WhatsAppMessageTemplateService.render(
+          template: printerConfig.whatsappMessageTemplate,
+          showCustomerBalance: printerConfig.whatsappShowCustomerBalance,
+          values: {
+            'customer_name': _metaText(customerSnapshot['name']),
+            'customer_code': _metaText(customerSnapshot['customer_code']),
+            'invoice_no': receiptNo,
+            'invoice_amount': total.toStringAsFixed(2),
+            'amount_paid': paid.toStringAsFixed(2),
+            'invoice_balance': balance.toStringAsFixed(2),
+            'customer_balance': rawCustomerBalance == null
+                ? ''
+                : _metaNum(rawCustomerBalance).toStringAsFixed(2),
+            'business_name': effectiveShopName,
+            'date': '${occurredAt.day.toString().padLeft(2, '0')}/'
+                '${occurredAt.month.toString().padLeft(2, '0')}/'
+                '${occurredAt.year}',
+            'currency': AppCurrency.currency,
+            'attachment_format': whatsappFormat.label,
+          },
+        );
+        final whatsappPhone = _whatsAppDestinationPhone();
+        final reusablePrimaryPdf = whatsappTemplate == mainTemplate &&
+                whatsappPaperCode == printerConfig.mainPaperCode
+            ? customerInvoicePdfBytes
+            : null;
+
+        // Do not keep the cashier waiting for PDF/JPG conversion, disk IO or
+        // clipboard work. The immutable sale/print values above are captured
+        // by this task before _resetForNextSale() clears the workspace.
+        unawaited(() async {
+          try {
+            final pdfTiming = Stopwatch()..start();
+            Uint8List? pdfBytes = reusablePrimaryPdf;
+            if (pdfBytes == null && whatsappPdfFuture != null) {
+              pdfBytes = await whatsappPdfFuture;
+              if (pdfBytes == null && whatsappPdfError != null) {
+                Error.throwWithStackTrace(
+                  whatsappPdfError!,
+                  whatsappPdfStackTrace ?? StackTrace.current,
+                );
+              }
+            }
+            pdfBytes ??= await buildWhatsappPdf();
+            debugPrint(
+              '[WHATSAPP-TIMING] background PDF wait ${pdfTiming.elapsedMilliseconds}ms reused=${reusablePrimaryPdf != null}',
+            );
+
+            final prepareTiming = Stopwatch()..start();
+            final prepared =
+                await WhatsAppInvoiceService.instance.prepareAttachment(
+              pdfBytes: pdfBytes,
+              receiptNo: receiptNo,
+              phone: whatsappPhone,
+              format: whatsappFormat,
+            );
+            debugPrint(
+              '[WHATSAPP-TIMING] background attachment ready in ${prepareTiming.elapsedMilliseconds}ms format=${whatsappFormat.value}',
+            );
+            if (!mounted) return;
+            _addPendingWhatsAppTask(
+              receiptNo: receiptNo,
               prepared: prepared,
               message: whatsappMessage,
             );
-          }
-        } catch (e, s) {
-          debugPrint('WHATSAPP INVOICE ERROR: $e');
-          debugPrintStack(stackTrace: s);
-          if (mounted) {
-            AppFeedback.warning(
-              context,
-              'Sale created, but the WhatsApp invoice could not be prepared: $e',
+          } catch (e, st) {
+            debugPrint('WHATSAPP INVOICE ERROR: $e');
+            debugPrintStack(stackTrace: st);
+            if (!mounted) return;
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(
+                  'Sale $receiptNo saved, but WhatsApp invoice preparation failed.',
+                ),
+                action: SnackBarAction(
+                  label: 'Dismiss',
+                  onPressed: () {},
+                ),
+              ),
             );
           }
-        }
+        }());
       }
       } // if (print)
 
@@ -2465,105 +2561,188 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     }
   }
 
-  Future<void> _showWhatsAppInvoiceReady({
+  void _addPendingWhatsAppTask({
+    required String receiptNo,
     required WhatsAppInvoicePreparation prepared,
     required String message,
-  }) async {
-    final attachmentDescription = prepared.attachmentDescription;
-    var clipboardStatus = prepared.copiedToClipboard
-        ? '$attachmentDescription copied to clipboard. Press "Open WhatsApp", then Ctrl+V and Send.'
-        : '$attachmentDescription saved. Windows could not copy it automatically - use Open Folder and attach it manually.';
-    await showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (dialogContext, setDialogState) => AlertDialog(
-          title: const Row(
-            children: [
-              Icon(Icons.check_circle_rounded, color: Color(0xFF128C7E)),
-              SizedBox(width: 8),
-              Text('WhatsApp invoice ready'),
-            ],
+  }) {
+    if (!mounted) return;
+    setState(() {
+      _pendingWhatsAppTasks.insert(
+        0,
+        _PendingWhatsAppTask(
+          id: '${DateTime.now().microsecondsSinceEpoch}-${_postSaleTaskSequence++}',
+          receiptNo: receiptNo,
+          prepared: prepared,
+          message: message,
+        ),
+      );
+      // Keep a useful recent queue without allowing a busy shift to grow this
+      // state forever. Older generated files remain on disk and can be resent
+      // from the sale later.
+      if (_pendingWhatsAppTasks.length > 8) {
+        _pendingWhatsAppTasks.removeRange(8, _pendingWhatsAppTasks.length);
+      }
+    });
+  }
+
+  Future<void> _openPendingWhatsAppTask(_PendingWhatsAppTask task) async {
+    if (task.opening) return;
+    setState(() => task.opening = true);
+    try {
+      final copied = await WhatsAppInvoiceService.instance
+          .copyFilesToClipboard(task.prepared.attachmentPaths);
+      await WhatsAppInvoiceService.instance.openChat(
+        phone: task.prepared.normalizedPhone,
+        message: task.message,
+      );
+      if (!mounted) return;
+      if (copied) {
+        setState(
+          () => _pendingWhatsAppTasks.removeWhere((t) => t.id == task.id),
+        );
+      } else {
+        // Keep the task visible so the cashier still has a one-click folder
+        // fallback instead of losing the generated invoice.
+        setState(() => task.opening = false);
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          duration: const Duration(seconds: 4),
+          content: Text(
+            copied
+                ? '${task.receiptNo}: WhatsApp opened. Press Ctrl+V, then Send.'
+                : '${task.receiptNo}: WhatsApp opened. Clipboard copy failed; use the folder button on the ready task to attach the ${task.prepared.attachmentDescription}.',
           ),
-          content: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 520),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('WhatsApp: +${prepared.normalizedPhone}'),
-                const SizedBox(height: 4),
-                Text(
-                  'Attachment: $attachmentDescription',
-                  style: const TextStyle(fontWeight: FontWeight.w700),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  clipboardStatus,
-                  style: const TextStyle(fontWeight: FontWeight.w700),
-                ),
-                const SizedBox(height: 12),
-                SelectableText(
-                  prepared.attachmentPaths.join('\n'),
-                  style: const TextStyle(
-                    fontSize: 11,
-                    color: AppTheme.textMuted,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => task.opening = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not open WhatsApp for ${task.receiptNo}: $e')),
+      );
+    }
+  }
+
+  void _dismissPendingWhatsAppTask(_PendingWhatsAppTask task) {
+    setState(() => _pendingWhatsAppTasks.removeWhere((t) => t.id == task.id));
+  }
+
+  Widget _buildPostSaleTaskPanel() {
+    if (_pendingWhatsAppTasks.isEmpty) return const SizedBox.shrink();
+    final visible = _pendingWhatsAppTasks.take(3).toList(growable: false);
+    return Material(
+      elevation: 10,
+      borderRadius: BorderRadius.circular(10),
+      color: Colors.white,
+      child: Container(
+        width: 360,
+        constraints: const BoxConstraints(maxHeight: 250),
+        decoration: BoxDecoration(
+          border: Border.all(color: AppTheme.border),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 9, 8, 7),
+              child: Row(
+                children: [
+                  const Icon(Icons.chat_rounded, size: 17, color: Color(0xFF128C7E)),
+                  const SizedBox(width: 7),
+                  Expanded(
+                    child: Text(
+                      _pendingWhatsAppTasks.length == 1
+                          ? 'WhatsApp invoice ready'
+                          : '${_pendingWhatsAppTasks.length} WhatsApp invoices ready',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w800,
+                        color: AppTheme.navy,
+                      ),
+                    ),
                   ),
+                  if (_pendingWhatsAppTasks.length > 3)
+                    Text(
+                      '+${_pendingWhatsAppTasks.length - 3} more',
+                      style: const TextStyle(fontSize: 10, color: AppTheme.textMuted),
+                    ),
+                ],
+              ),
+            ),
+            const Divider(height: 1, color: AppTheme.border),
+            ...visible.map(
+              (task) => Padding(
+                padding: const EdgeInsets.fromLTRB(12, 7, 6, 7),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            task.receiptNo,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            '+${task.prepared.normalizedPhone} • ${task.prepared.attachmentDescription}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 10,
+                              color: AppTheme.textMuted,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    TextButton.icon(
+                      onPressed: task.opening
+                          ? null
+                          : () => _openPendingWhatsAppTask(task),
+                      style: TextButton.styleFrom(
+                        visualDensity: VisualDensity.compact,
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                      ),
+                      icon: task.opening
+                          ? const SizedBox(
+                              width: 12,
+                              height: 12,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.open_in_new_rounded, size: 14),
+                      label: const Text('Open', style: TextStyle(fontSize: 10.5)),
+                    ),
+                    IconButton(
+                      tooltip: 'Open attachment folder',
+                      visualDensity: VisualDensity.compact,
+                      onPressed: task.opening
+                          ? null
+                          : () => WhatsAppInvoiceService.instance
+                              .openInvoiceFolder(task.prepared.primaryPath),
+                      icon: const Icon(Icons.folder_open_rounded, size: 16),
+                    ),
+                    IconButton(
+                      tooltip: 'Dismiss',
+                      visualDensity: VisualDensity.compact,
+                      onPressed: task.opening
+                          ? null
+                          : () => _dismissPendingWhatsAppTask(task),
+                      icon: const Icon(Icons.close_rounded, size: 16),
+                    ),
+                  ],
                 ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton.icon(
-              onPressed: () async {
-                setDialogState(
-                  () => clipboardStatus =
-                      'Copying $attachmentDescription to clipboard...',
-                );
-                final copied = await WhatsAppInvoiceService.instance
-                    .copyFilesToClipboard(prepared.attachmentPaths);
-                if (!dialogContext.mounted) return;
-                setDialogState(() {
-                  clipboardStatus = copied
-                      ? '$attachmentDescription copied successfully. Press Ctrl+V in WhatsApp, then Send.'
-                      : 'Copy failed. Use Open Folder and attach $attachmentDescription manually.';
-                });
-              },
-              icon: const Icon(Icons.copy_rounded),
-              label: Text('Copy ${prepared.formatLabel} again'),
-            ),
-            TextButton.icon(
-              onPressed: () => WhatsAppInvoiceService.instance
-                  .openInvoiceFolder(prepared.primaryPath),
-              icon: const Icon(Icons.folder_open_rounded),
-              label: const Text('Open folder'),
-            ),
-            TextButton.icon(
-              onPressed: () async {
-                setDialogState(() => clipboardStatus = 'Opening WhatsApp...');
-                try {
-                  await WhatsAppInvoiceService.instance.openChat(
-                    phone: prepared.normalizedPhone,
-                    message: message,
-                  );
-                  if (!dialogContext.mounted) return;
-                  setDialogState(() {
-                    clipboardStatus =
-                        'WhatsApp opened. Press Ctrl+V to attach the copied $attachmentDescription, then Send.';
-                  });
-                } catch (e) {
-                  if (!dialogContext.mounted) return;
-                  setDialogState(() {
-                    clipboardStatus = 'Could not open WhatsApp: $e';
-                  });
-                }
-              },
-              icon: const Icon(Icons.chat_rounded),
-              label: const Text('Open WhatsApp'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(dialogContext).pop(),
-              child: const Text('Done'),
+              ),
             ),
           ],
         ),
@@ -3234,6 +3413,16 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
                     top: 30,
                     child: _hiddenBarcodeField(),
                   ),
+
+                  // Non-modal post-sale task surface. It never requests focus,
+                  // so barcode scanning/typing for the next invoice continues
+                  // uninterrupted while WhatsApp attachments finish.
+                  if (_pendingWhatsAppTasks.isNotEmpty)
+                    Positioned(
+                      right: 12,
+                      bottom: 76,
+                      child: _buildPostSaleTaskPanel(),
+                    ),
                 ],
               ),
             ),

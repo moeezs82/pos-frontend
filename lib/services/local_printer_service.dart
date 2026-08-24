@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:enterprise_pos/models/invoice_template.dart';
 import 'package:enterprise_pos/models/item_discount_display.dart';
 import 'package:enterprise_pos/models/receipt_footer_style.dart';
@@ -42,7 +44,7 @@ class LocalPrinterService {
     );
   }
 
-  Future<void> printSaleReceipt({
+  Future<Uint8List> printSaleReceipt({
     required String printerName,
     required String shopName,
     String? shopAddress,
@@ -135,6 +137,7 @@ class LocalPrinterService {
     if (!printed) {
       throw Exception('Windows did not accept the print job for "${printer.name}".');
     }
+    return bytes;
   }
 
   Future<void> testReceipt({
@@ -156,9 +159,9 @@ class LocalPrinterService {
     String qrCaption = 'Scan to review us',
     InvoiceTemplate? template,
     ItemDiscountDisplay itemDiscountDisplay = ItemDiscountDisplay.compact,
-  }) {
+  }) async {
     final now = DateTime.now();
-    return printSaleReceipt(
+    await printSaleReceipt(
       printerName: printerName,
       shopName: shopName.trim().isEmpty ? 'CounterIQ' : shopName.trim(),
       shopAddress: shopAddress,

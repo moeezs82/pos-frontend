@@ -141,7 +141,13 @@ class _ItemsTableState extends State<ItemsTable> {
 
   void _ensureRows() {
     for (int i = 0; i < widget.items.length; i++) {
-      _rowCtrls.putIfAbsent(i, () => _RowControllers());
+      _rowCtrls.putIfAbsent(i, () {
+        late final _RowControllers ctrls;
+        ctrls = _RowControllers(
+          onEditingBlur: () => _commitControllersIfDirty(ctrls),
+        );
+        return ctrls;
+      });
       _syncControllersFromItem(i);
     }
     _rowCtrls.keys.where((k) => k >= widget.items.length).toList().forEach((k) {
@@ -170,10 +176,38 @@ class _ItemsTableState extends State<ItemsTable> {
     final ctrls = _rowCtrls[i]!;
     String _fmt(num n) => n.toStringAsFixed(2);
 
-    ctrls.name.text = (item['name'] ?? '').toString();
-    ctrls.price.text = _fmt(_num(item['price']));
-    ctrls.discount.text = _fmt(_num(item['discount_pct'] ?? 0));
-    ctrls.qty.text = _formatQty(_num(item['quantity']));
+    final nameText = (item['name'] ?? '').toString();
+    final priceText = _fmt(_num(item['price']));
+    final discountText = _fmt(_num(item['discount_pct'] ?? 0));
+    final qtyText = _formatQty(_num(item['quantity']));
+
+    // Do not rewrite a numeric controller while the cashier is editing it.
+    // A debounced row commit updates the parent, which rebuilds this widget;
+    // assigning controller.text during that rebuild resets the selection/caret
+    // and can turn a slowly typed "25" into "5". The focused field is the
+    // source of truth until editing finishes.
+    if (ctrls.name.text != nameText) {
+      ctrls.name.text = nameText;
+    }
+    _syncEditableController(ctrls.price, ctrls.priceFocus, priceText);
+    _syncEditableController(
+      ctrls.discount,
+      ctrls.discountFocus,
+      discountText,
+    );
+    _syncEditableController(ctrls.qty, ctrls.qtyFocus, qtyText);
+  }
+
+  void _syncEditableController(
+    TextEditingController controller,
+    FocusNode focusNode,
+    String value,
+  ) {
+    if (focusNode.hasFocus || controller.text == value) return;
+    controller.value = TextEditingValue(
+      text: value,
+      selection: TextSelection.collapsed(offset: value.length),
+    );
   }
 
   static double _num(dynamic v) => double.tryParse(v?.toString() ?? '') ?? 0.0;
@@ -200,13 +234,28 @@ class _ItemsTableState extends State<ItemsTable> {
   }
 
   void _scheduleCommitRow(int i) {
+    final ctrls = _rowCtrls[i];
+    if (ctrls == null) return;
+    ctrls.dirty = true;
     _rowDebounce[i]?.cancel();
     _rowDebounce[i] = Timer(const Duration(milliseconds: 1000), () {
       _commitRow(i);
     });
   }
 
+  void _commitControllersIfDirty(_RowControllers ctrls) {
+    if (!ctrls.dirty) return;
+    for (final entry in _rowCtrls.entries) {
+      if (identical(entry.value, ctrls)) {
+        _commitRow(entry.key);
+        return;
+      }
+    }
+  }
+
   void _commitRow(int i) {
+    _rowDebounce[i]?.cancel();
+    _rowDebounce[i] = null;
     if (i < 0 || i >= widget.items.length) return;
     final ctrls = _rowCtrls[i]!;
     final item = Map<String, dynamic>.from(widget.items[i]);
@@ -233,6 +282,7 @@ class _ItemsTableState extends State<ItemsTable> {
 
     final next = [...widget.items];
     next[i] = item;
+    ctrls.dirty = false;
     widget.onItemsChanged(next);
     setState(() {}); // update displayed totals immediately
   }
@@ -1450,6 +1500,18 @@ class _RowControllers {
   final priceFocus = FocusNode();
   final discountFocus = FocusNode();
   final qtyFocus = FocusNode();
+
+  bool dirty = false;
+
+  _RowControllers({VoidCallback? onEditingBlur}) {
+    if (onEditingBlur != null) {
+      for (final focusNode in [priceFocus, discountFocus, qtyFocus]) {
+        focusNode.addListener(() {
+          if (!focusNode.hasFocus) onEditingBlur();
+        });
+      }
+    }
+  }
 
   void dispose() {
     name.dispose();

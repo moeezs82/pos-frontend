@@ -258,8 +258,9 @@ class OfflineLicenseService {
       throw UnsupportedError('CounterIQ machine codes are supported on Windows only.');
     }
 
+    final powershell = await _resolvePowerShellExecutable();
     final result = await Process.run(
-      'powershell.exe',
+      powershell,
       const [
         '-NoProfile',
         '-NonInteractive',
@@ -286,6 +287,69 @@ class OfflineLicenseService {
     }
 
     return _formatMachineCode(fingerprint);
+  }
+
+  static Future<String> _resolvePowerShellExecutable() async {
+    if (!Platform.isWindows) {
+      throw UnsupportedError('Windows PowerShell is available on Windows only.');
+    }
+
+    final roots = <String>{
+      Platform.environment['SystemRoot']?.trim() ?? '',
+      Platform.environment['WINDIR']?.trim() ?? '',
+      r'C:\Windows',
+    }..removeWhere((value) => value.isEmpty);
+
+    final candidates = <String>[];
+    for (final root in roots) {
+      // Use an absolute path so installed CounterIQ does not depend on the
+      // customer's PATH environment variable containing Windows PowerShell.
+      candidates.add(
+        p.windows.join(
+          root,
+          'System32',
+          'WindowsPowerShell',
+          'v1.0',
+          'powershell.exe',
+        ),
+      );
+
+      // Sysnative is useful if CounterIQ is ever built as a 32-bit process on
+      // a 64-bit Windows installation. It does not exist for normal x64 builds.
+      candidates.add(
+        p.windows.join(
+          root,
+          'Sysnative',
+          'WindowsPowerShell',
+          'v1.0',
+          'powershell.exe',
+        ),
+      );
+    }
+
+    final programFiles = <String>{
+      Platform.environment['ProgramFiles']?.trim() ?? '',
+      Platform.environment['ProgramW6432']?.trim() ?? '',
+    }..removeWhere((value) => value.isEmpty);
+
+    for (final root in programFiles) {
+      candidates.add(
+        p.windows.join(root, 'PowerShell', '7', 'pwsh.exe'),
+      );
+    }
+
+    final checked = <String>{};
+    for (final candidate in candidates) {
+      final normalized = candidate.toLowerCase();
+      if (!checked.add(normalized)) continue;
+      if (await File(candidate).exists()) return candidate;
+    }
+
+    throw StateError(
+      'CounterIQ could not find Windows PowerShell on this computer. '
+      'Expected Windows PowerShell under the Windows System32 folder or '
+      'PowerShell 7 under Program Files.',
+    );
   }
 
   static String normalizeMachineCode(String value) =>
@@ -359,8 +423,9 @@ class OfflineLicenseService {
       await signatureFile.writeAsBytes(signature, flush: true);
       await scriptFile.writeAsString(_signatureVerificationPowerShell, flush: true);
 
+      final powershell = await _resolvePowerShellExecutable();
       final result = await Process.run(
-        'powershell.exe',
+        powershell,
         [
           '-NoProfile',
           '-NonInteractive',

@@ -90,6 +90,7 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
   String? _printLogoData;
   bool _qrCodeEnabled = false;
   WhatsAppInvoiceFormat _whatsAppInvoiceFormat = WhatsAppInvoiceFormat.pdf;
+  InvoiceTemplate _whatsAppTemplate = InvoiceTemplate.standard;
   ItemDiscountDisplay _itemDiscountDisplay = ItemDiscountDisplay.compact;
   bool _whatsAppShowCustomerBalance = false;
   InvoiceTemplate _secondaryTemplate = InvoiceTemplate.kitchen;
@@ -268,6 +269,9 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
       _qrUrlCtrl.text = config.qrCodeUrl ?? '';
       _qrCaptionCtrl.text = config.qrCodeCaption;
       _whatsAppInvoiceFormat = config.whatsappInvoiceFormat;
+      _whatsAppTemplate = config.whatsappInvoiceTemplate.isCustomerFacing
+          ? config.whatsappInvoiceTemplate
+          : InvoiceTemplate.standard;
       _itemDiscountDisplay = config.itemDiscountDisplay;
       _whatsAppMessageCtrl.text = config.whatsappMessageTemplate;
       _whatsAppShowCustomerBalance = config.whatsappShowCustomerBalance;
@@ -553,6 +557,7 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
         qrCodeUrl: _qrUrlCtrl.text.trim().isEmpty ? null : _qrUrlCtrl.text.trim(),
         qrCodeCaption: _qrCaptionCtrl.text.trim(),
         whatsappInvoiceFormat: _whatsAppInvoiceFormat,
+        whatsappInvoiceTemplate: _whatsAppTemplate,
         itemDiscountDisplay: _itemDiscountDisplay,
         whatsappMessageTemplate: _whatsAppMessageCtrl.text.trim().isEmpty
             ? WhatsAppMessageTemplateService.defaultTemplate
@@ -1222,7 +1227,7 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
             icon: Icons.branding_watermark_rounded,
             color: AppTheme.primary,
           ),
-          if (_mainTemplate.isPaged) ...[
+          if (_mainTemplate.isPaged || _whatsAppTemplate.isPaged) ...[
             const SizedBox(height: 14),
             Row(
               children: [
@@ -1442,7 +1447,38 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
               fontWeight: FontWeight.w600,
             ),
           ),
-          const SizedBox(height: 18),
+          const SizedBox(height: 16),
+          DropdownButtonFormField<InvoiceTemplate>(
+            value: _whatsAppTemplate,
+            decoration: const InputDecoration(
+              labelText: 'WhatsApp invoice template',
+              prefixIcon: Icon(Icons.receipt_long_rounded),
+              helperText:
+                  'Independent from the Primary and Secondary printer templates.',
+            ),
+            items: _templates
+                .where((template) => template.isCustomerFacing)
+                .map(
+                  (template) => DropdownMenuItem(
+                    value: template,
+                    child: Text(template.label),
+                  ),
+                )
+                .toList(growable: false),
+            onChanged: (value) {
+              if (value != null) setState(() => _whatsAppTemplate = value);
+            },
+          ),
+          const SizedBox(height: 8),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(
+              onPressed: () => _openPreview(_whatsAppTemplate),
+              icon: const Icon(Icons.visibility_outlined, size: 18),
+              label: const Text('Preview WhatsApp template'),
+            ),
+          ),
+          const SizedBox(height: 10),
           const Divider(height: 1),
           const SizedBox(height: 16),
           const Text(
@@ -1533,7 +1569,7 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
               SizedBox(width: 7),
               Expanded(
                 child: Text(
-                  'The attachment format, message template and balance privacy choice are saved per business. Every CounterIQ client using this business uses the same WhatsApp configuration.',
+                  'The attachment format, invoice template, message template and balance privacy choice are saved per business. Every CounterIQ client using this business uses the same WhatsApp configuration.',
                   style: TextStyle(
                     color: AppTheme.textMuted,
                     fontSize: 12,
@@ -1583,7 +1619,8 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
               if (value != null) setState(() => _itemDiscountDisplay = value);
             },
           ),
-          if (_mainTemplate.usesConfigurableThermalWidth) ...[
+          if (_mainTemplate.usesConfigurableThermalWidth ||
+              _whatsAppTemplate.usesConfigurableThermalWidth) ...[
             const SizedBox(height: 12),
             DropdownButtonFormField<String>(
               value: _thermalPaperSize,
