@@ -41,6 +41,31 @@ class SaleService {
     );
   }
 
+  /// Operational warehouse/packing summary. The backend aggregates only the
+  /// current active positive sale-item quantities for the working branch.
+  Future<Map<String, dynamic>> getPickingList({
+    String? dateFrom,
+    String? dateTo,
+    int? customerId,
+    int? saleSourceId,
+    String? search,
+    List<int>? saleIds,
+  }) async {
+    final query = <String, String>{
+      if (dateFrom != null && dateFrom.trim().isNotEmpty) 'date_from': dateFrom.trim(),
+      if (dateTo != null && dateTo.trim().isNotEmpty) 'date_to': dateTo.trim(),
+      if (customerId != null) 'customer_id': '$customerId',
+      if (saleSourceId != null) 'sale_source_id': '$saleSourceId',
+      if (search != null && search.trim().isNotEmpty) 'search': search.trim(),
+      if (saleIds != null && saleIds.isNotEmpty) 'sale_ids': saleIds.join(','),
+    };
+    final res = await _client.get('/sales/picking-list', query: query);
+    if (res['success'] == true && res['data'] is Map<String, dynamic>) {
+      return res['data'] as Map<String, dynamic>;
+    }
+    throw Exception(res['message'] ?? 'Failed to generate picking list');
+  }
+
   /// Creates a sale. Encodes array params with bracketed keys expected by your API.
   ///
   /// [branchId] is required.

@@ -5,6 +5,7 @@ import 'package:enterprise_pos/api/core/api_client.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/providers/branch_provider.dart';
 import 'package:enterprise_pos/screens/sales/sale_create.dart';
+import 'package:enterprise_pos/screens/sales/picking_list_screen.dart';
 import 'package:enterprise_pos/screens/sales/sale_detail.dart';
 import 'package:enterprise_pos/widgets/branch_indicator.dart';
 import 'package:enterprise_pos/widgets/customer_picker_sheet.dart';
@@ -257,6 +258,22 @@ class _SalesScreenState extends State<SalesScreen> {
     await _fetchInitial();
   }
 
+
+  Future<void> _openPickingList() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => PickingListScreen(
+          initialFromDate: _fromDate,
+          initialToDate: _toDate,
+          initialCustomerId: _selectedCustomerId,
+          initialCustomerLabel: _selectedCustomerLabel,
+          initialSearch: _searchQuery,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final isAll = context.watch<BranchProvider>().isAll;
@@ -267,6 +284,12 @@ class _SalesScreenState extends State<SalesScreen> {
         actions: [
           const BranchIndicator(tappable: false),
           IconButton(
+            tooltip: 'Picking List',
+            onPressed: _openPickingList,
+            icon: const Icon(Icons.inventory_2_outlined),
+          ),
+          IconButton(
+            tooltip: 'Refresh sales',
             onPressed: () => _fetchInitial(),
             icon: const Icon(Icons.refresh),
           ),
