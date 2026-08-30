@@ -23,6 +23,7 @@ import 'services/party_pick_caches.dart';
 import 'theme/app_theme.dart';
 import 'services/app_navigator.dart';
 import 'widgets/app_keyboard_shortcuts.dart';
+import 'widgets/app_exit_guard.dart';
 import 'widgets/subscription_warning_banner.dart';
 
 void main() {
@@ -265,7 +266,9 @@ class MyApp extends StatelessWidget {
         // ConnectivityAutoSyncService stuck on the first user's revoked
         // token for every subsequent session.
         builder: (context, child) => _AuthOrchestrator(
-          child: AppKeyboardShortcuts(child: child ?? const SizedBox.shrink()),
+          child: AppExitGuard(
+            child: AppKeyboardShortcuts(child: child ?? const SizedBox.shrink()),
+          ),
         ),
         home: Consumer<AuthProvider>(
           builder: (_, auth, __) =>

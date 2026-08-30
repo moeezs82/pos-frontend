@@ -22,6 +22,9 @@ abstract final class PosRouteIds {
   static const products = '/products';
   static const stock = '/stock';
   static const customers = '/customers';
+  static const customerCreate = '/customers/create';
+  static const backupRestore = '/settings/backup-restore';
+  static const offlineSync = '/sync/offline-sales';
   static const vendors = '/vendors';
   static const partyPayments = '/party-payments';
   static const cashLedger = '/cash-ledger';

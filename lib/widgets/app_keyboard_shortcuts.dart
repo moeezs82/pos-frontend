@@ -4,6 +4,7 @@ import 'package:enterprise_pos/screens/branches/branch_control_screen.dart';
 import 'package:enterprise_pos/screens/cash_ledger/cash_ledger_create_screen.dart';
 import 'package:enterprise_pos/screens/cash_ledger/cash_ledger_screen.dart';
 import 'package:enterprise_pos/screens/customers/customers_screen.dart';
+import 'package:enterprise_pos/forms/customer_form_screen.dart';
 import 'package:enterprise_pos/screens/home_screen.dart';
 import 'package:enterprise_pos/screens/payments/party_payments_screen.dart';
 import 'package:enterprise_pos/screens/product_screen.dart';
@@ -56,7 +57,8 @@ class PosShortcutCatalog {
     PosShortcutInfo(keys: 'Ctrl + Shift + O', title: 'Purchase List', section: 'Purchases', icon: Icons.shopping_cart_rounded, permission: 'view-purchases'),
     PosShortcutInfo(keys: 'Ctrl + P', title: 'Products', section: 'Inventory', icon: Icons.inventory_2_rounded, permission: 'view-products'),
     PosShortcutInfo(keys: 'Ctrl + I', title: 'Stock', section: 'Inventory', icon: Icons.warehouse_rounded, permission: 'view-stock'),
-    PosShortcutInfo(keys: 'Ctrl + Shift + C', title: 'Customers', section: 'Parties', icon: Icons.people_alt_rounded),
+    PosShortcutInfo(keys: 'Ctrl + Shift + C', title: 'Customers', section: 'Parties', icon: Icons.people_alt_rounded, permission: 'view-customers'),
+    PosShortcutInfo(keys: 'Ctrl + Alt + C', title: 'Create Customer', section: 'Parties', icon: Icons.person_add_alt_1_rounded, permission: 'manage-customers'),
     PosShortcutInfo(keys: 'Ctrl + Shift + V', title: 'Vendors', section: 'Parties', icon: Icons.groups_2_rounded),
     PosShortcutInfo(keys: 'Ctrl + M', title: 'Party Payments', section: 'Parties', icon: Icons.account_balance_wallet_rounded),
     PosShortcutInfo(keys: 'Ctrl + B', title: 'Cash Ledger', section: 'Accounts', icon: Icons.payments_rounded),
@@ -183,6 +185,9 @@ class AppKeyboardShortcuts extends StatelessWidget {
       _ctrlShift(LogicalKeyboardKey.keyC): () => open(PosRouteIds.customers, (_) => const CustomersScreen(), permission: 'view-customers'),
       _cmdShift(LogicalKeyboardKey.keyC): () => open(PosRouteIds.customers, (_) => const CustomersScreen(), permission: 'view-customers'),
 
+      _ctrlAlt(LogicalKeyboardKey.keyC): () => open(PosRouteIds.customerCreate, (_) => const CustomerFormScreen(), permission: 'manage-customers'),
+      _cmdAlt(LogicalKeyboardKey.keyC): () => open(PosRouteIds.customerCreate, (_) => const CustomerFormScreen(), permission: 'manage-customers'),
+
       _ctrlShift(LogicalKeyboardKey.keyV): () => open(PosRouteIds.vendors, (_) => const VendorsScreen(), permission: 'view-vendors'),
       _cmdShift(LogicalKeyboardKey.keyV): () => open(PosRouteIds.vendors, (_) => const VendorsScreen(), permission: 'view-vendors'),
 
@@ -259,6 +264,8 @@ class AppKeyboardShortcuts extends StatelessWidget {
   static SingleActivator _cmd(LogicalKeyboardKey key) => SingleActivator(key, meta: true);
   static SingleActivator _ctrlShift(LogicalKeyboardKey key) => SingleActivator(key, control: true, shift: true);
   static SingleActivator _cmdShift(LogicalKeyboardKey key) => SingleActivator(key, meta: true, shift: true);
+  static SingleActivator _ctrlAlt(LogicalKeyboardKey key) => SingleActivator(key, control: true, alt: true);
+  static SingleActivator _cmdAlt(LogicalKeyboardKey key) => SingleActivator(key, meta: true, alt: true);
 
   void _goHome(AuthProvider auth) {
     if (!auth.isAuthenticated) return;

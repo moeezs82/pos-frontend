@@ -87,6 +87,10 @@ class _CustomerFormScreenState extends State<CustomerFormScreen> {
   }
 
   Future<void> _saveCustomer() async {
+    if (!context.read<AuthProvider>().hasPermission('manage-customers')) {
+      AppFeedback.error(context, 'You do not have permission to manage customers.');
+      return;
+    }
     if (!_formKey.currentState!.validate() || _saving) return;
     setState(() => _saving = true);
     // Explicitly Map<String, dynamic>: without password the inferred type

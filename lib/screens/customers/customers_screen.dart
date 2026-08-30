@@ -3,6 +3,7 @@ import 'package:enterprise_pos/forms/customer_form_screen.dart';
 import 'package:enterprise_pos/providers/branch_provider.dart';
 import 'package:enterprise_pos/screens/customers/customers_edit_screen.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
+import 'package:enterprise_pos/services/app_navigator.dart';
 import 'package:enterprise_pos/widgets/app_feedback.dart';
 import 'package:enterprise_pos/widgets/branch_indicator.dart';
 import 'package:enterprise_pos/widgets/enterprise/enterprise_ui.dart';
@@ -97,7 +98,12 @@ class _CustomersScreenState extends State<CustomersScreen> {
   Future<void> _openForm([Map<String, dynamic>? customer]) async {
     final result = await Navigator.push(
       context,
-      MaterialPageRoute(builder: (_) => CustomerFormScreen(customer: customer)),
+      MaterialPageRoute(
+        settings: customer == null
+            ? const RouteSettings(name: PosRouteIds.customerCreate)
+            : null,
+        builder: (_) => CustomerFormScreen(customer: customer),
+      ),
     );
     if (result != null) _fetchCustomers(reset: true);
   }
@@ -177,6 +183,7 @@ class _CustomersScreenState extends State<CustomersScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final canManageCustomers = context.watch<AuthProvider>().hasPermission('manage-customers');
     return EnterprisePage(
       title: 'Customers',
       subtitle: 'Search customers, check balances and open full ledger/actions quickly.',
@@ -188,11 +195,12 @@ class _CustomersScreenState extends State<CustomersScreen> {
         ),
       ],
       actions: [
-        FilledButton.icon(
-          onPressed: () => _openForm(),
-          icon: const Icon(Icons.person_add_alt_1_rounded),
-          label: const Text('Add Customer'),
-        ),
+        if (canManageCustomers)
+          FilledButton.icon(
+            onPressed: () => _openForm(),
+            icon: const Icon(Icons.person_add_alt_1_rounded),
+            label: const Text('Add Customer'),
+          ),
       ],
       bottomNavigationBar: _customers.isNotEmpty
           ? EnterprisePaginationBar(
@@ -246,11 +254,13 @@ class _CustomersScreenState extends State<CustomersScreen> {
                         subtitle: _search.isEmpty
                             ? 'Add customers to manage balances, receipts and ledgers.'
                             : 'No customer matched your search.',
-                        action: FilledButton.icon(
-                          onPressed: () => _openForm(),
-                          icon: const Icon(Icons.person_add_alt_1_rounded),
-                          label: const Text('Add Customer'),
-                        ),
+                        action: canManageCustomers
+                            ? FilledButton.icon(
+                                onPressed: () => _openForm(),
+                                icon: const Icon(Icons.person_add_alt_1_rounded),
+                                label: const Text('Add Customer'),
+                              )
+                            : null,
                       )
                     : RefreshIndicator(
                         onRefresh: () => _fetchCustomers(reset: true),
@@ -325,17 +335,19 @@ class _CustomersScreenState extends State<CustomersScreen> {
                                     ],
                                   ),
                                 ),
-                                trailing: PopupMenuButton<String>(
-                                  tooltip: 'Actions',
-                                  onSelected: (value) {
-                                    if (value == 'edit') _openForm(c);
-                                    if (value == 'delete') _deleteCustomer(c);
-                                  },
-                                  itemBuilder: (_) => const [
-                                    PopupMenuItem(value: 'edit', child: Text('Edit')),
-                                    PopupMenuItem(value: 'delete', child: Text('Delete')),
-                                  ],
-                                ),
+                                trailing: canManageCustomers
+                                    ? PopupMenuButton<String>(
+                                        tooltip: 'Actions',
+                                        onSelected: (value) {
+                                          if (value == 'edit') _openForm(c);
+                                          if (value == 'delete') _deleteCustomer(c);
+                                        },
+                                        itemBuilder: (_) => const [
+                                          PopupMenuItem(value: 'edit', child: Text('Edit')),
+                                          PopupMenuItem(value: 'delete', child: Text('Delete')),
+                                        ],
+                                      )
+                                    : null,
                               ),
                             );
                           },

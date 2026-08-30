@@ -1,11 +1,14 @@
 import 'dart:async';
 import 'package:enterprise_pos/api/customer_service.dart';
+import 'package:enterprise_pos/providers/auth_provider.dart';
+import 'package:enterprise_pos/services/app_navigator.dart';
 import 'package:enterprise_pos/forms/customer_form_screen.dart';
 import 'package:enterprise_pos/services/party_pick_caches.dart';
 import 'package:enterprise_pos/services/app_currency.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:provider/provider.dart';
 
 class CustomerPickerSheet extends StatefulWidget {
   final String token;
@@ -128,6 +131,7 @@ class _CustomerPickerSheetState extends State<CustomerPickerSheet> {
     final created = await Navigator.push(
       context,
       MaterialPageRoute(
+        settings: const RouteSettings(name: PosRouteIds.customerCreate),
         fullscreenDialog: true,
         builder: (_) => const CustomerFormScreen(),
       ),
@@ -221,6 +225,7 @@ class _CustomerPickerSheetState extends State<CustomerPickerSheet> {
   @override
   Widget build(BuildContext context) {
     final bottomInset = MediaQuery.of(context).viewInsets.bottom;
+    final canManageCustomers = context.watch<AuthProvider>().hasPermission('manage-customers');
 
     final denseTile = const EdgeInsets.symmetric(horizontal: 8, vertical: 6);
     final visualDense = const VisualDensity(horizontal: -2, vertical: -3);
@@ -311,28 +316,30 @@ class _CustomerPickerSheetState extends State<CustomerPickerSheet> {
                 onTap: () => Navigator.pop(context, null),
               ),
             ),
-            const SizedBox(height: 6),
-            Container(
-              decoration: BoxDecoration(
-                color: Colors.green.shade50,
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.green.shade200),
-              ),
-              child: ListTile(
-                dense: true,
-                visualDensity: visualDense,
-                contentPadding: denseTile,
-                leading: const Icon(
-                  Icons.person_add_alt_1_outlined,
-                  color: Colors.green,
+            if (canManageCustomers) ...[
+              const SizedBox(height: 6),
+              Container(
+                decoration: BoxDecoration(
+                  color: Colors.green.shade50,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.green.shade200),
                 ),
-                title: const Text(
-                  "Quick Add",
-                  style: TextStyle(fontWeight: FontWeight.w600),
+                child: ListTile(
+                  dense: true,
+                  visualDensity: visualDense,
+                  contentPadding: denseTile,
+                  leading: const Icon(
+                    Icons.person_add_alt_1_outlined,
+                    color: Colors.green,
+                  ),
+                  title: const Text(
+                    "Quick Add",
+                    style: TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                  onTap: _quickAddCustomer,
                 ),
-                onTap: _quickAddCustomer,
               ),
-            ),
+            ],
 
             const SizedBox(height: 8),
 

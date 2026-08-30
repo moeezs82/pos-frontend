@@ -1,5 +1,5 @@
 #define MyAppName "CounterIQ"
-#define MyAppVersion "1.0.2"
+#define MyAppVersion "1.0.3"
 #define MyAppPublisher "Moeez"
 #define MyAppExeName "CounterIQ.exe"
 

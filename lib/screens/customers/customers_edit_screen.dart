@@ -27,6 +27,7 @@ class _CustomerEditScreenState extends State<CustomerEditScreen>
   late CustomerService _service;
   late TabController _tab;
   late final bool _canViewCreditAudits;
+  late final bool _canManageCustomers;
 
   bool _postingReceipt = false;
   final _amountController = TextEditingController();
@@ -69,6 +70,7 @@ class _CustomerEditScreenState extends State<CustomerEditScreen>
     final auth = context.read<AuthProvider>();
     final token = auth.token!;
     _canViewCreditAudits = auth.hasPermission('view-party-credit-limit-audits');
+    _canManageCustomers = auth.hasPermission('manage-customers');
     _service = CustomerService(token: token);
     _tab = TabController(length: _canViewCreditAudits ? 4 : 3, vsync: this);
     _tab.addListener(_onTabChanged);
@@ -670,7 +672,7 @@ class _CustomerEditScreenState extends State<CustomerEditScreen>
       primaryActionLabel: 'Receive Payment',
       primaryActionIcon: Icons.payments_rounded,
       onPrimaryAction: busy ? null : _openReceiveModal,
-      onEdit: busy ? null : _openEdit,
+      onEdit: busy || !_canManageCustomers ? null : _openEdit,
       infoPills: [
         if (customerCode.isNotEmpty)
           _PartyInfoPill(icon: Icons.numbers_rounded, label: 'Customer ID', value: customerCode),
