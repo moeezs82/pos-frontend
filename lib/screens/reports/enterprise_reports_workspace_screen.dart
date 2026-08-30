@@ -1,5 +1,6 @@
 import 'dart:async' show Timer;
 import 'package:enterprise_pos/api/reports_service.dart';
+import 'package:enterprise_pos/api/customer_area_service.dart';
 import 'package:enterprise_pos/api/sale_source_service.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/providers/branch_feature_provider.dart';
@@ -30,6 +31,7 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
 
   late ReportsService _service;
   late SaleSourceService _saleSourceService;
+  late CustomerAreaService _customerAreaService;
   late _EnterpriseReportMeta _selectedReport;
 
   DateTime? _from;
@@ -37,7 +39,11 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
   String? _status;
   String? _method;
   int? _saleSourceId;
+  int? _areaId;
+  String? _customerType;
   List<Map<String, dynamic>> _saleSources = const [];
+  List<Map<String, dynamic>> _customerAreas = const [];
+  final Map<String, Set<String>> _hiddenColumnsByReport = <String, Set<String>>{};
   int? _observedBranchId;
   bool _branchRefreshScheduled = false;
   int _page = 1;
@@ -62,12 +68,37 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
     'sales-by-hour',
     'sales-by-payment-method',
     'sales-by-source',
+    'sales-by-area',
+    'area-customer-potential',
+    'sale-return-summary',
+    'sale-return-detail',
     'discount-report',
     'tax-report',
   };
 
-  bool get _supportsSaleSource =>
-      _saleSourceReportKeys.contains(_selectedReport.key);
+  static const _areaReportKeys = <String>{
+    'sales-summary',
+    'sales-detail',
+    'sales-by-product',
+    'sales-by-category',
+    'sales-by-brand',
+    'sales-by-customer',
+    'sales-by-salesman',
+    'sales-by-hour',
+    'sales-by-payment-method',
+    'sales-by-source',
+    'sales-by-area',
+    'area-customer-potential',
+    'sale-return-summary',
+    'sale-return-detail',
+    'discount-report',
+    'tax-report',
+  };
+
+  bool get _supportsSaleSource => _saleSourceReportKeys.contains(_selectedReport.key);
+  bool get _supportsArea => _areaReportKeys.contains(_selectedReport.key);
+  bool get _supportsCustomerType => _selectedReport.key == 'area-customer-potential';
+  Set<String> get _hiddenColumns => _hiddenColumnsByReport.putIfAbsent(_selectedReport.key, () => <String>{});
 
   List<_EnterpriseReportMeta> _effectiveReports(bool deliveryEnabled) {
     if (deliveryEnabled) return _allReports;
@@ -91,7 +122,9 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
       final token = context.read<AuthProvider>().token!;
       _service = ReportsService(token: token);
       _saleSourceService = SaleSourceService(token: token);
+      _customerAreaService = CustomerAreaService(token: token);
       _loadSaleSources();
+      _loadCustomerAreas();
       // Branch scoping is resolved by backend from the logged-in user's active branch.
       _ready = true;
       _fetch();
@@ -105,13 +138,15 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
     if (_observedBranchId == branchId) return;
     _observedBranchId = branchId;
     _saleSourceId = null;
+    _areaId = null;
     _saleSources = const [];
+    _customerAreas = const [];
     if (_ready && !_branchRefreshScheduled) {
       _branchRefreshScheduled = true;
       WidgetsBinding.instance.addPostFrameCallback((_) async {
         _branchRefreshScheduled = false;
         if (!mounted) return;
-        await _loadSaleSources();
+        await Future.wait([_loadSaleSources(), _loadCustomerAreas()]);
         if (mounted) {
           _page = 1;
           await _fetch();
@@ -138,6 +173,16 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
     }
   }
 
+  Future<void> _loadCustomerAreas() async {
+    try {
+      final list = await _customerAreaService.getAreas(activeOnly: false);
+      if (!mounted) return;
+      setState(() => _customerAreas = list);
+    } catch (_) {
+      // Reports remain usable if reference-data loading is temporarily unavailable.
+    }
+  }
+
   Map<String, dynamic> _filters({bool export = false}) {
     return {
       if (_from != null) 'from': _dateTimeFmt.format(_from!),
@@ -145,8 +190,10 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
       if ((_searchCtrl.text).trim().isNotEmpty) 'search': _searchCtrl.text.trim(),
       if (_status != null && _status!.isNotEmpty) 'status': _status,
       if (_method != null && _method!.isNotEmpty) 'method': _method,
-      if (_supportsSaleSource && _saleSourceId != null)
-        'sale_source_id': _saleSourceId,
+      if (_supportsSaleSource && _saleSourceId != null) 'sale_source_id': _saleSourceId,
+      if (_supportsArea && _areaId != null) 'area_id': _areaId,
+      if (_supportsCustomerType && _customerType != null && _customerType!.isNotEmpty) 'customer_type': _customerType,
+      if (export && _hiddenColumns.isNotEmpty) 'hidden_columns': _hiddenColumns.join(','),
       'page': export ? 1 : _page,
       'per_page': export ? 1000 : (_searchCtrl.text.trim().isNotEmpty ? 250 : _perPage),
       'direction': 'desc',
@@ -245,6 +292,7 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
       _error = null;
       _status = null;
       _method = null;
+      _customerType = null;
     });
     _fetch();
   }
@@ -294,6 +342,7 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
                   else if (_error != null)
                     SliverFillRemaining(hasScrollBody: false, child: _ErrorState(message: _error!, onRetry: _fetch))
                   else ...[
+                    _buildAreaInsights(),
                     _buildTotals(),
                     _buildTable(),
                     _buildPagination(),
@@ -472,6 +521,80 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
             ),
           ),
         ),
+      if (_supportsArea)
+        Container(
+          constraints: const BoxConstraints(minWidth: 190, maxWidth: 250),
+          padding: const EdgeInsets.symmetric(horizontal: 11),
+          decoration: BoxDecoration(
+            border: Border.all(color: Theme.of(context).dividerColor),
+            borderRadius: BorderRadius.circular(14),
+          ),
+          child: DropdownButtonHideUnderline(
+            child: DropdownButton<int>(
+              value: _areaId ?? 0,
+              isExpanded: true,
+              icon: const Icon(Icons.keyboard_arrow_down_rounded),
+              items: <DropdownMenuItem<int>>[
+                const DropdownMenuItem<int>(
+                  value: 0,
+                  child: Row(children: [
+                    Icon(Icons.location_on_outlined, size: 16),
+                    SizedBox(width: 7),
+                    Text('All Towns / Areas'),
+                  ]),
+                ),
+                ..._customerAreas.map((area) {
+                  final id = int.tryParse(area['id']?.toString() ?? '');
+                  final active = area['is_active'] == true || area['is_active'] == 1 || area['is_active']?.toString().toLowerCase() == 'true';
+                  return DropdownMenuItem<int>(
+                    value: id,
+                    child: Text('${area['name'] ?? 'Area'}${active ? '' : ' (Inactive)'}', overflow: TextOverflow.ellipsis),
+                  );
+                }),
+              ],
+              onChanged: (value) {
+                setState(() {
+                  _areaId = value == 0 ? null : value;
+                  _page = 1;
+                });
+                _fetch();
+              },
+            ),
+          ),
+        ),
+      if (_supportsCustomerType)
+        Container(
+          constraints: const BoxConstraints(minWidth: 175, maxWidth: 210),
+          padding: const EdgeInsets.symmetric(horizontal: 11),
+          decoration: BoxDecoration(
+            border: Border.all(color: Theme.of(context).dividerColor),
+            borderRadius: BorderRadius.circular(14),
+          ),
+          child: DropdownButtonHideUnderline(
+            child: DropdownButton<String>(
+              value: _customerType ?? '',
+              isExpanded: true,
+              items: const [
+                DropdownMenuItem(value: '', child: Text('All Customer Types')),
+                DropdownMenuItem(value: 'retail', child: Text('Retail')),
+                DropdownMenuItem(value: 'wholesale', child: Text('Wholesale')),
+                DropdownMenuItem(value: 'reseller', child: Text('Reseller')),
+              ],
+              onChanged: (value) {
+                setState(() {
+                  _customerType = value == null || value.isEmpty ? null : value;
+                  _page = 1;
+                });
+                _fetch();
+              },
+            ),
+          ),
+        ),
+      OutlinedButton.icon(
+        onPressed: _result == null ? null : _showColumnPicker,
+        icon: const Icon(Icons.view_column_outlined),
+        label: Text(_hiddenColumns.isEmpty ? 'Columns' : 'Columns (${_hiddenColumns.length} hidden)'),
+      ),
       DropdownButtonHideUnderline(
         child: DropdownButton<int>(
           value: _perPage,
@@ -519,10 +642,146 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
     );
   }
 
+  bool _isProfitSensitiveColumn(String key) {
+    final k = key.toLowerCase();
+    return k == 'cogs' || k.contains('profit') || k.contains('margin');
+  }
+
+  Future<void> _showColumnPicker() async {
+    final result = _result;
+    if (result == null || result.columns.isEmpty) return;
+    final working = Set<String>.from(_hiddenColumns);
+    final applied = await showDialog<Set<String>>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          final hiddenProfit = result.columns.where((c) => _isProfitSensitiveColumn(c.key)).every((c) => working.contains(c.key));
+          final visibleCount = result.columns.where((c) => !working.contains(c.key)).length;
+          return AlertDialog(
+            title: const Text('Visible report columns'),
+            content: SizedBox(
+              width: 430,
+              height: 480,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Choose what staff can see on screen and in the next Excel/PDF export.', style: Theme.of(context).textTheme.bodySmall),
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: [
+                      OutlinedButton.icon(
+                        onPressed: () => setDialogState(working.clear),
+                        icon: const Icon(Icons.visibility_outlined, size: 18),
+                        label: const Text('Show all'),
+                      ),
+                      if (result.columns.any((c) => _isProfitSensitiveColumn(c.key)))
+                        OutlinedButton.icon(
+                          onPressed: () => setDialogState(() {
+                            for (final c in result.columns.where((c) => _isProfitSensitiveColumn(c.key))) {
+                              working.add(c.key);
+                            }
+                          }),
+                          icon: Icon(hiddenProfit ? Icons.visibility_off : Icons.lock_outline, size: 18),
+                          label: const Text('Hide profit fields'),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Expanded(
+                    child: SingleChildScrollView(
+                      child: Column(
+                        children: result.columns.map((column) {
+                          final visible = !working.contains(column.key);
+                          final sensitive = _isProfitSensitiveColumn(column.key);
+                          return CheckboxListTile(
+                            dense: true,
+                            contentPadding: EdgeInsets.zero,
+                            value: visible,
+                            title: Text(column.label),
+                            subtitle: sensitive ? const Text('Profit-sensitive') : null,
+                            secondary: sensitive ? const Icon(Icons.lock_outline_rounded, size: 19) : null,
+                            onChanged: (value) => setDialogState(() {
+                              if (value == true) {
+                                working.remove(column.key);
+                              } else if (visibleCount > 1) {
+                                working.add(column.key);
+                              }
+                            }),
+                          );
+                        }).toList(),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Cancel')),
+              FilledButton(onPressed: visibleCount < 1 ? null : () => Navigator.pop(dialogContext, working), child: const Text('Apply')),
+            ],
+          );
+        },
+      ),
+    );
+    if (applied == null || !mounted) return;
+    setState(() => _hiddenColumnsByReport[_selectedReport.key] = applied);
+  }
+
+  SliverToBoxAdapter _buildAreaInsights() {
+    final result = _result;
+    if (result == null || result.rows.isEmpty) return const SliverToBoxAdapter(child: SizedBox.shrink());
+    if (_selectedReport.key != 'sales-by-area' && _selectedReport.key != 'area-customer-potential') {
+      return const SliverToBoxAdapter(child: SizedBox.shrink());
+    }
+
+    Map<String, dynamic>? maxBy(String key) {
+      Map<String, dynamic>? best;
+      num? bestValue;
+      for (final row in result.rows) {
+        final value = row[key];
+        final n = value is num ? value : num.tryParse(value?.toString() ?? '');
+        if (n == null) continue;
+        if (best == null || n > bestValue!) {
+          best = row;
+          bestValue = n;
+        }
+      }
+      return best;
+    }
+
+    final cards = <_InsightData>[];
+    if (_selectedReport.key == 'sales-by-area') {
+      final revenue = maxBy('net_sales');
+      final invoices = maxBy('invoices');
+      final avg = maxBy('avg_invoice');
+      if (revenue != null) cards.add(_InsightData('Highest Net Sales', '${revenue['area']} • ${_formatValue(revenue['net_sales'], 'net_sales')}'));
+      if (invoices != null) cards.add(_InsightData('Most Orders', '${invoices['area']} • ${_formatValue(invoices['invoices'], 'invoices')} invoices'));
+      if (avg != null) cards.add(_InsightData('Highest Avg Invoice', '${avg['area']} • ${_formatValue(avg['avg_invoice'], 'avg_invoice')}'));
+    } else {
+      final base = maxBy('customers');
+      final opportunity = maxBy('no_purchase');
+      final repeat = maxBy('repeat_rate');
+      final revenue = maxBy('net_sales');
+      if (base != null) cards.add(_InsightData('Largest Customer Base', '${base['area']} • ${_formatValue(base['customers'], 'customers')}'));
+      if (opportunity != null) cards.add(_InsightData('Largest Reactivation Opportunity', '${opportunity['area']} • ${_formatValue(opportunity['no_purchase'], 'no_purchase')} customers'));
+      if (repeat != null) cards.add(_InsightData('Highest Repeat Rate', '${repeat['area']} • ${_formatValue(repeat['repeat_rate'], 'repeat_rate')}%'));
+      if (revenue != null) cards.add(_InsightData('Highest Net Sales', '${revenue['area']} • ${_formatValue(revenue['net_sales'], 'net_sales')}'));
+    }
+    if (cards.isEmpty) return const SliverToBoxAdapter(child: SizedBox.shrink());
+    return SliverToBoxAdapter(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+        child: Wrap(spacing: 10, runSpacing: 10, children: cards.map((c) => _InsightCard(data: c)).toList()),
+      ),
+    );
+  }
+
   SliverToBoxAdapter _buildTotals() {
     final totals = _result?.totals ?? const <String, dynamic>{};
     if (totals.isEmpty) return const SliverToBoxAdapter(child: SizedBox.shrink());
-    final visible = totals.entries.take(8).toList();
+    final visible = totals.entries.where((e) => !_hiddenColumns.contains(e.key)).take(8).toList();
     return SliverToBoxAdapter(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
@@ -539,6 +798,7 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
     final result = _result;
     if (result == null) return const SliverToBoxAdapter(child: SizedBox.shrink());
     final visibleRows = _visibleRows(result);
+    final visibleColumns = result.columns.where((c) => !_hiddenColumns.contains(c.key)).toList(growable: false);
     if (visibleRows.isEmpty) {
       final searching = _searchCtrl.text.trim().isNotEmpty;
       return SliverToBoxAdapter(
@@ -565,10 +825,10 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
                   headingRowHeight: 44,
                   dataRowMinHeight: 44,
                   dataRowMaxHeight: 64,
-                  columns: result.columns.map((c) => DataColumn(label: Text(c.label, style: const TextStyle(fontWeight: FontWeight.w800)))).toList(),
+                  columns: visibleColumns.map((c) => DataColumn(label: Text(c.label, style: const TextStyle(fontWeight: FontWeight.w800)))).toList(),
                   rows: visibleRows.map((row) {
                     return DataRow(
-                      cells: result.columns.map((c) => DataCell(Text(_formatValue(row[c.key], c.key), overflow: TextOverflow.ellipsis))).toList(),
+                      cells: visibleColumns.map((c) => DataCell(Text(_formatValue(row[c.key], c.key), overflow: TextOverflow.ellipsis))).toList(),
                     );
                   }).toList(),
                 ),
@@ -638,6 +898,13 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
 
   bool _looksMoney(String key) {
     final k = key.toLowerCase();
+
+    // `no_purchase` is a customer count in Area Customer Potential, not a
+    // monetary purchase value. Keep this guard before the generic
+    // `purchase` keyword check so totals, table cells and insight cards all
+    // render it as a plain number (for example: `0 customers`).
+    if (k == 'no_purchase') return false;
+
     return k.contains('total') || k.contains('amount') || k.contains('balance') || k.contains('paid') || k.contains('tax') || k.contains('discount') || k.contains('profit') || k.contains('revenue') || k.contains('cost') || k.contains('debit') || k.contains('credit') || k.contains('cash') || k.contains('valuation') || k.contains('sales') || k.contains('purchase');
   }
 
@@ -721,6 +988,38 @@ class _ReportNavTile extends StatelessWidget {
           selected: selected,
           onTap: onTap,
         ),
+      ),
+    );
+  }
+}
+
+class _InsightData {
+  final String label;
+  final String value;
+  const _InsightData(this.label, this.value);
+}
+
+class _InsightCard extends StatelessWidget {
+  final _InsightData data;
+  const _InsightCard({required this.data});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      constraints: const BoxConstraints(minWidth: 220, maxWidth: 340),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Theme.of(context).dividerColor.withOpacity(.7)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(data.label, style: Theme.of(context).textTheme.labelMedium),
+          const SizedBox(height: 7),
+          Text(data.value, maxLines: 2, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800)),
+        ],
       ),
     );
   }
@@ -843,6 +1142,8 @@ const _enterpriseReports = <_EnterpriseReportMeta>[
   _EnterpriseReportMeta(key: 'sales-by-hour', title: 'Hourly Sales', group: 'Sales', description: 'Sales heatmap base by hour.', icon: Icons.schedule_rounded),
   _EnterpriseReportMeta(key: 'sales-by-payment-method', title: 'Payment Collection', group: 'Sales', description: 'Cash, card, bank and wallet collections.', icon: Icons.payments_rounded),
   _EnterpriseReportMeta(key: 'sales-by-source', title: 'Sales by Source', group: 'Sales', description: 'Compare invoice volume, revenue, COGS and profit by Sale From channel.', icon: Icons.hub_outlined),
+  _EnterpriseReportMeta(key: 'sales-by-area', title: 'Sales by Town / Area', group: 'Sales', description: 'Historical area performance using the immutable area captured on each sale.', icon: Icons.location_on_rounded),
+  _EnterpriseReportMeta(key: 'area-customer-potential', title: 'Area Customer Potential', group: 'Customer Insights', description: 'Current customer-base opportunity, activity, repeat rate and spend by area.', icon: Icons.travel_explore_rounded),
   _EnterpriseReportMeta(key: 'delivery-boy-cash', title: 'Delivery Boy Cash', group: 'Sales', description: 'Delivery boy cash received and pending.', icon: Icons.delivery_dining_rounded),
   _EnterpriseReportMeta(key: 'discount-report', title: 'Discount Report', group: 'Sales', description: 'Discounts by invoice and period.', icon: Icons.percent_rounded),
   _EnterpriseReportMeta(key: 'tax-report', title: 'Tax Report', group: 'Sales', description: 'Tax collected and taxable sales.', icon: Icons.account_balance_rounded),
