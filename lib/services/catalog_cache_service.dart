@@ -61,7 +61,7 @@ class CatalogCacheService {
     final path = p.join(dbPath, 'catalog_cache.db');
     return openDatabase(
       path,
-      version: 13,
+      version: 14,
       // v1 → v2 adds the unit columns. ADDITIVE ONLY, and deliberately not a
       // table rebuild or a cache wipe: this database is a read replica, but a
       // "just delete and re-download" upgrade would strand a till that is
@@ -262,6 +262,18 @@ class CatalogCacheService {
             whereArgs: const ['catalog_version:%', 'last_synced_at:%'],
           );
         }
+        // v13 → v14: cache the product-vendor display snapshot beside
+        // vendor_id. Queued LAN sales include both values so a supplier
+        // reassignment/rename before sync cannot rewrite the sale's vendor
+        // history. Force an authoritative catalog refresh after upgrading.
+        if (oldVersion < 14) {
+          await db.execute('ALTER TABLE products ADD COLUMN vendor_name TEXT');
+          await db.delete(
+            'sync_meta',
+            where: 'key LIKE ? OR key LIKE ?',
+            whereArgs: const ['catalog_version:%', 'last_synced_at:%'],
+          );
+        }
       },
       onCreate: (db, version) async {
         await db.execute('''
@@ -282,6 +294,7 @@ class CatalogCacheService {
             discount REAL,
             discount_type TEXT,
             vendor_id INTEGER,
+            vendor_name TEXT,
             category_id INTEGER,
             brand_id INTEGER,
             unit_id INTEGER,
@@ -756,6 +769,7 @@ class CatalogCacheService {
       'discount': _asDouble(raw['discount']),
       'discount_type': raw['discount_type']?.toString() ?? 'percentage',
       'vendor_id': raw['vendor_id'] != null ? _asInt(raw['vendor_id']) : null,
+      'vendor_name': raw['vendor_name']?.toString(),
       'category_id': raw['category_id'] != null ? _asInt(raw['category_id']) : null,
       'brand_id': raw['brand_id'] != null ? _asInt(raw['brand_id']) : null,
       'unit_id': rule.unitId,
@@ -817,6 +831,7 @@ class CatalogCacheService {
       'discount': row['discount'],
       'discount_type': row['discount_type'] ?? 'percentage',
       'vendor_id': row['vendor_id'],
+      'vendor_name': row['vendor_name'],
       'category_id': row['category_id'],
       'brand_id': row['brand_id'],
       // Flat unit columns, read by QuantityRule.fromProduct. A row cached

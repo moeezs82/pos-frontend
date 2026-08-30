@@ -40,9 +40,11 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
   String? _method;
   int? _saleSourceId;
   int? _areaId;
+  int? _productVendorId;
   String? _customerType;
   List<Map<String, dynamic>> _saleSources = const [];
   List<Map<String, dynamic>> _customerAreas = const [];
+  List<Map<String, dynamic>> _productVendors = const [];
   final Map<String, Set<String>> _hiddenColumnsByReport = <String, Set<String>>{};
   int? _observedBranchId;
   bool _branchRefreshScheduled = false;
@@ -61,6 +63,7 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
     'sales-summary',
     'sales-detail',
     'sales-by-product',
+    'sales-by-vendor',
     'sales-by-category',
     'sales-by-brand',
     'sales-by-customer',
@@ -80,6 +83,7 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
     'sales-summary',
     'sales-detail',
     'sales-by-product',
+    'sales-by-vendor',
     'sales-by-category',
     'sales-by-brand',
     'sales-by-customer',
@@ -95,8 +99,16 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
     'tax-report',
   };
 
+  static const _productVendorReportKeys = <String>{
+    'sales-summary',
+    'sales-by-product',
+    'sales-by-area',
+    'sales-by-vendor',
+  };
+
   bool get _supportsSaleSource => _saleSourceReportKeys.contains(_selectedReport.key);
   bool get _supportsArea => _areaReportKeys.contains(_selectedReport.key);
+  bool get _supportsProductVendor => _productVendorReportKeys.contains(_selectedReport.key);
   bool get _supportsCustomerType => _selectedReport.key == 'area-customer-potential';
   Set<String> get _hiddenColumns => _hiddenColumnsByReport.putIfAbsent(_selectedReport.key, () => <String>{});
 
@@ -125,6 +137,7 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
       _customerAreaService = CustomerAreaService(token: token);
       _loadSaleSources();
       _loadCustomerAreas();
+      _loadProductVendors();
       // Branch scoping is resolved by backend from the logged-in user's active branch.
       _ready = true;
       _fetch();
@@ -139,14 +152,16 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
     _observedBranchId = branchId;
     _saleSourceId = null;
     _areaId = null;
+    _productVendorId = null;
     _saleSources = const [];
     _customerAreas = const [];
+    _productVendors = const [];
     if (_ready && !_branchRefreshScheduled) {
       _branchRefreshScheduled = true;
       WidgetsBinding.instance.addPostFrameCallback((_) async {
         _branchRefreshScheduled = false;
         if (!mounted) return;
-        await Future.wait([_loadSaleSources(), _loadCustomerAreas()]);
+        await Future.wait([_loadSaleSources(), _loadCustomerAreas(), _loadProductVendors()]);
         if (mounted) {
           _page = 1;
           await _fetch();
@@ -183,6 +198,38 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
     }
   }
 
+  Future<void> _loadProductVendors() async {
+    try {
+      final list = await _service.getProductVendorsForReports();
+      if (!mounted) return;
+      setState(() => _productVendors = list);
+    } catch (_) {
+      // Reports remain usable if the vendor reference list is unavailable.
+    }
+  }
+
+  String get _activeReportDescription {
+    if (_supportsProductVendor && _productVendorId != null) {
+      Map<String, dynamic>? selected;
+      for (final vendor in _productVendors) {
+        if (int.tryParse(vendor['id']?.toString() ?? '') == _productVendorId) {
+          selected = vendor;
+          break;
+        }
+      }
+      final vendor = selected == null ? 'Selected vendor' : _vendorLabel(selected);
+      return '$vendor product sales only. Invoice discount is allocated proportionally; tax and delivery are excluded from vendor revenue.';
+    }
+    return _selectedReport.description;
+  }
+
+  String _vendorLabel(Map<String, dynamic> vendor) {
+    final name = (vendor['name'] ?? '').toString().trim();
+    if (name.isNotEmpty) return name;
+    final id = vendor['id']?.toString() ?? '';
+    return id.isEmpty ? 'Vendor' : 'Vendor #$id';
+  }
+
   Map<String, dynamic> _filters({bool export = false}) {
     return {
       if (_from != null) 'from': _dateTimeFmt.format(_from!),
@@ -192,6 +239,7 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
       if (_method != null && _method!.isNotEmpty) 'method': _method,
       if (_supportsSaleSource && _saleSourceId != null) 'sale_source_id': _saleSourceId,
       if (_supportsArea && _areaId != null) 'area_id': _areaId,
+      if (_supportsProductVendor && _productVendorId != null) 'product_vendor_id': _productVendorId,
       if (_supportsCustomerType && _customerType != null && _customerType!.isNotEmpty) 'customer_type': _customerType,
       if (export && _hiddenColumns.isNotEmpty) 'hidden_columns': _hiddenColumns.join(','),
       'page': export ? 1 : _page,
@@ -416,7 +464,7 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
                   children: [
                     Text(_selectedReport.title, style: Theme.of(context).textTheme.titleLarge?.copyWith(color: Colors.white, fontWeight: FontWeight.w800)),
                     const SizedBox(height: 4),
-                    Text(_selectedReport.description, style: const TextStyle(color: Colors.white70)),
+                    Text(_activeReportDescription, style: const TextStyle(color: Colors.white70)),
                   ],
                 ),
               ),
@@ -555,6 +603,49 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
               onChanged: (value) {
                 setState(() {
                   _areaId = value == 0 ? null : value;
+                  _page = 1;
+                });
+                _fetch();
+              },
+            ),
+          ),
+        ),
+      if (_supportsProductVendor)
+        Container(
+          constraints: const BoxConstraints(minWidth: 205, maxWidth: 280),
+          padding: const EdgeInsets.symmetric(horizontal: 11),
+          decoration: BoxDecoration(
+            border: Border.all(color: Theme.of(context).dividerColor),
+            borderRadius: BorderRadius.circular(14),
+          ),
+          child: DropdownButtonHideUnderline(
+            child: DropdownButton<int>(
+              value: _productVendorId ?? 0,
+              isExpanded: true,
+              icon: const Icon(Icons.keyboard_arrow_down_rounded),
+              items: <DropdownMenuItem<int>>[
+                const DropdownMenuItem<int>(
+                  value: 0,
+                  child: Row(children: [
+                    Icon(Icons.local_shipping_outlined, size: 16),
+                    SizedBox(width: 7),
+                    Text('All Product Vendors'),
+                  ]),
+                ),
+                ..._productVendors.map((vendor) {
+                  final id = int.tryParse(vendor['id']?.toString() ?? '');
+                  return DropdownMenuItem<int>(
+                    value: id,
+                    child: Text(
+                      '${_vendorLabel(vendor)}${vendor['is_active'] == false ? ' (Inactive)' : ''}',
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  );
+                }),
+              ],
+              onChanged: (value) {
+                setState(() {
+                  _productVendorId = value == 0 ? null : value;
                   _page = 1;
                 });
                 _fetch();
@@ -1135,6 +1226,7 @@ const _enterpriseReports = <_EnterpriseReportMeta>[
   _EnterpriseReportMeta(key: 'sales-summary', title: 'Sales Summary', group: 'Sales', description: 'Daily invoices, net sales, returns, COGS and gross profit.', icon: Icons.summarize_rounded),
   _EnterpriseReportMeta(key: 'sales-detail', title: 'Sales Detail', group: 'Sales', description: 'Invoice-level sales detail for audit and export.', icon: Icons.receipt_long_rounded),
   _EnterpriseReportMeta(key: 'sales-by-product', title: 'Sales by Product', group: 'Sales', description: 'Revenue, quantity, COGS and profit by SKU.', icon: Icons.inventory_2_rounded),
+  _EnterpriseReportMeta(key: 'sales-by-vendor', title: 'Sales by Vendor', group: 'Sales', description: 'Product-vendor sales performance with proportional invoice discount allocation; tax and delivery excluded.', icon: Icons.local_shipping_rounded),
   _EnterpriseReportMeta(key: 'sales-by-category', title: 'Sales by Category', group: 'Sales', description: 'Category contribution and sales mix.', icon: Icons.category_rounded),
   _EnterpriseReportMeta(key: 'sales-by-brand', title: 'Sales by Brand', group: 'Sales', description: 'Brand performance by revenue and quantity.', icon: Icons.local_offer_rounded),
   _EnterpriseReportMeta(key: 'sales-by-customer', title: 'Sales by Customer', group: 'Sales', description: 'Customer-wise revenue and invoice count.', icon: Icons.people_alt_rounded),

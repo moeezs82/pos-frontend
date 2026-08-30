@@ -20,6 +20,17 @@ class ReportsService {
   ReportsService({required String token}) : _client = ApiClient(token: token);
 
 
+  Future<List<Map<String, dynamic>>> getProductVendorsForReports() async {
+    final res = await _client.get('/reports/product-vendors');
+    if (res['success'] == true && res['data'] is List) {
+      return (res['data'] as List)
+          .whereType<Map>()
+          .map((e) => Map<String, dynamic>.from(e))
+          .toList(growable: false);
+    }
+    throw Exception(res['message'] ?? 'Failed to load product vendors');
+  }
+
   Future<Map<String, dynamic>> getEnterpriseCatalog() async {
     final res = await _client.get('/reports/catalog');
     if (res['success'] == true && res['data'] is Map<String, dynamic>) {

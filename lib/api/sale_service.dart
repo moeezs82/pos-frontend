@@ -204,6 +204,13 @@ class SaleService {
           .map(
             (it) => {
               "product_id":    it["product_id"],
+              // Always include product_vendor_id, even when null. The backend
+              // uses field presence to distinguish an exact queued-sale
+              // snapshot from an older client that omitted the field.
+              "product_vendor_id": it["product_vendor_id"],
+              if (it["product_vendor_name"] != null &&
+                  it["product_vendor_name"].toString().trim().isNotEmpty)
+                "product_vendor_name": it["product_vendor_name"].toString().trim(),
               "quantity":      it["quantity"],
               "price":         it["price"],
               "discount_pct":  it["discount_pct"],

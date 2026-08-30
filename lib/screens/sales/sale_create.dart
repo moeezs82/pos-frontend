@@ -1231,6 +1231,11 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
           double.tryParse(_items[idx]['price']?.toString() ?? '') ?? price;
       _items[idx]['quantity'] = newQty;
       _items[idx].addAll(profitCostFields);
+      _items[idx]['product_vendor_id'] =
+          int.tryParse(product['vendor_id']?.toString() ?? '');
+      final productVendorName = (product['vendor_name'] ?? '').toString().trim();
+      _items[idx]['product_vendor_name'] =
+          productVendorName.isEmpty ? null : productVendorName;
       if ((product['secondary_name'] ?? '').toString().trim().isNotEmpty) {
         _items[idx]['secondary_name'] = product['secondary_name'];
       }
@@ -1241,6 +1246,10 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       final scanDiscType = (product['discount_type'] ?? 'percentage').toString();
       _items.add({
         'product_id': productId,
+        'product_vendor_id': int.tryParse(product['vendor_id']?.toString() ?? ''),
+        'product_vendor_name': (product['vendor_name'] ?? '').toString().trim().isEmpty
+            ? null
+            : (product['vendor_name'] ?? '').toString().trim(),
         'name': product['name'],
         'secondary_name': product['secondary_name'],
         'cost_price': product['cost_price'],
@@ -1284,6 +1293,11 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     if (idx != -1) {
       _items[idx]["quantity"] = qty;
       _items[idx].addAll(profitCostFields);
+      _items[idx]['product_vendor_id'] =
+          int.tryParse(product['vendor_id']?.toString() ?? '');
+      final productVendorName = (product['vendor_name'] ?? '').toString().trim();
+      _items[idx]['product_vendor_name'] =
+          productVendorName.isEmpty ? null : productVendorName;
       if ((product['secondary_name'] ?? '').toString().trim().isNotEmpty) {
         _items[idx]['secondary_name'] = product['secondary_name'];
       }
@@ -1302,6 +1316,10 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       final pickDiscType = (product['discount_type'] ?? 'percentage').toString();
       _items.add({
         "product_id": productId,
+        "product_vendor_id": int.tryParse(product['vendor_id']?.toString() ?? ''),
+        "product_vendor_name": (product['vendor_name'] ?? '').toString().trim().isEmpty
+            ? null
+            : (product['vendor_name'] ?? '').toString().trim(),
         "name": product['name'],
         "secondary_name": product['secondary_name'],
         "cost_price": product['cost_price'],
