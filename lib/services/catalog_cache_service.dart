@@ -61,7 +61,7 @@ class CatalogCacheService {
     final path = p.join(dbPath, 'catalog_cache.db');
     return openDatabase(
       path,
-      version: 12,
+      version: 13,
       // v1 → v2 adds the unit columns. ADDITIVE ONLY, and deliberately not a
       // table rebuild or a cache wipe: this database is a read replica, but a
       // "just delete and re-download" upgrade would strand a till that is
@@ -240,6 +240,28 @@ class CatalogCacheService {
             whereArgs: const ['catalog_version:%', 'last_synced_at:%'],
           );
         }
+        // v12 → v13: branch-scoped Town / Area reference data plus the
+        // customer's current/default area. Areas are part of the inbound
+        // catalog so LAN clients can continue creating correctly-snapshotted
+        // sales while temporarily offline.
+        if (oldVersion < 13) {
+          await db.execute('ALTER TABLE customers ADD COLUMN area_id INTEGER');
+          await db.execute('''
+            CREATE TABLE IF NOT EXISTS customer_areas (
+              id INTEGER PRIMARY KEY,
+              branch_id INTEGER NOT NULL,
+              name TEXT NOT NULL,
+              is_active INTEGER NOT NULL DEFAULT 1
+            )
+          ''');
+          await db.execute(
+              'CREATE INDEX IF NOT EXISTS idx_customer_areas_branch_active_name ON customer_areas(branch_id, is_active, name)');
+          await db.delete(
+            'sync_meta',
+            where: 'key LIKE ? OR key LIKE ?',
+            whereArgs: const ['catalog_version:%', 'last_synced_at:%'],
+          );
+        }
       },
       onCreate: (db, version) async {
         await db.execute('''
@@ -285,6 +307,7 @@ class CatalogCacheService {
           CREATE TABLE customers (
             id INTEGER NOT NULL,
             branch_id INTEGER,
+            area_id INTEGER,
             customer_code TEXT,
             customer_type TEXT NOT NULL DEFAULT 'retail',
             first_name TEXT,
@@ -317,6 +340,16 @@ class CatalogCacheService {
           )
         ''');
         await db.execute('CREATE INDEX idx_sale_sources_branch_active_sort ON sale_sources(branch_id, is_active, sort_order, id)');
+
+        await db.execute('''
+          CREATE TABLE customer_areas (
+            id INTEGER PRIMARY KEY,
+            branch_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            is_active INTEGER NOT NULL DEFAULT 1
+          )
+        ''');
+        await db.execute('CREATE INDEX idx_customer_areas_branch_active_name ON customer_areas(branch_id, is_active, name)');
 
         await db.execute('''
           CREATE TABLE sync_meta (
@@ -369,6 +402,8 @@ class CatalogCacheService {
       final deletedProducts = (data['deleted_products'] as List?) ?? const [];
       final deletedCustomers = (data['deleted_customers'] as List?) ?? const [];
       final saleSources = (data['sale_sources'] as List?) ?? const [];
+      final customerAreasRaw = data['customer_areas'];
+      final List customerAreas = customerAreasRaw is List ? customerAreasRaw : const [];
       final newVersion = (data['catalog_version'] ?? '').toString();
 
       await db.transaction((txn) async {
@@ -401,6 +436,27 @@ class CatalogCacheService {
         }
         for (final id in deletedCustomers) {
           await txn.delete('customers', where: 'id = ?', whereArgs: [_asInt(id)]);
+        }
+
+        if (data.containsKey('customer_areas') && branchId != null) {
+          await txn.delete('customer_areas', where: 'branch_id = ?', whereArgs: [branchId]);
+          for (final raw in customerAreas) {
+            final area = raw as Map;
+            final areaBranchId = area['branch_id'] != null
+                ? _asInt(area['branch_id'])
+                : branchId;
+            if (areaBranchId != branchId) continue;
+            await txn.insert(
+              'customer_areas',
+              {
+                'id': _asInt(area['id']),
+                'branch_id': areaBranchId,
+                'name': (area['name'] ?? '').toString(),
+                'is_active': _asBoolInt(area['is_active'], defaultTrue: true),
+              },
+              conflictAlgorithm: ConflictAlgorithm.replace,
+            );
+          }
         }
 
         if (data.containsKey('sale_sources')) {
@@ -573,22 +629,55 @@ class CatalogCacheService {
     final where = <String>[];
     final args = <Object?>[];
     if (branchId != null) {
-      where.add('branch_id = ?');
+      where.add('c.branch_id = ?');
       args.add(branchId);
     }
     if (q.isNotEmpty) {
-      where.add('search_blob LIKE ?');
-      args.add('%$q%');
+      where.add("(c.search_blob LIKE ? OR LOWER(COALESCE(a.name, '')) LIKE ?)");
+      args..add('%$q%')..add('%$q%');
     }
 
-    final rows = await db.query(
-      'customers',
-      where: where.isEmpty ? null : where.join(' AND '),
-      whereArgs: where.isEmpty ? null : args,
-      orderBy: 'first_name COLLATE NOCASE ASC',
-      limit: limit,
+    final whereSql = where.isEmpty ? '' : 'WHERE ${where.join(' AND ')}';
+    final rows = await db.rawQuery(
+      'SELECT c.*, a.name AS area_name '
+      'FROM customers c '
+      'LEFT JOIN customer_areas a '
+      'ON a.id = c.area_id AND a.branch_id = c.branch_id '
+      '$whereSql '
+      'ORDER BY c.first_name COLLATE NOCASE ASC '
+      'LIMIT ?',
+      [...args, limit],
     );
     return rows.map(_customerToApiShape).toList();
+  }
+
+  /// Branch-scoped Town / Area values cached by the catalog feed. Only the
+  /// server owns this reference data; the local table is a read replica used
+  /// to keep Sale Create operational during a temporary LAN/network outage.
+  Future<List<Map<String, dynamic>>> customerAreas({
+    required int? branchId,
+    bool activeOnly = false,
+  }) async {
+    if (branchId == null) return const [];
+    final db = await _database;
+    final where = <String>['branch_id = ?'];
+    final args = <Object?>[branchId];
+    if (activeOnly) where.add('is_active = 1');
+    final rows = await db.query(
+      'customer_areas',
+      where: where.join(' AND '),
+      whereArgs: args,
+      orderBy: 'name COLLATE NOCASE ASC, id ASC',
+    );
+    return rows
+        .map((row) => <String, dynamic>{
+              'id': row['id'],
+              'branch_id': row['branch_id'],
+              'name': row['name'],
+              'is_active': row['is_active'] == 1,
+              '_offline': true,
+            })
+        .toList(growable: false);
   }
 
   /// Managed Sale From values cached by the catalog feed for offline sale
@@ -694,6 +783,7 @@ class CatalogCacheService {
     return {
       'id': _asInt(raw['id']),
       'branch_id': raw['branch_id'] != null ? _asInt(raw['branch_id']) : null,
+      'area_id': raw['area_id'] != null ? _asInt(raw['area_id']) : null,
       'customer_code': raw['customer_code']?.toString(),
       'customer_type': (raw['customer_type'] ?? 'retail').toString(),
       'first_name': raw['first_name']?.toString(),
@@ -745,6 +835,8 @@ class CatalogCacheService {
   Map<String, dynamic> _customerToApiShape(Map<String, Object?> row) {
     return {
       'id': row['id'],
+      'area_id': row['area_id'],
+      'area_name': row['area_name'],
       'customer_code': row['customer_code'],
       'customer_type': row['customer_type'] ?? 'retail',
       'first_name': row['first_name'],

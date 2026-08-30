@@ -29,6 +29,11 @@ class PartyAutocompleteField<T> extends StatefulWidget {
   /// Optional secondary text shown under each suggestion (phone/email/etc).
   final String Function(T)? subtitleOf;
 
+  /// Optional richer text used only for local matching. This lets a customer
+  /// suggestion be found by code, type, area or phone while keeping the main
+  /// label clean and human-readable.
+  final String Function(T)? searchTextOf;
+
   /// Optional trailing widget per suggestion row (e.g. balance chip).
   final Widget Function(T)? trailingOf;
 
@@ -91,6 +96,7 @@ class PartyAutocompleteField<T> extends StatefulWidget {
     required this.onSelected,
     required this.onBrowseAll,
     this.subtitleOf,
+    this.searchTextOf,
     this.trailingOf,
     this.onSearchRemote,
     this.onCleared,
@@ -184,7 +190,10 @@ class _PartyAutocompleteFieldState<T> extends State<PartyAutocompleteField<T>> {
       matches = all.take(25).toList();
     } else {
       matches = all
-          .where((item) => widget.labelOf(item).toLowerCase().contains(q))
+          .where((item) =>
+              (widget.searchTextOf?.call(item) ?? widget.labelOf(item))
+                  .toLowerCase()
+                  .contains(q))
           .take(25)
           .toList();
     }

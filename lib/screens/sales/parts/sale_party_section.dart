@@ -3,6 +3,7 @@ import 'package:enterprise_pos/api/user_service.dart';
 import 'package:enterprise_pos/api/vendor_service.dart';
 import 'package:enterprise_pos/services/party_pick_caches.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
+import 'package:enterprise_pos/utils/customer_display_utils.dart';
 import 'package:enterprise_pos/widgets/enterprise/enterprise_panel.dart';
 import 'package:enterprise_pos/widgets/party_autocomplete_field.dart';
 import 'package:flutter/material.dart';
@@ -125,23 +126,9 @@ class PartySectionCard extends StatelessWidget {
     this.customerLockMessage,
   });
 
-  String _customerLabel(PartyMap c) {
-    final first = (c['first_name'] ?? '').toString();
-    final last = (c['last_name'] ?? '').toString();
-    return "$first ${last.isNotEmpty ? last : ''}".trim();
-  }
+  String _customerLabel(PartyMap c) => CustomerDisplayUtils.fullName(c);
 
-  String _customerSubtitle(PartyMap c) {
-    final code = (c['customer_code'] ?? '').toString().trim();
-    final phone = (c['phone'] ?? '').toString().trim();
-    final rawType = (c['customer_type'] ?? 'retail').toString().toLowerCase();
-    final type = rawType == 'wholesale'
-        ? 'Wholesale'
-        : rawType == 'reseller'
-            ? 'Reseller'
-            : 'Retail';
-    return [if (code.isNotEmpty) code, type, if (phone.isNotEmpty) phone].join(' • ');
-  }
+  String _customerSubtitle(PartyMap c) => CustomerDisplayUtils.subtitle(c);
 
   String _personLabel(PartyMap u) => (u['name'] ?? '').toString();
 
@@ -225,7 +212,7 @@ class PartySectionCard extends StatelessWidget {
                 else
                   PartyAutocompleteField<PartyMap>(
                     label: 'Customer',
-                    hintText: 'Type customer ID, name or phone…',
+                    hintText: 'Type customer ID, name, area or phone…',
                     focusNode: customerFocusNode,
                     controller: customerController,
                     getCachedItems: () =>
@@ -237,6 +224,7 @@ class PartySectionCard extends StatelessWidget {
                     ),
                     labelOf: _customerLabel,
                     subtitleOf: _customerSubtitle,
+                    searchTextOf: CustomerDisplayUtils.searchText,
                     idOf: (c) => (c['id'] ?? '').toString(),
                     selectedLabel: selectedCustomer != null ? _customerLabel(selectedCustomer!) : null,
                     selectedSubtitle: selectedCustomer != null ? _customerSubtitle(selectedCustomer!) : null,

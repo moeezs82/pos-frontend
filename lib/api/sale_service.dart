@@ -86,6 +86,8 @@ class SaleService {
     int? userId,
     int? deliveryBoyId,
     int? saleSourceId,
+    int? areaId,
+    String? areaName,
     String? saleType,
     List<Map<String, dynamic>> items = const [],
     List<Map<String, dynamic>> payments = const [],
@@ -107,6 +109,8 @@ class SaleService {
       userId: userId,
       deliveryBoyId: deliveryBoyId,
       saleSourceId: saleSourceId,
+      areaId: areaId,
+      areaName: areaName,
       saleType: saleType,
       items: items,
       payments: payments,
@@ -150,6 +154,8 @@ class SaleService {
     int? userId,
     int? deliveryBoyId,
     int? saleSourceId,
+    int? areaId,
+    String? areaName,
     String? saleType,
     List<Map<String, dynamic>> items = const [],
     List<Map<String, dynamic>> payments = const [],
@@ -179,6 +185,12 @@ class SaleService {
       if (userId != null) "salesman_id": userId,
       if (deliveryBoyId != null) "delivery_boy_id": deliveryBoyId,
       if (saleSourceId != null) "sale_source_id": saleSourceId,
+      // Always send area_id, including null, so the backend can distinguish a
+      // deliberate "No area" selection from an older client that omitted the
+      // field and should inherit the customer's default area.
+      "area_id": areaId,
+      if (areaId != null && areaName != null && areaName.trim().isNotEmpty)
+        "area_name": areaName.trim(),
       if (saleType != null && saleType.isNotEmpty) "sale_type": saleType,
       if (meta != null) "meta": meta,
       if (clientRef != null) "client_ref": clientRef,

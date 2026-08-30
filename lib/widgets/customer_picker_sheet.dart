@@ -6,6 +6,7 @@ import 'package:enterprise_pos/forms/customer_form_screen.dart';
 import 'package:enterprise_pos/services/party_pick_caches.dart';
 import 'package:enterprise_pos/services/app_currency.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
+import 'package:enterprise_pos/utils/customer_display_utils.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
@@ -159,13 +160,7 @@ class _CustomerPickerSheetState extends State<CustomerPickerSheet> {
       final filtered = q.isEmpty
           ? cached.items
           : cached.items.where((c) {
-              final name = "${c['first_name'] ?? ''} ${c['last_name'] ?? ''}".toLowerCase();
-              final phone = (c['phone'] ?? '').toString().toLowerCase();
-              final email = (c['email'] ?? '').toString().toLowerCase();
-              final customerCode = (c['customer_code'] ?? '').toString().toLowerCase();
-              final customerType = (c['customer_type'] ?? '').toString().toLowerCase();
-              return name.contains(q) || phone.contains(q) || email.contains(q) ||
-                  customerCode.contains(q) || customerType.contains(q);
+              return CustomerDisplayUtils.searchText(c).contains(q);
             }).toList();
       setState(() => _customers = filtered);
     }
@@ -283,7 +278,7 @@ class _CustomerPickerSheetState extends State<CustomerPickerSheet> {
                         },
                       )
                     : null,
-                hintText: "Search customer ID, name or phone…",
+                hintText: "Search customer ID, name, area or phone…",
                 isDense: true,
                 border: const OutlineInputBorder(),
                 contentPadding: const EdgeInsets.symmetric(
@@ -360,19 +355,7 @@ class _CustomerPickerSheetState extends State<CustomerPickerSheet> {
                       ),
                       itemBuilder: (_, i) {
                         final c = _customers[i];
-                        final first = (c['first_name'] ?? '').toString();
-                        final last = (c['last_name'] ?? '').toString();
-                        final name = "$first ${last.isNotEmpty ? last : ''}"
-                            .trim();
-                        final email = (c['email'] ?? '').toString();
-                        final phone = (c['phone'] ?? '').toString();
-                        final customerCode = (c['customer_code'] ?? '').toString().trim();
-                        final rawType = (c['customer_type'] ?? 'retail').toString().toLowerCase();
-                        final customerType = rawType == 'wholesale'
-                            ? 'Wholesale'
-                            : rawType == 'reseller'
-                                ? 'Reseller'
-                                : 'Retail';
+                        final name = CustomerDisplayUtils.fullName(c);
                         final balance = _balanceOf(c);
 
                         return ListTile(
@@ -393,12 +376,7 @@ class _CustomerPickerSheetState extends State<CustomerPickerSheet> {
                             ],
                           ),
                           subtitle: Text(
-                            [
-                              if (customerCode.isNotEmpty) customerCode,
-                              customerType,
-                              if (phone.isNotEmpty) phone,
-                              if (email.isNotEmpty) email,
-                            ].join(' • '),
+                            CustomerDisplayUtils.subtitle(c, includeEmail: true),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                           ),

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:enterprise_pos/api/sale_service.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/services/picking_list_print_service.dart';
+import 'package:enterprise_pos/utils/customer_display_utils.dart';
 import 'package:enterprise_pos/widgets/branch_indicator.dart';
 import 'package:enterprise_pos/widgets/customer_picker_sheet.dart';
 import 'package:flutter/material.dart';
@@ -152,12 +153,12 @@ class _PickingListScreenState extends State<PickingListScreen> {
     if (!mounted || picked == null) return;
     final id = _toInt(picked['id']);
     if (id == null) return;
-    final first = (picked['first_name'] ?? '').toString().trim();
-    final last = (picked['last_name'] ?? '').toString().trim();
-    final name = [first, last].where((e) => e.isNotEmpty).join(' ');
     setState(() {
       _customerId = id;
-      _customerLabel = name.isEmpty ? 'Customer #$id' : name;
+      _customerLabel = CustomerDisplayUtils.nameWithArea(
+        picked,
+        fallback: 'Customer #$id',
+      );
     });
     await _load();
   }

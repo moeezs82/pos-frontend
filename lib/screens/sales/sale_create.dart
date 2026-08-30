@@ -9,6 +9,7 @@ import 'package:enterprise_pos/models/sale_receipt_item.dart';
 import 'package:enterprise_pos/models/item_discount_display.dart';
 import 'package:enterprise_pos/api/sale_service.dart';
 import 'package:enterprise_pos/api/sale_source_service.dart';
+import 'package:enterprise_pos/api/customer_area_service.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/providers/branch_feature_provider.dart';
 import 'package:enterprise_pos/providers/branch_provider.dart';
@@ -41,6 +42,7 @@ import 'package:enterprise_pos/widgets/app_feedback.dart';
 import 'package:enterprise_pos/widgets/app_keyboard_shortcuts.dart';
 import 'package:enterprise_pos/widgets/sale_status_bar.dart';
 import 'package:enterprise_pos/widgets/sale_source_manager_dialog.dart';
+import 'package:enterprise_pos/widgets/reference_data_manager_dialog.dart';
 import 'package:flutter/material.dart';
 import 'package:enterprise_pos/services/app_currency.dart';
 import 'package:flutter/services.dart';
@@ -136,6 +138,10 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
   int? _selectedSaleSourceId;
   int? _saleSourcesBranchId;
   bool _saleSourcesReloadScheduled = false;
+  List<Map<String, dynamic>> _customerAreas = const [];
+  int? _selectedAreaId;
+  int? _customerAreasBranchId;
+  bool _customerAreasReloadScheduled = false;
 
   // cart & payments
   List<Map<String, dynamic>> _items = [];
@@ -210,6 +216,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
   late ProductService _productService;
   late SaleService _saleService;
   late SaleSourceService _saleSourceService;
+  late CustomerAreaService _customerAreaService;
 
   @override
   void initState() {
@@ -218,8 +225,10 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     _productService = ProductService(token: token);
     _saleService = SaleService(token: token);
     _saleSourceService = SaleSourceService(token: token);
+    _customerAreaService = CustomerAreaService(token: token);
     _editLoading = _isEditing;
     _loadSaleSources();
+    _loadCustomerAreas();
 
     // Warm customer/salesman/delivery-boy/product caches immediately, in
     // the background, before the user taps any "Select…" button. By the
@@ -253,6 +262,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         .then((_) {
           _hydrateOfflinePickers(branchIdInt);
           _loadSaleSources(preferCache: true);
+          _loadCustomerAreas(preferCache: true);
         });
 
     _barcodeFocusNode.addListener(() {
@@ -263,6 +273,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       final customer = widget.initialCustomer!;
       _selectedCustomer = customer;
       _selectedCustomerId = customer['id']?.toString();
+      _selectedAreaId = _metaInt(customer['area_id']);
       customerNameController.text = (customer['first_name'] ?? customer['name'] ?? '').toString();
       customerPhoneController.text = (customer['phone'] ?? '').toString();
       addressController.text = (customer['address'] ?? '').toString();
@@ -388,6 +399,122 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     }
   }
 
+  bool _areaActive(Map<String, dynamic> area) {
+    final value = area['is_active'];
+    return value == true ||
+        value == 1 ||
+        value?.toString().toLowerCase() == 'true';
+  }
+
+  Map<String, dynamic>? _areaById(int? id) {
+    if (id == null) return null;
+    for (final area in _customerAreas) {
+      if (_metaInt(area['id']) == id) return area;
+    }
+    return null;
+  }
+
+  String? get _selectedAreaName {
+    final name = (_areaById(_selectedAreaId)?['name'] ?? '').toString().trim();
+    return name.isEmpty ? null : name;
+  }
+
+  Future<void> _loadCustomerAreas({bool preferCache = false}) async {
+    final branchId = int.tryParse(_effectiveBranchIdStr());
+    if (branchId != null && _customerAreasBranchId != branchId && mounted) {
+      setState(() {
+        _customerAreas = const [];
+        if (!_isEditing) _selectedAreaId = null;
+        _customerAreasBranchId = branchId;
+      });
+    }
+    if (branchId == null) {
+      if (mounted) {
+        setState(() {
+          _customerAreas = const [];
+          if (!_isEditing) _selectedAreaId = null;
+          _customerAreasBranchId = null;
+        });
+      }
+      return;
+    }
+
+    List<Map<String, dynamic>> areas = const [];
+    if (!preferCache) {
+      try {
+        areas = await _customerAreaService.getAreas(activeOnly: true);
+      } catch (_) {
+        // Offline sale entry falls back to the catalog read replica below.
+      }
+    }
+    if (areas.isEmpty) {
+      try {
+        areas = await CatalogCacheService.instance.customerAreas(
+          branchId: branchId,
+          activeOnly: true,
+        );
+      } catch (_) {/* best-effort local reference data */}
+    }
+    if (!mounted) return;
+
+    areas = areas.toList(growable: false)
+      ..sort((a, b) => (a['name'] ?? '')
+          .toString()
+          .toLowerCase()
+          .compareTo((b['name'] ?? '').toString().toLowerCase()));
+
+    // Only active values are offered for new transactions. If a customer's
+    // stored default area has since been deactivated it is intentionally not
+    // carried into a fresh sale; the cashier can choose a current area.
+    final currentStillAvailable = _selectedAreaId == null ||
+        areas.any((area) => _metaInt(area['id']) == _selectedAreaId);
+    setState(() {
+      _customerAreas = areas;
+      _customerAreasBranchId = branchId;
+      if (!_isEditing && !currentStillAvailable) _selectedAreaId = null;
+    });
+  }
+
+  Future<void> _manageCustomerAreas() async {
+    final auth = context.read<AuthProvider>();
+    if (!auth.hasPermission('manage-customers')) {
+      AppFeedback.warning(
+        context,
+        'You do not have permission to manage customer town / area values.',
+      );
+      return;
+    }
+    final result = await showNamedReferenceManagerDialog(
+      context: context,
+      title: 'Town / Areas',
+      singularLabel: 'Town / Area',
+      icon: Icons.location_city_outlined,
+      selectedId: _selectedAreaId,
+      loadItems: () => _customerAreaService.getAreas(activeOnly: true),
+      createItem: _customerAreaService.createArea,
+      updateItem: _customerAreaService.updateArea,
+      subtitle: 'Create, rename, or choose an area without leaving the sale.',
+      selectedSubtitle: 'Selected for this sale',
+    );
+    if (!mounted || result == null) return;
+    await _loadCustomerAreas();
+    if (!mounted) return;
+    if (result.selectedId != null &&
+        _customerAreas.any((area) => _metaInt(area['id']) == result.selectedId)) {
+      setState(() => _selectedAreaId = result.selectedId);
+    } else if (result.selectedId == null) {
+      setState(() => _selectedAreaId = null);
+    }
+
+    if (result.changed) {
+      final branchId = int.tryParse(_effectiveBranchIdStr());
+      final token = auth.token!;
+      CatalogCacheService.instance
+          .refresh(token: token, branchId: branchId)
+          .then((_) => _loadCustomerAreas(preferCache: true));
+    }
+  }
+
   Map<String, dynamic> _mapValue(dynamic value) {
     if (value is Map<String, dynamic>) return value;
     if (value is Map) {
@@ -472,6 +599,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
           int.tryParse(sale['delivery_boy_id']?.toString() ?? '');
       final saleSourceId =
           int.tryParse(sale['sale_source_id']?.toString() ?? '');
+      final saleAreaId = int.tryParse(sale['area_id']?.toString() ?? '');
 
       discountController.text = _editNum(sale['discount']).toStringAsFixed(2);
       taxController.text = _editNum(sale['tax']).toStringAsFixed(2);
@@ -520,6 +648,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         _selectedDeliveryBoyId = deliveryBoyId;
         _selectedDeliveryBoy = deliveryBoyId == null ? null : deliveryBoy;
         _selectedSaleSourceId = saleSourceId;
+        _selectedAreaId = saleAreaId;
         _selectedBranchId = sale['branch_id']?.toString();
         _selectedBranch = branch.isEmpty ? null : branch;
         _customerLocked = true;
@@ -532,6 +661,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       // sale_source_id are established, so "Sale From" is auto-selected
       // deterministically instead of depending on the catalog-refresh race.
       await _loadSaleSources();
+      await _loadCustomerAreas();
       if (!mounted) return;
       setState(() => _editLoading = false);
       _productSearchFocusNode.requestFocus();
@@ -917,6 +1047,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       setState(() {
         _selectedCustomer = null;
         _selectedCustomerId = null;
+        _selectedAreaId = null;
         _customerLocked = false;
 
         // Option A: clear on unselect
@@ -931,6 +1062,10 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       setState(() {
         _selectedCustomer = customer;
         _selectedCustomerId = customer['id'].toString();
+        // Keep the customer's default id even if the area list is still
+        // loading. Once reference data arrives, _loadCustomerAreas validates
+        // that it is still an active value for this branch.
+        _selectedAreaId = _metaInt(customer['area_id']);
         customerNameController.text = name;
         customerPhoneController.text = phone;
         addressController.text = address;
@@ -950,6 +1085,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     setState(() {
       _selectedCustomer = null;
       _selectedCustomerId = null;
+      _selectedAreaId = null;
       _customerLocked = false;
       customerNameController.text = "";
       customerPhoneController.text = "";
@@ -1543,6 +1679,8 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       'phone': snapshotPrimaryPhone,
       'phone_numbers': snapshotSecondaryPhones,
       'address': addressController.text.trim(),
+      if (_selectedAreaId != null) 'area_id': _selectedAreaId,
+      if (_selectedAreaName != null) 'area_name': _selectedAreaName,
       if (_selectedCustomer != null &&
           _selectedCustomer!.containsKey('credit_limit'))
         'credit_limit': _selectedCustomer!['credit_limit'],
@@ -1584,6 +1722,11 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         'sale_source_snapshot': {
           'id': _selectedSaleSourceId,
           'name': (_selectedSaleSource?['name'] ?? 'Counter').toString(),
+        },
+      if (_selectedAreaId != null)
+        'sale_area_snapshot': {
+          'id': _selectedAreaId,
+          if (_selectedAreaName != null) 'name': _selectedAreaName,
         },
       'totals_snapshot': {
         'subtotal': subtotal,
@@ -2005,6 +2148,8 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         userId: _selectedUserId,
         deliveryBoyId: _selectedDeliveryBoyId,
         saleSourceId: _selectedSaleSourceId,
+        areaId: _selectedAreaId,
+        areaName: _selectedAreaName,
         saleType: _selectedDeliveryBoyId != null ? 'delivery' : null,
         items: _items,
         payments: paymentsToSend,
@@ -2773,6 +2918,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       if (!keepInitialCustomer) {
         _selectedCustomer = null;
         _selectedCustomerId = null;
+        _selectedAreaId = null;
         _customerLocked = false;
         customerNameController.clear();
         customerPhoneController.clear();
@@ -3093,6 +3239,16 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         _saleSourcesReloadScheduled = false;
         if (!mounted) return;
         await _loadSaleSources();
+      });
+    }
+    if (!_isEditing &&
+        activeBranchId != _customerAreasBranchId &&
+        !_customerAreasReloadScheduled) {
+      _customerAreasReloadScheduled = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        _customerAreasReloadScheduled = false;
+        if (!mounted) return;
+        await _loadCustomerAreas();
       });
     }
 
@@ -3757,6 +3913,101 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
                         ),
                       ),
                     ],
+                  ),
+                ),
+              ],
+            ],
+          ),
+          const SizedBox(height: 5),
+          Row(
+            children: [
+              Expanded(
+                child: SizedBox(
+                  height: 40,
+                  child: DropdownButtonFormField<int>(
+                    value: _areaById(_selectedAreaId) == null
+                        ? null
+                        : _selectedAreaId,
+                    isExpanded: true,
+                    decoration: inputDecoration.copyWith(
+                      labelText: 'Town / Area',
+                      hintText: 'Select sale area',
+                      prefixIcon: const Icon(
+                        Icons.location_city_outlined,
+                        size: 15,
+                        color: AppTheme.textMuted,
+                      ),
+                    ),
+                    items: _customerAreas
+                        .where(_areaActive)
+                        .map(
+                          (area) => DropdownMenuItem<int>(
+                            value: _metaInt(area['id']),
+                            child: Text(
+                              (area['name'] ?? '').toString(),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(fontSize: 12),
+                            ),
+                          ),
+                        )
+                        .where((item) => item.value != null)
+                        .toList(growable: false),
+                    onChanged: _submitting
+                        ? null
+                        : (value) => setState(() => _selectedAreaId = value),
+                  ),
+                ),
+              ),
+              if (_selectedAreaId != null) ...[
+                const SizedBox(width: 6),
+                Tooltip(
+                  message: 'Clear sale area',
+                  child: SizedBox(
+                    width: 38,
+                    height: 40,
+                    child: OutlinedButton(
+                      onPressed: _submitting
+                          ? null
+                          : () => setState(() => _selectedAreaId = null),
+                      style: OutlinedButton.styleFrom(
+                        padding: EdgeInsets.zero,
+                        side: const BorderSide(color: AppTheme.border),
+                      ),
+                      child: const Icon(Icons.close_rounded, size: 16),
+                    ),
+                  ),
+                ),
+              ],
+              if (context.read<AuthProvider>().hasPermission('manage-customers')) ...[
+                const SizedBox(width: 6),
+                Tooltip(
+                  message: 'Create or rename Town / Area',
+                  child: SizedBox(
+                    width: 38,
+                    height: 40,
+                    child: OutlinedButton(
+                      onPressed: _submitting ? null : _manageCustomerAreas,
+                      style: OutlinedButton.styleFrom(
+                        padding: EdgeInsets.zero,
+                        side: const BorderSide(color: AppTheme.border),
+                      ),
+                      child: const Icon(Icons.tune_rounded, size: 17),
+                    ),
+                  ),
+                ),
+              ],
+              if (_selectedCustomerId != null &&
+                  _metaInt(_selectedCustomer?['area_id']) != null &&
+                  _selectedAreaId != _metaInt(_selectedCustomer?['area_id'])) ...[
+                const SizedBox(width: 8),
+                const Tooltip(
+                  message:
+                      'This changes only this sale. The customer default area is not modified.',
+                  child: Icon(
+                    Icons.info_outline_rounded,
+                    size: 16,
+                    color: AppTheme.textMuted,
                   ),
                 ),
               ],

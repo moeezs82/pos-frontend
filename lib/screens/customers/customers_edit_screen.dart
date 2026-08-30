@@ -6,6 +6,7 @@ import 'package:enterprise_pos/screens/sales/sale_detail.dart';
 import 'package:enterprise_pos/screens/reports/credit_control_screen.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/utils/customer_phone_utils.dart';
+import 'package:enterprise_pos/utils/customer_display_utils.dart';
 import 'package:enterprise_pos/widgets/app_feedback.dart';
 import 'package:enterprise_pos/widgets/branch_indicator.dart';
 import 'package:enterprise_pos/widgets/ledger_pager.dart';
@@ -647,6 +648,7 @@ class _CustomerEditScreenState extends State<CustomerEditScreen>
     final email = (c['email'] ?? '').toString();
     final address = (c['address'] ?? '').toString();
     final customerCode = (c['customer_code'] ?? '').toString().trim();
+    final areaName = CustomerDisplayUtils.areaName(c);
     final rawType = (c['customer_type'] ?? 'retail').toString().toLowerCase();
     final customerType = rawType == 'wholesale'
         ? 'Wholesale'
@@ -677,6 +679,8 @@ class _CustomerEditScreenState extends State<CustomerEditScreen>
         if (customerCode.isNotEmpty)
           _PartyInfoPill(icon: Icons.numbers_rounded, label: 'Customer ID', value: customerCode),
         _PartyInfoPill(icon: Icons.storefront_outlined, label: 'Type', value: customerType),
+        if (areaName.isNotEmpty)
+          _PartyInfoPill(icon: Icons.location_on_outlined, label: 'Area', value: areaName),
         _PartyInfoPill(icon: Icons.phone_rounded, label: 'Phone', value: phone),
         if (otherPhones.isNotEmpty)
           _PartyInfoPill(

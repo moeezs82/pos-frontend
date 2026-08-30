@@ -36,8 +36,10 @@ Future<ReferenceManagerResult?> showNamedReferenceManagerDialog({
   required NamedReferenceLoader loadItems,
   required NamedReferenceCreate createItem,
   required NamedReferenceUpdate updateItem,
-  required NamedReferenceDelete deleteItem,
+  NamedReferenceDelete? deleteItem,
   bool allowClearSelection = true,
+  String? subtitle,
+  String selectedSubtitle = 'Selected for this product',
 }) {
   return showDialog<ReferenceManagerResult>(
     context: context,
@@ -52,6 +54,8 @@ Future<ReferenceManagerResult?> showNamedReferenceManagerDialog({
       updateItem: updateItem,
       deleteItem: deleteItem,
       allowClearSelection: allowClearSelection,
+      subtitle: subtitle,
+      selectedSubtitle: selectedSubtitle,
     ),
   );
 }
@@ -64,8 +68,10 @@ class _NamedReferenceManagerDialog extends StatefulWidget {
   final NamedReferenceLoader loadItems;
   final NamedReferenceCreate createItem;
   final NamedReferenceUpdate updateItem;
-  final NamedReferenceDelete deleteItem;
+  final NamedReferenceDelete? deleteItem;
   final bool allowClearSelection;
+  final String? subtitle;
+  final String selectedSubtitle;
 
   const _NamedReferenceManagerDialog({
     required this.title,
@@ -77,6 +83,8 @@ class _NamedReferenceManagerDialog extends StatefulWidget {
     required this.updateItem,
     required this.deleteItem,
     required this.allowClearSelection,
+    required this.subtitle,
+    required this.selectedSubtitle,
   });
 
   @override
@@ -217,7 +225,9 @@ class _NamedReferenceManagerDialogState
 
     setState(() => _busy = true);
     try {
-      await widget.deleteItem(id);
+      final deleteItem = widget.deleteItem;
+      if (deleteItem == null) return;
+      await deleteItem(id);
       _changed = true;
       if (_selectedId == id) _selectedId = null;
       await _load();
@@ -252,7 +262,10 @@ class _NamedReferenceManagerDialogState
             _ManagerHeader(
               icon: widget.icon,
               title: widget.title,
-              subtitle: 'Create, rename, delete, or choose without leaving the product form.',
+              subtitle: widget.subtitle ??
+                  (widget.deleteItem == null
+                      ? 'Create, rename, or choose without leaving this form.'
+                      : 'Create, rename, delete, or choose without leaving the product form.'),
               onClose: _busy
                   ? null
                   : () => Navigator.pop(
@@ -341,7 +354,7 @@ class _NamedReferenceManagerDialogState
                                     overflow: TextOverflow.ellipsis,
                                   ),
                                   subtitle: selected
-                                      ? const Text('Selected for this product')
+                                      ? Text(widget.selectedSubtitle)
                                       : null,
                                   onTap: id == null || _busy
                                       ? null
@@ -354,15 +367,16 @@ class _NamedReferenceManagerDialogState
                                         onPressed: _busy ? null : () => _edit(item),
                                         icon: const Icon(Icons.edit_outlined, size: 18),
                                       ),
-                                      IconButton(
-                                        tooltip: 'Delete',
-                                        onPressed: _busy ? null : () => _delete(item),
-                                        icon: const Icon(
-                                          Icons.delete_outline_rounded,
-                                          size: 18,
-                                          color: AppTheme.danger,
+                                      if (widget.deleteItem != null)
+                                        IconButton(
+                                          tooltip: 'Delete',
+                                          onPressed: _busy ? null : () => _delete(item),
+                                          icon: const Icon(
+                                            Icons.delete_outline_rounded,
+                                            size: 18,
+                                            color: AppTheme.danger,
+                                          ),
                                         ),
-                                      ),
                                     ],
                                   ),
                                 );

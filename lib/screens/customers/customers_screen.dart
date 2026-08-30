@@ -4,6 +4,7 @@ import 'package:enterprise_pos/providers/branch_provider.dart';
 import 'package:enterprise_pos/screens/customers/customers_edit_screen.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/services/app_navigator.dart';
+import 'package:enterprise_pos/utils/customer_display_utils.dart';
 import 'package:enterprise_pos/widgets/app_feedback.dart';
 import 'package:enterprise_pos/widgets/branch_indicator.dart';
 import 'package:enterprise_pos/widgets/enterprise/enterprise_ui.dart';
@@ -230,7 +231,7 @@ class _CustomersScreenState extends State<CustomersScreen> {
                 width: MediaQuery.of(context).size.width >= 720 ? 440 : double.infinity,
                 child: EnterpriseSearchField(
                   controller: _searchController,
-                  hintText: 'Search customer ID, name, phone, email...',
+                  hintText: 'Search customer ID, name, area, phone, email...',
                   onSubmitted: (_) => _searchNow(),
                   onSearch: _searchNow,
                   onClear: _clearSearch,
@@ -276,6 +277,7 @@ class _CustomersScreenState extends State<CustomersScreen> {
                             final customerCode = (c['customer_code'] ?? '').toString().trim();
                             final customerType = _customerTypeLabel(c['customer_type']);
                             final customerTypeColor = _customerTypeColor(c['customer_type']);
+                            final areaName = CustomerDisplayUtils.areaName(c);
                             final balance = _toDouble(c['balance']);
                             final totalSales = _money(c['total_sales']);
                             final totalReceipts = _money(c['total_receipts']);
@@ -327,6 +329,8 @@ class _CustomersScreenState extends State<CustomersScreen> {
                                     children: [
                                       if (customerCode.isNotEmpty)
                                         EnterpriseMetricChip(label: 'Customer ID', value: customerCode, color: AppTheme.primary, icon: Icons.numbers_rounded),
+                                      if (areaName.isNotEmpty)
+                                        EnterpriseMetricChip(label: 'Area', value: areaName, color: AppTheme.info, icon: Icons.location_on_outlined),
                                       EnterpriseMetricChip(label: 'Phone', value: phone, color: AppTheme.info, icon: Icons.call_rounded),
                                       EnterpriseMetricChip(label: 'Balance', value: _money(balance), color: balColor, icon: Icons.account_balance_wallet_rounded),
                                       EnterpriseMetricChip(label: 'Sales', value: totalSales, color: AppTheme.primary),

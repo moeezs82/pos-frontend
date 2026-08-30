@@ -14,6 +14,7 @@ import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter/services.dart';
 import 'package:enterprise_pos/services/app_currency.dart';
+import 'package:enterprise_pos/utils/customer_display_utils.dart';
 
 class SaleReturnsScreen extends StatefulWidget {
   const SaleReturnsScreen({super.key});
@@ -212,10 +213,10 @@ class _SaleReturnsScreenState extends State<SaleReturnsScreen> {
         _selectedCustomerLabel = null;
       } else {
         _selectedCustomerId = _toInt(picked['id']);
-        final first = (picked['first_name'] ?? '').toString();
-        final last = (picked['last_name'] ?? '').toString();
-        final full = [first, last].where((s) => s.trim().isNotEmpty).join(' ');
-        _selectedCustomerLabel = full.isEmpty ? 'Customer #${picked['id']}' : full;
+        _selectedCustomerLabel = CustomerDisplayUtils.nameWithArea(
+          picked,
+          fallback: 'Customer #${picked['id']}',
+        );
       }
     });
 

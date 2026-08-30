@@ -1,10 +1,12 @@
 import 'package:enterprise_pos/api/customer_service.dart';
+import 'package:enterprise_pos/api/customer_area_service.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/utils/customer_phone_utils.dart';
 import 'package:enterprise_pos/widgets/app_feedback.dart';
 import 'package:enterprise_pos/widgets/enterprise/enterprise_panel.dart';
 import 'package:enterprise_pos/widgets/enterprise/enterprise_ui.dart';
+import 'package:enterprise_pos/widgets/reference_data_manager_dialog.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -39,13 +41,18 @@ class _CustomerFormScreenState extends State<CustomerFormScreen> {
   String _status = 'active';
   String _customerType = 'retail';
   bool _saving = false;
+  int? _selectedAreaId;
+  List<Map<String, dynamic>> _areas = const [];
+  bool _areasLoading = false;
   late CustomerService _customerService;
+  late CustomerAreaService _areaService;
 
   @override
   void initState() {
     super.initState();
     final token = Provider.of<AuthProvider>(context, listen: false).token!;
     _customerService = CustomerService(token: token);
+    _areaService = CustomerAreaService(token: token);
     final c = widget.customer;
     if (c != null) {
       _customerCodeController.text = (c['customer_code'] ?? '').toString();
@@ -59,6 +66,7 @@ class _CustomerFormScreenState extends State<CustomerFormScreen> {
         _secondaryPhoneControllers.add(TextEditingController(text: phone));
       }
       _addressController.text = (c['address'] ?? '').toString();
+      _selectedAreaId = int.tryParse(c['area_id']?.toString() ?? '');
       _status = (c['status'] ?? 'active').toString();
       final rawCreditLimit = c['credit_limit'];
       if (rawCreditLimit != null && rawCreditLimit.toString().trim().isNotEmpty) {
@@ -68,6 +76,7 @@ class _CustomerFormScreenState extends State<CustomerFormScreen> {
       final rawMode = (c['credit_limit_mode'] ?? 'block').toString().toLowerCase();
       _creditLimitMode = rawMode == 'warning' ? 'warning' : 'block';
     }
+    _loadAreas();
   }
 
   @override
@@ -84,6 +93,54 @@ class _CustomerFormScreenState extends State<CustomerFormScreen> {
     _creditLimitController.dispose();
     _openingBalanceController.dispose();
     super.dispose();
+  }
+
+  bool _areaActive(Map<String, dynamic> area) {
+    final value = area['is_active'];
+    return value == true ||
+        value == 1 ||
+        value?.toString().toLowerCase() == 'true';
+  }
+
+  Future<void> _loadAreas() async {
+    if (mounted) setState(() => _areasLoading = true);
+    try {
+      final items = await _areaService.getAreas();
+      items.sort((a, b) {
+        final aa = _areaActive(a);
+        final ba = _areaActive(b);
+        if (aa != ba) return aa ? -1 : 1;
+        return (a['name'] ?? '').toString().toLowerCase().compareTo(
+              (b['name'] ?? '').toString().toLowerCase(),
+            );
+      });
+      if (!mounted) return;
+      setState(() => _areas = items);
+    } catch (e) {
+      if (mounted) AppFeedback.error(context, 'Unable to load town / area values: $e');
+    } finally {
+      if (mounted) setState(() => _areasLoading = false);
+    }
+  }
+
+  Future<void> _manageAreas() async {
+    if (!context.read<AuthProvider>().hasPermission('manage-customers')) return;
+    final result = await showNamedReferenceManagerDialog(
+      context: context,
+      title: 'Town / Areas',
+      singularLabel: 'Town / Area',
+      icon: Icons.location_city_outlined,
+      selectedId: _selectedAreaId,
+      loadItems: () => _areaService.getAreas(activeOnly: true),
+      createItem: _areaService.createArea,
+      updateItem: _areaService.updateArea,
+      subtitle: 'Create, rename, or choose an area without leaving the customer form.',
+      selectedSubtitle: 'Selected for this customer',
+    );
+    if (!mounted || result == null) return;
+    await _loadAreas();
+    if (!mounted) return;
+    setState(() => _selectedAreaId = result.selectedId);
   }
 
   Future<void> _saveCustomer() async {
@@ -108,6 +165,7 @@ class _CustomerFormScreenState extends State<CustomerFormScreen> {
           .where((phone) => phone.isNotEmpty)
           .toList(growable: false),
       'address': _addressController.text.trim(),
+      'area_id': _selectedAreaId,
       'status': _status,
       'credit_limit': _unlimitedCredit
           ? null
@@ -333,6 +391,65 @@ class _CustomerFormScreenState extends State<CustomerFormScreen> {
                           ),
                         ),
                       ],
+                      SizedBox(
+                        width: 360,
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: DropdownButtonFormField<int>(
+                                value: _selectedAreaId != null &&
+                                        _areas.any((a) =>
+                                            int.tryParse(a['id']?.toString() ?? '') ==
+                                            _selectedAreaId)
+                                    ? _selectedAreaId
+                                    : null,
+                                isExpanded: true,
+                                items: _areas
+                                    .where((a) => _areaActive(a) ||
+                                        int.tryParse(a['id']?.toString() ?? '') ==
+                                            _selectedAreaId)
+                                    .map((a) {
+                                      final id = int.tryParse(a['id']?.toString() ?? '');
+                                      final active = _areaActive(a);
+                                      return DropdownMenuItem<int>(
+                                        value: id,
+                                        child: Text(
+                                          '${a['name'] ?? ''}${active ? '' : ' (inactive)'}',
+                                          overflow: TextOverflow.ellipsis,
+                                        ),
+                                      );
+                                    })
+                                    .where((item) => item.value != null)
+                                    .toList(growable: false),
+                                onChanged: _areasLoading
+                                    ? null
+                                    : (value) => setState(() => _selectedAreaId = value),
+                                decoration: InputDecoration(
+                                  labelText: 'Town / Area',
+                                  prefixIcon: const Icon(Icons.location_city_outlined),
+                                  helperText: 'Used as the customer default and prefilled on new sales.',
+                                  suffixIcon: _areasLoading
+                                      ? const Padding(
+                                          padding: EdgeInsets.all(14),
+                                          child: SizedBox(
+                                            width: 16,
+                                            height: 16,
+                                            child: CircularProgressIndicator(strokeWidth: 2),
+                                          ),
+                                        )
+                                      : null,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            IconButton(
+                              tooltip: 'Manage town / areas',
+                              onPressed: _saving ? null : _manageAreas,
+                              icon: const Icon(Icons.tune_rounded, color: AppTheme.primary),
+                            ),
+                          ],
+                        ),
+                      ),
                       SizedBox(width: 736, child: _field(controller: _addressController, label: 'Address', icon: Icons.location_on_outlined, maxLines: 2)),
                     ],
                   ),
