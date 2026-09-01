@@ -45,6 +45,7 @@ class ItemsTable extends StatefulWidget {
   final Future<List<ProductRef>> Function(String query) onQueryProducts;
   final void Function(List<Map<String, dynamic>> nextItems) onItemsChanged;
   final void Function(int index)? onProfitInsight;
+  final Future<void> Function(int index, double returnQuantity)? onReturnLinkRequested;
 
   /// When [compact] is true the table renders as a plain borderless table
   /// (no EnterprisePanel card, no section header, tighter row padding)
@@ -58,6 +59,7 @@ class ItemsTable extends StatefulWidget {
     required this.onItemsChanged,
     required this.onAddItem,
     this.onProfitInsight,
+    this.onReturnLinkRequested,
     this.compact = false,
   });
 
@@ -230,7 +232,25 @@ class _ItemsTableState extends State<ItemsTable> {
       final d = (discountPct / 100.0).clamp(0.0, 100.0);
       total = qty * price * (1.0 - d);
     }
-    return (total.isFinite && total >= 0) ? total : 0.0;
+    return total.isFinite ? total : 0.0;
+  }
+
+  static double _displayLineTotal(
+    Map<String, dynamic> item, {
+    required double price,
+    required double qty,
+    required double discountPct,
+    required String discountType,
+  }) {
+    if (qty < 0 && item['original_sale_item_id'] != null) {
+      return -_num(item['return_credit']).abs();
+    }
+    return _calcLineTotal(
+      price: price,
+      qty: qty,
+      discountPct: discountPct,
+      discountType: discountType,
+    );
   }
 
   void _scheduleCommitRow(int i) {
@@ -260,15 +280,29 @@ class _ItemsTableState extends State<ItemsTable> {
     final ctrls = _rowCtrls[i]!;
     final item = Map<String, dynamic>.from(widget.items[i]);
 
-    final price       = _num(ctrls.price.text);
-    final qty         = double.tryParse(ctrls.qty.text.trim()) ?? 0.0;
-    final disc        = _num(ctrls.discount.text);
+    final qty = double.tryParse(ctrls.qty.text.trim()) ?? 0.0;
+    final linkedReturn = item['original_sale_item_id'] != null;
+    final price = linkedReturn ? _num(item['price']) : _num(ctrls.price.text);
+    final disc = linkedReturn ? _num(item['discount_pct']) : _num(ctrls.discount.text);
     final discountType = (item['discount_type'] ?? 'percentage').toString();
 
+    if (qty >= 0 && linkedReturn) {
+      const returnKeys = <String>[
+        'original_sale_id', 'original_sale_item_id', 'return_source_invoice',
+        'return_reason', 'returnable_quantity', 'return_original_outstanding',
+        'return_credit', 'return_merchandise_subtotal',
+        'return_invoice_discount', 'return_tax',
+      ];
+      for (final key in returnKeys) {
+        item.remove(key);
+      }
+    }
     item['price'] = price;
     item['quantity'] = qty;
     item['discount_pct'] = disc;
-    item['total'] = _calcLineTotal(price: price, qty: qty, discountPct: disc, discountType: discountType);
+    item['total'] = _displayLineTotal(
+      item, price: price, qty: qty, discountPct: disc, discountType: discountType,
+    );
 
     // The quantity is committed as typed even when it breaks the rule — never
     // silently rounded. The violation is recorded so the field shows it and
@@ -285,12 +319,16 @@ class _ItemsTableState extends State<ItemsTable> {
     ctrls.dirty = false;
     widget.onItemsChanged(next);
     setState(() {}); // update displayed totals immediately
+    if (qty < 0 && widget.onReturnLinkRequested != null) {
+      widget.onReturnLinkRequested!(i, qty.abs());
+    }
   }
 
   /// Toggles the discount type for row [i] between 'percentage' and 'fixed',
   /// then recomputes the line total immediately with the new type.
   void _toggleDiscountType(int i) {
     if (i < 0 || i >= widget.items.length) return;
+    if (widget.items[i]['original_sale_item_id'] != null) return;
     final next = [...widget.items];
     final item = Map<String, dynamic>.from(next[i]);
     final current = (item['discount_type'] ?? 'percentage').toString();
@@ -418,7 +456,8 @@ class _ItemsTableState extends State<ItemsTable> {
       0,
       (s, it) =>
           s +
-          _calcLineTotal(
+          _displayLineTotal(
+            it,
             price: _num(it['price']),
             qty: _num(it['quantity']),
             discountPct: _num(it['discount_pct'] ?? 0),
@@ -517,7 +556,8 @@ class _ItemsTableState extends State<ItemsTable> {
                   final item = widget.items[i];
                   final ctrls = _rowCtrls[i]!;
                   final rowDiscType = (item['discount_type'] ?? 'percentage').toString();
-                  final lineTotal = _calcLineTotal(
+                  final lineTotal = _displayLineTotal(
+                    item,
                     price: _num(ctrls.price.text),
                     qty: _num(ctrls.qty.text),
                     discountPct: _num(ctrls.discount.text),
@@ -551,11 +591,24 @@ class _ItemsTableState extends State<ItemsTable> {
                                 ),
                                 const SizedBox(width: 9),
                                 Expanded(
-                                  child: Text(
-                                    (item['name'] ?? '').toString(),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: const TextStyle(fontWeight: FontWeight.w800),
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        (item['name'] ?? '').toString(),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(fontWeight: FontWeight.w800),
+                                      ),
+                                      if (item['original_sale_item_id'] != null)
+                                        Text(
+                                          '↩ Return • ${(item['return_source_invoice'] ?? '').toString()}',
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: const TextStyle(fontSize: 9, fontWeight: FontWeight.w700, color: AppTheme.warning),
+                                        ),
+                                    ],
                                   ),
                                 ),
                               ],
@@ -567,6 +620,7 @@ class _ItemsTableState extends State<ItemsTable> {
                           child: _CellNumberField(
                             controller: ctrls.price,
                             focusNode: ctrls.priceFocus,
+                            enabled: item['original_sale_item_id'] == null,
                             onSubmitted: (_) {
                               _commitRow(i);
                               _focusNextFrom(i, _CellField.price);
@@ -587,6 +641,7 @@ class _ItemsTableState extends State<ItemsTable> {
                                 child: _CellNumberField(
                                   controller: ctrls.discount,
                                   focusNode: ctrls.discountFocus,
+                                  enabled: item['original_sale_item_id'] == null,
                                   onSubmitted: (_) {
                                     _commitRow(i);
                                     _focusNextFrom(i, _CellField.discount);
@@ -718,7 +773,8 @@ class _ItemsTableState extends State<ItemsTable> {
     final item = widget.items[i];
     final ctrls = _rowCtrls[i]!;
     final compactDiscType = (item['discount_type'] ?? 'percentage').toString();
-    final lineTotal = _calcLineTotal(
+    final lineTotal = _displayLineTotal(
+      item,
       price: _num(ctrls.price.text),
       qty: _num(ctrls.qty.text),
       discountPct: _num(ctrls.discount.text),
@@ -749,17 +805,27 @@ class _ItemsTableState extends State<ItemsTable> {
               child: Row(
                 children: [
                   Expanded(
-                    child: Text(
-                      (item['name'] ?? '').toString(),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w700,
-                        fontSize: 12,
-                      ),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          (item['name'] ?? '').toString(),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12),
+                        ),
+                        if (item['original_sale_item_id'] != null)
+                          Text(
+                            '↩ Return • ${(item['return_source_invoice'] ?? '').toString()}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontSize: 9, fontWeight: FontWeight.w700, color: AppTheme.warning),
+                          ),
+                      ],
                     ),
                   ),
-                  if (widget.onProfitInsight != null && _hoveredRow == i)
+                  if (widget.onProfitInsight != null && item['original_sale_item_id'] == null && _hoveredRow == i)
                     SizedBox(
                       width: 24,
                       height: 28,
@@ -793,6 +859,7 @@ class _ItemsTableState extends State<ItemsTable> {
               controller: ctrls.price,
               focusNode: ctrls.priceFocus,
               compact: true,
+              enabled: item['original_sale_item_id'] == null,
               onSubmitted: (_) {
                 _commitRow(i);
                 _focusNextFrom(i, _CellField.price);
@@ -815,6 +882,7 @@ class _ItemsTableState extends State<ItemsTable> {
                     controller: ctrls.discount,
                     focusNode: ctrls.discountFocus,
                     compact: true,
+                    enabled: item['original_sale_item_id'] == null,
                     onSubmitted: (_) {
                       _commitRow(i);
                       _focusNextFrom(i, _CellField.discount);
@@ -1326,6 +1394,7 @@ class _CellNumberField extends StatelessWidget {
   final String suffix;
   final bool allowNegative;
   final bool compact;
+  final bool enabled;
   final void Function(String)? onSubmitted;
   final void Function(String)? onChanged;
 
@@ -1350,6 +1419,7 @@ class _CellNumberField extends StatelessWidget {
     this.suffix = "",
     this.allowNegative = false,
     this.compact = false,
+    this.enabled = true,
     this.onSubmitted,
     this.onChanged,
     this.onSuffixTap,
@@ -1372,6 +1442,7 @@ class _CellNumberField extends StatelessWidget {
     );
 
     final field = TextField(
+      enabled: enabled,
       controller: controller,
       focusNode: focusNode,
       textAlign: TextAlign.right,

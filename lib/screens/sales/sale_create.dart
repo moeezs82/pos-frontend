@@ -1503,8 +1503,15 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
   }
 
   SaleProfitSummary _currentProfitSummary() {
+    // A linked return reverses the historical sale using the original item's
+    // cost/discount/tax allocation on the backend. Do not mix it with the
+    // live profit preview for newly sold items (which is based on today's
+    // inventory carrying cost and the new invoice header values).
+    final positiveItems = _items
+        .where((item) => _metaNum(item['quantity']) > 0)
+        .toList(growable: false);
     return SaleProfitCalculator.invoice(
-      items: _items,
+      items: positiveItems,
       invoiceDiscount: _toDouble(discountController),
       shippingRevenue: _toDouble(shippingController),
       tax: _toDouble(taxController),
@@ -1514,9 +1521,20 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
   void _showItemProfitInsight(int index) {
     if (!context.read<AuthProvider>().hasPermission('view-sale-profit')) return;
     if (index < 0 || index >= _items.length) return;
+    if (_items[index]['original_sale_item_id'] != null) {
+      AppFeedback.warning(
+        context,
+        'Return profit/cost is reversed from the original sale and is not editable in the live sale-profit preview.',
+      );
+      return;
+    }
+    final positiveIndex = _items
+        .take(index)
+        .where((item) => _metaNum(item['quantity']) > 0)
+        .length;
     final summary = _currentProfitSummary();
-    if (index >= summary.lines.length) return;
-    showSaleLineProfitDialog(context, summary.lines[index]);
+    if (positiveIndex >= summary.lines.length) return;
+    showSaleLineProfitDialog(context, summary.lines[positiveIndex]);
   }
 
   void _showInvoiceProfitDetails() {
@@ -1578,7 +1596,280 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       final d = (discPct / 100.0).clamp(0.0, 100.0);
       t = qty * price * (1.0 - d);
     }
-    return (t.isFinite && t >= 0) ? t : 0.0;
+    return t.isFinite ? t : 0.0;
+  }
+
+  double _cartLineTotal(Map<String, dynamic> item) {
+    final qty = _metaNum(item['quantity']);
+    if (qty < 0 && item['original_sale_item_id'] != null) {
+      return -_metaNum(item['return_credit']).abs();
+    }
+    return _lineTotal(
+      price: _metaNum(item['price']),
+      qty: qty,
+      discPct: _metaNum(item['discount_pct']),
+      discountType: (item['discount_type'] ?? 'percentage').toString(),
+    );
+  }
+
+  double get _linkedReturnCredit => _items
+      .where((i) => _metaNum(i['quantity']) < 0 && i['original_sale_item_id'] != null)
+      .fold<double>(0, (sum, i) => sum + _metaNum(i['return_credit']).abs());
+
+  double get _linkedReturnOriginalOutstanding {
+    for (final item in _items) {
+      if (_metaNum(item['quantity']) < 0 && item['original_sale_item_id'] != null) {
+        return _metaNum(item['return_original_outstanding']);
+      }
+    }
+    return 0;
+  }
+
+  Future<Map<String, String>?> _askReturnSource({String initialInvoice = '', String initialReason = ''}) async {
+    final invoice = TextEditingController(text: initialInvoice);
+    final other = TextEditingController();
+    final reasons = <String>[
+      'Customer changed mind',
+      'Wrong item',
+      'Wrong size / variant',
+      'Damaged / defective',
+      'Quality issue',
+      'Duplicate purchase',
+      'Other',
+    ];
+    String reason = reasons.contains(initialReason) ? initialReason : (initialReason.isNotEmpty ? 'Other' : reasons.first);
+    if (reason == 'Other' && initialReason.isNotEmpty && initialReason != 'Other') other.text = initialReason;
+    final result = await showDialog<Map<String, String>>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) => AlertDialog(
+          title: const Row(
+            children: [
+              Icon(Icons.assignment_return_outlined),
+              SizedBox(width: 8),
+              Text('Link return to original invoice'),
+            ],
+          ),
+          content: SizedBox(
+            width: 430,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: invoice,
+                  autofocus: initialInvoice.isEmpty,
+                  decoration: const InputDecoration(
+                    labelText: 'Original invoice *',
+                    hintText: 'Invoice no. / offline receipt no.',
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.receipt_long_outlined),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  value: reason,
+                  decoration: const InputDecoration(
+                    labelText: 'Return reason *',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: reasons.map((r) => DropdownMenuItem(value: r, child: Text(r))).toList(),
+                  onChanged: (v) => setDialogState(() => reason = v ?? reasons.first),
+                ),
+                if (reason == 'Other') ...[
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: other,
+                    decoration: const InputDecoration(
+                      labelText: 'Reason details *',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 10),
+                const Text(
+                  'CounterIQ will restore stock automatically and calculate the refundable item value, original invoice discount, and tax from the original invoice. Original delivery is never refunded.',
+                  style: TextStyle(fontSize: 11, color: AppTheme.textMuted),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Cancel')),
+            FilledButton(
+              onPressed: () {
+                final inv = invoice.text.trim();
+                final resolvedReason = reason == 'Other' ? other.text.trim() : reason;
+                if (inv.isEmpty || resolvedReason.isEmpty) {
+                  AppFeedback.warning(dialogContext, 'Original invoice and return reason are required.');
+                  return;
+                }
+                Navigator.pop(dialogContext, {'invoice': inv, 'reason': resolvedReason});
+              },
+              child: const Text('Find original item'),
+            ),
+          ],
+        ),
+      ),
+    );
+    invoice.dispose();
+    other.dispose();
+    return result;
+  }
+
+  Future<Map<String, dynamic>?> _chooseReturnSourceItem(List<dynamic> candidates) async {
+    if (candidates.isEmpty) return null;
+    if (candidates.length == 1 && candidates.first is Map) {
+      return Map<String, dynamic>.from(candidates.first as Map);
+    }
+    return showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Select original sale line'),
+        content: SizedBox(
+          width: 520,
+          child: ListView.separated(
+            shrinkWrap: true,
+            itemCount: candidates.length,
+            separatorBuilder: (_, __) => const Divider(height: 1),
+            itemBuilder: (_, index) {
+              final row = Map<String, dynamic>.from(candidates[index] as Map);
+              return ListTile(
+                title: Text((row['product_name'] ?? 'Product').toString()),
+                subtitle: Text(
+                  'Sold ${row['sold_qty']} • Returned ${row['returned_qty']} • Returnable ${row['returnable_qty']}',
+                ),
+                trailing: Text(
+                  AppCurrency.format(_metaNum(row['return_credit'])),
+                  style: const TextStyle(fontWeight: FontWeight.w800),
+                ),
+                onTap: () => Navigator.pop(dialogContext, row),
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _linkReturnForRow(int index, double quantity) async {
+    if (!mounted || index < 0 || index >= _items.length || quantity <= 0) return;
+    final current = Map<String, dynamic>.from(_items[index]);
+    final productId = _metaInt(current['product_id']);
+    if (productId == null || productId <= 0) return;
+
+    final wasLinked = current['original_sale_item_id'] != null;
+    String invoice = (current['return_source_invoice'] ?? '').toString().trim();
+    String reason = (current['return_reason'] ?? '').toString().trim();
+    if (!wasLinked) {
+      String defaultInvoice = '';
+      for (final row in _items) {
+        if (row['original_sale_item_id'] != null) {
+          defaultInvoice = (row['return_source_invoice'] ?? '').toString();
+          break;
+        }
+      }
+      final request = await _askReturnSource(initialInvoice: defaultInvoice);
+      if (!mounted) return;
+      if (request == null) {
+        setState(() {
+          if (index < _items.length && _items[index]['original_sale_item_id'] == null) {
+            _items[index]['quantity'] = quantity;
+            _items[index]['total'] = _cartLineTotal(_items[index]);
+          }
+        });
+        return;
+      }
+      invoice = request['invoice']!;
+      reason = request['reason']!;
+    }
+
+    for (int i = 0; i < _items.length; i++) {
+      if (i == index) continue;
+      final otherInvoice = (_items[i]['return_source_invoice'] ?? '').toString().trim();
+      if (_items[i]['original_sale_item_id'] != null && otherInvoice.isNotEmpty && otherInvoice != invoice) {
+        AppFeedback.warning(context, 'All returned items in one transaction must come from the same original invoice ($otherInvoice).');
+        if (!wasLinked) setState(() => _items[index]['quantity'] = quantity);
+        return;
+      }
+    }
+
+    try {
+      final data = await _saleService.getReturnSource(
+        invoice: invoice,
+        productId: productId,
+        quantity: quantity,
+      );
+      if (!mounted) return;
+      final candidates = data['items'] is List ? data['items'] as List : const <dynamic>[];
+      Map<String, dynamic>? picked;
+      if (wasLinked) {
+        final existingId = _metaInt(current['original_sale_item_id']);
+        for (final raw in candidates) {
+          if (raw is Map && _metaInt(raw['sale_item_id']) == existingId) {
+            picked = Map<String, dynamic>.from(raw);
+            break;
+          }
+        }
+      }
+      picked ??= await _chooseReturnSourceItem(candidates);
+      if (!mounted || picked == null) {
+        if (!wasLinked) setState(() => _items[index]['quantity'] = quantity);
+        return;
+      }
+      final sale = data['sale'] is Map ? Map<String, dynamic>.from(data['sale'] as Map) : <String, dynamic>{};
+      final sourceSaleId = _metaInt(sale['id']);
+      if (sourceSaleId == null) throw Exception('Original sale could not be resolved.');
+
+      final customer = sale['customer'];
+      if (customer is Map) {
+        _applyCustomerSelection(Map<String, dynamic>.from(customer));
+      } else {
+        _applyCustomerSelection(null);
+      }
+
+      final updated = Map<String, dynamic>.from(current)
+        ..['original_sale_id'] = sourceSaleId
+        ..['original_sale_item_id'] = _metaInt(picked['sale_item_id'])
+        ..['return_source_invoice'] = (sale['invoice_no'] ?? invoice).toString()
+        ..['return_reason'] = reason
+        ..['returnable_quantity'] = _metaNum(picked['returnable_qty'])
+        ..['return_original_outstanding'] = _metaNum(sale['outstanding'])
+        ..['return_credit'] = _metaNum(picked['return_credit'])
+        ..['return_merchandise_subtotal'] = _metaNum(picked['merchandise_subtotal'])
+        ..['return_invoice_discount'] = _metaNum(picked['invoice_discount_allocated'])
+        ..['return_tax'] = _metaNum(picked['tax_allocated'])
+        ..['return_linked_quantity'] = quantity
+        ..['price'] = _metaNum(picked['original_price'])
+        ..['discount_pct'] = _metaNum(picked['line_discount'])
+        ..['discount_type'] = (picked['discount_type'] ?? 'percentage').toString()
+        ..['quantity'] = -quantity
+        ..['total'] = -_metaNum(picked['return_credit']).abs();
+      setState(() {
+        _items[index] = updated;
+        // Return linkage can materially change what is payable/refundable.
+        // Stale split-tender amounts must never survive that recalculation.
+        _payments = [];
+        cashReceivedController.clear();
+      });
+    } catch (e) {
+      if (!mounted) return;
+      final message = e is ApiException ? e.message : e.toString().replaceFirst('Exception: ', '');
+      AppFeedback.error(context, message);
+      setState(() {
+        if (index >= _items.length) return;
+        if (wasLinked) {
+          final previous = _metaNum(current['return_linked_quantity']);
+          _items[index] = current;
+          if (previous > 0) _items[index]['quantity'] = -previous;
+        } else {
+          _items[index]['quantity'] = quantity;
+          _items[index].remove('original_sale_id');
+          _items[index].remove('original_sale_item_id');
+        }
+        _items[index]['total'] = _cartLineTotal(_items[index]);
+      });
+    }
   }
 
   Widget _hiddenBarcodeField() {
@@ -2029,17 +2320,67 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     }
     final originUserId = int.tryParse(auth.user?['id']?.toString() ?? '');
     double _rowNum(v) => double.tryParse(v?.toString() ?? '') ?? 0.0;
+
+    final hasUnlinkedReturn = _items.any(
+      (i) => _rowNum(i['quantity']) < 0 && i['original_sale_item_id'] == null,
+    );
+    if (hasUnlinkedReturn) {
+      AppFeedback.warning(
+        context,
+        'Every negative quantity must be linked to its original invoice before saving.',
+      );
+      return;
+    }
+    final linkedReturns = _items
+        .where((i) => _rowNum(i['quantity']) < 0 && i['original_sale_item_id'] != null)
+        .toList();
+    final linkedInvoiceIds = linkedReturns
+        .map((i) => _metaInt(i['original_sale_id']))
+        .whereType<int>()
+        .toSet();
+    if (linkedInvoiceIds.length > 1) {
+      AppFeedback.warning(context, 'All returned items in one transaction must come from the same original invoice.');
+      return;
+    }
+
     final subtotal = _items.fold<double>(0.0, (sum, i) {
-      final price      = _rowNum(i['price']);
-      final qty        = _rowNum(i['quantity']);
-      final disc       = _rowNum(i['discount_pct']); // may be null -> 0
-      final discType   = (i['discount_type'] ?? 'percentage').toString();
+      final qty = _rowNum(i['quantity']);
+      if (qty <= 0) return sum;
+      final price = _rowNum(i['price']);
+      final disc = _rowNum(i['discount_pct']);
+      final discType = (i['discount_type'] ?? 'percentage').toString();
       return sum + _lineTotal(price: price, qty: qty, discPct: disc, discountType: discType);
     });
     double discount = double.tryParse(discountController.text.trim()) ?? 0.0;
     double tax = double.tryParse(taxController.text.trim()) ?? 0.0;
     double shipping = double.tryParse(shippingController.text.trim()) ?? 0.0;
-    double total = subtotal - discount + tax + shipping;
+    if (subtotal <= .004 && linkedReturns.isNotEmpty &&
+        (discount.abs() > .004 || tax.abs() > .004 || shipping.abs() > .004)) {
+      AppFeedback.warning(
+        context,
+        'A return-only transaction cannot add a new invoice discount, tax, or delivery charge. Original delivery is non-refundable.',
+      );
+      return;
+    }
+    final saleTotal = subtotal - discount + tax + shipping;
+    if (saleTotal < -0.004) {
+      AppFeedback.warning(context, 'The new-sale total cannot be negative.');
+      return;
+    }
+    final returnCredit = linkedReturns.fold<double>(
+      0, (sum, i) => sum + _rowNum(i['return_credit']).abs(),
+    );
+    final originalOutstanding = linkedReturns.isEmpty
+        ? 0.0
+        : _rowNum(linkedReturns.first['return_original_outstanding']);
+    final appliedToOriginal = returnCredit.clamp(0.0, originalOutstanding).toDouble();
+    final afterOriginal = (returnCredit - appliedToOriginal).clamp(0.0, double.infinity).toDouble();
+    final appliedToExchange = afterOriginal.clamp(0.0, saleTotal).toDouble();
+    final refundDue = (afterOriginal - appliedToExchange).clamp(0.0, double.infinity).toDouble();
+    final customerPays = (saleTotal - appliedToExchange).clamp(0.0, double.infinity).toDouble();
+    // Customer-facing signed transaction total. Settlement is deliberately
+    // separate: some return credit may first reduce the old invoice balance.
+    final total = saleTotal - returnCredit;
 
     // Resolve the selected tender (falls back to the branch default drawer
     // method). Reference only applies to non-drawer methods (KNET/card/bank…).
@@ -2052,7 +2393,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     final saleReference = saleReferenceController.text.trim();
 
     final List<Map<String, dynamic>> paymentsToSend = [];
-    if (total > 0 && _payments.isNotEmpty) {
+    if (customerPays > 0 && _payments.isNotEmpty) {
       // Explicit split tender: send every row (method + amount + optional ref).
       for (final p in _payments) {
         final ref = (p['reference'] ?? '').toString().trim();
@@ -2062,19 +2403,19 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
           if (ref.isNotEmpty) "reference": ref,
         });
       }
-    } else if (_autoCashIfEmpty && total > 0) {
+    } else if (_autoCashIfEmpty && customerPays > 0) {
       // Quick single tender via the selected method.
       paymentsToSend.add({
-        "amount": total.toStringAsFixed(2),
+        "amount": customerPays.toStringAsFixed(2),
         "method": effectiveMethod,
         if (!isDrawerMethod && saleReference.isNotEmpty)
           "reference": saleReference,
       });
     }
     final Map<String, dynamic>? refundToSend =
-        _autoCashIfEmpty && total < 0
+        linkedReturns.isNotEmpty && _autoCashIfEmpty && refundDue > .004
         ? {
-            'amount': total.abs().toStringAsFixed(2),
+            'mode': 'auto',
             'method': effectiveMethod,
             if (!isDrawerMethod && saleReference.isNotEmpty)
               'reference': saleReference,
@@ -2085,11 +2426,11 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       0.0,
       (sum, payment) => sum + _metaNum(payment['amount']),
     );
-    final balance = total - paid;
+    final balance = customerPays - paid;
 
     // Cash Received / Change apply to the CASH (drawer) portion only, and are
     // printed on the invoice (e.g. bill 1500, cash received 2000 → change 500).
-    final cashDue = _saleCashDue(total);
+    final cashDue = _saleCashDue(customerPays);
     final enteredCashReceived = _toDouble(cashReceivedController);
     final cashReceived =
         enteredCashReceived > 0 ? enteredCashReceived : cashDue;
@@ -2144,17 +2485,20 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         discount: discount,
         tax: tax,
         shipping: shipping,
-        total: total,
+        total: saleTotal,
         paid: paid,
         balance: balance,
         cashReceived: cashReceived,
         changeAmount: changeAmount,
         paymentsToSend: paymentsToSend,
       );
-      if (refundToSend != null) {
-        meta['refund_snapshot'] = {
-          'amount': total.abs(),
-          'method': effectiveMethod,
+      if (linkedReturns.isNotEmpty) {
+        meta['return_preview'] = {
+          'return_credit': returnCredit,
+          'applied_to_original': appliedToOriginal,
+          'applied_to_exchange': appliedToExchange,
+          'refund_due': refundDue,
+          'original_delivery_refund': 0,
         };
       }
       final payload = _saleService.buildSalePayload(
@@ -2230,6 +2574,18 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
 
       if (submitError != null) {
         final e = submitError!;
+        // Linked returns are never queued offline: current returnable quantity,
+        // old-invoice settlement and concurrent return locks must be verified
+        // against the authoritative backend at posting time.
+        if (linkedReturns.isNotEmpty &&
+            (!(e is ApiException) || e.isRetryable || e.isAuthFailure || e.statusCode == 402 || isNetworkFailure(e))) {
+          if (!mounted) return;
+          AppFeedback.error(
+            context,
+            'Return/exchange requires a live CounterIQ connection. Nothing was queued or posted.',
+          );
+          return;
+        }
         // A DETERMINISTIC rejection must not be queued. The queue's premise is
         // "this will work later"; re-POSTing an identical payload that the
         // server already refused on its merits will be refused identically.
@@ -2256,9 +2612,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
             ? 'Offline: could not reach the server ($e).'
             : 'Server responded with a retryable error, queued for review on sync: $e';
 
-        final refundAmount = refundToSend == null
-            ? 0.0
-            : _metaNum(refundToSend['amount']);
+        final refundAmount = 0.0;
         final offlineCredit = await _prepareOfflineCreditQueue(
           payload: payload,
           branchId: originBranchId,
@@ -2312,6 +2666,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
               .toString();
 
       if (print) {
+      final receiptSubtotal = subtotal - returnCredit;
       final receiptItems = _items.map((i) {
         final name = (i['name'] ?? '').toString();
         final price = double.tryParse(i['price']?.toString() ?? '') ?? 0.0;
@@ -2378,7 +2733,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
           receiptNo: receiptNo,
           dateTime: receiptPrintTime,
           items: receiptItems,
-          subtotal: subtotal,
+          subtotal: receiptSubtotal,
           discount: discount,
           tax: tax,
           grandTotal: total,
@@ -2446,7 +2801,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
             receiptNo: receiptNo,
             dateTime: receiptPrintTime,
             items: receiptItems,
-            subtotal: subtotal,
+            subtotal: receiptSubtotal,
             discount: discount,
             tax: tax,
             grandTotal: total,
@@ -2476,7 +2831,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
               receiptNo: receiptNo,
               dateTime: receiptPrintTime,
               items: receiptItems,
-              subtotal: subtotal,
+              subtotal: receiptSubtotal,
               discount: discount,
               tax: tax,
               grandTotal: total,
@@ -2511,7 +2866,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
             receiptNo: receiptNo,
             dateTime: receiptPrintTime,
             items: receiptItems,
-            subtotal: subtotal,
+            subtotal: receiptSubtotal,
             discount: discount,
             tax: tax,
             grandTotal: total,
@@ -2542,7 +2897,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
               receiptNo: receiptNo,
               dateTime: receiptPrintTime,
               items: receiptItems,
-              subtotal: subtotal,
+              subtotal: receiptSubtotal,
               discount: discount,
               tax: tax,
               grandTotal: total,
@@ -2578,7 +2933,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
           receiptNo: receiptNo,
           dateTime: receiptPrintTime,
           items: receiptItems,
-          subtotal: subtotal,
+          subtotal: receiptSubtotal,
           discount: discount,
           tax: tax,
           grandTotal: total,
@@ -2706,10 +3061,31 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
               : 'Sale $receiptNo created with a credit-limit warning. ${creditLimitNotice.summary}',
         );
       } else {
-        AppFeedback.success(
-          context,
-          "Sale $receiptNo created successfully. Ready for next sale.",
-        );
+        final postedReturn = res?['data']?['return'];
+        if (postedReturn is Map) {
+          final returned = _metaNum(postedReturn['return_credit']);
+          final appliedOld = _metaNum(postedReturn['applied_to_original']);
+          final appliedExchange = _metaNum(postedReturn['applied_to_exchange']);
+          final refunded = _metaNum(postedReturn['refunded']);
+          final creditLeft = _metaNum(postedReturn['customer_credit_left']);
+          final postedReturnNo = (postedReturn['return_no'] ?? receiptNo).toString();
+          final creditSuffix = creditLeft > .004
+              ? ' • ${AppCurrency.format(creditLeft)} customer credit'
+              : '';
+          AppFeedback.success(
+            context,
+            'Return $postedReturnNo posted: '
+            '${AppCurrency.format(returned)} credit • '
+            '${AppCurrency.format(appliedOld)} old balance • '
+            '${AppCurrency.format(appliedExchange)} exchange • '
+            '${AppCurrency.format(refunded)} refunded$creditSuffix.',
+          );
+        } else {
+          AppFeedback.success(
+            context,
+            "Sale $receiptNo created successfully. Ready for next sale.",
+          );
+        }
       }
       // Return focus to the product search panel so the cashier can start
       // the next sale immediately without touching the mouse.
@@ -3383,16 +3759,26 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
 
     double rowNum(v) => double.tryParse(v?.toString() ?? '') ?? 0.0;
     final subtotal = _items.fold<double>(0.0, (sum, i) {
-      final price    = rowNum(i['price']);
-      final qty      = rowNum(i['quantity']);
-      final disc     = rowNum(i['discount_pct']);
+      final qty = rowNum(i['quantity']);
+      if (qty <= 0) return sum;
+      final price = rowNum(i['price']);
+      final disc = rowNum(i['discount_pct']);
       final discType = (i['discount_type'] ?? 'percentage').toString();
       return sum + _lineTotal(price: price, qty: qty, discPct: disc, discountType: discType);
     });
     final discount = _toDouble(discountController);
     final tax = _toDouble(taxController);
     final shipping = _toDouble(shippingController);
-    final total = subtotal - discount + tax + shipping;
+    final saleTotal = subtotal - discount + tax + shipping;
+    final returnCredit = _linkedReturnCredit;
+    final appliedOld = returnCredit.clamp(0.0, _linkedReturnOriginalOutstanding).toDouble();
+    final afterOld = (returnCredit - appliedOld).clamp(0.0, double.infinity).toDouble();
+    final appliedExchange = afterOld.clamp(0.0, saleTotal.clamp(0.0, double.infinity)).toDouble();
+    final refundDue = (afterOld - appliedExchange).clamp(0.0, double.infinity).toDouble();
+    final customerPays = (saleTotal - appliedExchange).clamp(0.0, double.infinity).toDouble();
+    // Signed checkout amount: positive means collect from customer; negative
+    // means refundable/credit value remains after settling old AR + exchange.
+    final total = customerPays > .004 ? customerPays : -refundDue;
 
     // Change is computed against the CASH (drawer) portion only — a split of
     // 1000 cash + 500 bank on a 1500 bill has no change; 2000 cash on a 1500
@@ -3693,6 +4079,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
               onQueryProducts: _queryProducts,
               onAddItem: _addItemManual,
               onItemsChanged: (next) => setState(() => _items = next),
+              onReturnLinkRequested: _isEditing ? null : _linkReturnForRow,
               onProfitInsight:
                   canViewProfit ? _showItemProfitInsight : null,
             ),
@@ -4336,6 +4723,36 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
             ],
           ),
         ),
+        if (_linkedReturnCredit > .004)
+          Container(
+            margin: const EdgeInsets.only(top: 5),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+              color: AppTheme.warning.withOpacity(.06),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: AppTheme.warning.withOpacity(.22)),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.assignment_return_outlined, size: 15, color: AppTheme.warning),
+                const SizedBox(width: 6),
+                Text(
+                  'Return credit ${AppCurrency.format(_linkedReturnCredit)}',
+                  style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: AppTheme.navy),
+                ),
+                const SizedBox(width: 12),
+                Text(
+                  'Old invoice outstanding ${AppCurrency.format(_linkedReturnOriginalOutstanding)}',
+                  style: const TextStyle(fontSize: 10.5, color: AppTheme.textMuted, fontWeight: FontWeight.w600),
+                ),
+                const Spacer(),
+                const Text(
+                  'Original delivery refund: 0',
+                  style: TextStyle(fontSize: 10.5, color: AppTheme.textMuted, fontWeight: FontWeight.w700),
+                ),
+              ],
+            ),
+          ),
         AnimatedSwitcher(
           duration: const Duration(milliseconds: 160),
           switchInCurve: Curves.easeOut,
@@ -4732,7 +5149,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
           const SizedBox(width: 8),
           // Split tender — add another payment row (e.g. 1000 cash + 500 bank).
           OutlinedButton.icon(
-            onPressed: () => _addSalePaymentDialog(total),
+            onPressed: total > .004 ? () => _addSalePaymentDialog(total) : null,
             icon: const Icon(Icons.call_split_rounded, size: 16),
             label: Text(hasSplit ? 'Add (${_payments.length})' : 'Split'),
             style: OutlinedButton.styleFrom(
@@ -4749,21 +5166,21 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
             mainAxisAlignment: MainAxisAlignment.center,
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              const Text(
-                'Total Payable',
-                style: TextStyle(
+              Text(
+                total < -0.004 ? 'Refund / Credit Due' : 'Total Payable',
+                style: const TextStyle(
                   fontSize: 10,
                   color: AppTheme.textMuted,
                   fontWeight: FontWeight.w600,
                 ),
               ),
               Text(
-                AppCurrency.format(total),
-                style: const TextStyle(
+                AppCurrency.format(total.abs()),
+                style: TextStyle(
                   fontSize: 17,
                   fontWeight: FontWeight.w900,
-                  color: AppTheme.navy,
-                  fontFeatures: [FontFeature.tabularFigures()],
+                  color: total < -0.004 ? AppTheme.warning : AppTheme.navy,
+                  fontFeatures: const [FontFeature.tabularFigures()],
                 ),
               ),
             ],

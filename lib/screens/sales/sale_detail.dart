@@ -726,6 +726,16 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
                       balanceColor: balanceColor,
                     ),
 
+                    if (((_sale!['returns'] as List?) ?? const []).isNotEmpty) ...[
+                      const SizedBox(height: 12),
+                      _SaleReturnHistoryCard(
+                        returns: ((_sale!['returns'] as List?) ?? const [])
+                            .whereType<Map>()
+                            .map((e) => e.cast<String, dynamic>())
+                            .toList(growable: false),
+                      ),
+                    ],
+
                     const SizedBox(height: 12),
 
                     _SalePaymentHistoryCard(
@@ -744,6 +754,158 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
                   ],
                 ),
               ),
+      ),
+    );
+  }
+}
+
+class _SaleReturnHistoryCard extends StatelessWidget {
+  final List<Map<String, dynamic>> returns;
+
+  const _SaleReturnHistoryCard({required this.returns});
+
+  double _n(dynamic value) => double.tryParse(value?.toString() ?? '') ?? 0.0;
+
+  List<Map<String, dynamic>> _maps(dynamic value) => value is List
+      ? value
+          .whereType<Map>()
+          .map((e) => e.cast<String, dynamic>())
+          .toList(growable: false)
+      : const <Map<String, dynamic>>[];
+
+  String _date(dynamic value) {
+    final text = (value ?? '').toString();
+    return text.length >= 10 ? text.substring(0, 10) : text;
+  }
+
+  Widget _metric(String label, double amount, {bool emphasized = false}) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 3),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: emphasized ? FontWeight.w700 : FontWeight.w500,
+              ),
+            ),
+          ),
+          Text(
+            AppCurrency.format(amount),
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: emphasized ? FontWeight.w800 : FontWeight.w600,
+              fontFeatures: const [FontFeature.tabularFigures()],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      elevation: 1,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.assignment_return_outlined, size: 19),
+                const SizedBox(width: 8),
+                const Expanded(
+                  child: Text(
+                    'Returns / Credit Notes',
+                    style: TextStyle(fontWeight: FontWeight.w800, fontSize: 15),
+                  ),
+                ),
+                Text(
+                  '${returns.length}',
+                  style: Theme.of(context).textTheme.labelMedium,
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            ...returns.map((ret) {
+              final items = _maps(ret['items']);
+              final refunds = _maps(ret['refunds']);
+              final applications = _maps(ret['applications']);
+              final credit = _n(ret['total']);
+              final refunded = refunds.fold<double>(
+                0,
+                (sum, row) => sum + _n(row['amount']),
+              );
+              final applied = applications.fold<double>(
+                0,
+                (sum, row) => sum + _n(row['amount']),
+              );
+              final remainingCredit = (credit - refunded - applied).clamp(0.0, double.infinity);
+              final productText = items.map((row) {
+                final name = (row['product_name'] ?? 'Product').toString();
+                final qty = _n(row['quantity']);
+                return '$name × ${qty.toStringAsFixed(qty == qty.roundToDouble() ? 0 : 3)}';
+              }).join(' • ');
+
+              return Container(
+                margin: const EdgeInsets.only(bottom: 9),
+                padding: const EdgeInsets.all(11),
+                decoration: BoxDecoration(
+                  border: Border.all(color: Theme.of(context).dividerColor),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            (ret['return_no'] ?? 'Return').toString(),
+                            style: const TextStyle(fontWeight: FontWeight.w800),
+                          ),
+                        ),
+                        Text(
+                          '${(ret['status'] ?? 'completed').toString().toUpperCase()} • ${_date(ret['created_at'])}',
+                          style: Theme.of(context).textTheme.labelSmall,
+                        ),
+                      ],
+                    ),
+                    if (productText.isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        productText,
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ],
+                    const Divider(height: 14),
+                    _metric('Merchandise after discounts', _n(ret['subtotal'])),
+                    if (_n(ret['invoice_discount']) > .004)
+                      _metric('Invoice discount allocated', _n(ret['invoice_discount'])),
+                    _metric('Tax reversed', _n(ret['tax'])),
+                    _metric('Original delivery refunded', _n(ret['delivery_refund'])),
+                    _metric('Return credit', credit, emphasized: true),
+                    if (applied > .004) _metric('Applied to invoice balance / exchange', applied),
+                    if (refunded > .004) _metric('Actually refunded', refunded),
+                    if (remainingCredit > .004) _metric('Customer credit remaining', remainingCredit),
+                    if ((ret['reason'] ?? '').toString().trim().isNotEmpty) ...[
+                      const SizedBox(height: 6),
+                      Text(
+                        'Reason: ${ret['reason']}',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ],
+                  ],
+                ),
+              );
+            }),
+          ],
+        ),
       ),
     );
   }

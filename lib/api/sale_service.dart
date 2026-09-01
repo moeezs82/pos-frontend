@@ -66,6 +66,28 @@ class SaleService {
     throw Exception(res['message'] ?? 'Failed to generate picking list');
   }
 
+  /// Previews a linked return against the authoritative original invoice.
+  /// The backend returns the exact merchandise, invoice-discount and tax
+  /// allocations; original delivery is intentionally excluded.
+  Future<Map<String, dynamic>> getReturnSource({
+    required String invoice,
+    required int productId,
+    required double quantity,
+  }) async {
+    final res = await _client.get(
+      '/sales/return-source',
+      query: {
+        'invoice': invoice.trim(),
+        'product_id': '$productId',
+        'quantity': quantity.toString(),
+      },
+    );
+    if (res['success'] == true && res['data'] is Map<String, dynamic>) {
+      return res['data'] as Map<String, dynamic>;
+    }
+    throw Exception(res['message'] ?? 'Failed to load return source');
+  }
+
   /// Creates a sale. Encodes array params with bracketed keys expected by your API.
   ///
   /// [branchId] is required.
@@ -174,6 +196,20 @@ class SaleService {
     /// invoice number — that is always allocated by InvoiceSequenceService.
     String? offlineInvoiceNo,
   }) {
+    final normalItems = items
+        .where((it) => (double.tryParse(it['quantity']?.toString() ?? '') ?? 0) > 0)
+        .toList();
+    final linkedReturns = items
+        .where((it) => (double.tryParse(it['quantity']?.toString() ?? '') ?? 0) < 0)
+        .map((it) => <String, dynamic>{
+              'original_sale_id': it['original_sale_id'],
+              'original_sale_item_id': it['original_sale_item_id'],
+              'product_id': it['product_id'],
+              'quantity': (double.tryParse(it['quantity']?.toString() ?? '') ?? 0).abs(),
+              'reason': (it['return_reason'] ?? '').toString().trim(),
+            })
+        .toList();
+
     return <String, dynamic>{
       // "branch_id": branchId,
       "discount": discount,
@@ -200,7 +236,7 @@ class SaleService {
       if (occurredAt != null) "occurred_at": occurredAt.toIso8601String(),
       if (registerShiftClientRef != null) "register_shift_client_ref": registerShiftClientRef,
       if (offlineInvoiceNo != null) "offline_invoice_no": offlineInvoiceNo,
-      "items": items
+      "items": normalItems
           .map(
             (it) => {
               "product_id":    it["product_id"],
@@ -218,6 +254,7 @@ class SaleService {
             },
           )
           .toList(),
+      if (linkedReturns.isNotEmpty) "returns": linkedReturns,
       // Preserve every payment property — not just amount/method — so a
       // KNET/card/bank reference, note, paid date and per-payment client_ref
       // survive to the backend (and offline replay).
