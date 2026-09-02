@@ -90,6 +90,11 @@ class _OfflineCreditDecision {
 class CreateSaleScreen extends StatefulWidget {
   final Map<String, dynamic>? initialCustomer;
 
+  /// When opened from Sale Detail, keeps the cashier inside a clearly scoped
+  /// Return / Exchange workflow. It only pre-fills the original invoice; the
+  /// backend still validates every returned item and remaining quantity.
+  final String? initialReturnInvoice;
+
   /// When supplied, this screen becomes the controlled posted-sale editor.
   /// Create mode remains unchanged; edit mode loads the current invoice and
   /// saves one audited desired-state amendment instead of POST /sales.
@@ -98,6 +103,7 @@ class CreateSaleScreen extends StatefulWidget {
   const CreateSaleScreen({
     super.key,
     this.initialCustomer,
+    this.initialReturnInvoice,
     this.editSaleId,
   });
 
@@ -1625,96 +1631,21 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     return 0;
   }
 
-  Future<Map<String, String>?> _askReturnSource({String initialInvoice = '', String initialReason = ''}) async {
-    final invoice = TextEditingController(text: initialInvoice);
-    final other = TextEditingController();
-    final reasons = <String>[
-      'Customer changed mind',
-      'Wrong item',
-      'Wrong size / variant',
-      'Damaged / defective',
-      'Quality issue',
-      'Duplicate purchase',
-      'Other',
-    ];
-    String reason = reasons.contains(initialReason) ? initialReason : (initialReason.isNotEmpty ? 'Other' : reasons.first);
-    if (reason == 'Other' && initialReason.isNotEmpty && initialReason != 'Other') other.text = initialReason;
-    final result = await showDialog<Map<String, String>>(
+  Future<Map<String, String>?> _askReturnSource({
+    String initialInvoice = '',
+    String initialReason = '',
+  }) {
+    final seededInvoice = initialInvoice.trim().isNotEmpty
+        ? initialInvoice.trim()
+        : (widget.initialReturnInvoice ?? '').trim();
+    return showDialog<Map<String, String>>(
       context: context,
       barrierDismissible: false,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (dialogContext, setDialogState) => AlertDialog(
-          title: const Row(
-            children: [
-              Icon(Icons.assignment_return_outlined),
-              SizedBox(width: 8),
-              Text('Link return to original invoice'),
-            ],
-          ),
-          content: SizedBox(
-            width: 430,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  controller: invoice,
-                  autofocus: initialInvoice.isEmpty,
-                  decoration: const InputDecoration(
-                    labelText: 'Original invoice *',
-                    hintText: 'Invoice no. / offline receipt no.',
-                    border: OutlineInputBorder(),
-                    prefixIcon: Icon(Icons.receipt_long_outlined),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                DropdownButtonFormField<String>(
-                  value: reason,
-                  decoration: const InputDecoration(
-                    labelText: 'Return reason *',
-                    border: OutlineInputBorder(),
-                  ),
-                  items: reasons.map((r) => DropdownMenuItem(value: r, child: Text(r))).toList(),
-                  onChanged: (v) => setDialogState(() => reason = v ?? reasons.first),
-                ),
-                if (reason == 'Other') ...[
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: other,
-                    decoration: const InputDecoration(
-                      labelText: 'Reason details *',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                ],
-                const SizedBox(height: 10),
-                const Text(
-                  'CounterIQ will restore stock automatically and calculate the refundable item value, original invoice discount, and tax from the original invoice. Original delivery is never refunded.',
-                  style: TextStyle(fontSize: 11, color: AppTheme.textMuted),
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Cancel')),
-            FilledButton(
-              onPressed: () {
-                final inv = invoice.text.trim();
-                final resolvedReason = reason == 'Other' ? other.text.trim() : reason;
-                if (inv.isEmpty || resolvedReason.isEmpty) {
-                  AppFeedback.warning(dialogContext, 'Original invoice and return reason are required.');
-                  return;
-                }
-                Navigator.pop(dialogContext, {'invoice': inv, 'reason': resolvedReason});
-              },
-              child: const Text('Find original item'),
-            ),
-          ],
-        ),
+      builder: (_) => _ReturnSourceDialog(
+        initialInvoice: seededInvoice,
+        initialReason: initialReason,
       ),
     );
-    invoice.dispose();
-    other.dispose();
-    return result;
   }
 
   Future<Map<String, dynamic>?> _chooseReturnSourceItem(List<dynamic> candidates) async {
@@ -1752,17 +1683,17 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     );
   }
 
-  Future<void> _linkReturnForRow(int index, double quantity) async {
-    if (!mounted || index < 0 || index >= _items.length || quantity <= 0) return;
+  Future<bool> _linkReturnForRow(int index, double quantity) async {
+    if (!mounted || index < 0 || index >= _items.length || quantity <= 0) return false;
     final current = Map<String, dynamic>.from(_items[index]);
     final productId = _metaInt(current['product_id']);
-    if (productId == null || productId <= 0) return;
+    if (productId == null || productId <= 0) return false;
 
     final wasLinked = current['original_sale_item_id'] != null;
     String invoice = (current['return_source_invoice'] ?? '').toString().trim();
     String reason = (current['return_reason'] ?? '').toString().trim();
     if (!wasLinked) {
-      String defaultInvoice = '';
+      String defaultInvoice = (widget.initialReturnInvoice ?? '').trim();
       for (final row in _items) {
         if (row['original_sale_item_id'] != null) {
           defaultInvoice = (row['return_source_invoice'] ?? '').toString();
@@ -1770,7 +1701,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         }
       }
       final request = await _askReturnSource(initialInvoice: defaultInvoice);
-      if (!mounted) return;
+      if (!mounted) return false;
       if (request == null) {
         setState(() {
           if (index < _items.length && _items[index]['original_sale_item_id'] == null) {
@@ -1778,7 +1709,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
             _items[index]['total'] = _cartLineTotal(_items[index]);
           }
         });
-        return;
+        return false;
       }
       invoice = request['invoice']!;
       reason = request['reason']!;
@@ -1790,7 +1721,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       if (_items[i]['original_sale_item_id'] != null && otherInvoice.isNotEmpty && otherInvoice != invoice) {
         AppFeedback.warning(context, 'All returned items in one transaction must come from the same original invoice ($otherInvoice).');
         if (!wasLinked) setState(() => _items[index]['quantity'] = quantity);
-        return;
+        return false;
       }
     }
 
@@ -1800,7 +1731,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         productId: productId,
         quantity: quantity,
       );
-      if (!mounted) return;
+      if (!mounted) return false;
       final candidates = data['items'] is List ? data['items'] as List : const <dynamic>[];
       Map<String, dynamic>? picked;
       if (wasLinked) {
@@ -1815,7 +1746,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       picked ??= await _chooseReturnSourceItem(candidates);
       if (!mounted || picked == null) {
         if (!wasLinked) setState(() => _items[index]['quantity'] = quantity);
-        return;
+        return false;
       }
       final sale = data['sale'] is Map ? Map<String, dynamic>.from(data['sale'] as Map) : <String, dynamic>{};
       final sourceSaleId = _metaInt(sale['id']);
@@ -1852,8 +1783,9 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         _payments = [];
         cashReceivedController.clear();
       });
+      return true;
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted) return false;
       final message = e is ApiException ? e.message : e.toString().replaceFirst('Exception: ', '');
       AppFeedback.error(context, message);
       setState(() {
@@ -1869,6 +1801,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         }
         _items[index]['total'] = _cartLineTotal(_items[index]);
       });
+      return false;
     }
   }
 
@@ -4057,6 +3990,9 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
             vendorController: _vendorController,
           ),
 
+          if ((widget.initialReturnInvoice ?? '').trim().isNotEmpty)
+            _buildReturnContextBanner(),
+
           // 2. FIXED — walk-in/customer snapshot fields are immutable once the
           // invoice is posted. Customer identity is already shown above in the
           // locked party field, so hiding these edit-only inputs avoids a
@@ -4090,6 +4026,42 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
           _buildSummaryRow(
             subtotal: subtotal,
             canViewProfit: canViewProfit,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildReturnContextBanner() {
+    final invoice = (widget.initialReturnInvoice ?? '').trim();
+    if (_isEditing || invoice.isEmpty) return const SizedBox.shrink();
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: AppTheme.warning.withOpacity(.08),
+        border: const Border(
+          bottom: BorderSide(color: AppTheme.border),
+        ),
+      ),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.assignment_return_outlined,
+            size: 18,
+            color: AppTheme.warning,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'Return / Exchange for $invoice • Enter a negative quantity on the item being returned. Original delivery is non-refundable.',
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontSize: 11.5,
+                fontWeight: FontWeight.w700,
+                color: AppTheme.navy,
+              ),
+            ),
           ),
         ],
       ),
@@ -6626,4 +6598,185 @@ class _AmendmentBottomMetric extends StatelessWidget {
           ),
         ],
       );
+}
+
+class _ReturnSourceDialog extends StatefulWidget {
+  final String initialInvoice;
+  final String initialReason;
+
+  const _ReturnSourceDialog({
+    required this.initialInvoice,
+    required this.initialReason,
+  });
+
+  @override
+  State<_ReturnSourceDialog> createState() => _ReturnSourceDialogState();
+}
+
+class _ReturnSourceDialogState extends State<_ReturnSourceDialog> {
+  static const _reasons = <String>[
+    'Customer changed mind',
+    'Wrong item',
+    'Wrong size / variant',
+    'Damaged / defective',
+    'Quality issue',
+    'Duplicate purchase',
+    'Other',
+  ];
+
+  late final TextEditingController _invoiceController;
+  late final TextEditingController _otherController;
+  late String _reason;
+
+  @override
+  void initState() {
+    super.initState();
+    _invoiceController = TextEditingController(text: widget.initialInvoice);
+    _otherController = TextEditingController();
+    _reason = _reasons.contains(widget.initialReason)
+        ? widget.initialReason
+        : (widget.initialReason.trim().isNotEmpty ? 'Other' : _reasons.first);
+    if (_reason == 'Other' &&
+        widget.initialReason.trim().isNotEmpty &&
+        widget.initialReason != 'Other') {
+      _otherController.text = widget.initialReason;
+    }
+  }
+
+  @override
+  void dispose() {
+    _invoiceController.dispose();
+    _otherController.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final invoice = _invoiceController.text.trim();
+    final reason = _reason == 'Other'
+        ? _otherController.text.trim()
+        : _reason;
+    if (invoice.isEmpty || reason.isEmpty) {
+      AppFeedback.warning(
+        context,
+        'Original invoice and return reason are required.',
+      );
+      return;
+    }
+    Navigator.of(context).pop(<String, String>{
+      'invoice': invoice,
+      'reason': reason,
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 32, vertical: 24),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 520, maxHeight: 620),
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(20, 18, 20, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Row(
+                children: [
+                  Icon(Icons.assignment_return_outlined),
+                  SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Link return to original invoice',
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: _invoiceController,
+                autofocus: widget.initialInvoice.trim().isEmpty,
+                textInputAction: TextInputAction.next,
+                decoration: const InputDecoration(
+                  labelText: 'Original invoice *',
+                  hintText: 'Invoice no. / offline receipt no.',
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.receipt_long_outlined),
+                ),
+              ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                value: _reason,
+                isExpanded: true,
+                decoration: const InputDecoration(
+                  labelText: 'Return reason *',
+                  border: OutlineInputBorder(),
+                ),
+                items: _reasons
+                    .map(
+                      (reason) => DropdownMenuItem<String>(
+                        value: reason,
+                        child: Text(reason),
+                      ),
+                    )
+                    .toList(growable: false),
+                onChanged: (value) => setState(
+                  () => _reason = value ?? _reasons.first,
+                ),
+              ),
+              if (_reason == 'Other') ...[
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _otherController,
+                  textInputAction: TextInputAction.done,
+                  onSubmitted: (_) => _submit(),
+                  decoration: const InputDecoration(
+                    labelText: 'Reason details *',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+              ],
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.all(11),
+                decoration: BoxDecoration(
+                  color: AppTheme.surfaceSoft,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: AppTheme.border),
+                ),
+                child: const Text(
+                  'Stock is restored automatically. CounterIQ calculates the refundable merchandise, original invoice discount and tax from the original invoice. Original delivery is never refunded.',
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    color: AppTheme.textMuted,
+                    height: 1.35,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  TextButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    child: const Text('Cancel'),
+                  ),
+                  const SizedBox(width: 8),
+                  FilledButton.icon(
+                    onPressed: _submit,
+                    icon: const Icon(Icons.search_rounded, size: 17),
+                    label: const Text('Find original item'),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }

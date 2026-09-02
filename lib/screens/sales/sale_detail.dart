@@ -134,6 +134,33 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
     await _fetchSale();
   }
 
+  Future<void> _openReturnExchange() async {
+    final sale = _sale;
+    if (sale == null) return;
+    final invoice = (sale['invoice_no'] ?? sale['id'] ?? '').toString().trim();
+    if (invoice.isEmpty) return;
+
+    Map<String, dynamic>? customer;
+    final rawCustomer = sale['customer'];
+    if (rawCustomer is Map) {
+      customer = rawCustomer.cast<String, dynamic>();
+    }
+
+    final changed = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (_) => CreateSaleScreen(
+          initialCustomer: customer,
+          initialReturnInvoice: invoice,
+        ),
+      ),
+    );
+    if (!mounted) return;
+    if (changed == true) _updated = true;
+    // Always refresh because the return may have been posted even if the user
+    // subsequently backed out of the exchange/new-sale screen.
+    await _fetchSale();
+  }
+
   Future<void> _showAmendmentHistory() async {
     showDialog<void>(
       context: context,
@@ -578,6 +605,17 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
         appBar: AppBar(
           title: const Text("Sale Detail"),
           actions: [
+            if (!_loading &&
+                _sale != null &&
+                context.watch<AuthProvider>().hasPermission('refund-sale'))
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+                child: OutlinedButton.icon(
+                  onPressed: _openReturnExchange,
+                  icon: const Icon(Icons.assignment_return_outlined, size: 18),
+                  label: const Text('Return / Exchange'),
+                ),
+              ),
             if (!_loading && _sale != null &&
                 context.watch<AuthProvider>().hasPermission('amend-sales'))
               Padding(

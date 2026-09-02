@@ -45,7 +45,7 @@ class ItemsTable extends StatefulWidget {
   final Future<List<ProductRef>> Function(String query) onQueryProducts;
   final void Function(List<Map<String, dynamic>> nextItems) onItemsChanged;
   final void Function(int index)? onProfitInsight;
-  final Future<void> Function(int index, double returnQuantity)? onReturnLinkRequested;
+  final Future<bool> Function(int index, double returnQuantity)? onReturnLinkRequested;
 
   /// When [compact] is true the table renders as a plain borderless table
   /// (no EnterprisePanel card, no section header, tighter row padding)
@@ -76,6 +76,7 @@ class _ItemsTableState extends State<ItemsTable> {
   // per-row commit debounce (keeps parent totals live but efficient)
   final Map<int, Timer?> _rowDebounce = {};
   int? _hoveredRow;
+  final Set<int> _returnLinkInProgress = <int>{};
 
   // NEW: anchor for the product cell
   final LayerLink _productSearchLink = LayerLink();
@@ -281,6 +282,18 @@ class _ItemsTableState extends State<ItemsTable> {
     final item = Map<String, dynamic>.from(widget.items[i]);
 
     final qty = double.tryParse(ctrls.qty.text.trim()) ?? 0.0;
+
+    // A negative quantity is a return intent, not a normal cart mutation.
+    // Never commit the temporary negative value into parent state before the
+    // async original-invoice linker succeeds; cancelling the dialog must leave
+    // the cart exactly as it was. This also prevents parent/row-controller
+    // desynchronisation and the RenderFlex/error-screen cascade it caused.
+    if (qty < 0 && widget.onReturnLinkRequested != null) {
+      ctrls.dirty = false;
+      _startReturnLink(i, qty.abs());
+      return;
+    }
+
     final linkedReturn = item['original_sale_item_id'] != null;
     final price = linkedReturn ? _num(item['price']) : _num(ctrls.price.text);
     final disc = linkedReturn ? _num(item['discount_pct']) : _num(ctrls.discount.text);
@@ -291,7 +304,7 @@ class _ItemsTableState extends State<ItemsTable> {
         'original_sale_id', 'original_sale_item_id', 'return_source_invoice',
         'return_reason', 'returnable_quantity', 'return_original_outstanding',
         'return_credit', 'return_merchandise_subtotal',
-        'return_invoice_discount', 'return_tax',
+        'return_invoice_discount', 'return_tax', 'return_linked_quantity',
       ];
       for (final key in returnKeys) {
         item.remove(key);
@@ -304,9 +317,6 @@ class _ItemsTableState extends State<ItemsTable> {
       item, price: price, qty: qty, discountPct: disc, discountType: discountType,
     );
 
-    // The quantity is committed as typed even when it breaks the rule — never
-    // silently rounded. The violation is recorded so the field shows it and
-    // the screen's pre-flight check can block the save.
     final rule = QuantityRule.fromProduct(item);
     if (rule.allows(qty)) {
       _qtyErrors.remove(i);
@@ -318,9 +328,40 @@ class _ItemsTableState extends State<ItemsTable> {
     next[i] = item;
     ctrls.dirty = false;
     widget.onItemsChanged(next);
-    setState(() {}); // update displayed totals immediately
-    if (qty < 0 && widget.onReturnLinkRequested != null) {
-      widget.onReturnLinkRequested!(i, qty.abs());
+    setState(() {});
+  }
+
+  Future<void> _startReturnLink(int i, double returnQuantity) async {
+    if (_returnLinkInProgress.contains(i) ||
+        i < 0 ||
+        i >= widget.items.length ||
+        widget.onReturnLinkRequested == null) {
+      return;
+    }
+
+    _returnLinkInProgress.add(i);
+    final ctrls = _rowCtrls[i];
+    final originalQty = _num(widget.items[i]['quantity']);
+    try {
+      // Release the editor before opening the modal so its stale '-1' text
+      // cannot remain the focused source of truth while parent state changes.
+      ctrls?.qtyFocus.unfocus();
+      final linked = await widget.onReturnLinkRequested!(i, returnQuantity);
+      if (!mounted) return;
+
+      final displayQty = linked ? -returnQuantity : originalQty;
+      if (ctrls != null) {
+        final text = _formatQty(displayQty);
+        ctrls.qty.value = TextEditingValue(
+          text: text,
+          selection: TextSelection.collapsed(offset: text.length),
+        );
+        ctrls.dirty = false;
+      }
+      _qtyErrors.remove(i);
+      setState(() {});
+    } finally {
+      _returnLinkInProgress.remove(i);
     }
   }
 
