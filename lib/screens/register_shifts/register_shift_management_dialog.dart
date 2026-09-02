@@ -483,7 +483,7 @@ class _RegisterShiftManagementDialogState
       builder: (_) => _ManagerDecisionDialog(
         title: 'Approve & Close Shift',
         message:
-            'The cashier count and resulting variance will be finalized. A cash shortage or overage journal will be posted automatically.',
+            'The cashier count will be finalized. Any non-zero cash difference will be moved to Pending Investigation and will not affect profit or loss until an authorized resolution is recorded.',
         confirmLabel: 'Approve & Close',
         pendingSyncCount: pendingSync,
       ),
@@ -924,7 +924,7 @@ class _ForceCloseDialogState extends State<_ForceCloseDialog> {
                 ),
               ),
               child: const Text(
-                'Use this only when the cashier is unavailable, the device failed, or a normal close request cannot be completed. The physical variance will be posted to accounting.',
+                'Use this only when the cashier is unavailable, the device failed, or a normal close request cannot be completed. Any non-zero physical difference will be recorded as Pending Investigation, not immediate income or expense.',
                 style: TextStyle(fontWeight: FontWeight.w700),
               ),
             ),

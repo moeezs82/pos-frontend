@@ -116,4 +116,36 @@ class RegisterShiftService {
       Map<String, dynamic>.from(
         (await _client.get('/register-shifts/$id'))['data'] as Map,
       );
+  Future<Map<String, dynamic>> variances({
+    String status = 'pending',
+    String? direction,
+    int page = 1,
+    int perPage = 50,
+  }) async => Map<String, dynamic>.from(
+    (await _client.get(
+      '/register-shift-variances',
+      query: {
+        'status': status,
+        'page': '$page',
+        'per_page': '$perPage',
+        if (direction != null && direction.isNotEmpty) 'direction': direction,
+      },
+    ))['data'] as Map,
+  );
+
+  Future<Map<String, dynamic>> varianceDetail(int varianceId) async =>
+      Map<String, dynamic>.from(
+        (await _client.get('/register-shift-variances/$varianceId'))['data'] as Map,
+      );
+
+  Future<Map<String, dynamic>> resolveVariance(
+    int varianceId,
+    Map<String, dynamic> body,
+  ) async => Map<String, dynamic>.from(
+    (await _client.post(
+      '/register-shift-variances/$varianceId/resolve',
+      body: body,
+    ))['data'] as Map,
+  );
+
 }

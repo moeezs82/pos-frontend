@@ -7,6 +7,7 @@ import '../../providers/offline_queue_provider.dart';
 import '../../providers/register_shift_provider.dart';
 import '../../theme/app_theme.dart';
 import 'register_shift_management_dialog.dart';
+import 'register_shift_variance_dialog.dart';
 
 class RegisterShiftScreen extends StatefulWidget {
   const RegisterShiftScreen({super.key});
@@ -37,6 +38,12 @@ class _RegisterShiftScreenState extends State<RegisterShiftScreen> {
     final state = context.watch<RegisterShiftProvider>();
     final auth = context.watch<AuthProvider>();
     final canManageRegisters = auth.hasPermission('manage-register-shifts');
+    final canViewVariances = auth.hasAnyPermission(const [
+      'view-shift-variances',
+      'resolve-shift-variance',
+      'manage-register-shifts',
+    ]);
+    final canResolveVariances = auth.hasPermission('resolve-shift-variance');
     final canViewHistory = auth.hasAnyPermission(const [
       'view-register-shifts',
       'manage-register-shifts',
@@ -44,6 +51,12 @@ class _RegisterShiftScreenState extends State<RegisterShiftScreen> {
     final availableRegisters = _availableRegisters(state);
     return Scaffold(
       appBar: AppBar(title: const Text('Register Shift'), actions: [
+        if (canViewVariances)
+          IconButton(
+            tooltip: 'Cash variances',
+            onPressed: () => _showVariances(canResolveVariances),
+            icon: const Icon(Icons.balance_rounded),
+          ),
         if (canManageRegisters)
           IconButton(tooltip: 'Manage open shifts', onPressed: _manageOpenShifts, icon: const Icon(Icons.pending_actions_rounded)),
         if (canManageRegisters)
@@ -649,11 +662,14 @@ class _RegisterShiftScreenState extends State<RegisterShiftScreen> {
       context: context,
       builder: (_) => _CloseShiftDialog(
         pendingSyncCount: pending,
+        expectedCash: _number(context.read<RegisterShiftProvider>().summary['expected_cash']),
         initialCount: existing?['counted_cash'],
         initialNote: existing?['closing_note']?.toString(),
       ),
     );
     if (input == null || !mounted) return;
+    final expectedCash = _number(context.read<RegisterShiftProvider>().summary['expected_cash']);
+    final submittedVariance = input.countedCash - expectedCash;
     try {
       final approvalRequired = await context.read<RegisterShiftProvider>().close(
         countedCash: input.countedCash,
@@ -665,8 +681,10 @@ class _RegisterShiftScreenState extends State<RegisterShiftScreen> {
         SnackBar(
           content: Text(
             approvalRequired
-                ? 'Close request submitted. A manager or owner must review the variance.'
-                : 'Register shift closed.',
+                ? 'Close request submitted. A manager or owner must review the physical count.'
+                : submittedVariance.abs() >= 0.005
+                    ? 'Register shift closed. The cash variance is pending investigation and has not been posted to profit/loss.'
+                    : 'Register shift closed.',
           ),
           backgroundColor:
               approvalRequired ? AppTheme.warning : AppTheme.success,
@@ -683,6 +701,17 @@ class _RegisterShiftScreenState extends State<RegisterShiftScreen> {
     await showRegisterShiftManagementDialog(
       context: context,
       token: token,
+      onChanged: _load,
+    );
+  }
+
+  Future<void> _showVariances(bool canResolve) async {
+    final token = context.read<AuthProvider>().token;
+    if (token == null) return;
+    await showRegisterShiftVarianceDialog(
+      context: context,
+      token: token,
+      canResolve: canResolve,
       onChanged: _load,
     );
   }
@@ -762,11 +791,13 @@ class _CloseShiftInput {
 
 class _CloseShiftDialog extends StatefulWidget {
   final int pendingSyncCount;
+  final double expectedCash;
   final dynamic initialCount;
   final String? initialNote;
 
   const _CloseShiftDialog({
     required this.pendingSyncCount,
+    required this.expectedCash,
     this.initialCount,
     this.initialNote,
   });
@@ -779,6 +810,7 @@ class _CloseShiftDialogState extends State<_CloseShiftDialog> {
   late final TextEditingController _counted;
   late final TextEditingController _note;
   String? _countError;
+  String? _noteError;
   bool _closing = false;
 
   @override
@@ -801,8 +833,17 @@ class _CloseShiftDialogState extends State<_CloseShiftDialog> {
   void _submit() {
     if (_closing) return;
     final counted = double.tryParse(_counted.text.trim());
+    final note = _note.text.trim();
     if (counted == null || counted < 0) {
       setState(() => _countError = 'Enter a valid counted cash amount.');
+      return;
+    }
+    final variance = counted - widget.expectedCash;
+    if (variance.abs() >= 0.005 && note.length < 5) {
+      setState(() {
+        _noteError =
+            'Add a short note explaining the cash difference (minimum 5 characters).';
+      });
       return;
     }
     _closing = true;
@@ -810,7 +851,63 @@ class _CloseShiftDialogState extends State<_CloseShiftDialog> {
     Navigator.of(context).pop(
       _CloseShiftInput(
         countedCash: counted,
-        note: _note.text.trim().isEmpty ? null : _note.text.trim(),
+        note: note.isEmpty ? null : note,
+      ),
+    );
+  }
+
+  Widget _variancePreview() {
+    final counted = double.tryParse(_counted.text.trim());
+    final variance = counted == null ? null : counted - widget.expectedCash;
+    final hasVariance = variance != null && variance.abs() >= 0.005;
+    final tone = !hasVariance
+        ? AppTheme.success
+        : variance! < 0
+            ? AppTheme.danger
+            : AppTheme.warning;
+    final label = variance == null
+        ? 'Enter the physical count to preview the variance.'
+        : !hasVariance
+            ? 'Drawer reconciles with expected cash.'
+            : variance < 0
+                ? 'Cash shortage ${AppCurrency.format(variance.abs())}'
+                : 'Cash overage ${AppCurrency.format(variance)}';
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: tone.withValues(alpha: .07),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: tone.withValues(alpha: .24)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Expected ${AppCurrency.format(widget.expectedCash)}',
+                  style: const TextStyle(fontWeight: FontWeight.w800),
+                ),
+              ),
+              Text(
+                label,
+                style: TextStyle(color: tone, fontWeight: FontWeight.w900),
+              ),
+            ],
+          ),
+          if (hasVariance) ...[
+            const SizedBox(height: 7),
+            const Text(
+              'If this count is finalized, the difference will be kept in Pending Investigation. It will not become income or expense until an authorized variance resolution is recorded.',
+              style: TextStyle(
+                color: AppTheme.textMuted,
+                fontSize: 12.5,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ],
       ),
     );
   }
@@ -859,17 +956,25 @@ class _CloseShiftDialogState extends State<_CloseShiftDialog> {
                     'Enter the physical amount actually present in the drawer.',
               ),
               onChanged: (_) {
-                if (_countError != null) setState(() => _countError = null);
+                setState(() => _countError = null);
               },
             ),
+            const SizedBox(height: 12),
+            _variancePreview(),
             const SizedBox(height: 12),
             TextField(
               controller: _note,
               maxLines: 3,
               maxLength: 500,
-              decoration: const InputDecoration(
-                labelText: 'Closing note (optional)',
+              decoration: InputDecoration(
+                labelText: 'Closing note',
+                errorText: _noteError,
+                helperText:
+                    'Required when counted cash differs from expected cash.',
               ),
+              onChanged: (_) {
+                if (_noteError != null) setState(() => _noteError = null);
+              },
             ),
           ],
         ),
@@ -888,3 +993,6 @@ class _CloseShiftDialogState extends State<_CloseShiftDialog> {
     );
   }
 }
+
+
+double _number(dynamic value) => value is num ? value.toDouble() : double.tryParse('$value') ?? 0;
