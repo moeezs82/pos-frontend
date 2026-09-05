@@ -2055,7 +2055,14 @@ class ReceiptPreviewService {
       footerLineStyles,
       devCreditEnabled: devCreditEnabled,
       devCreditText: devCreditText,
-    );
+    ).where((line) => !line.isDevCredit).toList();
+    // The credit line belongs to the page chrome, not the invoice content, so
+    // it is pinned in the MultiPage `footer:` callback below (bottom of every
+    // page) rather than flowing between the merchant's own footer and the QR
+    // code.
+    final devCreditLine = devCreditEnabled
+        ? PrintTextUtils.sanitizeFooterText(devCreditText)
+        : '';
 
     doc.addPage(
       pw.MultiPage(
@@ -2064,11 +2071,29 @@ class ReceiptPreviewService {
         footer: (context) => pw.Container(
           padding: const pw.EdgeInsets.only(top: 6),
           decoration: pw.BoxDecoration(border: pw.Border(top: pw.BorderSide(color: border, width: .6))),
-          child: pw.Row(
-            mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+          child: pw.Column(
+            crossAxisAlignment: pw.CrossAxisAlignment.stretch,
             children: [
-              pw.Text('Thank you for your business!', style: textStyle(isA5 ? 7.5 : 8.5, bold: true, color: accent)),
-              pw.Text('Page ${context.pageNumber} of ${context.pagesCount}', style: textStyle(isA5 ? 7 : 8, color: muted)),
+              pw.Row(
+                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                children: [
+                  pw.Text('Thank you for your business!', style: textStyle(isA5 ? 7.5 : 8.5, bold: true, color: accent)),
+                  pw.Text('Page ${context.pageNumber} of ${context.pagesCount}', style: textStyle(isA5 ? 7 : 8, color: muted)),
+                ],
+              ),
+              if (devCreditLine.isNotEmpty)
+                pw.Padding(
+                  padding: const pw.EdgeInsets.only(top: 4),
+                  child: pw.Text(
+                    devCreditLine,
+                    textAlign: pw.TextAlign.center,
+                    style: pw.TextStyle(
+                      fontStyle: pw.FontStyle.italic,
+                      fontSize: isA5 ? 6 : 6.6,
+                      color: muted,
+                    ),
+                  ),
+                ),
             ],
           ),
         ),
@@ -2258,29 +2283,21 @@ class ReceiptPreviewService {
                     ],
                     if (activeFooterLines.isNotEmpty) ...[
                       pw.SizedBox(height: payments.isEmpty ? 0 : 10),
-                      ...activeFooterLines.map((line) => line.isDevCredit
-                          ? _devCreditFooterWidget(
+                      ...activeFooterLines.map((line) => pw.Container(
+                            width: double.infinity,
+                            alignment: _footerPdfAlignment(line.style.alignment),
+                            padding: const pw.EdgeInsets.only(bottom: 3),
+                            child: brandedText(
                               line.text,
-                              isA5 ? 6.6 : 7.4,
-                              color: muted,
-                            )
-                          : pw.Container(
-                              width: double.infinity,
-                              alignment:
-                                  _footerPdfAlignment(line.style.alignment),
-                              padding: const pw.EdgeInsets.only(bottom: 3),
-                              child: brandedText(
-                                line.text,
-                                size: _footerFontSize(
-                                  isA5 ? 7.5 : 8.5,
-                                  line.style.size,
-                                ),
-                                color: muted,
-                                align:
-                                    _footerPdfTextAlign(line.style.alignment),
-                                bold: line.style.bold,
+                              size: _footerFontSize(
+                                isA5 ? 7.5 : 8.5,
+                                line.style.size,
                               ),
-                            )),
+                              color: muted,
+                              align: _footerPdfTextAlign(line.style.alignment),
+                              bold: line.style.bold,
+                            ),
+                          )),
                     ],
                     if (showQr && _validQrUrl(qrUrl)) ...[
                       pw.SizedBox(height: 10),
