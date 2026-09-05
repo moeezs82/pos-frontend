@@ -646,10 +646,20 @@ class ThermalPrinterService {
       writeLine(text, style);
     }
     // Master-Admin-controlled software credit line, printed last (below the
-    // shop's own footer) in a small, non-bold style.
+    // shop's own footer). A short hairline separates it from the merchant's
+    // own footer so it reads as a quiet software credit, not part of their
+    // message.
     if (devCreditEnabled) {
       final creditText = PrintTextUtils.sanitizeFooterText(devCreditText);
       if (creditText.isNotEmpty) {
+        writeLine(
+          '- - - - - - - -',
+          const ReceiptFooterStyle(
+            alignment: ReceiptFooterAlignment.center,
+            bold: false,
+            size: ReceiptFooterTextSize.small,
+          ),
+        );
         writeLine(
           creditText,
           const ReceiptFooterStyle(
