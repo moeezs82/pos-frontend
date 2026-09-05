@@ -143,7 +143,11 @@ class OfflineSyncService {
 
     try {
       final payload = Map<String, dynamic>.from(item.payload)
-        ..['origin_branch_id'] = branchId;
+        ..['origin_branch_id'] = branchId
+        // This flag is added ONLY when replaying an already-queued sale. It
+        // tells the backend to honor the immutable package factor captured
+        // while the till was offline, even if product packaging changed later.
+        ..['offline_replay'] = true;
       final res = await _client
           .post('/sales', body: payload)
           .timeout(const Duration(seconds: 20));

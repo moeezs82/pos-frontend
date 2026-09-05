@@ -361,8 +361,11 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
     final receiptItems = itemsRaw.map((i) {
       final m = (i as Map);
       final name = (m['product']?['name'] ?? m['name'] ?? '-').toString();
-      final price = _d(m['price']);
-      final qty = _d(m['quantity']);
+      final packaged = m['packaging_id'] != null;
+      final basePrice = _d(m['price']);
+      final baseQty = _d(m['quantity']);
+      final price = packaged ? _d(m['packaging_unit_price']) : basePrice;
+      final qty = packaged ? _d(m['packaging_quantity']) : baseQty;
       final lineTotal = _d(m['total']) != 0 ? _d(m['total']) : (price * qty);
 
       final gross = (price * qty).abs();
@@ -372,9 +375,17 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
       final unitRaw = m['unit_name'] ??
           m['unit_symbol'] ??
           (product is Map ? product['unit'] : null);
-      final unitName = unitRaw is Map
+      final baseUnitName = unitRaw is Map
           ? (unitRaw['symbol'] ?? unitRaw['name'] ?? '').toString()
           : (unitRaw ?? '').toString();
+      final packageLabel = (m['packaging_short_name_snapshot'] ??
+              m['packaging_name_snapshot'] ??
+              '')
+          .toString()
+          .trim();
+      final unitName = packaged && packageLabel.isNotEmpty
+          ? packageLabel
+          : baseUnitName;
       final secondaryName = (product is Map
               ? (product['secondary_name'] ?? '')
               : (m['secondary_name'] ?? ''))
@@ -389,7 +400,9 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
         unitName: unitName,
         discountAmount: lineDiscount,
         discountType: (m['discount_type'] ?? 'percentage').toString(),
-        discountValue: _d(m['discount']),
+        discountValue: (m['discount_type'] ?? 'percentage').toString() == 'fixed' && packaged
+            ? _d(m['packaging_discount_snapshot'])
+            : _d(m['discount']),
       );
     }).toList();
 
@@ -448,6 +461,8 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
           qrUrl: printerConfig.qrCodeUrl,
           qrCaption: printerConfig.qrCodeCaption,
           template: mainTemplate,
+          devCreditEnabled: printerConfig.devCreditEnabled,
+          devCreditText: printerConfig.devCreditText,
         );
         printedToHardware = true;
 
@@ -474,6 +489,8 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
             footerLineStyles: footerLineStyles,
             receiptHeader: secondaryHeader,
             template: secondaryTemplate,
+            devCreditEnabled: printerConfig.devCreditEnabled,
+            devCreditText: printerConfig.devCreditText,
           );
         }
       } catch (e, s) {
@@ -513,6 +530,8 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
           qrUrl: printerConfig.qrCodeUrl,
           qrCaption: printerConfig.qrCodeCaption,
           template: mainTemplate,
+          devCreditEnabled: printerConfig.devCreditEnabled,
+          devCreditText: printerConfig.devCreditText,
         );
         printedToHardware = true;
 
@@ -540,6 +559,8 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
             receiptHeader: secondaryHeader,
             template: secondaryTemplate,
             jobName: 'Secondary Copy $receiptNo',
+            devCreditEnabled: printerConfig.devCreditEnabled,
+            devCreditText: printerConfig.devCreditText,
           );
         }
       } catch (e, s) {
@@ -577,6 +598,8 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
         qrUrl: printerConfig.qrCodeUrl,
         qrCaption: printerConfig.qrCodeCaption,
         template: mainTemplate,
+        devCreditEnabled: printerConfig.devCreditEnabled,
+        devCreditText: printerConfig.devCreditText,
       );
     }
   }

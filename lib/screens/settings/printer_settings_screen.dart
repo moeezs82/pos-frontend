@@ -100,6 +100,11 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
   final List<TextEditingController> _footerCtrls = [];
   final List<ReceiptFooterStyle> _footerStyles = [];
 
+  // Master-Admin-only software credit line, shown under the shop's own
+  // footer on customer-facing invoices/receipts.
+  bool _devCreditEnabled = true;
+  final _devCreditTextCtrl = TextEditingController(text: 'Powered by A Developers');
+
   @override
   void initState() {
     super.initState();
@@ -150,6 +155,7 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
     _qrUrlCtrl.dispose();
     _qrCaptionCtrl.dispose();
     _whatsAppMessageCtrl.dispose();
+    _devCreditTextCtrl.dispose();
     for (final c in _footerCtrls) {
       c.dispose();
     }
@@ -294,6 +300,8 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
       _barcodeShowValue = config.barcodeShowValue;
       _barcodeShowPrice = config.barcodeShowPrice;
       _barcodeShowVariantDetails = config.barcodeShowVariantDetails;
+      _devCreditEnabled = config.devCreditEnabled;
+      _devCreditTextCtrl.text = config.devCreditText;
     });
   }
 
@@ -585,6 +593,10 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
         barcodeShowValue: _barcodeShowValue,
         barcodeShowPrice: _barcodeShowPrice,
         barcodeShowVariantDetails: _barcodeShowVariantDetails,
+        devCreditEnabled: _devCreditEnabled,
+        devCreditText: _devCreditTextCtrl.text.trim().isEmpty
+            ? 'Powered by A Developers'
+            : _devCreditTextCtrl.text.trim(),
       );
 
       if (!mounted) return;
@@ -901,6 +913,10 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
           qrUrl: _qrUrlCtrl.text.trim().isEmpty ? null : _qrUrlCtrl.text.trim(),
           qrCaption: _qrCaptionCtrl.text.trim(),
           itemDiscountDisplay: _itemDiscountDisplay,
+          devCreditEnabled: receiptHeader == null && _devCreditEnabled,
+          devCreditText: _devCreditTextCtrl.text.trim().isEmpty
+              ? 'Powered by A Developers'
+              : _devCreditTextCtrl.text.trim(),
         ),
       ),
     );
@@ -953,6 +969,10 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
                   const SizedBox(height: 14),
                   _buildFooterLinesPanel(),
                   const SizedBox(height: 14),
+                  if (auth.isMasterAdmin) ...[
+                    _buildDevCreditPanel(),
+                    const SizedBox(height: 14),
+                  ],
                   _buildSecondaryPanel(),
                   const SizedBox(height: 14),
                   _buildBarcodePanel(),
@@ -1871,6 +1891,43 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
               fontWeight: FontWeight.w500,
             ),
           ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDevCreditPanel() {
+    return EnterprisePanel(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const EnterpriseSectionHeader(
+            title: 'Software credit (Master Admin)',
+            subtitle:
+                'A small credit line for the software itself, printed under the shop\'s own footer. Only Master Admin can see or change this.',
+            icon: Icons.verified_rounded,
+            color: AppTheme.navy,
+          ),
+          const SizedBox(height: 8),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            value: _devCreditEnabled,
+            onChanged: (value) => setState(() => _devCreditEnabled = value),
+            title: const Text('Show on this branch\'s invoices/receipts', style: TextStyle(fontWeight: FontWeight.w800)),
+            subtitle: const Text('Appears in small text below the shop\'s own footer on customer-facing templates. Never shown on the kitchen ticket.'),
+          ),
+          if (_devCreditEnabled) ...[
+            const SizedBox(height: 8),
+            TextFormField(
+              controller: _devCreditTextCtrl,
+              maxLength: 120,
+              decoration: const InputDecoration(
+                labelText: 'Credit text',
+                hintText: 'Powered by A Developers',
+                prefixIcon: Icon(Icons.copyright_rounded),
+              ),
+            ),
+          ],
         ],
       ),
     );

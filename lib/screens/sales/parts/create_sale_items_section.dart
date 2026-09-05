@@ -45,6 +45,8 @@ class ItemsTable extends StatefulWidget {
   final Future<List<ProductRef>> Function(String query) onQueryProducts;
   final void Function(List<Map<String, dynamic>> nextItems) onItemsChanged;
   final void Function(int index)? onProfitInsight;
+  final void Function(int index)? onEditSellingUnit;
+  final void Function(int index, int? packagingId)? onSellingUnitChanged;
   final Future<bool> Function(int index, double returnQuantity)? onReturnLinkRequested;
 
   /// When [compact] is true the table renders as a plain borderless table
@@ -59,6 +61,8 @@ class ItemsTable extends StatefulWidget {
     required this.onItemsChanged,
     required this.onAddItem,
     this.onProfitInsight,
+    this.onEditSellingUnit,
+    this.onSellingUnitChanged,
     this.onReturnLinkRequested,
     this.compact = false,
   });
@@ -180,9 +184,17 @@ class _ItemsTableState extends State<ItemsTable> {
     String _fmt(num n) => n.toStringAsFixed(2);
 
     final nameText = (item['name'] ?? '').toString();
-    final priceText = _fmt(_num(item['price']));
-    final discountText = _fmt(_num(item['discount_pct'] ?? 0));
-    final qtyText = _formatQty(_num(item['quantity']));
+    final packaged = _isPackaged(item);
+    final priceText = _fmt(packaged
+        ? _num(item['packaging_unit_price'])
+        : _num(item['price']));
+    final discountType = (item['discount_type'] ?? 'percentage').toString();
+    final discountText = _fmt(packaged && discountType == 'fixed'
+        ? _num(item['packaging_discount_snapshot'])
+        : _num(item['discount_pct'] ?? 0));
+    final qtyText = _formatQty(packaged
+        ? _num(item['packaging_quantity'])
+        : _num(item['quantity']));
 
     // Do not rewrite a numeric controller while the cashier is editing it.
     // A debounced row commit updates the parent, which rebuilds this widget;
@@ -192,21 +204,34 @@ class _ItemsTableState extends State<ItemsTable> {
     if (ctrls.name.text != nameText) {
       ctrls.name.text = nameText;
     }
-    _syncEditableController(ctrls.price, ctrls.priceFocus, priceText);
+    final forceExternalSync = !ctrls.dirty;
+    _syncEditableController(
+      ctrls.price,
+      ctrls.priceFocus,
+      priceText,
+      force: forceExternalSync,
+    );
     _syncEditableController(
       ctrls.discount,
       ctrls.discountFocus,
       discountText,
+      force: forceExternalSync,
     );
-    _syncEditableController(ctrls.qty, ctrls.qtyFocus, qtyText);
+    _syncEditableController(
+      ctrls.qty,
+      ctrls.qtyFocus,
+      qtyText,
+      force: forceExternalSync,
+    );
   }
 
   void _syncEditableController(
     TextEditingController controller,
     FocusNode focusNode,
-    String value,
-  ) {
-    if (focusNode.hasFocus || controller.text == value) return;
+    String value, {
+    bool force = false,
+  }) {
+    if ((!force && focusNode.hasFocus) || controller.text == value) return;
     controller.value = TextEditingValue(
       text: value,
       selection: TextSelection.collapsed(offset: value.length),
@@ -214,6 +239,172 @@ class _ItemsTableState extends State<ItemsTable> {
   }
 
   static double _num(dynamic v) => double.tryParse(v?.toString() ?? '') ?? 0.0;
+
+  static double _round2(double value) =>
+      (value * 100).roundToDouble() / 100;
+
+  static double _round3(double value) =>
+      (value * 1000).roundToDouble() / 1000;
+
+  static double _round4(double value) =>
+      (value * 10000).roundToDouble() / 10000;
+
+  static bool _isPackaged(Map<String, dynamic> item) =>
+      item['packaging_id'] != null;
+
+  static bool _hasPackagingChoices(Map<String, dynamic> item) {
+    final values = item['packagings'];
+    if (values is! List) return false;
+    for (final raw in values) {
+      if (raw is! Map) continue;
+      final active = raw['is_active'];
+      final isActive = active == null ||
+          active == true ||
+          active == 1 ||
+          active.toString().toLowerCase() == 'true';
+      if (isActive && _num(raw['base_quantity']) > 0) return true;
+    }
+    return false;
+  }
+
+  static String _sellingUnitSummary(Map<String, dynamic> item) {
+    if (_isPackaged(item)) {
+      final name = (item['packaging_short_name_snapshot'] ??
+              item['packaging_name_snapshot'] ??
+              'Package')
+          .toString();
+      final factor = _num(item['packaging_factor_snapshot']);
+      final baseUnit = (item['unit_name'] ?? '').toString().trim();
+      final factorText = _formatQty(factor);
+      return baseUnit.isEmpty
+          ? '$name • 1 = $factorText base units'
+          : '$name • 1 = $factorText $baseUnit';
+    }
+    final baseUnit = (item['unit_name'] ?? '').toString().trim();
+    return baseUnit.isEmpty ? 'Base unit • Change selling unit' : '$baseUnit • Change selling unit';
+  }
+
+  Widget _buildSellingUnitMenu(
+    int index,
+    Map<String, dynamic> item, {
+    bool compact = false,
+  }) {
+    final currentId = int.tryParse(item['packaging_id']?.toString() ?? '') ?? 0;
+    final baseUnit = (item['unit_name'] ?? '').toString().trim();
+    final choices = <PopupMenuEntry<int>>[
+      PopupMenuItem<int>(
+        value: 0,
+        child: Row(
+          children: [
+            Icon(
+              currentId == 0 ? Icons.check_rounded : Icons.inventory_2_outlined,
+              size: 16,
+              color: currentId == 0 ? AppTheme.success : AppTheme.textMuted,
+            ),
+            const SizedBox(width: 8),
+            Expanded(child: Text(baseUnit.isEmpty ? 'Base unit' : baseUnit)),
+          ],
+        ),
+      ),
+    ];
+    final rawPackages = item['packagings'];
+    if (rawPackages is List) {
+      for (final raw in rawPackages) {
+        if (raw is! Map) continue;
+        final id = int.tryParse(raw['id']?.toString() ?? '');
+        final factor = _num(raw['base_quantity']);
+        final activeRaw = raw['is_active'];
+        final active = activeRaw == null ||
+            activeRaw == true ||
+            activeRaw == 1 ||
+            activeRaw.toString().toLowerCase() == 'true';
+        if (id == null || id <= 0 || factor <= 0 || !active) continue;
+        final name = (raw['name'] ?? 'Package').toString().trim();
+        final short = (raw['short_name'] ?? '').toString().trim();
+        final title = short.isEmpty || short.toLowerCase() == name.toLowerCase()
+            ? name
+            : '$name ($short)';
+        final factorText = _formatQty(factor);
+        choices.add(
+          PopupMenuItem<int>(
+            value: id,
+            child: Row(
+              children: [
+                Icon(
+                  currentId == id ? Icons.check_rounded : Icons.inventory_2_outlined,
+                  size: 16,
+                  color: currentId == id ? AppTheme.success : AppTheme.textMuted,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(title, style: const TextStyle(fontWeight: FontWeight.w700)),
+                      Text(
+                        baseUnit.isEmpty
+                            ? '1 = $factorText base units'
+                            : '1 = $factorText $baseUnit',
+                        style: const TextStyle(fontSize: 11, color: AppTheme.textMuted),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      }
+    }
+    choices
+      ..add(const PopupMenuDivider())
+      ..add(
+        const PopupMenuItem<int>(
+          value: -1,
+          child: Row(
+            children: [
+              Icon(Icons.edit_outlined, size: 16),
+              SizedBox(width: 8),
+              Text('Advanced item edit'),
+            ],
+          ),
+        ),
+      );
+
+    return PopupMenuButton<int>(
+      tooltip: 'Change selling unit',
+      padding: EdgeInsets.zero,
+      position: PopupMenuPosition.under,
+      onOpened: () => _commitRow(index),
+      onSelected: (value) {
+        if (value == -1) {
+          widget.onEditSellingUnit?.call(index);
+          return;
+        }
+        widget.onSellingUnitChanged?.call(index, value == 0 ? null : value);
+      },
+      itemBuilder: (_) => choices,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Flexible(
+            child: Text(
+              _sellingUnitSummary(item),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: compact ? 9 : 10,
+                fontWeight: FontWeight.w700,
+                color: AppTheme.primary,
+              ),
+            ),
+          ),
+          Icon(Icons.arrow_drop_down_rounded, size: compact ? 14 : 16, color: AppTheme.primary),
+        ],
+      ),
+    );
+  }
 
   static String _formatQty(double value) {
     if (value % 1 == 0) return value.toInt().toString();
@@ -245,6 +436,18 @@ class _ItemsTableState extends State<ItemsTable> {
   }) {
     if (qty < 0 && item['original_sale_item_id'] != null) {
       return -_num(item['return_credit']).abs();
+    }
+    if (_isPackaged(item)) {
+      // For packaged rows [price], [qty] and [discountPct] are the currently
+      // displayed selling-unit values. This keeps totals live while the cashier
+      // is typing instead of waiting for the debounced parent-state commit.
+      final packageQty = qty;
+      final packagePrice = price;
+      final gross = _round2(packageQty * packagePrice);
+      final lineDiscount = discountType == 'fixed'
+          ? _round2(packageQty * discountPct)
+          : _round2(gross * (discountPct.clamp(0.0, 100.0) / 100.0));
+      return _round2(gross - lineDiscount);
     }
     return _calcLineTotal(
       price: price,
@@ -280,6 +483,94 @@ class _ItemsTableState extends State<ItemsTable> {
     if (i < 0 || i >= widget.items.length) return;
     final ctrls = _rowCtrls[i]!;
     final item = Map<String, dynamic>.from(widget.items[i]);
+
+    // A packaged row displays package quantity in the Qty cell while stock/COGS
+    // still use canonical base quantity. Commit the two atomically so editing
+    // `2 Box -> 3 Box` can never leave packaging_quantity and quantity out of sync.
+    if (_isPackaged(item)) {
+      final packageQty = double.tryParse(ctrls.qty.text.trim());
+      final factor = _num(item['packaging_factor_snapshot']);
+      if (packageQty == null || packageQty <= 0) {
+        _qtyErrors[i] = 'Package quantity must be greater than zero.';
+        ctrls.dirty = false;
+        setState(() {});
+        return;
+      }
+      if (!QuantityRule.isWhole(packageQty)) {
+        _qtyErrors[i] =
+            'Package quantity must be a whole number. Use the base unit for loose quantity.';
+        ctrls.dirty = false;
+        setState(() {});
+        return;
+      }
+      if (factor <= 0) {
+        _qtyErrors[i] =
+            'This package conversion is invalid. Re-select the selling unit.';
+        ctrls.dirty = false;
+        setState(() {});
+        return;
+      }
+
+      final baseQty = _round3(packageQty * factor);
+      final baseRule = QuantityRule.fromProduct(item);
+      if (!baseRule.allows(baseQty)) {
+        _qtyErrors[i] = baseRule.message;
+        ctrls.dirty = false;
+        setState(() {});
+        return;
+      }
+
+      final packagePrice = double.tryParse(ctrls.price.text.trim());
+      final displayedDiscount = double.tryParse(ctrls.discount.text.trim());
+      final discountType =
+          (item['discount_type'] ?? 'percentage').toString();
+      if (packagePrice == null || packagePrice < 0) {
+        AppFeedback.warning(context, 'Enter a valid package sale price.');
+        ctrls.dirty = false;
+        return;
+      }
+      if (displayedDiscount == null || displayedDiscount < 0 ||
+          (discountType == 'percentage' && displayedDiscount > 100) ||
+          (discountType == 'fixed' &&
+              displayedDiscount > packagePrice + 0.0004)) {
+        AppFeedback.warning(
+          context,
+          discountType == 'fixed'
+              ? 'Fixed discount cannot exceed the package sale price.'
+              : 'Percentage discount must be between 0 and 100.',
+        );
+        ctrls.dirty = false;
+        return;
+      }
+
+      item['packaging_quantity'] = packageQty;
+      item['quantity'] = baseQty;
+      item['packaging_unit_price'] = packagePrice;
+      item['price'] = factor > 0 ? _round4(packagePrice / factor) : packagePrice;
+      if (discountType == 'fixed') {
+        item['packaging_discount_snapshot'] = displayedDiscount;
+        item['discount_pct'] =
+            factor > 0 ? _round4(displayedDiscount / factor) : displayedDiscount;
+      } else {
+        item.remove('packaging_discount_snapshot');
+        item['discount_pct'] = displayedDiscount;
+      }
+      item['total'] = _displayLineTotal(
+        item,
+        price: packagePrice,
+        qty: packageQty,
+        discountPct: displayedDiscount,
+        discountType: discountType,
+      );
+
+      final next = [...widget.items];
+      next[i] = item;
+      _qtyErrors.remove(i);
+      ctrls.dirty = false;
+      widget.onItemsChanged(next);
+      setState(() {});
+      return;
+    }
 
     final qty = double.tryParse(ctrls.qty.text.trim()) ?? 0.0;
 
@@ -370,21 +661,65 @@ class _ItemsTableState extends State<ItemsTable> {
   void _toggleDiscountType(int i) {
     if (i < 0 || i >= widget.items.length) return;
     if (widget.items[i]['original_sale_item_id'] != null) return;
+
     final next = [...widget.items];
     final item = Map<String, dynamic>.from(next[i]);
-    final current = (item['discount_type'] ?? 'percentage').toString();
-    item['discount_type'] = current == 'percentage' ? 'fixed' : 'percentage';
     final ctrls = _rowCtrls[i]!;
-    final price = _num(ctrls.price.text);
-    final qty   = double.tryParse(ctrls.qty.text.trim()) ?? 0.0;
-    final disc  = _num(ctrls.discount.text);
-    item['total'] = _calcLineTotal(
-      price: price,
-      qty: qty,
-      discountPct: disc,
-      discountType: item['discount_type'].toString(),
-    );
+    final current = (item['discount_type'] ?? 'percentage').toString();
+    final nextType = current == 'percentage' ? 'fixed' : 'percentage';
+    var displayedDiscount = _num(ctrls.discount.text);
+    final displayedPrice = _num(ctrls.price.text);
+
+    // A number such as a fixed Rs. 480 cannot become 480%. Likewise a
+    // percentage larger than a very small package price cannot become a valid
+    // fixed amount. Reset only when the existing numeric value is invalid in
+    // the newly selected semantic, rather than silently clipping money.
+    if ((nextType == 'percentage' && displayedDiscount > 100) ||
+        (nextType == 'fixed' && displayedDiscount > displayedPrice + 0.0004)) {
+      displayedDiscount = 0;
+      ctrls.discount.value = const TextEditingValue(
+        text: '0.00',
+        selection: TextSelection.collapsed(offset: 4),
+      );
+    }
+
+    item['discount_type'] = nextType;
+    if (_isPackaged(item)) {
+      final factor = _num(item['packaging_factor_snapshot']);
+      final packageQty = _num(ctrls.qty.text);
+      final packagePrice = _num(ctrls.price.text);
+      item['packaging_unit_price'] = packagePrice;
+      if (factor > 0) item['price'] = _round4(packagePrice / factor);
+      if (nextType == 'fixed') {
+        item['packaging_discount_snapshot'] = displayedDiscount;
+        item['discount_pct'] = factor > 0
+            ? _round4(displayedDiscount / factor)
+            : displayedDiscount;
+      } else {
+        item.remove('packaging_discount_snapshot');
+        item['discount_pct'] = displayedDiscount;
+      }
+      item['total'] = _displayLineTotal(
+        item,
+        price: packagePrice,
+        qty: packageQty,
+        discountPct: displayedDiscount,
+        discountType: nextType,
+      );
+    } else {
+      item['discount_pct'] = displayedDiscount;
+      final price = _num(ctrls.price.text);
+      final qty = double.tryParse(ctrls.qty.text.trim()) ?? 0.0;
+      item['total'] = _calcLineTotal(
+        price: price,
+        qty: qty,
+        discountPct: displayedDiscount,
+        discountType: nextType,
+      );
+    }
+
     next[i] = item;
+    ctrls.dirty = false;
     widget.onItemsChanged(next);
     setState(() {});
   }
@@ -499,9 +834,16 @@ class _ItemsTableState extends State<ItemsTable> {
           s +
           _displayLineTotal(
             it,
-            price: _num(it['price']),
-            qty: _num(it['quantity']),
-            discountPct: _num(it['discount_pct'] ?? 0),
+            price: _isPackaged(it)
+                ? _num(it['packaging_unit_price'])
+                : _num(it['price']),
+            qty: _isPackaged(it)
+                ? _num(it['packaging_quantity'])
+                : _num(it['quantity']),
+            discountPct: _isPackaged(it) &&
+                    (it['discount_type'] ?? 'percentage').toString() == 'fixed'
+                ? _num(it['packaging_discount_snapshot'])
+                : _num(it['discount_pct'] ?? 0),
             discountType: (it['discount_type'] ?? 'percentage').toString(),
           ),
     );
@@ -642,6 +984,10 @@ class _ItemsTableState extends State<ItemsTable> {
                                         overflow: TextOverflow.ellipsis,
                                         style: const TextStyle(fontWeight: FontWeight.w800),
                                       ),
+                                      if (item['original_sale_item_id'] == null &&
+                                          widget.onEditSellingUnit != null &&
+                                          (_isPackaged(item) || _hasPackagingChoices(item)))
+                                        _buildSellingUnitMenu(i, item),
                                       if (item['original_sale_item_id'] != null)
                                         Text(
                                           '↩ Return • ${(item['return_source_invoice'] ?? '').toString()}',
@@ -707,10 +1053,15 @@ class _ItemsTableState extends State<ItemsTable> {
                           child: _CellNumberField(
                             controller: ctrls.qty,
                             focusNode: ctrls.qtyFocus,
-                            allowNegative: true,
-                            rule: _ruleFor(i),
+                            allowNegative: !_isPackaged(item),
+                            rule: _isPackaged(item)
+                                ? const QuantityRule(allowDecimal: false)
+                                : _ruleFor(i),
                             errorText: _qtyErrors[i] ??
-                                _ruleFor(i).validateText(ctrls.qty.text),
+                                (_isPackaged(item)
+                                    ? const QuantityRule(allowDecimal: false)
+                                        .validateText(ctrls.qty.text)
+                                    : _ruleFor(i).validateText(ctrls.qty.text)),
                             onRejected: () => _onQtyRejected(i),
                             onSubmitted: (_) {
                               _commitRow(i);
@@ -856,6 +1207,10 @@ class _ItemsTableState extends State<ItemsTable> {
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12),
                         ),
+                        if (item['original_sale_item_id'] == null &&
+                            widget.onEditSellingUnit != null &&
+                            (_isPackaged(item) || _hasPackagingChoices(item)))
+                          _buildSellingUnitMenu(i, item, compact: true),
                         if (item['original_sale_item_id'] != null)
                           Text(
                             '↩ Return • ${(item['return_source_invoice'] ?? '').toString()}',
@@ -950,11 +1305,16 @@ class _ItemsTableState extends State<ItemsTable> {
             child: _CellNumberField(
               controller: ctrls.qty,
               focusNode: ctrls.qtyFocus,
-              allowNegative: true,
+              allowNegative: !_isPackaged(item),
               compact: true,
-              rule: _ruleFor(i),
-              errorText:
-                  _qtyErrors[i] ?? _ruleFor(i).validateText(ctrls.qty.text),
+              rule: _isPackaged(item)
+                  ? const QuantityRule(allowDecimal: false)
+                  : _ruleFor(i),
+              errorText: _qtyErrors[i] ??
+                  (_isPackaged(item)
+                      ? const QuantityRule(allowDecimal: false)
+                          .validateText(ctrls.qty.text)
+                      : _ruleFor(i).validateText(ctrls.qty.text)),
               onRejected: () => _onQtyRejected(i),
               onSubmitted: (_) {
                 _commitRow(i);

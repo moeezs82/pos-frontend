@@ -249,8 +249,27 @@ class SaleService {
                 "product_vendor_name": it["product_vendor_name"].toString().trim(),
               "quantity":      it["quantity"],
               "price":         it["price"],
-              "discount_pct":  it["discount_pct"],
+              // Packaged lines keep quantity/price in the existing canonical
+              // base-unit contract while carrying an immutable cashier-facing
+              // package snapshot beside them. For fixed discounts the API
+              // expects the amount per PACKAGE; the cart stores both forms so
+              // existing base-unit profit/display helpers remain compatible.
+              "discount_pct":  it["packaging_id"] != null &&
+                      (it["discount_type"] ?? "percentage").toString() == "fixed"
+                  ? (it["packaging_discount_snapshot"] ?? it["discount_pct"])
+                  : it["discount_pct"],
               "discount_type": it["discount_type"] ?? "percentage",
+              if (it["packaging_id"] != null) ...{
+                "packaging_id": it["packaging_id"],
+                "packaging_name_snapshot": it["packaging_name_snapshot"],
+                "packaging_short_name_snapshot": it["packaging_short_name_snapshot"],
+                "packaging_factor_snapshot": it["packaging_factor_snapshot"],
+                "packaging_quantity": it["packaging_quantity"],
+                "packaging_unit_price": it["packaging_unit_price"],
+                if ((it["discount_type"] ?? "percentage").toString() == "fixed")
+                  "packaging_discount_snapshot":
+                      it["packaging_discount_snapshot"] ?? it["discount_pct"],
+              },
             },
           )
           .toList(),

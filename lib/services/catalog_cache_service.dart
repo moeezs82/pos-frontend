@@ -61,7 +61,7 @@ class CatalogCacheService {
     final path = p.join(dbPath, 'catalog_cache.db');
     return openDatabase(
       path,
-      version: 14,
+      version: 15,
       // v1 → v2 adds the unit columns. ADDITIVE ONLY, and deliberately not a
       // table rebuild or a cache wipe: this database is a read replica, but a
       // "just delete and re-download" upgrade would strand a till that is
@@ -274,6 +274,33 @@ class CatalogCacheService {
             whereArgs: const ['catalog_version:%', 'last_synced_at:%'],
           );
         }
+        // v14 → v15: product-specific packaging for offline Sales. Keep this
+        // as a normalized child table so product search rows stay compact while
+        // every returned picker map still receives its package list. Invalidate
+        // cursors so each branch gets a complete authoritative package snapshot.
+        if (oldVersion < 15) {
+          await db.execute('''
+            CREATE TABLE IF NOT EXISTS product_packagings (
+              id INTEGER PRIMARY KEY,
+              branch_id INTEGER NOT NULL,
+              product_id INTEGER NOT NULL,
+              name TEXT NOT NULL,
+              short_name TEXT,
+              base_quantity REAL NOT NULL,
+              retail_price REAL,
+              wholesale_price REAL,
+              is_active INTEGER NOT NULL DEFAULT 1,
+              sort_order INTEGER NOT NULL DEFAULT 0
+            )
+          ''');
+          await db.execute(
+              'CREATE INDEX IF NOT EXISTS idx_product_packagings_product ON product_packagings(branch_id, product_id, is_active, sort_order, id)');
+          await db.delete(
+            'sync_meta',
+            where: 'key LIKE ? OR key LIKE ?',
+            whereArgs: const ['catalog_version:%', 'last_synced_at:%'],
+          );
+        }
       },
       onCreate: (db, version) async {
         await db.execute('''
@@ -315,6 +342,23 @@ class CatalogCacheService {
         await db.execute('CREATE INDEX idx_products_group ON products(product_group_id)');
         await db.execute('CREATE INDEX idx_products_category ON products(category_id)');
         await db.execute('CREATE INDEX idx_products_brand ON products(brand_id)');
+
+        await db.execute('''
+          CREATE TABLE product_packagings (
+            id INTEGER PRIMARY KEY,
+            branch_id INTEGER NOT NULL,
+            product_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            short_name TEXT,
+            base_quantity REAL NOT NULL,
+            retail_price REAL,
+            wholesale_price REAL,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            sort_order INTEGER NOT NULL DEFAULT 0
+          )
+        ''');
+        await db.execute(
+            'CREATE INDEX idx_product_packagings_product ON product_packagings(branch_id, product_id, is_active, sort_order, id)');
 
         await db.execute('''
           CREATE TABLE customers (
@@ -423,6 +467,11 @@ class CatalogCacheService {
         // On a full snapshot, clear this branch's rows first so
         // deactivated/deleted products from a previous sync can't linger.
         if (full) {
+          if (branchId != null) {
+            await txn.delete('product_packagings', where: 'branch_id = ?', whereArgs: [branchId]);
+          } else {
+            await txn.delete('product_packagings');
+          }
           await txn.delete('products', where: 'branch_id IS ?', whereArgs: [branchId]);
           if (branchId != null) {
             await txn.delete(
@@ -436,8 +485,30 @@ class CatalogCacheService {
         }
 
         for (final raw in products) {
-          await txn.insert('products', _productRow(raw as Map, branchId),
+          final product = raw as Map;
+          final productId = _asInt(product['id']);
+          final productBranchId = product['branch_id'] != null
+              ? _asInt(product['branch_id'])
+              : branchId;
+          await txn.insert('products', _productRow(product, branchId),
               conflictAlgorithm: ConflictAlgorithm.replace);
+
+          // A changed product carries the COMPLETE package list. Replace only
+          // this product's child rows so deactivated/removed packages cannot
+          // linger in the offline till after a delta sync.
+          await txn.delete('product_packagings',
+              where: 'product_id = ?', whereArgs: [productId]);
+          final rawPackagings = product['packagings'];
+          if (productBranchId != null && rawPackagings is List) {
+            for (final rawPackaging in rawPackagings) {
+              if (rawPackaging is! Map) continue;
+              await txn.insert(
+                'product_packagings',
+                _packagingRow(rawPackaging, productId, productBranchId),
+                conflictAlgorithm: ConflictAlgorithm.replace,
+              );
+            }
+          }
         }
         for (final raw in customers) {
           await txn.insert('customers', _customerRow(raw as Map),
@@ -445,7 +516,10 @@ class CatalogCacheService {
         }
 
         for (final id in deletedProducts) {
-          await txn.delete('products', where: 'id = ?', whereArgs: [_asInt(id)]);
+          final productId = _asInt(id);
+          await txn.delete('product_packagings',
+              where: 'product_id = ?', whereArgs: [productId]);
+          await txn.delete('products', where: 'id = ?', whereArgs: [productId]);
         }
         for (final id in deletedCustomers) {
           await txn.delete('customers', where: 'id = ?', whereArgs: [_asInt(id)]);
@@ -582,7 +656,7 @@ class CatalogCacheService {
       orderBy: 'name COLLATE NOCASE ASC',
       limit: limit,
     );
-    return rows.map(_productToApiShape).toList();
+    return _productsToApiShape(db, rows);
   }
 
   /// Exact-barcode lookup for the scanner path.
@@ -605,7 +679,8 @@ class CatalogCacheService {
     final rows = await db.query('products',
         where: where.join(' AND '), whereArgs: args, limit: 1);
     if (rows.isEmpty) return null;
-    return _productToApiShape(rows.first);
+    final shaped = await _productsToApiShape(db, [rows.first]);
+    return shaped.isEmpty ? null : shaped.first;
   }
 
   /// The cached selling price for a product, or null if not cached.
@@ -783,6 +858,64 @@ class CatalogCacheService {
       'is_active': _asBoolInt(raw['is_active'], defaultTrue: true),
       'updated_at': raw['updated_at']?.toString(),
     };
+  }
+
+  Map<String, Object?> _packagingRow(
+      Map raw, int productId, int branchId) {
+    return {
+      'id': _asInt(raw['id']),
+      'branch_id': raw['branch_id'] != null
+          ? _asInt(raw['branch_id'])
+          : branchId,
+      'product_id': raw['product_id'] != null
+          ? _asInt(raw['product_id'])
+          : productId,
+      'name': (raw['name'] ?? '').toString(),
+      'short_name': raw['short_name']?.toString(),
+      'base_quantity': _asDouble(raw['base_quantity']),
+      'retail_price': raw['retail_price'] == null
+          ? null
+          : _asDouble(raw['retail_price']),
+      'wholesale_price': raw['wholesale_price'] == null
+          ? null
+          : _asDouble(raw['wholesale_price']),
+      'is_active': _asBoolInt(raw['is_active'], defaultTrue: true),
+      'sort_order': raw['sort_order'] == null ? 0 : _asInt(raw['sort_order']),
+    };
+  }
+
+  Future<List<Map<String, dynamic>>> _productsToApiShape(
+      Database db, List<Map<String, Object?>> rows) async {
+    if (rows.isEmpty) return const [];
+    final ids = rows.map((e) => _asInt(e['id'])).toList(growable: false);
+    final placeholders = List.filled(ids.length, '?').join(',');
+    final packageRows = await db.rawQuery(
+      'SELECT * FROM product_packagings WHERE product_id IN ($placeholders) '
+      'ORDER BY product_id, is_active DESC, sort_order, name COLLATE NOCASE, id',
+      ids,
+    );
+    final byProduct = <int, List<Map<String, dynamic>>>{};
+    for (final raw in packageRows) {
+      final productId = _asInt(raw['product_id']);
+      byProduct.putIfAbsent(productId, () => <Map<String, dynamic>>[]).add({
+        'id': raw['id'],
+        'product_id': raw['product_id'],
+        'name': raw['name'],
+        'short_name': raw['short_name'],
+        'base_quantity': raw['base_quantity'],
+        'retail_price': raw['retail_price'],
+        'wholesale_price': raw['wholesale_price'],
+        'is_active': raw['is_active'] == 1,
+        'sort_order': raw['sort_order'],
+      });
+    }
+    return rows
+        .map((row) {
+          final shaped = _productToApiShape(row);
+          shaped['packagings'] = byProduct[_asInt(row['id'])] ?? const [];
+          return shaped;
+        })
+        .toList(growable: false);
   }
 
   Map<String, Object?> _customerRow(Map raw) {

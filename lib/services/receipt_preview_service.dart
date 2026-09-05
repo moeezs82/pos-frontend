@@ -41,6 +41,8 @@ class ReceiptPreviewService {
     List<String> lines,
     List<ReceiptFooterStyle> styles, {
     bool enabled = true,
+    bool devCreditEnabled = false,
+    String devCreditText = '',
   }) {
     if (!enabled) return const <_ReceiptFooterRenderLine>[];
     final out = <_ReceiptFooterRenderLine>[];
@@ -49,6 +51,23 @@ class ReceiptPreviewService {
       if (text.isEmpty) continue;
       final style = i < styles.length ? styles[i] : const ReceiptFooterStyle();
       out.add(_ReceiptFooterRenderLine(text, style));
+    }
+    // Master-Admin-controlled software credit line. Always rendered last (i.e.
+    // below the shop's own footer) and in a smaller, non-bold style so it
+    // reads as a quiet software credit rather than part of the merchant's own
+    // message.
+    if (devCreditEnabled) {
+      final creditText = PrintTextUtils.sanitizeFooterText(devCreditText);
+      if (creditText.isNotEmpty) {
+        out.add(_ReceiptFooterRenderLine(
+          creditText,
+          const ReceiptFooterStyle(
+            alignment: ReceiptFooterAlignment.center,
+            bold: false,
+            size: ReceiptFooterTextSize.small,
+          ),
+        ));
+      }
     }
     return out;
   }
@@ -245,6 +264,8 @@ class ReceiptPreviewService {
     String qrCaption = 'Scan to review us',
     InvoiceTemplate? template,
     bool layoutForPrinting = true,
+    bool devCreditEnabled = false,
+    String devCreditText = '',
   }) async {
     final bytes = await buildReceiptPdf(
       shopName: shopName,
@@ -270,6 +291,8 @@ class ReceiptPreviewService {
       qrUrl: qrUrl,
       qrCaption: qrCaption,
       template: template,
+      devCreditEnabled: devCreditEnabled,
+      devCreditText: devCreditText,
     );
 
     if (layoutForPrinting) {
@@ -310,6 +333,8 @@ class ReceiptPreviewService {
     String? qrUrl,
     String qrCaption = 'Scan to review us',
     InvoiceTemplate? template,
+    bool devCreditEnabled = false,
+    String devCreditText = '',
   }) async {
     // --- extract meta safely ---
     final snapRaw = meta?["customer_snapshot"];
@@ -362,6 +387,8 @@ class ReceiptPreviewService {
         showQr: showQr,
         qrUrl: qrUrl,
         qrCaption: qrCaption,
+        devCreditEnabled: devCreditEnabled,
+        devCreditText: devCreditText,
       );
     }
 
@@ -386,6 +413,8 @@ class ReceiptPreviewService {
         showQr: showQr,
         qrUrl: qrUrl,
         qrCaption: qrCaption,
+        devCreditEnabled: devCreditEnabled,
+        devCreditText: devCreditText,
       );
     }
 
@@ -412,6 +441,8 @@ class ReceiptPreviewService {
         showQr: showQr,
         qrUrl: qrUrl,
         qrCaption: qrCaption,
+        devCreditEnabled: devCreditEnabled,
+        devCreditText: devCreditText,
       );
     }
 
@@ -528,6 +559,8 @@ class ReceiptPreviewService {
             footerLines,
             footerLineStyles,
             enabled: sections.footer,
+            devCreditEnabled: devCreditEnabled,
+            devCreditText: devCreditText,
           );
 
           return pw.Column(
@@ -827,6 +860,8 @@ class ReceiptPreviewService {
     required bool showQr,
     String? qrUrl,
     required String qrCaption,
+    bool devCreditEnabled = false,
+    String devCreditText = '',
   }) async {
     final fonts = await _loadArabicFonts();
     final doc = pw.Document(
@@ -986,7 +1021,12 @@ class ReceiptPreviewService {
         '${dateTime.day.toString().padLeft(2, '0')}/${dateTime.month.toString().padLeft(2, '0')}/${dateTime.year}';
     final timeText =
         '${dateTime.hour.toString().padLeft(2, '0')}:${dateTime.minute.toString().padLeft(2, '0')}';
-    final activeFooterLines = _footerRenderLines(footerLines, footerLineStyles);
+    final activeFooterLines = _footerRenderLines(
+      footerLines,
+      footerLineStyles,
+      devCreditEnabled: devCreditEnabled,
+      devCreditText: devCreditText,
+    );
 
     doc.addPage(
       pw.Page(
@@ -1240,6 +1280,8 @@ class ReceiptPreviewService {
     required bool showQr,
     String? qrUrl,
     required String qrCaption,
+    bool devCreditEnabled = false,
+    String devCreditText = '',
   }) async {
     final fonts = await _loadArabicFonts();
     final doc = pw.Document(
@@ -1432,7 +1474,12 @@ class ReceiptPreviewService {
     final headingAr =
         _configuredLanguagePart(configuredHeading, arabic: true) ??
         _arabicInvoiceHeading(headingEn);
-    final activeFooterLines = _footerRenderLines(footerLines, footerLineStyles);
+    final activeFooterLines = _footerRenderLines(
+      footerLines,
+      footerLineStyles,
+      devCreditEnabled: devCreditEnabled,
+      devCreditText: devCreditText,
+    );
 
     doc.addPage(
       pw.MultiPage(
@@ -1791,6 +1838,8 @@ class ReceiptPreviewService {
     required bool showQr,
     String? qrUrl,
     required String qrCaption,
+    bool devCreditEnabled = false,
+    String devCreditText = '',
   }) async {
     final unicodeFonts = await loadSystemArabicPdfFonts();
     final doc = unicodeFonts == null
@@ -1944,7 +1993,12 @@ class ReceiptPreviewService {
     }
 
     final heading = invoiceHeading.trim().isEmpty ? 'SALES INVOICE' : invoiceHeading.trim();
-    final activeFooterLines = _footerRenderLines(footerLines, footerLineStyles);
+    final activeFooterLines = _footerRenderLines(
+      footerLines,
+      footerLineStyles,
+      devCreditEnabled: devCreditEnabled,
+      devCreditText: devCreditText,
+    );
 
     doc.addPage(
       pw.MultiPage(

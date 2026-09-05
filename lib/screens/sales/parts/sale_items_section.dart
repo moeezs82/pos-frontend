@@ -26,7 +26,31 @@ class SaleItemsSection extends StatelessWidget {
   double _num(dynamic v) => double.tryParse(v?.toString() ?? '') ?? 0.0;
   String _money(num v) => AppCurrency.format(v);
 
+  bool _isPackaged(Map i) => i['packaging_id'] != null;
+
+  String _qtyText(double value) =>
+      value.toStringAsFixed(value == value.roundToDouble() ? 0 : 3);
+
   double _lineTotal(Map i) {
+    // The backend-stored total is authoritative, especially for packaged
+    // lines where package price / factor may be a repeating decimal.
+    if (i['total'] != null) return _num(i['total']);
+
+    if (_isPackaged(i)) {
+      final packagePrice = _num(i['packaging_unit_price']);
+      final packageQty = _num(i['packaging_quantity']);
+      final discountVal = (i['discount_type'] ?? 'percentage').toString() == 'fixed'
+          ? _num(i['packaging_discount_snapshot'])
+          : _num(i['discount_pct'] ?? i['discount'] ?? 0);
+      final discountType = (i['discount_type'] ?? 'percentage').toString();
+      final gross = packagePrice * packageQty;
+      if (discountType == 'fixed') {
+        return max(0.0, gross - (packageQty * discountVal));
+      }
+      final d = (discountVal / 100.0).clamp(0.0, 1.0);
+      return max(0.0, gross * (1 - d));
+    }
+
     final price        = _num(i['price']);
     final qty          = _num(i['quantity']);
     final discountVal  = _num(i['discount_pct'] ?? i['discount'] ?? 0);
@@ -38,6 +62,7 @@ class SaleItemsSection extends StatelessWidget {
     final d = (discountVal / 100.0).clamp(0.0, 1.0);
     return max(0.0, qty * price * (1 - d));
   }
+
 
   @override
   Widget build(BuildContext context) {
@@ -104,11 +129,32 @@ class SaleItemsSection extends StatelessWidget {
             else
               ...items.map((i) {
                 final productName  = i['product']?['name'] ?? i['name'] ?? 'Product Deleted';
-                final tp           = _num(i['price']);
-                final discountVal  = _num(i['discount_pct'] ?? i['discount'] ?? 0);
-                final discountType = (i['discount_type'] ?? 'percentage').toString();
-                final qty          = _num(i['quantity']);
+                final packaged = _isPackaged(i);
+                final tp = packaged
+                    ? _num(i['packaging_unit_price'])
+                    : _num(i['price']);
+                final discountType =
+                    (i['discount_type'] ?? 'percentage').toString();
+                final discountVal = packaged && discountType == 'fixed'
+                    ? _num(i['packaging_discount_snapshot'])
+                    : _num(i['discount_pct'] ?? i['discount'] ?? 0);
+                final qty = packaged
+                    ? _num(i['packaging_quantity'])
+                    : _num(i['quantity']);
                 final total = _lineTotal(i);
+                final packageName = (i['packaging_short_name_snapshot'] ??
+                        i['packaging_name_snapshot'] ??
+                        '')
+                    .toString()
+                    .trim();
+                final baseQty = _num(i['quantity']);
+                final product = i['product'];
+                final unitRaw = i['unit_name'] ??
+                    i['unit_symbol'] ??
+                    (product is Map ? product['unit'] : null);
+                final baseUnit = unitRaw is Map
+                    ? (unitRaw['symbol'] ?? unitRaw['name'] ?? '').toString()
+                    : (unitRaw ?? '').toString();
 
                 return InkWell(
                   onTap: editable && onEditItem != null
@@ -125,11 +171,28 @@ class SaleItemsSection extends StatelessWidget {
                               flex: 6,
                               child: Padding(
                                 padding: const EdgeInsets.only(right: 8),
-                                child: Text(
-                                  productName.toString(),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(fontWeight: FontWeight.w600),
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      productName.toString(),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(fontWeight: FontWeight.w600),
+                                    ),
+                                    if (packaged)
+                                      Text(
+                                        '$packageName • ${_qtyText(baseQty)}${baseUnit.isEmpty ? ' base units' : ' $baseUnit'} stock/COGS',
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          fontSize: 10,
+                                          color: t.hintColor,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                  ],
                                 ),
                               ),
                             ),
@@ -169,7 +232,9 @@ class SaleItemsSection extends StatelessWidget {
                               child: Align(
                                 alignment: Alignment.centerRight,
                                 child: Text(
-                                  qty.toStringAsFixed(qty == qty.roundToDouble() ? 0 : 2),
+                                  packaged && packageName.isNotEmpty
+                                      ? '${_qtyText(qty)} $packageName'
+                                      : _qtyText(qty),
                                   style: const TextStyle(
                                     fontWeight: FontWeight.w600,
                                     fontFeatures: [FontFeature.tabularFigures()],

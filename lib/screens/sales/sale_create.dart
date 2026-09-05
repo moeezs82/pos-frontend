@@ -5,6 +5,7 @@ import 'dart:ui' show FontFeature;
 import 'package:enterprise_pos/api/core/api_client.dart' show ApiException;
 import 'package:enterprise_pos/api/product_service.dart';
 import 'package:enterprise_pos/models/product_unit.dart';
+import 'package:enterprise_pos/models/product_packaging.dart';
 import 'package:enterprise_pos/models/sale_receipt_item.dart';
 import 'package:enterprise_pos/models/item_discount_display.dart';
 import 'package:enterprise_pos/api/sale_service.dart';
@@ -563,7 +564,8 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         final discountType =
             (line['discount_type'] ?? 'percentage').toString();
         final unitCost = _editNum(line['unit_cost']);
-        items.add(<String, dynamic>{
+        final packagingId = int.tryParse(line['packaging_id']?.toString() ?? '');
+        final row = <String, dynamic>{
           ...product,
           'sale_item_id': int.tryParse(line['id']?.toString() ?? ''),
           'product_id': productId,
@@ -573,17 +575,33 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
           'price': price,
           'discount_pct': discount,
           'discount_type': discountType,
-          'total': _lineTotal(
-            price: price,
-            qty: qty,
-            discPct: discount,
-            discountType: discountType,
-          ),
+          if (packagingId != null) ...{
+            'packaging_id': packagingId,
+            'packaging_name_snapshot': line['packaging_name_snapshot'],
+            'packaging_short_name_snapshot':
+                line['packaging_short_name_snapshot'],
+            'packaging_factor_snapshot': line['packaging_factor_snapshot'],
+            'packaging_quantity': line['packaging_quantity'],
+            'packaging_unit_price': line['packaging_unit_price'],
+            'packaging_discount_snapshot':
+                line['packaging_discount_snapshot'],
+          },
           SaleProfitCalculator.unitCostKey: unitCost,
           SaleProfitCalculator.estimatedKey: true,
           SaleProfitCalculator.sourceKey:
               'Posted cost snapshot; final amendment COGS is confirmed by the server',
-        });
+        };
+        // Packaged history uses the immutable transaction snapshot. Base-unit
+        // rows preserve the exact legacy preview calculation.
+        row['total'] = packagingId != null
+            ? _editNum(line['total'])
+            : _lineTotal(
+                price: price,
+                qty: qty,
+                discPct: discount,
+                discountType: discountType,
+              );
+        items.add(row);
       }
       if (items.isEmpty) {
         throw const FormatException(
@@ -725,6 +743,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     var quantityChanged = 0;
     var priceChanged = 0;
     var discountChanged = 0;
+    var packagingChanged = 0;
     for (final item in _items) {
       final id = int.tryParse(item['sale_item_id']?.toString() ?? '');
       if (id == null) {
@@ -751,6 +770,25 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
               (item['discount_type'] ?? 'percentage').toString()) {
         discountChanged++;
       }
+      final oldPackageId = _metaInt(old['packaging_id']);
+      final newPackageId = _metaInt(item['packaging_id']);
+      if (oldPackageId != newPackageId ||
+          (_editNum(old['packaging_factor_snapshot']) -
+                      _editNum(item['packaging_factor_snapshot']))
+                  .abs() >
+              .0004 ||
+          (_editNum(old['packaging_quantity']) -
+                      _editNum(item['packaging_quantity']))
+                  .abs() >
+              .0004 ||
+          (_editNum(old['packaging_unit_price']) -
+                      _editNum(item['packaging_unit_price']))
+                  .abs() >
+              .0004 ||
+          (old['packaging_name_snapshot'] ?? '').toString() !=
+              (item['packaging_name_snapshot'] ?? '').toString()) {
+        packagingChanged++;
+      }
     }
     final removed = beforeById.keys.where((id) => !afterIds.contains(id)).length;
     return _AmendmentDiff(
@@ -759,6 +797,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       quantityChanged: quantityChanged,
       priceChanged: priceChanged,
       discountChanged: discountChanged,
+      packagingChanged: packagingChanged,
       sourceChanged: sourceChanged,
     );
   }
@@ -793,12 +832,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
 
     double subtotal = 0;
     for (final item in _items) {
-      subtotal += _lineTotal(
-        price: _editNum(item['price']),
-        qty: _editNum(item['quantity']),
-        discPct: _editNum(item['discount_pct']),
-        discountType: (item['discount_type'] ?? 'percentage').toString(),
-      );
+      subtotal += _cartLineTotal(item);
     }
     final discount = _toDouble(discountController);
     final tax = _toDouble(taxController);
@@ -872,9 +906,27 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
           'product_id': int.tryParse(item['product_id']?.toString() ?? '') ?? 0,
           'quantity': _editNum(item['quantity']),
           'price': _editNum(item['price']),
-          'discount_pct': _editNum(item['discount_pct']),
+          'discount_pct': item['packaging_id'] != null &&
+                  (item['discount_type'] ?? 'percentage').toString() == 'fixed'
+              ? (_metaNullableNum(item['packaging_discount_snapshot']) ??
+                  _editNum(item['discount_pct']))
+              : _editNum(item['discount_pct']),
           'discount_type':
               (item['discount_type'] ?? 'percentage').toString(),
+          if (item['packaging_id'] != null) ...{
+            'packaging_id': _metaInt(item['packaging_id']),
+            'packaging_name_snapshot': item['packaging_name_snapshot'],
+            'packaging_short_name_snapshot':
+                item['packaging_short_name_snapshot'],
+            'packaging_factor_snapshot':
+                _editNum(item['packaging_factor_snapshot']),
+            'packaging_quantity': _editNum(item['packaging_quantity']),
+            'packaging_unit_price': _editNum(item['packaging_unit_price']),
+            if ((item['discount_type'] ?? 'percentage').toString() == 'fixed')
+              'packaging_discount_snapshot':
+                  _metaNullableNum(item['packaging_discount_snapshot']) ??
+                      _editNum(item['discount_pct']),
+          },
         };
       }).toList(growable: false),
       'discount': discount,
@@ -1218,7 +1270,10 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       final existingId =
           int.tryParse(it['product_id']?.toString() ?? '') ?? 0;
       if (existingId != productId) return false;
-      // Do not merge into inline-return (negative-qty) rows.
+      // Do not merge into inline-return rows or a packaged line. A base
+      // Piece and a Box/Carton of the same product are separate transaction
+      // identities even though both ultimately post base-unit stock.
+      if (it['packaging_id'] != null) return false;
       final existingQty =
           double.tryParse(it['quantity']?.toString() ?? '') ?? 0.0;
       return existingQty >= 0;
@@ -1266,6 +1321,9 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         'discount_pct': scanDiscPct,
         'discount_type': scanDiscType,
         'total': _lineTotal(price: price, qty: addQty, discPct: scanDiscPct, discountType: scanDiscType),
+        // Keep packaging choices locally so this line can switch selling
+        // unit without another network request (also required offline).
+        'packagings': product['packagings'],
         // Stamp the quantity contract onto the line — the product map this
         // came from (search hit, scan lookup, cache row) is not kept.
         ...QuantityRule.fromProduct(product).toRowFields(),
@@ -1292,9 +1350,13 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     final profitCostFields =
         SaleProfitCalculator.costFieldsFromProduct(product);
 
-    final idx = _items.indexWhere(
-      (it) => (int.tryParse(it["product_id"].toString()) ?? 0) == productId,
-    );
+    final idx = _items.indexWhere((it) {
+      if ((int.tryParse(it["product_id"].toString()) ?? 0) != productId) {
+        return false;
+      }
+      if (it['packaging_id'] != null) return false;
+      return (double.tryParse(it['quantity']?.toString() ?? '') ?? 0) >= 0;
+    });
 
     if (idx != -1) {
       _items[idx]["quantity"] = qty;
@@ -1336,6 +1398,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         "discount_pct": pickDiscPct,
         "discount_type": pickDiscType,
         "total": _lineTotal(price: price, qty: qty, discPct: pickDiscPct, discountType: pickDiscType),
+        'packagings': product['packagings'],
         ...QuantityRule.fromProduct(product).toRowFields(),
       });
     }
@@ -1350,14 +1413,18 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     }
     final token = Provider.of<AuthProvider>(context, listen: false).token!;
     // ✅ Already selected products in cart/items (for preselect)
-    final alreadySelectedIds = _items
+    final baseRows = _items
+        .where((it) => it['packaging_id'] == null && _metaNum(it['quantity']) >= 0)
+        .toList(growable: false);
+    final alreadySelectedIds = baseRows
         .map((e) => int.tryParse(e["product_id"].toString()) ?? 0)
         .where((id) => id > 0)
         .toList();
 
-    // ✅ Already selected qty map (id -> qty)
+    // F2 edits the base-unit row only. A Box/Carton row for the same product
+    // must never pre-fill or overwrite this picker quantity.
     final alreadySelectedQty = <int, double>{
-      for (final it in _items)
+      for (final it in baseRows)
         (int.tryParse(it["product_id"].toString()) ?? 0):
             (double.tryParse(it["quantity"].toString()) ?? 1.0),
     }..removeWhere((k, _) => k == 0);
@@ -1369,7 +1436,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       customerType: _selectedCustomerType,
       alreadySelectedIds: alreadySelectedIds,
       alreadySelectedQty: alreadySelectedQty,
-      alreadySelectedProducts: _items.map((item) {
+      alreadySelectedProducts: baseRows.map((item) {
         return {
           'id': item['product_id'],
           'name': item['name'],
@@ -1399,107 +1466,661 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     });
   }
 
+  double _roundTo(double value, int scale) {
+    var factor = 1.0;
+    for (var i = 0; i < scale; i++) {
+      factor *= 10;
+    }
+    return (value * factor).roundToDouble() / factor;
+  }
+
+  String _compactNumber(num value, {int scale = 4}) {
+    if (QuantityRule.isWhole(value)) return value.toInt().toString();
+    var text = value.toDouble().toStringAsFixed(scale);
+    text = text.replaceFirst(RegExp(r'0+$'), '');
+    return text.endsWith('.') ? text.substring(0, text.length - 1) : text;
+  }
+
+  List<ProductPackaging> _activePackagings(Map<String, dynamic> item) {
+    final values = ProductPackaging.listFromJson(item['packagings'])
+        .where((p) => p.id != null && p.isActive && p.baseQuantity > 0)
+        .toList(growable: false);
+    values.sort((a, b) {
+      final order = a.sortOrder.compareTo(b.sortOrder);
+      if (order != 0) return order;
+      return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+    });
+    return values;
+  }
+
+  ProductPackaging? _snapshotPackaging(Map<String, dynamic> item) {
+    final id = _metaInt(item['packaging_id']);
+    final factor = _metaNum(item['packaging_factor_snapshot']);
+    final name = (item['packaging_name_snapshot'] ?? '').toString().trim();
+    if (id == null || factor <= 0 || name.isEmpty) return null;
+    return ProductPackaging(
+      id: id,
+      name: name,
+      shortName: (item['packaging_short_name_snapshot'] ?? '')
+              .toString()
+              .trim()
+              .isEmpty
+          ? null
+          : item['packaging_short_name_snapshot'].toString().trim(),
+      baseQuantity: factor,
+      retailPrice: _metaNullableNum(item['packaging_unit_price']),
+      isActive: true,
+    );
+  }
+
+  double? _metaNullableNum(dynamic value) {
+    if (value == null) return null;
+    if (value is num) return value.toDouble();
+    return double.tryParse(value.toString());
+  }
+
+  String _packagingDisplayLabel(
+    ProductPackaging packaging,
+    QuantityRule rule,
+  ) {
+    final unit = rule.unitName.trim().isEmpty ? 'base unit' : rule.unitName.trim();
+    final short = (packaging.shortName ?? '').trim();
+    final title = short.isEmpty || short.toLowerCase() == packaging.name.toLowerCase()
+        ? packaging.name
+        : '${packaging.name} ($short)';
+    return '$title = ${_compactNumber(packaging.baseQuantity)} $unit';
+  }
+
+  void _changeSellingUnitQuick(int index, int? packagingId) {
+    if (index < 0 || index >= _items.length) return;
+    final current = Map<String, dynamic>.from(_items[index]);
+    final currentPackagingId = _metaInt(current['packaging_id']);
+    if ((packagingId == null && currentPackagingId == null) ||
+        (packagingId != null && currentPackagingId == packagingId)) {
+      return;
+    }
+
+    // Existing posted package snapshots are intentionally edited through the
+    // advanced amendment flow so historical conversion rules remain visible.
+    if (_isEditing && current['sale_item_id'] != null) {
+      _editItem(index);
+      return;
+    }
+
+    final rule = QuantityRule.fromProduct(current);
+    final wasPackaged = current['packaging_id'] != null;
+    final displayedQty = wasPackaged
+        ? (_metaNullableNum(current['packaging_quantity']) ?? 0)
+        : _metaNum(current['quantity']);
+    final discountType =
+        (current['discount_type'] ?? 'percentage').toString();
+    final displayedDiscount = discountType == 'fixed' && wasPackaged
+        ? (_metaNullableNum(current['packaging_discount_snapshot']) ??
+            _metaNum(current['discount_pct']) *
+                _metaNum(current['packaging_factor_snapshot']))
+        : _metaNum(current['discount_pct']);
+
+    if (packagingId == null) {
+      if (!rule.allows(displayedQty)) {
+        AppFeedback.warning(context, rule.message);
+        return;
+      }
+      final next = Map<String, dynamic>.from(current);
+      next['quantity'] = _roundTo(displayedQty, 3);
+      next['price'] = SalePricing.effectiveProductPrice(
+        current,
+        customerType: _selectedCustomerType,
+      );
+      next['discount_pct'] = displayedDiscount;
+      next.remove('packaging_id');
+      next.remove('packaging_name_snapshot');
+      next.remove('packaging_short_name_snapshot');
+      next.remove('packaging_factor_snapshot');
+      next.remove('packaging_quantity');
+      next.remove('packaging_unit_price');
+      next.remove('packaging_discount_snapshot');
+      next['total'] = _cartLineTotal(next);
+      setState(() => _items[index] = next);
+      return;
+    }
+
+    ProductPackaging? selected;
+    for (final packaging in _activePackagings(current)) {
+      if (packaging.id == packagingId) {
+        selected = packaging;
+        break;
+      }
+    }
+    if (selected == null) {
+      AppFeedback.warning(
+        context,
+        'That packaging is no longer available. Refresh the product and try again.',
+      );
+      return;
+    }
+    if (displayedQty <= 0 || !QuantityRule.isWhole(displayedQty)) {
+      final unitLabel = rule.unitName.trim().isEmpty
+          ? 'the base unit'
+          : rule.unitName.trim();
+      AppFeedback.warning(
+        context,
+        'Package quantity must be a positive whole number. Use $unitLabel for loose quantity.',
+      );
+      return;
+    }
+
+    final factor = selected.baseQuantity;
+    final baseQty = _roundTo(displayedQty * factor, 3);
+    if (!rule.allows(baseQty)) {
+      AppFeedback.warning(context, rule.message);
+      return;
+    }
+    final packagePrice = SalePricing.effectivePackagingPrice(
+      current,
+      selected,
+      customerType: _selectedCustomerType,
+    );
+    var nextDiscount = displayedDiscount;
+    if ((discountType == 'percentage' && nextDiscount > 100) ||
+        (discountType == 'fixed' && nextDiscount > packagePrice + 0.0004)) {
+      nextDiscount = 0;
+      AppFeedback.info(
+        context,
+        'The previous discount was not valid for the selected selling unit, so it was reset to 0.',
+      );
+    }
+
+    final next = Map<String, dynamic>.from(current);
+    next['quantity'] = baseQty;
+    next['price'] = _roundTo(packagePrice / factor, 4);
+    next['discount_type'] = discountType;
+    if (discountType == 'fixed') {
+      next['discount_pct'] = _roundTo(nextDiscount / factor, 4);
+      next['packaging_discount_snapshot'] = _roundTo(nextDiscount, 4);
+    } else {
+      next['discount_pct'] = nextDiscount;
+      next.remove('packaging_discount_snapshot');
+    }
+    next['packaging_id'] = selected.id;
+    next['packaging_name_snapshot'] = selected.name;
+    final short = (selected.shortName ?? '').trim();
+    if (short.isEmpty) {
+      next.remove('packaging_short_name_snapshot');
+    } else {
+      next['packaging_short_name_snapshot'] = short;
+    }
+    next['packaging_factor_snapshot'] = factor;
+    next['packaging_quantity'] = displayedQty;
+    next['packaging_unit_price'] = packagePrice;
+    next['total'] = _cartLineTotal(next);
+    setState(() => _items[index] = next);
+  }
+
   void _editItem(int index) {
     final item = _items[index];
+    final rule = QuantityRule.fromProduct(item);
+    final existingSnapshot = _snapshotPackaging(item);
+    final existingPackageId = _metaInt(item['packaging_id']);
+    final isExistingPostedPackage =
+        _isEditing && item['sale_item_id'] != null && existingPackageId != null;
+
+    final active = _activePackagings(item);
+    final options = <String, ProductPackaging?>{'base': null};
+    if (existingSnapshot != null) {
+      options['snapshot'] = existingSnapshot;
+    }
+    for (final package in active) {
+      // A posted historical package keeps its original conversion. If today's
+      // row with the same ID changed, the amendment backend intentionally does
+      // not let that old line morph into the new conversion; it must be added
+      // as a separate line instead.
+      if (existingPackageId != null && package.id == existingPackageId) {
+        continue;
+      }
+      options['package:${package.id}'] = package;
+    }
+
+    var selectedKey = existingSnapshot != null ? 'snapshot' : 'base';
+    final initialQty = existingSnapshot == null
+        ? _metaNum(item['quantity'])
+        : (_metaNullableNum(item['packaging_quantity']) ??
+            (_metaNum(item['quantity']) / existingSnapshot.baseQuantity));
+    final initialPrice = existingSnapshot == null
+        ? _metaNum(item['price'])
+        : (_metaNullableNum(item['packaging_unit_price']) ??
+            (_metaNum(item['price']) * existingSnapshot.baseQuantity));
     final qtyController = TextEditingController(
-      text: item['quantity'].toString(),
+      text: _compactNumber(initialQty),
     );
     final priceController = TextEditingController(
-      text: item['price'].toString(),
+      text: _compactNumber(initialPrice),
+    );
+    var discountType = (item['discount_type'] ?? 'percentage').toString();
+    final initialDiscount = discountType == 'fixed' && existingSnapshot != null
+        ? (_metaNullableNum(item['packaging_discount_snapshot']) ??
+            _metaNum(item['discount_pct']) * existingSnapshot.baseQuantity)
+        : _metaNum(item['discount_pct']);
+    final discountController = TextEditingController(
+      text: _compactNumber(initialDiscount),
     );
 
     final costPrice = item['cost_price'] ?? 0.0;
     final wholesalePrice = item['wholesale_price'] ?? 0.0;
-    final rule = QuantityRule.fromProduct(item);
-
     bool showHidden = false;
     String? qtyError;
+    String? priceError;
+    String? discountError;
 
     showDialog(
       context: context,
       builder: (_) => StatefulBuilder(
         builder: (context, setLocal) {
+          final selectedPackaging = options[selectedKey];
+          final packageMode = selectedPackaging != null;
+          final unitLabel = rule.unitName.trim().isEmpty
+              ? 'Base Unit'
+              : rule.unitName.trim();
+
+          void selectSellingUnit(String? nextKey) {
+            if (nextKey == null || nextKey == selectedKey) return;
+            final currentPackaging = options[selectedKey];
+            final enteredQty = double.tryParse(qtyController.text.trim()) ?? 0;
+            final currentBaseQty = currentPackaging == null
+                ? enteredQty
+                : enteredQty * currentPackaging.baseQuantity;
+            final next = options[nextKey];
+
+            selectedKey = nextKey;
+            qtyError = null;
+            priceError = null;
+            discountError = null;
+
+            // New-sale UX treats Qty as the cashier's entered count: changing
+            // 2 Piece -> Box means 2 Box. Posted amendment lines preserve the
+            // base-equivalent quantity so historical edits cannot silently
+            // reinterpret already-posted inventory.
+            if (isExistingPostedPackage) {
+              qtyController.text = _compactNumber(
+                next == null
+                    ? _roundTo(currentBaseQty, 3)
+                    : _roundTo(currentBaseQty / next.baseQuantity, 4),
+              );
+              if (discountType == 'fixed') {
+                final enteredDiscount =
+                    double.tryParse(discountController.text.trim()) ?? 0;
+                final baseDiscount = currentPackaging == null
+                    ? enteredDiscount
+                    : enteredDiscount / currentPackaging.baseQuantity;
+                discountController.text = _compactNumber(
+                  next == null
+                      ? baseDiscount
+                      : baseDiscount * next.baseQuantity,
+                );
+              }
+            } else {
+              qtyController.text = _compactNumber(enteredQty);
+            }
+
+            if (next == null) {
+              priceController.text = _compactNumber(
+                SalePricing.effectiveProductPrice(
+                  item,
+                  customerType: _selectedCustomerType,
+                ),
+              );
+            } else {
+              priceController.text = _compactNumber(
+                SalePricing.effectivePackagingPrice(
+                  item,
+                  next,
+                  customerType: _selectedCustomerType,
+                ),
+              );
+            }
+          }
+
           return AlertDialog(
             title: Text("Edit ${item['name']}"),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  controller: qtyController,
-                  keyboardType: TextInputType.numberWithOptions(
-                    decimal: rule.allowDecimal,
-                    signed: true,
-                  ),
-                  onChanged: (v) =>
-                      setLocal(() => qtyError = rule.validateText(v)),
-                  decoration: InputDecoration(
-                    labelText: "Quantity",
-                    helperText: rule.allowDecimal
-                        ? null
-                        : 'Whole numbers only${rule.unitName.isEmpty ? '' : ' (${rule.unitName})'}',
-                    errorText: qtyError,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: priceController,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(labelText: "Sale Price"),
-                ),
-                const SizedBox(height: 12),
-                TextButton.icon(
-                  icon: Icon(
-                    showHidden ? Icons.visibility_off : Icons.visibility,
-                  ),
-                  label: Text(
-                    showHidden ? "Hide Cost/Wholesale" : "Show Cost/Wholesale",
-                  ),
-                  onPressed: () => setLocal(() => showHidden = !showHidden),
-                ),
-                if (showHidden) ...[
-                  const Divider(),
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          "Cost Price: ${AppCurrency.format(costPrice)}",
-                          style: const TextStyle(color: Colors.grey),
-                        ),
-                        Text(
-                          "Wholesale Price: ${AppCurrency.format(wholesalePrice)}",
-                          style: const TextStyle(color: Colors.grey),
-                        ),
-                      ],
+            content: ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 560),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    DropdownButtonFormField<String>(
+                      value: selectedKey,
+                      isExpanded: true,
+                      decoration: const InputDecoration(
+                        labelText: 'Selling Unit',
+                      ),
+                      items: options.entries.map((entry) {
+                        final package = entry.value;
+                        final historical = entry.key == 'snapshot' &&
+                            isExistingPostedPackage;
+                        final label = package == null
+                            ? unitLabel
+                            : '${_packagingDisplayLabel(package, rule)}${historical ? ' • invoice snapshot' : ''}';
+                        return DropdownMenuItem<String>(
+                          value: entry.key,
+                          child: Text(label, overflow: TextOverflow.ellipsis),
+                        );
+                      }).toList(growable: false),
+                      onChanged: (value) => setLocal(() => selectSellingUnit(value)),
                     ),
-                  ),
-                ],
-              ],
+                    if (isExistingPostedPackage) ...[
+                      const SizedBox(height: 8),
+                      const Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          'This posted line keeps its original package conversion. If the current package changed, add it as a new line instead.',
+                          style: TextStyle(fontSize: 12, color: Colors.grey),
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: qtyController,
+                      keyboardType: TextInputType.numberWithOptions(
+                        decimal: !packageMode && rule.allowDecimal,
+                        signed: !packageMode,
+                      ),
+                      onChanged: (v) {
+                        setLocal(() {
+                          final parsed = double.tryParse(v.trim());
+                          if (v.trim().isEmpty) {
+                            qtyError = null;
+                          } else if (parsed == null) {
+                            qtyError = 'Enter a valid quantity.';
+                          } else if (packageMode) {
+                            qtyError = parsed <= 0
+                                ? 'Package quantity must be greater than zero.'
+                                : (!QuantityRule.isWhole(parsed)
+                                    ? 'Package quantity must be a whole number. Use $unitLabel for loose quantity.'
+                                    : (rule.allows(parsed * selectedPackaging!.baseQuantity)
+                                        ? null
+                                        : rule.message));
+                          } else {
+                            qtyError = rule.validateText(v);
+                          }
+                        });
+                      },
+                      decoration: InputDecoration(
+                        labelText: packageMode
+                            ? '${selectedPackaging!.shortName ?? selectedPackaging.name} Quantity'
+                            : 'Quantity',
+                        helperText: packageMode
+                            ? 'Whole packages only • ${_packagingDisplayLabel(selectedPackaging!, rule)}'
+                            : (rule.allowDecimal
+                                ? null
+                                : 'Whole numbers only${rule.unitName.isEmpty ? '' : ' (${rule.unitName})'}'),
+                        errorText: qtyError,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: priceController,
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      onChanged: (v) => setLocal(() {
+                        final parsed = double.tryParse(v.trim());
+                        priceError = v.trim().isEmpty || parsed == null
+                            ? 'Enter a valid sale price.'
+                            : (parsed < 0 ? 'Sale price cannot be negative.' : null);
+                      }),
+                      decoration: InputDecoration(
+                        labelText: packageMode
+                            ? 'Price per ${selectedPackaging!.shortName ?? selectedPackaging.name}'
+                            : 'Sale Price per $unitLabel',
+                        errorText: priceError,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    LayoutBuilder(
+                      builder: (context, constraints) {
+                        Widget buildDiscountField() => TextField(
+                              controller: discountController,
+                              keyboardType: const TextInputType.numberWithOptions(
+                                decimal: true,
+                              ),
+                              onChanged: (v) => setLocal(() {
+                                final parsed = double.tryParse(v.trim());
+                                final currentPrice =
+                                    double.tryParse(priceController.text.trim()) ?? 0;
+                                if (v.trim().isEmpty || parsed == null) {
+                                  discountError = 'Enter a valid discount.';
+                                } else if (parsed < 0) {
+                                  discountError = 'Discount cannot be negative.';
+                                } else if (discountType == 'percentage' &&
+                                    parsed > 100) {
+                                  discountError =
+                                      'Percentage discount cannot exceed 100%.';
+                                } else if (discountType == 'fixed' &&
+                                    parsed > currentPrice + 0.0004) {
+                                  discountError =
+                                      'Fixed discount cannot exceed the sale price.';
+                                } else {
+                                  discountError = null;
+                                }
+                              }),
+                              decoration: InputDecoration(
+                                labelText: discountType == 'fixed'
+                                    ? (packageMode
+                                        ? 'Discount per ${selectedPackaging!.shortName ?? selectedPackaging.name}'
+                                        : 'Discount per $unitLabel')
+                                    : 'Discount %',
+                                errorText: discountError,
+                              ),
+                            );
+
+                        Widget buildDiscountTypeField() =>
+                            DropdownButtonFormField<String>(
+                              value: discountType,
+                              isExpanded: true,
+                              decoration: const InputDecoration(
+                                labelText: 'Discount Type',
+                              ),
+                              items: const [
+                                DropdownMenuItem(
+                                  value: 'percentage',
+                                  child: Text('Percentage'),
+                                ),
+                                DropdownMenuItem(
+                                  value: 'fixed',
+                                  child: Text('Fixed'),
+                                ),
+                              ],
+                              onChanged: (value) => setLocal(() {
+                                if (value == null) return;
+                                discountType = value;
+                                final parsed = double.tryParse(
+                                      discountController.text.trim(),
+                                    ) ??
+                                    0;
+                                final currentPrice =
+                                    double.tryParse(priceController.text.trim()) ?? 0;
+                                if ((value == 'percentage' && parsed > 100) ||
+                                    (value == 'fixed' &&
+                                        parsed > currentPrice + 0.0004)) {
+                                  discountController.text = '0';
+                                }
+                                discountError = null;
+                              }),
+                            );
+
+                        if (constraints.maxWidth < 430) {
+                          return Column(
+                            children: [
+                              buildDiscountField(),
+                              const SizedBox(height: 12),
+                              buildDiscountTypeField(),
+                            ],
+                          );
+                        }
+                        return Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(flex: 3, child: buildDiscountField()),
+                            const SizedBox(width: 12),
+                            Expanded(flex: 2, child: buildDiscountTypeField()),
+                          ],
+                        );
+                      },
+                    ),
+                    if (packageMode) ...[
+                      const SizedBox(height: 8),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          'Stock / COGS equivalent: ${_compactNumber(_roundTo((double.tryParse(qtyController.text.trim()) ?? 0) * selectedPackaging!.baseQuantity, 3))} $unitLabel',
+                          style: const TextStyle(fontSize: 12, color: Colors.grey),
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 12),
+                    TextButton.icon(
+                      icon: Icon(
+                        showHidden ? Icons.visibility_off : Icons.visibility,
+                      ),
+                      label: Text(
+                        showHidden ? 'Hide Cost/Wholesale' : 'Show Cost/Wholesale',
+                      ),
+                      onPressed: () => setLocal(() => showHidden = !showHidden),
+                    ),
+                    if (showHidden) ...[
+                      const Divider(),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Base Cost: ${AppCurrency.format(costPrice)} / $unitLabel',
+                              style: const TextStyle(color: Colors.grey),
+                            ),
+                            Text(
+                              'Base Wholesale: ${AppCurrency.format(wholesalePrice)} / $unitLabel',
+                              style: const TextStyle(color: Colors.grey),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
             ),
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(context),
-                child: const Text("Cancel"),
+                child: const Text('Cancel'),
               ),
               ElevatedButton(
                 onPressed: () {
-                  final error = rule.validateText(qtyController.text);
-                  if (error != null) {
-                    // Block rather than round: a rounded quantity would post
-                    // stock and money the cashier never agreed to.
-                    setLocal(() => qtyError = error);
+                  final qty = double.tryParse(qtyController.text.trim());
+                  final price = double.tryParse(priceController.text.trim());
+                  final discount =
+                      double.tryParse(discountController.text.trim());
+                  final package = options[selectedKey];
+                  if (qty == null) {
+                    setLocal(() => qtyError = 'Enter a valid quantity.');
                     return;
                   }
+                  if (price == null || price < 0) {
+                    setLocal(() => priceError = price == null
+                        ? 'Enter a valid sale price.'
+                        : 'Sale price cannot be negative.');
+                    return;
+                  }
+                  if (discount == null || discount < 0 ||
+                      (discountType == 'percentage' && discount > 100) ||
+                      (discountType == 'fixed' && discount > price + .0004)) {
+                    setLocal(() {
+                      if (discount == null) {
+                        discountError = 'Enter a valid discount.';
+                      } else if (discount < 0) {
+                        discountError = 'Discount cannot be negative.';
+                      } else if (discountType == 'percentage') {
+                        discountError = 'Percentage discount cannot exceed 100%.';
+                      } else {
+                        discountError = 'Fixed discount cannot exceed the sale price.';
+                      }
+                    });
+                    return;
+                  }
+
+                  if (package == null) {
+                    final error = rule.validateText(qtyController.text);
+                    if (error != null) {
+                      setLocal(() => qtyError = error);
+                      return;
+                    }
+                    setState(() {
+                      final row = _items[index];
+                      row['quantity'] = qty;
+                      row['price'] = price;
+                      row['discount_type'] = discountType;
+                      row['discount_pct'] = discount;
+                      row.remove('packaging_id');
+                      row.remove('packaging_name_snapshot');
+                      row.remove('packaging_short_name_snapshot');
+                      row.remove('packaging_factor_snapshot');
+                      row.remove('packaging_quantity');
+                      row.remove('packaging_unit_price');
+                      row.remove('packaging_discount_snapshot');
+                      row['total'] = _cartLineTotal(row);
+                    });
+                    Navigator.pop(context);
+                    return;
+                  }
+
+                  if (qty <= 0 || !QuantityRule.isWhole(qty)) {
+                    setLocal(() => qtyError = qty <= 0
+                        ? 'Package quantity must be greater than zero.'
+                        : 'Package quantity must be a whole number. Use $unitLabel for loose quantity.');
+                    return;
+                  }
+                  final baseQty = _roundTo(qty * package.baseQuantity, 3);
+                  if (!rule.allows(baseQty)) {
+                    setLocal(() => qtyError = rule.message);
+                    return;
+                  }
+
                   setState(() {
-                    _items[index]['quantity'] =
-                        double.tryParse(qtyController.text.trim()) ?? 1.0;
-                    _items[index]['price'] =
-                        double.tryParse(priceController.text) ?? 0.0;
+                    final row = _items[index];
+                    row['discount_type'] = discountType;
+                    final packageFixedDiscount =
+                        discountType == 'fixed' ? discount : null;
+
+                    row['quantity'] = baseQty;
+                    // Keep the historical sale-item price contract in base-unit
+                    // terms. Exact packaged revenue comes from the immutable
+                    // package qty/price snapshot below.
+                    row['price'] = _roundTo(price / package.baseQuantity, 4);
+                    if (discountType == 'fixed') {
+                      row['discount_pct'] = _roundTo(
+                        (packageFixedDiscount ?? 0) / package.baseQuantity,
+                        4,
+                      );
+                      row['packaging_discount_snapshot'] =
+                          _roundTo(packageFixedDiscount ?? 0, 4);
+                    } else {
+                      row.remove('packaging_discount_snapshot');
+                    }
+                    row['packaging_id'] = package.id;
+                    row['packaging_name_snapshot'] = package.name;
+                    if ((package.shortName ?? '').trim().isEmpty) {
+                      row.remove('packaging_short_name_snapshot');
+                    } else {
+                      row['packaging_short_name_snapshot'] =
+                          package.shortName!.trim();
+                    }
+                    row['packaging_factor_snapshot'] = package.baseQuantity;
+                    row['packaging_quantity'] = qty;
+                    row['packaging_unit_price'] = price;
+                    row['total'] = _cartLineTotal(row);
                   });
                   Navigator.pop(context);
                 },
-                child: const Text("Save"),
+                child: const Text('Save'),
               ),
             ],
           );
@@ -1610,6 +2231,26 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     if (qty < 0 && item['original_sale_item_id'] != null) {
       return -_metaNum(item['return_credit']).abs();
     }
+
+    if (item['packaging_id'] != null) {
+      final packageQty = _metaNum(item['packaging_quantity']);
+      final packagePrice = _metaNum(item['packaging_unit_price']);
+      final gross = _roundTo(packageQty * packagePrice, 2);
+      final discountType =
+          (item['discount_type'] ?? 'percentage').toString().toLowerCase();
+      final discount = discountType == 'fixed'
+          ? _roundTo(
+              packageQty * _metaNum(item['packaging_discount_snapshot']),
+              2,
+            )
+          : _roundTo(
+              gross *
+                  (_metaNum(item['discount_pct']).clamp(0.0, 100.0) / 100.0),
+              2,
+            );
+      return _roundTo(gross - discount, 2);
+    }
+
     return _lineTotal(
       price: _metaNum(item['price']),
       qty: qty,
@@ -2156,6 +2797,23 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       if (qty == null) {
         return 'Line ${i + 1} ($name) has no valid quantity.';
       }
+      if (row['packaging_id'] != null) {
+        final packageQty =
+            double.tryParse(row['packaging_quantity']?.toString() ?? '');
+        final factor =
+            double.tryParse(row['packaging_factor_snapshot']?.toString() ?? '');
+        if (packageQty == null || packageQty <= 0 ||
+            !QuantityRule.isWhole(packageQty)) {
+          return 'Line ${i + 1} — $name: package quantity must be a positive whole number.';
+        }
+        if (factor == null || factor <= 0) {
+          return 'Line ${i + 1} — $name: package conversion is invalid. Re-select the selling unit.';
+        }
+        final expectedBaseQty = _roundTo(packageQty * factor, 3);
+        if ((expectedBaseQty - qty).abs() > 0.0005) {
+          return 'Line ${i + 1} — $name: package quantity no longer matches its base-unit quantity. Re-select the selling unit.';
+        }
+      }
       final rule = QuantityRule.fromProduct(row);
       if (!rule.allows(qty)) {
         return 'Line ${i + 1} — $name: ${rule.message}';
@@ -2279,10 +2937,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     final subtotal = _items.fold<double>(0.0, (sum, i) {
       final qty = _rowNum(i['quantity']);
       if (qty <= 0) return sum;
-      final price = _rowNum(i['price']);
-      final disc = _rowNum(i['discount_pct']);
-      final discType = (i['discount_type'] ?? 'percentage').toString();
-      return sum + _lineTotal(price: price, qty: qty, discPct: disc, discountType: discType);
+      return sum + _cartLineTotal(i);
     });
     double discount = double.tryParse(discountController.text.trim()) ?? 0.0;
     double tax = double.tryParse(taxController.text.trim()) ?? 0.0;
@@ -2602,17 +3257,31 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       final receiptSubtotal = subtotal - returnCredit;
       final receiptItems = _items.map((i) {
         final name = (i['name'] ?? '').toString();
-        final price = double.tryParse(i['price']?.toString() ?? '') ?? 0.0;
-        final qty = double.tryParse(i['quantity']?.toString() ?? '') ?? 0.0;
+        final packaged = i['packaging_id'] != null;
+        final basePrice = double.tryParse(i['price']?.toString() ?? '') ?? 0.0;
+        final baseQty = double.tryParse(i['quantity']?.toString() ?? '') ?? 0.0;
+        final price = packaged
+            ? _metaNum(i['packaging_unit_price'])
+            : basePrice;
+        final qty = packaged
+            ? _metaNum(i['packaging_quantity'])
+            : baseQty;
         final lineTotal =
-            double.tryParse(i['total']?.toString() ?? '') ?? (price * qty);
+            double.tryParse(i['total']?.toString() ?? '') ?? _cartLineTotal(i);
         final gross = (price * qty).abs();
         final net = lineTotal.abs();
         final lineDiscount = gross > net ? gross - net : 0.0;
         final unitRaw = i['unit_name'] ?? i['unit_symbol'] ?? i['unit'];
-        final unitName = unitRaw is Map
+        final baseUnitName = unitRaw is Map
             ? (unitRaw['symbol'] ?? unitRaw['name'] ?? '').toString()
             : (unitRaw ?? '').toString();
+        final packageLabel = (i['packaging_short_name_snapshot'] ??
+                i['packaging_name_snapshot'] ??
+                '')
+            .toString()
+            .trim();
+        final discountType =
+            (i['discount_type'] ?? 'percentage').toString();
         return SaleReceiptItem(
           name: name,
           secondaryName: (i['secondary_name'] ?? '').toString().trim().isEmpty
@@ -2621,11 +3290,14 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
           price: price,
           qty: qty,
           total: lineTotal,
-          unitName: unitName,
+          unitName: packaged && packageLabel.isNotEmpty
+              ? packageLabel
+              : baseUnitName,
           discountAmount: lineDiscount,
-          discountType: (i['discount_type'] ?? 'percentage').toString(),
-          discountValue:
-              double.tryParse(i['discount_pct']?.toString() ?? '') ?? 0.0,
+          discountType: discountType,
+          discountValue: discountType == 'fixed' && packaged
+              ? _metaNum(i['packaging_discount_snapshot'])
+              : _metaNum(i['discount_pct']),
         );
       }).toList();
       final printerConfig = context.read<PrinterConfigProvider>();
@@ -2684,6 +3356,8 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
           qrUrl: printerConfig.qrCodeUrl,
           qrCaption: printerConfig.qrCodeCaption,
           template: whatsappTemplate,
+          devCreditEnabled: printerConfig.devCreditEnabled,
+          devCreditText: printerConfig.devCreditText,
         );
       }
 
@@ -2751,6 +3425,8 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
             qrUrl: printerConfig.qrCodeUrl,
             qrCaption: printerConfig.qrCodeCaption,
             template: mainTemplate,
+            devCreditEnabled: printerConfig.devCreditEnabled,
+            devCreditText: printerConfig.devCreditText,
           );
           printedToHardware = true;
 
@@ -2777,6 +3453,8 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
               footerLineStyles: footerLineStyles,
               receiptHeader: secondaryHeader,
               template: secondaryTemplate,
+              devCreditEnabled: printerConfig.devCreditEnabled,
+              devCreditText: printerConfig.devCreditText,
             );
           }
         } catch (e, s) {
@@ -2817,6 +3495,8 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
             qrUrl: printerConfig.qrCodeUrl,
             qrCaption: printerConfig.qrCodeCaption,
             template: mainTemplate,
+            devCreditEnabled: printerConfig.devCreditEnabled,
+            devCreditText: printerConfig.devCreditText,
           );
           printedToHardware = true;
 
@@ -2844,6 +3524,8 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
               receiptHeader: secondaryHeader,
               template: secondaryTemplate,
               jobName: 'Secondary Copy $receiptNo',
+              devCreditEnabled: printerConfig.devCreditEnabled,
+              devCreditText: printerConfig.devCreditText,
             );
           }
         } catch (e, s) {
@@ -2883,6 +3565,8 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
           qrUrl: printerConfig.qrCodeUrl,
           qrCaption: printerConfig.qrCodeCaption,
           template: mainTemplate,
+          devCreditEnabled: printerConfig.devCreditEnabled,
+          devCreditText: printerConfig.devCreditText,
         );
       }
 
@@ -3694,10 +4378,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     final subtotal = _items.fold<double>(0.0, (sum, i) {
       final qty = rowNum(i['quantity']);
       if (qty <= 0) return sum;
-      final price = rowNum(i['price']);
-      final disc = rowNum(i['discount_pct']);
-      final discType = (i['discount_type'] ?? 'percentage').toString();
-      return sum + _lineTotal(price: price, qty: qty, discPct: disc, discountType: discType);
+      return sum + _cartLineTotal(i);
     });
     final discount = _toDouble(discountController);
     final tax = _toDouble(taxController);
@@ -4015,6 +4696,8 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
               onQueryProducts: _queryProducts,
               onAddItem: _addItemManual,
               onItemsChanged: (next) => setState(() => _items = next),
+              onEditSellingUnit: _editItem,
+              onSellingUnitChanged: _changeSellingUnitQuick,
               onReturnLinkRequested: _isEditing ? null : _linkReturnForRow,
               onProfitInsight:
                   canViewProfit ? _showItemProfitInsight : null,
@@ -5792,6 +6475,7 @@ class _AmendmentDiff {
   final int quantityChanged;
   final int priceChanged;
   final int discountChanged;
+  final int packagingChanged;
   final bool sourceChanged;
 
   const _AmendmentDiff({
@@ -5800,6 +6484,7 @@ class _AmendmentDiff {
     required this.quantityChanged,
     required this.priceChanged,
     required this.discountChanged,
+    required this.packagingChanged,
     required this.sourceChanged,
   });
 
@@ -5809,6 +6494,7 @@ class _AmendmentDiff {
       quantityChanged > 0 ||
       priceChanged > 0 ||
       discountChanged > 0 ||
+      packagingChanged > 0 ||
       sourceChanged;
 }
 
@@ -6101,6 +6787,11 @@ class _SaleAmendmentReviewDialogState
                           icon: Icons.percent_rounded,
                           label: '${widget.diff.discountChanged} discount',
                           active: widget.diff.discountChanged > 0,
+                        ),
+                        _ChangeChip(
+                          icon: Icons.inventory_2_outlined,
+                          label: '${widget.diff.packagingChanged} packaging',
+                          active: widget.diff.packagingChanged > 0,
                         ),
                         _ChangeChip(
                           icon: Icons.hub_outlined,

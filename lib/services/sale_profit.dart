@@ -88,6 +88,9 @@ class SaleProfitCalculator {
   static double _num(dynamic value) =>
       double.tryParse(value?.toString() ?? '') ?? 0.0;
 
+  static double _round2(double value) =>
+      (value * 100).roundToDouble() / 100;
+
   static bool _bool(dynamic value) {
     if (value is bool) return value;
     if (value is num) return value != 0;
@@ -169,11 +172,23 @@ class SaleProfitCalculator {
     final discountType =
         (item['discount_type'] ?? 'percentage').toString().toLowerCase();
 
-    final grossRevenue = quantity * unitPrice;
+    final packaged = item['packaging_id'] != null;
+    final packageQuantity = _num(item['packaging_quantity']);
+    final packageUnitPrice = _num(item['packaging_unit_price']);
+    final packageFixedDiscount = _num(item['packaging_discount_snapshot']);
+    final grossRevenue = packaged
+        ? _round2(packageQuantity * packageUnitPrice)
+        : quantity * unitPrice;
     final discountAmount = discountType == 'fixed'
-        ? quantity * discountValue
-        : grossRevenue * (discountValue.clamp(0.0, 100.0) / 100.0);
-    final netRevenue = grossRevenue - discountAmount;
+        ? (packaged
+            ? _round2(packageQuantity * packageFixedDiscount)
+            : quantity * discountValue)
+        : (packaged
+            ? _round2(grossRevenue * (discountValue.clamp(0.0, 100.0) / 100.0))
+            : grossRevenue * (discountValue.clamp(0.0, 100.0) / 100.0));
+    final netRevenue = packaged
+        ? _round2(grossRevenue - discountAmount)
+        : grossRevenue - discountAmount;
 
     final basis = costBasisFromProduct(item);
     final costOfGoods = quantity * basis.unitCost;

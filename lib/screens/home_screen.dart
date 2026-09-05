@@ -299,6 +299,13 @@ class HomeScreen extends StatelessWidget {
                   const SizedBox(height: 10),
                   _TileGrid(tiles: management, columns: cols),
                 ],
+                const SizedBox(height: 24),
+                const Center(
+                  child: Text(
+                    'Powered by A Developers',
+                    style: TextStyle(fontSize: 11, color: AppTheme.textMuted, fontWeight: FontWeight.w600),
+                  ),
+                ),
               ],
             ),
           ),

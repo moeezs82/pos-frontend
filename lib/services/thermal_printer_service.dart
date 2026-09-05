@@ -60,6 +60,8 @@ class ThermalPrinterService {
     String? qrUrl,
     String qrCaption = 'Scan to review us',
     InvoiceTemplate? template,
+    bool devCreditEnabled = false,
+    String devCreditText = '',
   }) async {
     final profile = await CapabilityProfile.load();
     final paper = paperWidth == 'mm58' ? PaperSize.mm58 : PaperSize.mm80;
@@ -100,6 +102,8 @@ class ThermalPrinterService {
           showQr: showQr,
           qrUrl: qrUrl,
           qrCaption: qrCaption,
+          devCreditEnabled: devCreditEnabled,
+          devCreditText: devCreditText,
         );
       } finally {
         printer.disconnect();
@@ -138,6 +142,8 @@ class ThermalPrinterService {
         qrUrl: qrUrl,
         qrCaption: qrCaption,
         is58mm: paperWidth == 'mm58',
+        devCreditEnabled: devCreditEnabled,
+        devCreditText: devCreditText,
       );
     } finally {
       printer.disconnect();
@@ -300,6 +306,8 @@ class ThermalPrinterService {
     required bool showQr,
     String? qrUrl,
     required String qrCaption,
+    bool devCreditEnabled = false,
+    String devCreditText = '',
   }) async {
     final effectiveMeta = <String, dynamic>{
       ...?meta,
@@ -334,6 +342,8 @@ class ThermalPrinterService {
       qrUrl: qrUrl,
       qrCaption: qrCaption,
       template: InvoiceTemplate.arabicThermal,
+      devCreditEnabled: devCreditEnabled,
+      devCreditText: devCreditText,
     );
 
     final maxWidth = paperWidth.toLowerCase() == 'mm58' ? 384 : 576;
@@ -392,6 +402,8 @@ class ThermalPrinterService {
     String? qrUrl,
     String qrCaption = 'Scan to review us',
     bool is58mm = false,
+    bool devCreditEnabled = false,
+    String devCreditText = '',
   }) {
     final snapRaw = meta?['customer_snapshot'];
     final snap = (snapRaw is Map) ? snapRaw.cast<String, dynamic>() : <String, dynamic>{};
@@ -587,7 +599,13 @@ class ThermalPrinterService {
     }
 
     if (sections.footer) {
-      _writeFooterLines(printer, footerLines, footerLineStyles);
+      _writeFooterLines(
+        printer,
+        footerLines,
+        footerLineStyles,
+        devCreditEnabled: devCreditEnabled,
+        devCreditText: devCreditText,
+      );
     }
 
     printer.feed(2);
@@ -597,15 +615,12 @@ class ThermalPrinterService {
   void _writeFooterLines(
     NetworkPrinter printer,
     List<String> footerLines,
-    List<ReceiptFooterStyle> footerLineStyles,
-  ) {
+    List<ReceiptFooterStyle> footerLineStyles, {
+    bool devCreditEnabled = false,
+    String devCreditText = '',
+  }) {
     var printed = false;
-    for (var i = 0; i < footerLines.length; i++) {
-      final text = PrintTextUtils.sanitizeFooterText(footerLines[i]);
-      if (text.isEmpty) continue;
-      final style = i < footerLineStyles.length
-          ? footerLineStyles[i]
-          : const ReceiptFooterStyle();
+    void writeLine(String text, ReceiptFooterStyle style) {
       final isLarge = style.size == ReceiptFooterTextSize.large;
       printer.text(
         text,
@@ -620,6 +635,30 @@ class ThermalPrinterService {
         ),
       );
       printed = true;
+    }
+
+    for (var i = 0; i < footerLines.length; i++) {
+      final text = PrintTextUtils.sanitizeFooterText(footerLines[i]);
+      if (text.isEmpty) continue;
+      final style = i < footerLineStyles.length
+          ? footerLineStyles[i]
+          : const ReceiptFooterStyle();
+      writeLine(text, style);
+    }
+    // Master-Admin-controlled software credit line, printed last (below the
+    // shop's own footer) in a small, non-bold style.
+    if (devCreditEnabled) {
+      final creditText = PrintTextUtils.sanitizeFooterText(devCreditText);
+      if (creditText.isNotEmpty) {
+        writeLine(
+          creditText,
+          const ReceiptFooterStyle(
+            alignment: ReceiptFooterAlignment.center,
+            bold: false,
+            size: ReceiptFooterTextSize.small,
+          ),
+        );
+      }
     }
     if (printed) printer.feed(1);
   }

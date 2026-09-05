@@ -72,6 +72,8 @@ class LocalPrinterService {
     String qrCaption = 'Scan to review us',
     InvoiceTemplate? template,
     String? jobName,
+    bool devCreditEnabled = false,
+    String devCreditText = '',
   }) async {
     final totalTiming = Stopwatch()..start();
     print('[LOCAL-PRINT-TIMING] printSaleReceipt start receipt=$receiptNo');
@@ -110,6 +112,8 @@ class LocalPrinterService {
       qrUrl: qrUrl,
       qrCaption: qrCaption,
       template: template,
+      devCreditEnabled: devCreditEnabled,
+      devCreditText: devCreditText,
     );
     print(
       '[LOCAL-PRINT-TIMING] PDF built in ${pdfTiming.elapsedMilliseconds}ms bytes=${bytes.length}',

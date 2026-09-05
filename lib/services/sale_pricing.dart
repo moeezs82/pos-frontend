@@ -1,3 +1,5 @@
+import 'package:enterprise_pos/models/product_packaging.dart';
+
 /// Shared POS default-pricing rules.
 ///
 /// Customer type only chooses the default price when a product is added.
@@ -33,6 +35,31 @@ class SalePricing {
     // back to retail prevents an accidental zero-price sale.
     if (wholesale == null || wholesale <= 0) return retail;
     return wholesale;
+  }
+
+
+  /// Cashier-facing selling price for one product-specific package.
+  ///
+  /// Wholesale follows the same safe fallback contract as the base product:
+  /// an explicit package wholesale override wins; otherwise an actually
+  /// configured base wholesale price is multiplied by the package factor; if
+  /// wholesale is unconfigured, fall back to the package retail price rather
+  /// than creating a zero-price sale.
+  static double effectivePackagingPrice(
+    Map<String, dynamic> product,
+    ProductPackaging packaging, {
+    dynamic customerType,
+  }) {
+    final retailBase = _asDouble(product['price'] ?? product['tp']) ?? 0.0;
+    final retailPackage = packaging.effectiveRetailPrice(retailBase);
+    if (!isWholesale(customerType)) return retailPackage;
+
+    if (packaging.wholesalePrice != null) {
+      return packaging.wholesalePrice!;
+    }
+    final wholesaleBase = _asDouble(product['wholesale_price']);
+    if (wholesaleBase == null || wholesaleBase <= 0) return retailPackage;
+    return wholesaleBase * packaging.baseQuantity;
   }
 
   static double? _asDouble(dynamic value) {

@@ -75,6 +75,11 @@ class PrinterConfig {
   final String? mainPrinterName;
   final String? secondaryPrinterName;
 
+  /// Master-Admin-only software credit line, printed under the shop's own
+  /// footer on customer-facing receipts/invoices when enabled.
+  final bool devCreditEnabled;
+  final String devCreditText;
+
   const PrinterConfig({
     this.branchId,
     this.branchName,
@@ -128,6 +133,8 @@ class PrinterConfig {
     this.barcodeShowVariantDetails = true,
     this.mainPrinterName,
     this.secondaryPrinterName,
+    this.devCreditEnabled = true,
+    this.devCreditText = 'Powered by A Developers',
   });
 
   bool get isConfigured => activeConnection != 'none';
@@ -269,6 +276,10 @@ class PrinterConfig {
       mainPrinterName: json['main_printer_name']?.toString(),
       secondaryPrinterName:
           preferred('secondary_printer_name', 'kitchen_printer_name')?.toString(),
+      devCreditEnabled: _bool(json['dev_credit_enabled'], fallback: true),
+      devCreditText: (json['dev_credit_text']?.toString().trim().isNotEmpty ?? false)
+          ? json['dev_credit_text'].toString()
+          : 'Powered by A Developers',
     );
   }
 
@@ -325,6 +336,8 @@ class PrinterConfig {
         'barcode_show_variant_details': barcodeShowVariantDetails,
         'main_printer_name': mainPrinterName,
         'secondary_printer_name': secondaryPrinterName,
+        'dev_credit_enabled': devCreditEnabled,
+        'dev_credit_text': devCreditText,
       };
 
   PrinterConfig copyWith({
@@ -378,6 +391,8 @@ class PrinterConfig {
     bool? barcodeShowValue,
     bool? barcodeShowPrice,
     bool? barcodeShowVariantDetails,
+    bool? devCreditEnabled,
+    String? devCreditText,
   }) {
     return PrinterConfig(
       branchId: branchId,
@@ -449,6 +464,8 @@ class PrinterConfig {
           barcodeShowVariantDetails ?? this.barcodeShowVariantDetails,
       mainPrinterName: mainPrinterName,
       secondaryPrinterName: secondaryPrinterName,
+      devCreditEnabled: devCreditEnabled ?? this.devCreditEnabled,
+      devCreditText: devCreditText ?? this.devCreditText,
     );
   }
 }
