@@ -56,12 +56,15 @@ class ReportsService {
     required String reportKey,
     required String format, // xlsx | pdf
     Map<String, dynamic>? filters,
-    String orientation = 'landscape',
+    String orientation = 'auto',
+    String paperSize = 'a4',
   }) async {
     final query = _cleanQuery({
       ...?filters,
       'format': format,
-      if (format == 'pdf') 'orientation': orientation,
+      if (format == 'pdf' && orientation.trim().toLowerCase() != 'auto')
+        'orientation': orientation,
+      if (format == 'pdf') 'paper_size': paperSize.trim().toLowerCase(),
     });
     final normalized = reportKey.trim().replaceAll('_', '-');
     final res = await _client.download('/reports/export/$normalized', query: query);

@@ -13,6 +13,7 @@ import 'package:flutter/material.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/app_feedback.dart';
 import 'package:enterprise_pos/widgets/branch_indicator.dart';
+import 'package:enterprise_pos/widgets/report_pdf_export_dialog.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import 'package:enterprise_pos/services/app_currency.dart';
@@ -175,12 +176,23 @@ class _PartyBalancesScreenState extends State<PartyBalancesScreen> {
   }
 
   Future<void> _export(String format) async {
+    ReportPdfExportOptions? pdfOptions;
+    if (format == 'pdf') {
+      pdfOptions = await showReportPdfExportDialog(
+        context,
+        reportTitle: _title,
+      );
+      if (pdfOptions == null || !mounted) return;
+    }
+
     setState(() => _exporting = true);
     try {
       final file = await _reports.exportEnterpriseReport(
         reportKey: _balanceReportKey,
         format: format,
         filters: _baseFilters(export: true),
+        orientation: pdfOptions?.orientation ?? 'auto',
+        paperSize: pdfOptions?.paperSize ?? 'a4',
       );
       final path = await saveReportFile(bytes: file.bytes, filename: file.filename, mimeType: file.contentType);
       if (!mounted) return;

@@ -11,6 +11,7 @@ import 'package:flutter/material.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/app_feedback.dart';
 import 'package:enterprise_pos/widgets/branch_indicator.dart';
+import 'package:enterprise_pos/widgets/report_pdf_export_dialog.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
@@ -278,13 +279,23 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
   }
 
   Future<void> _export(String format) async {
+    ReportPdfExportOptions? pdfOptions;
+    if (format == 'pdf') {
+      pdfOptions = await showReportPdfExportDialog(
+        context,
+        reportTitle: _selectedReport.title,
+      );
+      if (pdfOptions == null || !mounted) return;
+    }
+
     setState(() => _exporting = true);
     try {
       final file = await _service.exportEnterpriseReport(
         reportKey: _selectedReport.key,
         format: format,
         filters: _filters(export: true),
-        orientation: 'landscape',
+        orientation: pdfOptions?.orientation ?? 'auto',
+        paperSize: pdfOptions?.paperSize ?? 'a4',
       );
       final path = await saveReportFile(
         bytes: file.bytes,

@@ -60,3 +60,5 @@ installer/output
 # Optional: local secret notes
 *license-password*
 *private-key*
+
+*.patch
