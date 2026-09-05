@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:path/path.dart' as p;
 import 'package:enterprise_pos/api/core/api_client.dart';
 
@@ -74,7 +75,8 @@ class ProductService {
 
   /// Converts a product payload map to multipart-friendly string fields.
   /// Booleans become '1'/'0'. Nulls are kept as null (omitted by the client).
-  /// Collections (List/Map) are skipped — multipart can't encode them.
+  /// Product packaging is JSON-encoded when multipart is required (for image
+  /// create/update). Other nested collections remain ignored.
   Map<String, String?> _toFields(Map<String, dynamic> product) {
     final fields = <String, String?>{};
     for (final entry in product.entries) {
@@ -84,7 +86,9 @@ class ProductService {
       } else if (v is bool) {
         fields[entry.key] = v ? '1' : '0';
       } else if (v is List || v is Map) {
-        // Skip nested collections — the API doesn't need them via multipart.
+        if (entry.key == 'packagings') {
+          fields[entry.key] = jsonEncode(v);
+        }
       } else {
         fields[entry.key] = v.toString();
       }

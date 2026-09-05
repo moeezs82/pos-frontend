@@ -5,8 +5,10 @@ import 'package:enterprise_pos/api/product_group_service.dart';
 import 'package:enterprise_pos/api/product_service.dart';
 import 'package:enterprise_pos/api/unit_service.dart';
 import 'package:enterprise_pos/models/product_unit.dart';
+import 'package:enterprise_pos/models/product_packaging.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/app_feedback.dart';
+import 'package:enterprise_pos/widgets/product_packaging_editor.dart';
 import 'package:enterprise_pos/widgets/reference_data_manager_dialog.dart';
 import 'package:enterprise_pos/widgets/vendor_picker_sheet.dart';
 import 'package:file_picker/file_picker.dart';
@@ -44,6 +46,7 @@ class _VariableProductFormScreenState extends State<VariableProductFormScreen> {
   final _defaultWholesaleCtrl = TextEditingController();
   final _defaultCostCtrl = TextEditingController();
   final _defaultReorderCtrl = TextEditingController(text: '0');
+  List<ProductPackaging> _defaultPackagings = [];
 
   bool _isActive = true;
   bool _taxInclusive = false;
@@ -73,6 +76,8 @@ class _VariableProductFormScreenState extends State<VariableProductFormScreen> {
   late UnitService _unitService;
 
   bool get _isEdit => widget.group != null;
+  bool get _groupHasPackagings =>
+      ProductUnit.parseBool(widget.group?['has_packagings'], false);
 
   ProductUnit? get _selectedUnit {
     if (_selectedUnitId == null) return null;
@@ -105,11 +110,19 @@ class _VariableProductFormScreenState extends State<VariableProductFormScreen> {
       _selectedVendorId = _asInt(g['vendor_id']);
     }
     if (widget.vendorId != null) _selectedVendorId = widget.vendorId;
+    _defaultRetailCtrl.addListener(_onDefaultPackagePriceChanged);
+    _defaultWholesaleCtrl.addListener(_onDefaultPackagePriceChanged);
     _loadRefData();
+  }
+
+  void _onDefaultPackagePriceChanged() {
+    if (mounted && _defaultPackagings.isNotEmpty) setState(() {});
   }
 
   @override
   void dispose() {
+    _defaultRetailCtrl.removeListener(_onDefaultPackagePriceChanged);
+    _defaultWholesaleCtrl.removeListener(_onDefaultPackagePriceChanged);
     _nameCtrl.dispose();
     _secondaryNameCtrl.dispose();
     _taxRateCtrl.dispose();
@@ -228,9 +241,63 @@ class _VariableProductFormScreenState extends State<VariableProductFormScreen> {
     });
   }
 
+  Future<void> _applyUnitChange(int? nextUnitId) async {
+    if (nextUnitId == _selectedUnitId) return;
+    if (_isEdit && _groupHasPackagings) {
+      if (mounted) {
+        AppFeedback.warning(
+          context,
+          'Base unit is locked because one or more variants already have packaging conversions.',
+        );
+      }
+      return;
+    }
+
+    final hasUnsavedPackaging = _defaultPackagings.isNotEmpty ||
+        _variants.any((v) => v.packagings.isNotEmpty);
+    if (hasUnsavedPackaging) {
+      final clear = await showDialog<bool>(
+            context: context,
+            builder: (context) => AlertDialog(
+              title: const Text('Change base unit?'),
+              content: const Text(
+                'Packaging conversions are defined against the current base unit. Changing the unit will clear the configured packaging on new variants so it cannot be reinterpreted incorrectly.',
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context, false),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.pop(context, true),
+                  child: const Text('Clear Packaging & Change'),
+                ),
+              ],
+            ),
+          ) ??
+          false;
+      if (!clear || !mounted) return;
+    }
+
+    setState(() {
+      _selectedUnitId = nextUnitId;
+      _defaultPackagings = [];
+      for (final variant in _variants) {
+        variant.packagings = [];
+      }
+    });
+  }
+
   Future<void> _manageUnits() async {
     final auth = context.read<AuthProvider>();
     if (!auth.hasPermission('manage-units')) return;
+    if (_isEdit && _groupHasPackagings) {
+      AppFeedback.warning(
+        context,
+        'Base unit is locked because this family already has packaging conversions.',
+      );
+      return;
+    }
     final result = await showUnitManagerDialog(
       context: context,
       service: _unitService,
@@ -238,17 +305,12 @@ class _VariableProductFormScreenState extends State<VariableProductFormScreen> {
       allowClearSelection: !_isEdit,
     );
     if (result == null || !mounted) return;
-    if (result.selectedId != _selectedUnitId) {
-      _selectedUnitId = result.selectedId;
-    }
+    final next = result.selectedId;
     await _loadUnits();
     if (!mounted) return;
-    setState(() {
-      if (_selectedUnitId != null &&
-          !_units.any((u) => u.id == _selectedUnitId)) {
-        _selectedUnitId = null;
-      }
-    });
+    if (next == null || _units.any((u) => u.id == next)) {
+      await _applyUnitChange(next);
+    }
   }
 
   Future<void> _pickVendor() async {
@@ -276,6 +338,7 @@ class _VariableProductFormScreenState extends State<VariableProductFormScreen> {
         wholesalePrice: _parseDouble(_defaultWholesaleCtrl.text),
         costPrice: _parseDouble(_defaultCostCtrl.text),
         reorderLevel: _parseInt(_defaultReorderCtrl.text),
+        packagings: _defaultPackagings.map((p) => p.copy()).toList(),
       );
 
   Future<void> _addVariantFlow() async {
@@ -328,7 +391,7 @@ class _VariableProductFormScreenState extends State<VariableProductFormScreen> {
         editingIndex: editingIndex,
         allowAddAnother: allowAddAnother,
         groupName: _nameCtrl.text.trim(),
-        selectedUnitLabel: _selectedUnit?.label,
+        selectedUnit: _selectedUnit,
         groupService: _groupService,
         validateDraft: (draft) => _variantValidationMessage(
           draft,
@@ -504,6 +567,7 @@ class _VariableProductFormScreenState extends State<VariableProductFormScreen> {
               taxInclusive: _taxInclusive,
               discount: v.discount,
               discountType: v.discountType,
+              packagings: v.packagings,
             ),
           )
           .toList();
@@ -808,15 +872,18 @@ class _VariableProductFormScreenState extends State<VariableProductFormScreen> {
                             ),
                           ),
                         ],
-                        onChanged: (value) =>
-                            setState(() => _selectedUnitId = value),
+                        onChanged: (_isEdit && _groupHasPackagings)
+                            ? null
+                            : (value) => _applyUnitChange(value),
                       ),
                     ),
                     if (canManageUnits) ...[
                       const SizedBox(width: 4),
                       IconButton(
                         tooltip: 'Manage units',
-                        onPressed: _saving ? null : _manageUnits,
+                        onPressed: (_saving || (_isEdit && _groupHasPackagings))
+                            ? null
+                            : _manageUnits,
                         icon: const Icon(Icons.tune_rounded, color: AppTheme.primary),
                       ),
                     ],
@@ -874,35 +941,79 @@ class _VariableProductFormScreenState extends State<VariableProductFormScreen> {
       subtitle:
           'Optional shortcuts. These values prefill Add Variant and can still be changed per variant.',
       icon: Icons.tune_rounded,
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final columns = constraints.maxWidth >= 900 ? 4 : 2;
-          final width = (constraints.maxWidth - (columns - 1) * 12) / columns;
-          return Wrap(
-            spacing: 12,
-            runSpacing: 12,
-            children: [
-              SizedBox(
-                width: width,
-                child: _numberField(_defaultRetailCtrl, 'Default Retail'),
-              ),
-              SizedBox(
-                width: width,
-                child:
-                    _numberField(_defaultWholesaleCtrl, 'Default Wholesale'),
-              ),
-              SizedBox(
-                width: width,
-                child: _numberField(_defaultCostCtrl, 'Default Cost'),
-              ),
-              SizedBox(
-                width: width,
-                child:
-                    _numberField(_defaultReorderCtrl, 'Default Reorder Level'),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final columns = constraints.maxWidth >= 900 ? 4 : 2;
+              final width =
+                  (constraints.maxWidth - (columns - 1) * 12) / columns;
+              return Wrap(
+                spacing: 12,
+                runSpacing: 12,
+                children: [
+                  SizedBox(
+                    width: width,
+                    child: _numberField(_defaultRetailCtrl, 'Default Retail'),
+                  ),
+                  SizedBox(
+                    width: width,
+                    child: _numberField(
+                        _defaultWholesaleCtrl, 'Default Wholesale'),
+                  ),
+                  SizedBox(
+                    width: width,
+                    child: _numberField(_defaultCostCtrl, 'Default Cost'),
+                  ),
+                  SizedBox(
+                    width: width,
+                    child: _numberField(
+                        _defaultReorderCtrl, 'Default Reorder Level'),
+                  ),
+                ],
+              );
+            },
+          ),
+          if (!_isEdit) ...[
+            const SizedBox(height: 14),
+            ProductPackagingEditor(
+              title: 'Default Packaging for New Variants',
+              packagings: _defaultPackagings,
+              baseUnit: _selectedUnit,
+              baseRetailPrice: _parseDouble(_defaultRetailCtrl.text),
+              baseWholesalePrice: _parseDouble(_defaultWholesaleCtrl.text),
+              enabled: !_saving,
+              onChanged: (items) =>
+                  setState(() => _defaultPackagings = items),
+            ),
+            if (_variants.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Align(
+                alignment: Alignment.centerRight,
+                child: OutlinedButton.icon(
+                  onPressed: _saving
+                      ? null
+                      : () {
+                          setState(() {
+                            for (final variant in _variants) {
+                              variant.packagings = _defaultPackagings
+                                  .map((p) => p.copy())
+                                  .toList();
+                            }
+                          });
+                          AppFeedback.success(
+                            context,
+                            'Packaging defaults applied to current variants.',
+                          );
+                        },
+                  icon: const Icon(Icons.copy_all_outlined, size: 17),
+                  label: const Text('Apply Packaging to Current Variants'),
+                ),
               ),
             ],
-          );
-        },
+          ],
+        ],
       ),
     );
   }
@@ -1520,7 +1631,7 @@ class _VariantEditorDialog extends StatefulWidget {
   final int? editingIndex;
   final bool allowAddAnother;
   final String groupName;
-  final String? selectedUnitLabel;
+  final ProductUnit? selectedUnit;
   final ProductGroupService groupService;
   final _VariantDraftValidator validateDraft;
 
@@ -1529,7 +1640,7 @@ class _VariantEditorDialog extends StatefulWidget {
     required this.editingIndex,
     required this.allowAddAnother,
     required this.groupName,
-    required this.selectedUnitLabel,
+    required this.selectedUnit,
     required this.groupService,
     required this.validateDraft,
   });
@@ -1554,6 +1665,7 @@ class _VariantEditorDialogState extends State<_VariantEditorDialog> {
   late final TextEditingController _discountCtrl;
   late String _discountType;
   String? _imagePath;
+  late List<ProductPackaging> _packagings;
 
   bool _skuBusy = false;
   bool _barcodeBusy = false;
@@ -1581,10 +1693,19 @@ class _VariantEditorDialogState extends State<_VariantEditorDialog> {
     _discountCtrl = TextEditingController(text: _numberText(seed.discount));
     _discountType = seed.discountType == 'fixed' ? 'fixed' : 'percentage';
     _imagePath = seed.imagePath;
+    _packagings = seed.packagings.map((p) => p.copy()).toList();
+    _retailCtrl.addListener(_onPackagePriceChanged);
+    _wholesaleCtrl.addListener(_onPackagePriceChanged);
+  }
+
+  void _onPackagePriceChanged() {
+    if (mounted && _packagings.isNotEmpty) setState(() {});
   }
 
   @override
   void dispose() {
+    _retailCtrl.removeListener(_onPackagePriceChanged);
+    _wholesaleCtrl.removeListener(_onPackagePriceChanged);
     _sizeCtrl.dispose();
     _colorCtrl.dispose();
     _secondaryNameCtrl.dispose();
@@ -1756,6 +1877,7 @@ class _VariantEditorDialogState extends State<_VariantEditorDialog> {
       openingStock: _parseDouble(_stockCtrl.text),
       reorderLevel: _parseInt(_reorderCtrl.text),
       imagePath: _imagePath,
+      packagings: _packagings.map((p) => p.copy()).toList(),
     );
 
     final error = widget.validateDraft(draft);
@@ -1971,15 +2093,27 @@ class _VariantEditorDialogState extends State<_VariantEditorDialog> {
                         ],
                       ),
                       const SizedBox(height: 22),
+                      _sectionTitle('Packaging'),
+                      const SizedBox(height: 10),
+                      ProductPackagingEditor(
+                        packagings: _packagings,
+                        baseUnit: widget.selectedUnit,
+                        baseRetailPrice: _parseDouble(_retailCtrl.text),
+                        baseWholesalePrice: _parseDouble(_wholesaleCtrl.text),
+                        enabled: !_submitting,
+                        onChanged: (items) =>
+                            setState(() => _packagings = items),
+                      ),
+                      const SizedBox(height: 22),
                       _sectionTitle('Opening Inventory'),
                       const SizedBox(height: 10),
                       _field(
                         _stockCtrl,
                         'Opening Stock',
                         numeric: true,
-                        hint: widget.selectedUnitLabel == null
+                        hint: widget.selectedUnit == null
                             ? '0'
-                            : 'Quantity in ${widget.selectedUnitLabel}',
+                            : 'Quantity in ${widget.selectedUnit!.label}',
                       ),
                       const SizedBox(height: 8),
                       Text(
@@ -2169,6 +2303,7 @@ class _VariantDraft {
   double openingStock;
   int reorderLevel;
   String? imagePath;
+  List<ProductPackaging> packagings;
 
   _VariantDraft({
     required this.id,
@@ -2185,7 +2320,9 @@ class _VariantDraft {
     this.openingStock = 0,
     this.reorderLevel = 0,
     this.imagePath,
-  });
+    List<ProductPackaging>? packagings,
+  }) : packagings =
+            packagings?.map((p) => p.copy()).toList() ?? <ProductPackaging>[];
 
   _VariantDraft copy() => _VariantDraft(
         id: id,
@@ -2202,6 +2339,7 @@ class _VariantDraft {
         openingStock: openingStock,
         reorderLevel: reorderLevel,
         imagePath: imagePath,
+        packagings: packagings,
       );
 
   _VariantDraft copyForNext({required int id}) => _VariantDraft(
@@ -2213,6 +2351,7 @@ class _VariantDraft {
         discount: discount,
         discountType: discountType,
         reorderLevel: reorderLevel,
+        packagings: packagings,
         // Never copy an image into the next variant automatically; colors and
         // sizes often have different product photos.
         imagePath: null,

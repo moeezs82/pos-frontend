@@ -1,4 +1,5 @@
 import 'package:enterprise_pos/api/core/api_client.dart';
+import 'package:enterprise_pos/models/product_packaging.dart';
 
 // ── Models ────────────────────────────────────────────────────────────────────
 
@@ -75,6 +76,7 @@ class VariantInput {
   bool taxInclusive;
   double discount;
   String discountType;
+  List<ProductPackaging> packagings;
 
   VariantInput({
     this.size = '',
@@ -91,7 +93,8 @@ class VariantInput {
     this.taxInclusive = false,
     this.discount = 0.0,
     this.discountType = 'percentage',
-  });
+    List<ProductPackaging>? packagings,
+  }) : packagings = packagings?.map((p) => p.copy()).toList() ?? <ProductPackaging>[];
 
   Map<String, dynamic> toJson() => {
         'size': size,
@@ -108,6 +111,7 @@ class VariantInput {
         'tax_inclusive': taxInclusive,
         'discount': discount,
         'discount_type': discountType,
+        'packagings': packagings.map((p) => p.toJson()).toList(),
       };
 }
 

@@ -3,8 +3,10 @@ import 'package:enterprise_pos/api/common_service.dart';
 import 'package:enterprise_pos/api/product_service.dart';
 import 'package:enterprise_pos/api/unit_service.dart';
 import 'package:enterprise_pos/models/product_unit.dart';
+import 'package:enterprise_pos/models/product_packaging.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/reference_data_manager_dialog.dart';
+import 'package:enterprise_pos/widgets/product_packaging_editor.dart';
 import 'package:enterprise_pos/widgets/vendor_picker_sheet.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -58,6 +60,9 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
   int?               _selectedUnitId;
   List<ProductUnit>  _units = [];
   late UnitService   _unitService;
+
+  /// Product-specific package conversions. Stock itself remains in the base unit.
+  List<ProductPackaging> _packagings = [];
 
   // ── Image state ──────────────────────────────────────────────────────────────
   /// File picked from disk, not yet uploaded.
@@ -142,6 +147,7 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
       _selectedUnitId = p['unit_id'] is int
           ? p['unit_id'] as int
           : (p['unit'] is Map ? (p['unit']['id'] as num?)?.toInt() : null);
+      _packagings = ProductPackaging.listFromJson(p['packagings']);
 
       // Existing server image
       _currentImageUrl = p['image_url']?.toString();
@@ -158,11 +164,145 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
       _selectedVendor   = {'id': widget.vendorId, 'first_name': 'Vendor #${widget.vendorId}'};
     }
 
+    _priceController.addListener(_onPackageBasePriceChanged);
+    _wholesalePriceController.addListener(_onPackageBasePriceChanged);
     _loadInitialData();
+  }
+
+  void _onPackageBasePriceChanged() {
+    if (mounted && _packagings.isNotEmpty) setState(() {});
+  }
+
+  ProductUnit? get _selectedUnit {
+    for (final unit in _units) {
+      if (unit.id == _selectedUnitId) return unit;
+    }
+    final nested = widget.product?['unit'];
+    if (nested is Map && (nested['id'] as num?)?.toInt() == _selectedUnitId) {
+      return ProductUnit.fromJson(Map<String, dynamic>.from(nested));
+    }
+    return null;
+  }
+
+  bool get _hasPersistedPackaging => _packagings.any((p) => p.id != null);
+
+  double get _baseRetailPrice => double.tryParse(_priceController.text.trim()) ?? 0;
+  double get _baseWholesalePrice =>
+      double.tryParse(_wholesalePriceController.text.trim()) ?? 0;
+
+
+  /// Resolves a base unit when packaging is being added to an older/simple
+  /// product that currently has no unit selected. We deliberately ask the
+  /// user rather than silently assuming Piece because the base unit becomes
+  /// the permanent conversion basis for Box/Carton/etc.
+  Future<ProductUnit?> _requestBaseUnitForPackaging() async {
+    final current = _selectedUnit;
+    if (current != null) return current;
+
+    if (_units.isEmpty) {
+      await _loadUnits();
+      if (!mounted) return null;
+    }
+
+    final choices = _units.where((u) => u.isActive).toList();
+    if (choices.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('No active units are available. Add or enable a unit first.'),
+          ),
+        );
+      }
+      return null;
+    }
+
+    int selectedId = (() {
+      final piece = choices.where((u) => u.name.trim().toLowerCase() == 'piece');
+      return piece.isNotEmpty ? piece.first.id : choices.first.id;
+    })();
+
+    final chosenId = await showDialog<int>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) => AlertDialog(
+          title: const Text('Select Base Unit'),
+          content: SizedBox(
+            width: 420,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Packaging must convert directly to the product base unit. '
+                  'Choose the unit before adding Box, Carton, Pack, or other packaging.',
+                ),
+                const SizedBox(height: 16),
+                DropdownButtonFormField<int>(
+                  value: selectedId,
+                  decoration: const InputDecoration(
+                    labelText: 'Base Unit',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: choices
+                      .map(
+                        (u) => DropdownMenuItem<int>(
+                          value: u.id,
+                          child: Text(
+                            u.allowDecimal
+                                ? '${u.name} (decimals allowed)'
+                                : u.name,
+                          ),
+                        ),
+                      )
+                      .toList(),
+                  onChanged: (value) {
+                    if (value != null) {
+                      setDialogState(() => selectedId = value);
+                    }
+                  },
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  'Once saved with packaging, the base unit is protected from accidental changes.',
+                  style: Theme.of(dialogContext).textTheme.bodySmall,
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, selectedId),
+              child: const Text('Continue'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (chosenId == null || !mounted) return null;
+
+    ProductUnit? chosen;
+    for (final unit in choices) {
+      if (unit.id == chosenId) {
+        chosen = unit;
+        break;
+      }
+    }
+    if (chosen == null) return null;
+
+    setState(() => _selectedUnitId = chosen!.id);
+    return chosen;
   }
 
   @override
   void dispose() {
+    _priceController.removeListener(_onPackageBasePriceChanged);
+    _wholesalePriceController.removeListener(_onPackageBasePriceChanged);
     _skuController.dispose();
     _barcodeController.dispose();
     _nameController.dispose();
@@ -474,6 +614,48 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
     });
   }
 
+  Future<void> _applyUnitChange(int? nextUnitId) async {
+    if (nextUnitId == _selectedUnitId) return;
+    if (_hasPersistedPackaging) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Base unit is locked because this product already has packaging conversions.',
+          ),
+        ),
+      );
+      return;
+    }
+    if (_packagings.isNotEmpty) {
+      final clear = await showDialog<bool>(
+            context: context,
+            builder: (context) => AlertDialog(
+              title: const Text('Change base unit?'),
+              content: const Text(
+                'Packaging quantities are defined against the current base unit. Changing the unit will clear the unsaved packaging definitions so they cannot be reinterpreted incorrectly.',
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context, false),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.pop(context, true),
+                  child: const Text('Clear Packaging & Change'),
+                ),
+              ],
+            ),
+          ) ??
+          false;
+      if (!clear || !mounted) return;
+    }
+    setState(() {
+      _packagings = [];
+      _selectedUnitId = nextUnitId;
+    });
+  }
+
   Future<void> _manageUnits() async {
     final auth = context.read<AuthProvider>();
     if (!auth.hasPermission('manage-units')) return;
@@ -486,12 +668,10 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
     if (result == null || !mounted) return;
     await _loadUnits();
     if (!mounted) return;
-    setState(() {
-      if (result.selectedId != null &&
-          _units.any((u) => u.id == result.selectedId)) {
-        _selectedUnitId = result.selectedId;
-      }
-    });
+    if (result.selectedId != null &&
+        _units.any((u) => u.id == result.selectedId)) {
+      await _applyUnitChange(result.selectedId);
+    }
   }
 
   // ── Save ──────────────────────────────────────────────────────────────────────
@@ -517,6 +697,7 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
       'category_id':     _selectedCategoryId,
       'brand_id':        _selectedBrandId,
       'unit_id':         _selectedUnitId,
+      'packagings':      _packagings.map((p) => p.toJson()).toList(),
       'vendor_id':       _selectedVendorId,
       'is_active':       _isActive,
       'branch_stocks':   <Map<String, dynamic>>[],
@@ -722,11 +903,12 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
                               _units.any((u) => u.id == _selectedUnitId))
                           ? _selectedUnitId
                           : null,
-                      decoration: const InputDecoration(
+                      decoration: InputDecoration(
                         labelText: 'Unit',
                         border: OutlineInputBorder(),
-                        helperText:
-                            'Controls whether this product can be sold in decimal quantities.',
+                        helperText: _hasPersistedPackaging
+                            ? 'Locked: packaging conversions already use this base unit.'
+                            : 'Controls whether this product can be sold in decimal quantities.',
                       ),
                       items: _units
                           .map((u) => DropdownMenuItem<int>(
@@ -736,14 +918,18 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
                                     : u.name),
                               ))
                           .toList(),
-                      onChanged: (val) => setState(() => _selectedUnitId = val),
+                      onChanged: _hasPersistedPackaging
+                          ? null
+                          : (val) => _applyUnitChange(val),
                     ),
                   ),
                   if (canManageUnits)
                     IconButton(
                       tooltip: 'Manage units',
                       icon: const Icon(Icons.tune_rounded, color: AppTheme.primary),
-                      onPressed: _loading ? null : _manageUnits,
+                      onPressed: (_loading || _hasPersistedPackaging)
+                          ? null
+                          : _manageUnits,
                     ),
                 ],
               ),
@@ -808,6 +994,16 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
                 controller: _wholesalePriceController,
                 keyboardType: TextInputType.number,
                 decoration: const InputDecoration(labelText: 'Wholesale Price', border: OutlineInputBorder()),
+              ),
+              const SizedBox(height: 12),
+              ProductPackagingEditor(
+                packagings: _packagings,
+                baseUnit: _selectedUnit,
+                baseRetailPrice: _baseRetailPrice,
+                baseWholesalePrice: _baseWholesalePrice,
+                enabled: !_loading,
+                onRequestBaseUnit: _requestBaseUnitForPackaging,
+                onChanged: (items) => setState(() => _packagings = items),
               ),
               const SizedBox(height: 12),
               TextFormField(

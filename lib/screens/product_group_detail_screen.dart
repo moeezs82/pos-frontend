@@ -4,11 +4,14 @@ import 'package:enterprise_pos/api/product_group_service.dart';
 import 'package:enterprise_pos/api/product_service.dart';
 import 'package:enterprise_pos/forms/variable_product_form_screen.dart';
 import 'package:enterprise_pos/models/printer_config.dart';
+import 'package:enterprise_pos/models/product_packaging.dart';
+import 'package:enterprise_pos/models/product_unit.dart';
 import 'package:enterprise_pos/providers/branch_provider.dart';
 import 'package:enterprise_pos/providers/printer_config_provider.dart';
 import 'package:enterprise_pos/services/app_currency.dart' show AppCurrency;
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/app_feedback.dart';
+import 'package:enterprise_pos/widgets/product_packaging_editor.dart';
 import 'package:enterprise_pos/widgets/barcode_print_dialog.dart';
 import 'package:enterprise_pos/widgets/variant_barcode_print_dialog.dart';
 import 'package:enterprise_pos/widgets/enterprise/enterprise_ui.dart';
@@ -42,6 +45,14 @@ class _ProductGroupDetailScreenState extends State<ProductGroupDetailScreen> {
 
   late ProductGroupService _service;
   late ProductService _productService;
+
+  ProductUnit? get _groupUnit {
+    final raw = _group?['unit'];
+    if (raw is Map) {
+      return ProductUnit.fromJson(Map<String, dynamic>.from(raw));
+    }
+    return null;
+  }
 
   @override
   void initState() {
@@ -312,6 +323,7 @@ class _ProductGroupDetailScreenState extends State<ProductGroupDetailScreen> {
     bool saving = false;
     String discountType = 'percentage';
     String? imagePath;
+    List<ProductPackaging> packagings = [];
     final groupName = _group?['name']?.toString() ?? widget.groupName;
 
     final result = await showDialog<bool>(
@@ -438,6 +450,7 @@ class _ProductGroupDetailScreenState extends State<ProductGroupDetailScreen> {
                                 'Retail Price *',
                                 numeric: true,
                                 required: true,
+                                onChanged: (_) => setSt(() {}),
                               ),
                             ),
                             const SizedBox(width: 10),
@@ -446,6 +459,7 @@ class _ProductGroupDetailScreenState extends State<ProductGroupDetailScreen> {
                                 wholesaleCtrl,
                                 'Wholesale Price',
                                 numeric: true,
+                                onChanged: (_) => setSt(() {}),
                               ),
                             ),
                           ],
@@ -502,6 +516,18 @@ class _ProductGroupDetailScreenState extends State<ProductGroupDetailScreen> {
                         ),
                         const SizedBox(height: 10),
                         _dlgField(reorderCtrl, 'Reorder Level', numeric: true),
+                        const SizedBox(height: 16),
+                        _dlgLabel('Packaging'),
+                        const SizedBox(height: 8),
+                        ProductPackagingEditor(
+                          packagings: packagings,
+                          baseUnit: _groupUnit,
+                          baseRetailPrice: double.tryParse(priceCtrl.text.trim()) ?? 0,
+                          baseWholesalePrice:
+                              double.tryParse(wholesaleCtrl.text.trim()) ?? 0,
+                          enabled: !saving,
+                          onChanged: (items) => setSt(() => packagings = items),
+                        ),
                         const SizedBox(height: 16),
                         _dlgLabel('Identification'),
                         const SizedBox(height: 8),
@@ -667,6 +693,7 @@ class _ProductGroupDetailScreenState extends State<ProductGroupDetailScreen> {
                                       reorderLevel: reorder,
                                       discount: discount,
                                       discountType: discountType,
+                                      packagings: packagings,
                                     ),
                                   );
 
@@ -772,6 +799,8 @@ class _ProductGroupDetailScreenState extends State<ProductGroupDetailScreen> {
         text: (variant['barcode'] ?? '').toString());
     final reorderCtrl = TextEditingController(
         text: (variant['reorder_level'] ?? '').toString());
+    List<ProductPackaging> packagings =
+        ProductPackaging.listFromJson(variant['packagings']);
 
     double? currentStock;
     final stocks = variant['stocks'];
@@ -969,14 +998,22 @@ class _ProductGroupDetailScreenState extends State<ProductGroupDetailScreen> {
                         Row(
                           children: [
                             Expanded(
-                              child: _dlgField(priceCtrl, 'Retail Price *',
-                                  numeric: true, required: true),
+                              child: _dlgField(
+                                priceCtrl,
+                                'Retail Price *',
+                                numeric: true,
+                                required: true,
+                                onChanged: (_) => setSt(() {}),
+                              ),
                             ),
                             const SizedBox(width: 10),
                             Expanded(
                               child: _dlgField(
-                                  wholesaleCtrl, 'Wholesale Price',
-                                  numeric: true),
+                                wholesaleCtrl,
+                                'Wholesale Price',
+                                numeric: true,
+                                onChanged: (_) => setSt(() {}),
+                              ),
                             ),
                           ],
                         ),
@@ -1027,6 +1064,18 @@ class _ProductGroupDetailScreenState extends State<ProductGroupDetailScreen> {
                         ),
                         const SizedBox(height: 10),
                         _dlgField(secondaryNameCtrl, 'Secondary Name'),
+                        const SizedBox(height: 18),
+                        _dlgLabel('Packaging'),
+                        const SizedBox(height: 8),
+                        ProductPackagingEditor(
+                          packagings: packagings,
+                          baseUnit: _groupUnit,
+                          baseRetailPrice: double.tryParse(priceCtrl.text.trim()) ?? 0,
+                          baseWholesalePrice:
+                              double.tryParse(wholesaleCtrl.text.trim()) ?? 0,
+                          enabled: !saving,
+                          onChanged: (items) => setSt(() => packagings = items),
+                        ),
                         const SizedBox(height: 18),
                         _dlgLabel('Identification'),
                         const SizedBox(height: 8),
@@ -1207,6 +1256,9 @@ class _ProductGroupDetailScreenState extends State<ProductGroupDetailScreen> {
                                       'sku': skuCtrl.text.trim(),
                                       'barcode': barcodeCtrl.text.trim(),
                                       'reorder_level': reorder,
+                                      'packagings': packagings
+                                          .map((p) => p.toJson())
+                                          .toList(),
                                     },
                                   );
 
@@ -1829,6 +1881,8 @@ class _ProductGroupDetailScreenState extends State<ProductGroupDetailScreen> {
         _variants.any((v) => (v['sku'] ?? '').toString().isNotEmpty);
     final hasBarcode =
         _variants.any((v) => (v['barcode'] ?? '').toString().isNotEmpty);
+    final hasPackaging = _variants.any((v) =>
+        ProductPackaging.listFromJson(v['packagings']).any((p) => p.isActive));
 
     const hStyle = TextStyle(
         fontSize: 10.5,
@@ -1889,6 +1943,7 @@ class _ProductGroupDetailScreenState extends State<ProductGroupDetailScreen> {
                 if (hasColor) hdr('COLOR'),
                 if (hasSku) hdr('SKU'),
                 if (hasBarcode) hdr('BARCODE'),
+                if (hasPackaging) hdr('PACKAGING'),
                 hdr('STOCK', right: true),
                 hdr('AVG COST', right: true),
                 hdr('RETAIL', right: true),
@@ -1968,6 +2023,14 @@ class _ProductGroupDetailScreenState extends State<ProductGroupDetailScreen> {
                   if (hasBarcode)
                     cell((v['barcode'] ?? '—').toString(),
                         style: mutedStyle),
+                  if (hasPackaging)
+                    cell(
+                      _variantPackagingLabel(v),
+                      style: const TextStyle(
+                        fontSize: 12,
+                        color: AppTheme.textMuted,
+                      ),
+                    ),
                   // Stock
                   Padding(
                     padding: const EdgeInsets.fromLTRB(4, 11, 14, 11),
@@ -2143,6 +2206,16 @@ class _ProductGroupDetailScreenState extends State<ProductGroupDetailScreen> {
     );
   }
 
+  String _variantPackagingLabel(Map<String, dynamic> variant) {
+    final active = ProductPackaging.listFromJson(variant['packagings'])
+        .where((p) => p.isActive)
+        .toList();
+    if (active.isEmpty) return '—';
+    return active
+        .map((p) => '${p.name} ×${_fmtQty(p.baseQuantity)}')
+        .join(' • ');
+  }
+
   Widget _variantTableThumbnail(String? imageUrl) {
     final url = imageUrl?.trim() ?? '';
     return Container(
@@ -2215,6 +2288,7 @@ class _ProductGroupDetailScreenState extends State<ProductGroupDetailScreen> {
     String hint, {
     bool numeric = false,
     bool required = false,
+    ValueChanged<String>? onChanged,
   }) {
     return TextField(
       controller: ctrl,
@@ -2242,6 +2316,7 @@ class _ProductGroupDetailScreenState extends State<ProductGroupDetailScreen> {
                 const BorderSide(color: AppTheme.primary, width: 1.5)),
       ),
       style: const TextStyle(fontSize: 13),
+      onChanged: onChanged,
     );
   }
 
