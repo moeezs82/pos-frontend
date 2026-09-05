@@ -448,6 +448,8 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
           qrUrl: printerConfig.qrCodeUrl,
           qrCaption: printerConfig.qrCodeCaption,
           template: mainTemplate,
+          devCreditEnabled: printerConfig.devCreditEnabled,
+          devCreditText: printerConfig.devCreditText,
         );
         printedToHardware = true;
 
@@ -474,6 +476,8 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
             footerLineStyles: footerLineStyles,
             receiptHeader: secondaryHeader,
             template: secondaryTemplate,
+            devCreditEnabled: printerConfig.devCreditEnabled,
+            devCreditText: printerConfig.devCreditText,
           );
         }
       } catch (e, s) {
@@ -513,6 +517,8 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
           qrUrl: printerConfig.qrCodeUrl,
           qrCaption: printerConfig.qrCodeCaption,
           template: mainTemplate,
+          devCreditEnabled: printerConfig.devCreditEnabled,
+          devCreditText: printerConfig.devCreditText,
         );
         printedToHardware = true;
 
@@ -540,6 +546,8 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
             receiptHeader: secondaryHeader,
             template: secondaryTemplate,
             jobName: 'Secondary Copy $receiptNo',
+            devCreditEnabled: printerConfig.devCreditEnabled,
+            devCreditText: printerConfig.devCreditText,
           );
         }
       } catch (e, s) {
@@ -577,6 +585,8 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
         qrUrl: printerConfig.qrCodeUrl,
         qrCaption: printerConfig.qrCodeCaption,
         template: mainTemplate,
+        devCreditEnabled: printerConfig.devCreditEnabled,
+        devCreditText: printerConfig.devCreditText,
       );
     }
   }

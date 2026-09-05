@@ -2684,6 +2684,8 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
           qrUrl: printerConfig.qrCodeUrl,
           qrCaption: printerConfig.qrCodeCaption,
           template: whatsappTemplate,
+          devCreditEnabled: printerConfig.devCreditEnabled,
+          devCreditText: printerConfig.devCreditText,
         );
       }
 
@@ -2751,6 +2753,8 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
             qrUrl: printerConfig.qrCodeUrl,
             qrCaption: printerConfig.qrCodeCaption,
             template: mainTemplate,
+            devCreditEnabled: printerConfig.devCreditEnabled,
+            devCreditText: printerConfig.devCreditText,
           );
           printedToHardware = true;
 
@@ -2777,6 +2781,8 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
               footerLineStyles: footerLineStyles,
               receiptHeader: secondaryHeader,
               template: secondaryTemplate,
+              devCreditEnabled: printerConfig.devCreditEnabled,
+              devCreditText: printerConfig.devCreditText,
             );
           }
         } catch (e, s) {
@@ -2817,6 +2823,8 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
             qrUrl: printerConfig.qrCodeUrl,
             qrCaption: printerConfig.qrCodeCaption,
             template: mainTemplate,
+            devCreditEnabled: printerConfig.devCreditEnabled,
+            devCreditText: printerConfig.devCreditText,
           );
           printedToHardware = true;
 
@@ -2844,6 +2852,8 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
               receiptHeader: secondaryHeader,
               template: secondaryTemplate,
               jobName: 'Secondary Copy $receiptNo',
+              devCreditEnabled: printerConfig.devCreditEnabled,
+              devCreditText: printerConfig.devCreditText,
             );
           }
         } catch (e, s) {
@@ -2883,6 +2893,8 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
           qrUrl: printerConfig.qrCodeUrl,
           qrCaption: printerConfig.qrCodeCaption,
           template: mainTemplate,
+          devCreditEnabled: printerConfig.devCreditEnabled,
+          devCreditText: printerConfig.devCreditText,
         );
       }
 

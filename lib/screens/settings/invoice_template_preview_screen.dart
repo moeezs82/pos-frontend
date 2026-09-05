@@ -29,6 +29,8 @@ class InvoiceTemplatePreviewScreen extends StatefulWidget {
   final String? qrUrl;
   final String qrCaption;
   final ItemDiscountDisplay itemDiscountDisplay;
+  final bool devCreditEnabled;
+  final String devCreditText;
 
   const InvoiceTemplatePreviewScreen({
     super.key,
@@ -52,6 +54,8 @@ class InvoiceTemplatePreviewScreen extends StatefulWidget {
     this.qrUrl,
     this.qrCaption = 'Scan to review us',
     this.itemDiscountDisplay = ItemDiscountDisplay.compact,
+    this.devCreditEnabled = false,
+    this.devCreditText = 'Powered by A Developers',
   });
 
   @override
@@ -144,6 +148,8 @@ class _InvoiceTemplatePreviewScreenState
       qrUrl: widget.qrUrl,
       qrCaption: widget.qrCaption,
       template: _selected,
+      devCreditEnabled: widget.devCreditEnabled,
+      devCreditText: widget.devCreditText,
     );
   }
 

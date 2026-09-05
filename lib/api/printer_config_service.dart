@@ -109,6 +109,8 @@ class PrinterConfigService {
     bool barcodeShowValue = true,
     bool barcodeShowPrice = true,
     bool barcodeShowVariantDetails = true,
+    bool devCreditEnabled = true,
+    String devCreditText = 'Powered by A Developers',
   }) async {
     final res = await _client.post("/printer-config/save", body: {
       'branch_id': branchId,
@@ -157,6 +159,8 @@ class PrinterConfigService {
       'barcode_show_value': barcodeShowValue,
       'barcode_show_price': barcodeShowPrice,
       'barcode_show_variant_details': barcodeShowVariantDetails,
+      'dev_credit_enabled': devCreditEnabled,
+      'dev_credit_text': devCreditText,
     });
 
     if (res["success"] == true) {
