@@ -23,8 +23,13 @@ class _ReceiptTextPart {
 class _ReceiptFooterRenderLine {
   final String text;
   final ReceiptFooterStyle style;
+  final bool isDevCredit;
 
-  const _ReceiptFooterRenderLine(this.text, this.style);
+  const _ReceiptFooterRenderLine(
+    this.text,
+    this.style, {
+    this.isDevCredit = false,
+  });
 }
 
 class ReceiptPreviewService {
@@ -66,6 +71,7 @@ class ReceiptPreviewService {
             bold: false,
             size: ReceiptFooterTextSize.small,
           ),
+          isDevCredit: true,
         ));
       }
     }
@@ -103,6 +109,42 @@ class ReceiptPreviewService {
       case ReceiptFooterTextSize.normal:
         return normalSize;
     }
+  }
+
+  /// A quiet, clearly-separated "Powered by" credit block: a short hairline
+  /// divider under the merchant's own footer, then small italic muted text.
+  /// Kept visually distinct from the merchant's own footer lines so it never
+  /// reads as part of their message.
+  pw.Widget _devCreditFooterWidget(
+    String text,
+    double baseFontSize, {
+    PdfColor? color,
+    PdfColor? dividerColor,
+  }) {
+    return pw.Container(
+      width: double.infinity,
+      padding: const pw.EdgeInsets.only(top: 6),
+      child: pw.Column(
+        crossAxisAlignment: pw.CrossAxisAlignment.center,
+        children: [
+          pw.Container(
+            width: 26,
+            height: 0.6,
+            color: dividerColor ?? PdfColors.grey400,
+          ),
+          pw.SizedBox(height: 3),
+          pw.Text(
+            text,
+            textAlign: pw.TextAlign.center,
+            style: pw.TextStyle(
+              fontStyle: pw.FontStyle.italic,
+              fontSize: baseFontSize,
+              color: color ?? PdfColors.grey600,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   /// Splits configured bilingual text on `|` and orders the language segments
@@ -758,20 +800,23 @@ class ReceiptPreviewService {
               if (activeFooterLines.isNotEmpty) ...[
                 divider(),
                 ...activeFooterLines.map(
-                  (line) => pw.Container(
-                    width: double.infinity,
-                    alignment: _footerPdfAlignment(line.style.alignment),
-                    padding: const pw.EdgeInsets.only(top: 2),
-                    child: pw.Text(
-                      line.text,
-                      style: pw.TextStyle(
-                        fontSize: _footerFontSize(9, line.style.size),
-                        fontWeight:
-                            line.style.bold ? pw.FontWeight.bold : null,
-                      ),
-                      textAlign: _footerPdfTextAlign(line.style.alignment),
-                    ),
-                  ),
+                  (line) => line.isDevCredit
+                      ? _devCreditFooterWidget(line.text, 7.5)
+                      : pw.Container(
+                          width: double.infinity,
+                          alignment: _footerPdfAlignment(line.style.alignment),
+                          padding: const pw.EdgeInsets.only(top: 2),
+                          child: pw.Text(
+                            line.text,
+                            style: pw.TextStyle(
+                              fontSize: _footerFontSize(9, line.style.size),
+                              fontWeight:
+                                  line.style.bold ? pw.FontWeight.bold : null,
+                            ),
+                            textAlign:
+                                _footerPdfTextAlign(line.style.alignment),
+                          ),
+                        ),
                 ),
               ],
 
@@ -1225,23 +1270,29 @@ class ReceiptPreviewService {
             if (activeFooterLines.isNotEmpty) ...[
               divider(),
               ...activeFooterLines.map(
-                (line) => pw.Container(
-                  width: double.infinity,
-                  alignment: _footerPdfAlignment(line.style.alignment),
-                  padding: const pw.EdgeInsets.only(bottom: 2),
-                  child: _configuredPdfText(
-                    line.text,
-                    fonts: fonts,
-                    arabicFirst: true,
-                    fontSize: _footerFontSize(
-                      is58 ? 6.4 : 7.3,
-                      line.style.size,
-                    ),
-                    bold: line.style.bold,
-                    align: _footerPdfTextAlign(line.style.alignment),
-                    lineGap: .6,
-                  ),
-                ),
+                (line) => line.isDevCredit
+                    ? _devCreditFooterWidget(
+                        line.text,
+                        is58 ? 5.8 : 6.4,
+                        color: muted,
+                      )
+                    : pw.Container(
+                        width: double.infinity,
+                        alignment: _footerPdfAlignment(line.style.alignment),
+                        padding: const pw.EdgeInsets.only(bottom: 2),
+                        child: _configuredPdfText(
+                          line.text,
+                          fonts: fonts,
+                          arabicFirst: true,
+                          fontSize: _footerFontSize(
+                            is58 ? 6.4 : 7.3,
+                            line.style.size,
+                          ),
+                          bold: line.style.bold,
+                          align: _footerPdfTextAlign(line.style.alignment),
+                          lineGap: .6,
+                        ),
+                      ),
               ),
             ],
             pw.SizedBox(height: 5),
@@ -1781,27 +1832,33 @@ class ReceiptPreviewService {
                     child: pw.Column(
                       crossAxisAlignment: pw.CrossAxisAlignment.stretch,
                       children: activeFooterLines
-                          .map((line) => pw.Container(
-                                alignment: _footerPdfAlignment(
-                                  line.style.alignment,
-                                ),
-                                padding: const pw.EdgeInsets.only(top: 2),
-                                child: _configuredPdfText(
+                          .map((line) => line.isDevCredit
+                              ? _devCreditFooterWidget(
                                   line.text,
-                                  fonts: fonts,
-                                  arabicFirst: true,
-                                  fontSize: _footerFontSize(
-                                    isA5 ? 5.5 : 6.4,
-                                    line.style.size,
-                                  ),
-                                  bold: line.style.bold,
+                                  isA5 ? 5.0 : 5.6,
                                   color: muted,
-                                  align: _footerPdfTextAlign(
+                                )
+                              : pw.Container(
+                                  alignment: _footerPdfAlignment(
                                     line.style.alignment,
                                   ),
-                                  lineGap: .5,
-                                ),
-                              ))
+                                  padding: const pw.EdgeInsets.only(top: 2),
+                                  child: _configuredPdfText(
+                                    line.text,
+                                    fonts: fonts,
+                                    arabicFirst: true,
+                                    fontSize: _footerFontSize(
+                                      isA5 ? 5.5 : 6.4,
+                                      line.style.size,
+                                    ),
+                                    bold: line.style.bold,
+                                    color: muted,
+                                    align: _footerPdfTextAlign(
+                                      line.style.alignment,
+                                    ),
+                                    lineGap: .5,
+                                  ),
+                                ))
                           .toList(),
                     ),
                   ),
@@ -1998,7 +2055,14 @@ class ReceiptPreviewService {
       footerLineStyles,
       devCreditEnabled: devCreditEnabled,
       devCreditText: devCreditText,
-    );
+    ).where((line) => !line.isDevCredit).toList();
+    // The credit line belongs to the page chrome, not the invoice content, so
+    // it is pinned in the MultiPage `footer:` callback below (bottom of every
+    // page) rather than flowing between the merchant's own footer and the QR
+    // code.
+    final devCreditLine = devCreditEnabled
+        ? PrintTextUtils.sanitizeFooterText(devCreditText)
+        : '';
 
     doc.addPage(
       pw.MultiPage(
@@ -2007,11 +2071,29 @@ class ReceiptPreviewService {
         footer: (context) => pw.Container(
           padding: const pw.EdgeInsets.only(top: 6),
           decoration: pw.BoxDecoration(border: pw.Border(top: pw.BorderSide(color: border, width: .6))),
-          child: pw.Row(
-            mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+          child: pw.Column(
+            crossAxisAlignment: pw.CrossAxisAlignment.stretch,
             children: [
-              pw.Text('Thank you for your business!', style: textStyle(isA5 ? 7.5 : 8.5, bold: true, color: accent)),
-              pw.Text('Page ${context.pageNumber} of ${context.pagesCount}', style: textStyle(isA5 ? 7 : 8, color: muted)),
+              pw.Row(
+                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                children: [
+                  pw.Text('Thank you for your business!', style: textStyle(isA5 ? 7.5 : 8.5, bold: true, color: accent)),
+                  pw.Text('Page ${context.pageNumber} of ${context.pagesCount}', style: textStyle(isA5 ? 7 : 8, color: muted)),
+                ],
+              ),
+              if (devCreditLine.isNotEmpty)
+                pw.Padding(
+                  padding: const pw.EdgeInsets.only(top: 4),
+                  child: pw.Text(
+                    devCreditLine,
+                    textAlign: pw.TextAlign.center,
+                    style: pw.TextStyle(
+                      fontStyle: pw.FontStyle.italic,
+                      fontSize: isA5 ? 6 : 6.6,
+                      color: muted,
+                    ),
+                  ),
+                ),
             ],
           ),
         ),

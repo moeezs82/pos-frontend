@@ -33,21 +33,23 @@ class _BarcodePrintDialogState extends State<BarcodePrintDialog> {
   String? _error;
   int _previewRevision = 0;
 
-  String get _name =>
-      (widget.product['_barcode_label_name'] ?? widget.product['name'] ?? 'Product')
-          .toString()
-          .trim();
-  String get _barcode => (widget.product['barcode'] ?? '').toString().trim();
-  double get _price =>
-      double.tryParse((widget.product['price'] ?? '0').toString()) ?? 0;
-  String get _variantDetails {
-    final override =
-        (widget.product['_barcode_variant_details'] ?? '').toString().trim();
-    if (override.isNotEmpty) return override;
-    final color = (widget.product['variant_color'] ?? '').toString().trim();
-    final size = (widget.product['variant_size'] ?? '').toString().trim();
-    return [color, size].where((e) => e.isNotEmpty).join(' • ');
-  }
+  /// Built once from the product map so the price, discount and SKU the label
+  /// prints are exactly the ones stored on the product. The product-group
+  /// screen passes display overrides for the name and variant text.
+  BarcodeLabelItem _item({required int copies}) => BarcodeLabelItem.fromProduct(
+        widget.product,
+        nameOverride:
+            (widget.product['_barcode_label_name'] ?? '').toString().trim().isEmpty
+                ? null
+                : widget.product['_barcode_label_name'].toString(),
+        variantOverride:
+            (widget.product['_barcode_variant_details'] ?? '').toString(),
+        copies: copies,
+      );
+
+  String get _name => _item(copies: 1).productName;
+  String get _barcode => _item(copies: 1).barcode;
+  String get _variantDetails => _item(copies: 1).variantDetails;
 
   bool get _configuredSheetAllowed =>
       widget.config.barcodeConnection != 'network';
@@ -78,11 +80,7 @@ class _BarcodePrintDialogState extends State<BarcodePrintDialog> {
   }
 
   Future<Uint8List> _preview(PdfPageFormat _) {
-    final item = BarcodeLabelItem(
-      productName: _name,
-      variantDetails: _variantDetails,
-      barcode: _barcode,
-      price: _price,
+    final item = _item(
       copies: _layout == BarcodeOutputLayout.labels ? 1 : _previewCopies,
     );
     if (_layout == BarcodeOutputLayout.labels) {
@@ -147,15 +145,7 @@ class _BarcodePrintDialogState extends State<BarcodePrintDialog> {
     try {
       await BarcodeLabelPrinterService.instance.printBatch(
         config: widget.config,
-        items: [
-          BarcodeLabelItem(
-            productName: _name,
-            variantDetails: _variantDetails,
-            barcode: _barcode,
-            price: _price,
-            copies: copies,
-          ),
-        ],
+        items: [_item(copies: copies)],
         layout: _layout,
         destination: _destination,
         localPrinterName: _localPrinterName,

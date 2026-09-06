@@ -84,6 +84,8 @@ class PrinterConfigProvider extends ChangeNotifier {
   String get barcodeCurrency => _config.barcodeCurrency;
   List<String> get footerLines => _config.footerLines;
   List<ReceiptFooterStyle> get footerLineStyles => _config.footerLineStyles;
+  bool get devCreditEnabled => _config.devCreditEnabled;
+  String get devCreditText => _config.devCreditText;
 
   // Compatibility getters for receipt code compiled during a rolling update.
   String? get kitchenPrinterName => secondaryPrinterName;
