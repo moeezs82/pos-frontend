@@ -1,5 +1,6 @@
 import 'package:enterprise_pos/api/core/api_client.dart';
 
+import '../models/barcode_label_line.dart';
 import '../models/invoice_template.dart';
 import '../models/item_discount_display.dart';
 import '../models/printer_config.dart';
@@ -109,6 +110,7 @@ class PrinterConfigService {
     bool barcodeShowValue = true,
     bool barcodeShowPrice = true,
     bool barcodeShowVariantDetails = true,
+    List<BarcodeLabelLine> barcodeLabelLines = const [],
     bool devCreditEnabled = true,
     String devCreditText = 'Powered by A Developers',
   }) async {
@@ -159,6 +161,12 @@ class PrinterConfigService {
       'barcode_show_value': barcodeShowValue,
       'barcode_show_price': barcodeShowPrice,
       'barcode_show_variant_details': barcodeShowVariantDetails,
+      // Omitted rather than sent empty: the backend treats null as "this
+      // branch has no custom design" and the client then falls back to the
+      // four barcode_show_* booleans above.
+      if (barcodeLabelLines.isNotEmpty)
+        'barcode_label_lines':
+            barcodeLabelLines.map((line) => line.toJson()).toList(),
       'dev_credit_enabled': devCreditEnabled,
       'dev_credit_text': devCreditText,
     });

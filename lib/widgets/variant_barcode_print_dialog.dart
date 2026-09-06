@@ -118,12 +118,13 @@ class _VariantBarcodePrintDialogState extends State<VariantBarcodePrintDialog> {
         if (copies <= 0) break;
         previewRemaining -= copies;
       }
+      // Built from the variant row itself so each variant's own price and
+      // discount reach the label, not just the family name.
       result.add(
-        BarcodeLabelItem(
-          productName: widget.groupName,
-          variantDetails: _variantDetails(row.variant),
-          barcode: barcode,
-          price: _double(row.variant['price']),
+        BarcodeLabelItem.fromProduct(
+          Map<String, dynamic>.from(row.variant),
+          nameOverride: widget.groupName,
+          variantOverride: _variantDetails(row.variant),
           copies: copies,
         ),
       );

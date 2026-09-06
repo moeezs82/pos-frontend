@@ -1,3 +1,4 @@
+import 'barcode_label_line.dart';
 import 'invoice_template.dart';
 import 'item_discount_display.dart';
 import 'receipt_footer_style.dart';
@@ -71,6 +72,12 @@ class PrinterConfig {
   final bool barcodeShowPrice;
   final bool barcodeShowVariantDetails;
 
+  /// The branch's composed label design. Never empty: when the branch has no
+  /// saved design, [fromJson] derives one from the four legacy barcodeShow*
+  /// flags so the label keeps printing exactly as it did before the builder
+  /// existed.
+  final List<BarcodeLabelLine> barcodeLabelLines;
+
   // Legacy display helpers retained for older call sites.
   final String? mainPrinterName;
   final String? secondaryPrinterName;
@@ -131,6 +138,7 @@ class PrinterConfig {
     this.barcodeShowValue = true,
     this.barcodeShowPrice = true,
     this.barcodeShowVariantDetails = true,
+    this.barcodeLabelLines = const [],
     this.mainPrinterName,
     this.secondaryPrinterName,
     this.devCreditEnabled = true,
@@ -185,6 +193,37 @@ class PrinterConfig {
     if (value is num) return value != 0;
     return const {'1', 'true', 'yes', 'on'}.contains(value.toString().toLowerCase());
   }
+
+  /// Resolves the branch's label design.
+  ///
+  /// A branch that has never opened the label builder stores nothing, and the
+  /// backend then returns an empty array. Falling back to the four legacy
+  /// booleans — rather than to a blank design — is what stops an upgrade from
+  /// silently changing what a shop's printer produces. Non-empty designs from a
+  /// newer client are accepted as-is; unknown line types are dropped by
+  /// [BarcodeLabelLine.listFromJson].
+  static List<BarcodeLabelLine> _labelLines(Map<String, dynamic> json) {
+    final stored = BarcodeLabelLine.listFromJson(json['barcode_label_lines']);
+    if (stored.isNotEmpty) return stored;
+    return BarcodeLabelLine.fromLegacyFlags(
+      showName: _bool(json['barcode_show_name'], fallback: true),
+      showVariantDetails:
+          _bool(json['barcode_show_variant_details'], fallback: true),
+      showValue: _bool(json['barcode_show_value'], fallback: true),
+      showPrice: _bool(json['barcode_show_price'], fallback: true),
+    );
+  }
+
+  /// The design to render with, for a config built by hand (previews, tests,
+  /// older cached configs) where [barcodeLabelLines] was never populated.
+  List<BarcodeLabelLine> get effectiveLabelLines => barcodeLabelLines.isNotEmpty
+      ? barcodeLabelLines
+      : BarcodeLabelLine.fromLegacyFlags(
+          showName: barcodeShowName,
+          showVariantDetails: barcodeShowVariantDetails,
+          showValue: barcodeShowValue,
+          showPrice: barcodeShowPrice,
+        );
 
   factory PrinterConfig.fromJson(Map<String, dynamic> json) {
     int toInt(dynamic value, int fallback) {
@@ -273,6 +312,7 @@ class PrinterConfig {
       barcodeShowValue: _bool(json['barcode_show_value'], fallback: true),
       barcodeShowPrice: _bool(json['barcode_show_price'], fallback: true),
       barcodeShowVariantDetails: _bool(json['barcode_show_variant_details'], fallback: true),
+      barcodeLabelLines: _labelLines(json),
       mainPrinterName: json['main_printer_name']?.toString(),
       secondaryPrinterName:
           preferred('secondary_printer_name', 'kitchen_printer_name')?.toString(),
@@ -334,6 +374,8 @@ class PrinterConfig {
         'barcode_show_value': barcodeShowValue,
         'barcode_show_price': barcodeShowPrice,
         'barcode_show_variant_details': barcodeShowVariantDetails,
+        'barcode_label_lines':
+            barcodeLabelLines.map((line) => line.toJson()).toList(),
         'main_printer_name': mainPrinterName,
         'secondary_printer_name': secondaryPrinterName,
         'dev_credit_enabled': devCreditEnabled,
@@ -391,6 +433,7 @@ class PrinterConfig {
     bool? barcodeShowValue,
     bool? barcodeShowPrice,
     bool? barcodeShowVariantDetails,
+    List<BarcodeLabelLine>? barcodeLabelLines,
     bool? devCreditEnabled,
     String? devCreditText,
   }) {
@@ -462,6 +505,7 @@ class PrinterConfig {
       barcodeShowPrice: barcodeShowPrice ?? this.barcodeShowPrice,
       barcodeShowVariantDetails:
           barcodeShowVariantDetails ?? this.barcodeShowVariantDetails,
+      barcodeLabelLines: barcodeLabelLines ?? this.barcodeLabelLines,
       mainPrinterName: mainPrinterName,
       secondaryPrinterName: secondaryPrinterName,
       devCreditEnabled: devCreditEnabled ?? this.devCreditEnabled,

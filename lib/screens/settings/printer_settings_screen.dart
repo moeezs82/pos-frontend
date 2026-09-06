@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:enterprise_pos/api/common_service.dart';
 import 'package:enterprise_pos/api/printer_config_service.dart';
+import 'package:enterprise_pos/models/barcode_label_line.dart';
 import 'package:enterprise_pos/models/invoice_template.dart';
 import 'package:enterprise_pos/models/item_discount_display.dart';
 import 'package:enterprise_pos/models/printer_config.dart';
@@ -78,10 +79,24 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
   String _barcodeLanguage = 'driver';
   int _barcodeDpi = 203;
   String _barcodeOrientation = 'portrait';
-  bool _barcodeShowName = true;
-  bool _barcodeShowValue = true;
-  bool _barcodeShowPrice = true;
-  bool _barcodeShowVariantDetails = true;
+  /// The branch's composed label design, in print order.
+  final List<_LabelLineEntry> _barcodeLines = [];
+  int _barcodeLineSeq = 0;
+
+  List<BarcodeLabelLine> get _barcodeLabelLines =>
+      _barcodeLines.map((e) => e.line).toList();
+
+  // The four legacy booleans are still sent on save, derived from the design,
+  // so a workstation still running the previous build keeps printing a
+  // sensible label during a rolling update.
+  bool get _barcodeShowName =>
+      BarcodeLabelLine.legacyFlag(_barcodeLabelLines, BarcodeLabelField.productName);
+  bool get _barcodeShowValue =>
+      BarcodeLabelLine.legacyFlag(_barcodeLabelLines, BarcodeLabelField.barcodeValue);
+  bool get _barcodeShowPrice =>
+      BarcodeLabelLine.legacyFlag(_barcodeLabelLines, BarcodeLabelField.price);
+  bool get _barcodeShowVariantDetails => BarcodeLabelLine.legacyFlag(
+      _barcodeLabelLines, BarcodeLabelField.variantDetails);
   List<Printer> _installedPrinters = [];
   InvoiceTemplate _mainTemplate = InvoiceTemplate.standard;
   String _invoicePaperSize = 'a4';
@@ -145,6 +160,9 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
     _secondaryNetworkPortCtrl.dispose();
     _secondaryLocalPrinterCtrl.dispose();
     _secondaryHeaderCtrl.dispose();
+    for (final entry in _barcodeLines) {
+      entry.dispose();
+    }
     _barcodeLocalPrinterCtrl.dispose();
     _barcodeNetworkIpCtrl.dispose();
     _barcodeNetworkPortCtrl.dispose();
@@ -296,10 +314,7 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
       _barcodeGapCtrl.text = _numberText(config.barcodeLabelGapMm);
       _barcodeDpi = config.barcodeDpi;
       _barcodeOrientation = config.barcodeOrientation;
-      _barcodeShowName = config.barcodeShowName;
-      _barcodeShowValue = config.barcodeShowValue;
-      _barcodeShowPrice = config.barcodeShowPrice;
-      _barcodeShowVariantDetails = config.barcodeShowVariantDetails;
+      _setBarcodeLines(config.effectiveLabelLines);
       _devCreditEnabled = config.devCreditEnabled;
       _devCreditTextCtrl.text = config.devCreditText;
     });
@@ -593,6 +608,7 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
         barcodeShowValue: _barcodeShowValue,
         barcodeShowPrice: _barcodeShowPrice,
         barcodeShowVariantDetails: _barcodeShowVariantDetails,
+        barcodeLabelLines: _barcodeLabelLines,
         devCreditEnabled: _devCreditEnabled,
         devCreditText: _devCreditTextCtrl.text.trim().isEmpty
             ? 'Powered by A Developers'
@@ -785,7 +801,348 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
       barcodeShowValue: _barcodeShowValue,
       barcodeShowPrice: _barcodeShowPrice,
       barcodeShowVariantDetails: _barcodeShowVariantDetails,
+      barcodeLabelLines: _barcodeLabelLines,
+      // The shop-name line reads this, so a preview shows the real shop name
+      // as it is currently typed rather than a blank row.
+      shopName: _shopNameCtrl.text.trim(),
     );
+  }
+
+  // ── barcode label designer ──────────────────────────────────────────────
+
+  void _setBarcodeLines(List<BarcodeLabelLine> lines) {
+    for (final entry in _barcodeLines) {
+      entry.dispose();
+    }
+    _barcodeLines
+      ..clear()
+      ..addAll(lines.map((line) => _LabelLineEntry(_barcodeLineSeq++, line)));
+  }
+
+  void _updateBarcodeLine(int index, BarcodeLabelLine line) {
+    setState(() => _barcodeLines[index].line = line);
+  }
+
+  /// Fields already on the label. Everything except a free-text line is a
+  /// single value on the product, so it is offered only once.
+  Set<BarcodeLabelField> get _usedBarcodeFields => _barcodeLines
+      .map((e) => e.line.field)
+      .where((f) => f != BarcodeLabelField.customText)
+      .toSet();
+
+  List<BarcodeLabelField> get _addableBarcodeFields => BarcodeLabelField.values
+      .where((f) => !_usedBarcodeFields.contains(f))
+      .toList();
+
+  void _addBarcodeLine(BarcodeLabelField field) {
+    setState(() {
+      _barcodeLines.add(
+        _LabelLineEntry(
+          _barcodeLineSeq++,
+          BarcodeLabelLine(
+            field: field,
+            label: _defaultLabelWord(field),
+            size: field == BarcodeLabelField.salePrice
+                ? BarcodeLabelTextSize.large
+                : BarcodeLabelTextSize.normal,
+          ),
+        ),
+      );
+    });
+  }
+
+  /// A starting prefix word so a newly added line reads as a sentence
+  /// immediately. Every one of these is editable — a shop printing in Urdu or
+  /// Arabic simply types over them.
+  String _defaultLabelWord(BarcodeLabelField field) {
+    switch (field) {
+      case BarcodeLabelField.price:
+        return 'Price:';
+      case BarcodeLabelField.discount:
+        return 'Discount:';
+      case BarcodeLabelField.salePrice:
+        return 'Now:';
+      case BarcodeLabelField.sku:
+        return 'SKU:';
+      default:
+        return '';
+    }
+  }
+
+  Widget _buildBarcodeLabelDesigner() {
+    final addable = _addableBarcodeFields;
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 12, 12, 14),
+      decoration: BoxDecoration(
+        color: AppTheme.surfaceSoft,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppTheme.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.tune_rounded, size: 18, color: AppTheme.primary),
+              const SizedBox(width: 8),
+              const Expanded(
+                child: Text(
+                  'Label content',
+                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w800),
+                ),
+              ),
+              TextButton.icon(
+                onPressed: () => setState(
+                  () => _setBarcodeLines(
+                    BarcodeLabelLine.fromLegacyFlags(
+                      showName: true,
+                      showVariantDetails: true,
+                      showValue: true,
+                      showPrice: true,
+                    ),
+                  ),
+                ),
+                icon: const Icon(Icons.restart_alt_rounded, size: 18),
+                label: const Text('Reset'),
+              ),
+            ],
+          ),
+          const Padding(
+            padding: EdgeInsets.only(bottom: 10),
+            child: Text(
+              'Drag to reorder. The prefix word is yours to write — in English, '
+              'Urdu, Arabic or anything else. Lines with nothing to print are '
+              'skipped automatically, so a discount line only appears on '
+              'products that actually have a discount.',
+              style: TextStyle(
+                fontSize: 12,
+                color: AppTheme.textMuted,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          if (_barcodeLines.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 18),
+              child: Text(
+                'No lines yet. Add one below.',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 12, color: AppTheme.textMuted),
+              ),
+            )
+          else
+            ReorderableListView.builder(
+              shrinkWrap: true,
+              buildDefaultDragHandles: false,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: _barcodeLines.length,
+              onReorder: (oldIndex, newIndex) {
+                setState(() {
+                  if (newIndex > oldIndex) newIndex -= 1;
+                  final moved = _barcodeLines.removeAt(oldIndex);
+                  _barcodeLines.insert(newIndex, moved);
+                });
+              },
+              itemBuilder: (context, index) => _buildBarcodeLineRow(index),
+            ),
+          const SizedBox(height: 6),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: PopupMenuButton<BarcodeLabelField>(
+              enabled: addable.isNotEmpty,
+              onSelected: _addBarcodeLine,
+              itemBuilder: (_) => addable
+                  .map(
+                    (field) => PopupMenuItem(
+                      value: field,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            field.title,
+                            style: const TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                          Text(
+                            field.hint,
+                            style: const TextStyle(
+                              fontSize: 11,
+                              color: AppTheme.textMuted,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  )
+                  .toList(),
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: addable.isEmpty ? AppTheme.border : AppTheme.primary,
+                  ),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.add_rounded,
+                      size: 18,
+                      color:
+                          addable.isEmpty ? AppTheme.textMuted : AppTheme.primary,
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      addable.isEmpty ? 'All lines added' : 'Add line',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w700,
+                        fontSize: 13,
+                        color: addable.isEmpty
+                            ? AppTheme.textMuted
+                            : AppTheme.primary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBarcodeLineRow(int index) {
+    final entry = _barcodeLines[index];
+    final line = entry.line;
+    final field = line.field;
+
+    return Padding(
+      key: ValueKey(entry.id),
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(4, 6, 8, 6),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: AppTheme.border),
+        ),
+        child: Row(
+          children: [
+            ReorderableDragStartListener(
+              index: index,
+              child: const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 4),
+                child: Icon(Icons.drag_indicator_rounded,
+                    size: 20, color: AppTheme.textMuted),
+              ),
+            ),
+            Checkbox(
+              value: line.enabled,
+              onChanged: (v) =>
+                  _updateBarcodeLine(index, line.copyWith(enabled: v ?? false)),
+            ),
+            SizedBox(
+              width: 128,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    field.title,
+                    style: const TextStyle(
+                        fontSize: 12.5, fontWeight: FontWeight.w700),
+                  ),
+                  if (field == BarcodeLabelField.discount ||
+                      field == BarcodeLabelField.salePrice)
+                    const Text(
+                      'discounted items only',
+                      style: TextStyle(fontSize: 10, color: AppTheme.textMuted),
+                    ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: field.supportsLabelWord
+                  ? TextField(
+                      controller: entry.controller,
+                      textDirection: _looksRtl(entry.controller.text)
+                          ? TextDirection.rtl
+                          : TextDirection.ltr,
+                      decoration: InputDecoration(
+                        isDense: true,
+                        labelText: field.labelWordIsContent
+                            ? 'Text to print'
+                            : 'Prefix word',
+                        hintText: field.labelWordIsContent
+                            ? 'e.g. Exchange within 7 days'
+                            : 'optional',
+                      ),
+                      onChanged: (v) => _updateBarcodeLine(
+                        index,
+                        line.copyWith(label: v),
+                      ),
+                    )
+                  : Text(
+                      field.hint,
+                      style: const TextStyle(
+                          fontSize: 11, color: AppTheme.textMuted),
+                    ),
+            ),
+            const SizedBox(width: 8),
+            SizedBox(
+              width: 96,
+              child: DropdownButtonFormField<BarcodeLabelTextSize>(
+                value: line.size,
+                isDense: true,
+                decoration: const InputDecoration(
+                    isDense: true, labelText: 'Size'),
+                items: BarcodeLabelTextSize.values
+                    .map((size) => DropdownMenuItem(
+                          value: size,
+                          child: Text(size.title,
+                              style: const TextStyle(fontSize: 12)),
+                        ))
+                    .toList(),
+                onChanged: field.isGraphic
+                    ? null
+                    : (v) => _updateBarcodeLine(
+                          index,
+                          line.copyWith(size: v ?? BarcodeLabelTextSize.normal),
+                        ),
+              ),
+            ),
+            IconButton(
+              tooltip: 'Remove line',
+              onPressed: () => setState(() {
+                _barcodeLines.removeAt(index).dispose();
+              }),
+              icon: const Icon(Icons.close_rounded,
+                  size: 18, color: AppTheme.textMuted),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Mirrors the renderer's script check so the prefix-word field reads
+  /// right-to-left while an Urdu or Arabic word is being typed.
+  static bool _looksRtl(String value) {
+    for (final rune in value.runes) {
+      if ((rune >= 0x0600 && rune <= 0x06FF) ||
+          (rune >= 0x0750 && rune <= 0x077F) ||
+          (rune >= 0x08A0 && rune <= 0x08FF) ||
+          (rune >= 0xFB50 && rune <= 0xFDFF) ||
+          (rune >= 0xFE70 && rune <= 0xFEFF)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   Future<void> _testBarcodePrint() async {
@@ -859,12 +1216,18 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(12),
                     child: PdfPreview(
+                      // A sample that exercises every line type, including
+                      // the discount-only ones, so the design is fully visible
+                      // before it reaches a printer.
                       build: (_) => BarcodeLabelPrinterService.instance.buildLabelsPdf(
                         config: config,
                         productName: 'Classic T-Shirt',
-                        variantDetails: 'Black • M',
+                        variantDetails: 'Black / M',
                         barcode: '123456789012',
                         price: 1250,
+                        sku: 'TS-BLK-M',
+                        discount: 10,
+                        discountType: 'percentage',
                       ),
                       initialPageFormat: BarcodeLabelPrinterService.instance.pageFormat(config),
                       canChangePageFormat: false,
@@ -2302,32 +2665,8 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
                 ),
               ],
             ),
-            const SizedBox(height: 10),
-            Wrap(
-              spacing: 8,
-              children: [
-                FilterChip(
-                  label: const Text('Product name'),
-                  selected: _barcodeShowName,
-                  onSelected: (v) => setState(() => _barcodeShowName = v),
-                ),
-                FilterChip(
-                  label: const Text('Barcode value'),
-                  selected: _barcodeShowValue,
-                  onSelected: (v) => setState(() => _barcodeShowValue = v),
-                ),
-                FilterChip(
-                  label: const Text('Price'),
-                  selected: _barcodeShowPrice,
-                  onSelected: (v) => setState(() => _barcodeShowPrice = v),
-                ),
-                FilterChip(
-                  label: const Text('Variant details'),
-                  selected: _barcodeShowVariantDetails,
-                  onSelected: (v) => setState(() => _barcodeShowVariantDetails = v),
-                ),
-              ],
-            ),
+            const SizedBox(height: 14),
+            _buildBarcodeLabelDesigner(),
             const SizedBox(height: 14),
             Container(
               padding: const EdgeInsets.all(12),
@@ -2440,4 +2779,21 @@ class _TemplateOptionTile extends StatelessWidget {
       ),
     );
   }
+}
+
+/// One row of the barcode label designer.
+///
+/// The design itself is a plain list of [BarcodeLabelLine]; this adds the two
+/// things a reorderable, editable list needs and the model should not carry: a
+/// stable identity for the drag animation, and a text controller so the prefix
+/// word keeps its cursor position while the branch types.
+class _LabelLineEntry {
+  final int id;
+  BarcodeLabelLine line;
+  final TextEditingController controller;
+
+  _LabelLineEntry(this.id, this.line)
+      : controller = TextEditingController(text: line.label);
+
+  void dispose() => controller.dispose();
 }
