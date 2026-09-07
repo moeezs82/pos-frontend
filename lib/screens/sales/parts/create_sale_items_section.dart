@@ -47,7 +47,11 @@ class ItemsTable extends StatefulWidget {
   final void Function(int index)? onProfitInsight;
   final void Function(int index)? onEditSellingUnit;
   final void Function(int index, int? packagingId)? onSellingUnitChanged;
-  final Future<bool> Function(int index, double returnQuantity)? onReturnLinkRequested;
+  final Future<bool> Function(
+    int index,
+    double baseReturnQuantity,
+    double? packagingQuantity,
+  )? onReturnLinkRequested;
 
   /// When [compact] is true the table renders as a plain borderless table
   /// (no EnterprisePanel card, no section header, tighter row padding)
@@ -284,6 +288,14 @@ class _ItemsTableState extends State<ItemsTable> {
     return baseUnit.isEmpty ? 'Base unit • Change selling unit' : '$baseUnit • Change selling unit';
   }
 
+  static String _returnLineSummary(Map<String, dynamic> item) {
+    final invoice = (item['return_source_invoice'] ?? '').toString();
+    if (_isPackaged(item)) {
+      return '↩ Return • ${_sellingUnitSummary(item)} • $invoice';
+    }
+    return '↩ Return • $invoice';
+  }
+
   Widget _buildSellingUnitMenu(
     int index,
     Map<String, dynamic> item, {
@@ -376,12 +388,35 @@ class _ItemsTableState extends State<ItemsTable> {
       tooltip: 'Change selling unit',
       padding: EdgeInsets.zero,
       position: PopupMenuPosition.under,
-      onOpened: () => _commitRow(index),
-      onSelected: (value) {
-        if (value == -1) {
-          widget.onEditSellingUnit?.call(index);
+      onOpened: () {
+        final qtyText = _rowCtrls[index]?.qty.text.trim() ?? '';
+        final pendingQty = double.tryParse(qtyText);
+        // Do not start the async return-link dialog underneath a popup route.
+        // The negative value is committed when the cashier submits/leaves the
+        // Qty field; the selling-unit menu remains safe to open/change first.
+        if (pendingQty != null &&
+            pendingQty < 0 &&
+            widget.onReturnLinkRequested != null) {
+          _rowDebounce[index]?.cancel();
           return;
         }
+        _commitRow(index);
+      },
+      onSelected: (value) {
+        if (value == -1) {
+          // PopupMenuButton starts its reverse route transition before
+          // onSelected. Opening AlertDialog during that transition can leave
+          // the popup modal barrier above the dialog on Windows. Wait for the
+          // Material popup transition to finish before pushing another route.
+          Future<void>.delayed(const Duration(milliseconds: 350), () {
+            if (!mounted) return;
+            widget.onEditSellingUnit?.call(index);
+          });
+          return;
+        }
+        // Ordinary selling-unit changes do not open a new route on a new sale,
+        // so keep the fast POS path immediate. Posted amendments perform their
+        // own route-safe deferral before opening the advanced editor.
         widget.onSellingUnitChanged?.call(index, value == 0 ? null : value);
       },
       itemBuilder: (_) => choices,
@@ -490,8 +525,8 @@ class _ItemsTableState extends State<ItemsTable> {
     if (_isPackaged(item)) {
       final packageQty = double.tryParse(ctrls.qty.text.trim());
       final factor = _num(item['packaging_factor_snapshot']);
-      if (packageQty == null || packageQty <= 0) {
-        _qtyErrors[i] = 'Package quantity must be greater than zero.';
+      if (packageQty == null || packageQty == 0) {
+        _qtyErrors[i] = 'Package quantity cannot be zero.';
         ctrls.dirty = false;
         setState(() {});
         return;
@@ -520,6 +555,25 @@ class _ItemsTableState extends State<ItemsTable> {
         return;
       }
 
+      // Negative package quantities enter the exact same linked-return flow as
+      // base-unit quantities, but the return API receives canonical base
+      // quantity. The package count stays the cashier-facing display value.
+      if (packageQty < 0) {
+        if (widget.onReturnLinkRequested == null) {
+          _qtyErrors[i] = 'Negative package quantity is only available in Return / Exchange.';
+          ctrls.dirty = false;
+          setState(() {});
+          return;
+        }
+        ctrls.dirty = false;
+        _startReturnLink(
+          i,
+          packageQty.abs(),
+          baseReturnQuantity: baseQty.abs(),
+        );
+        return;
+      }
+
       final packagePrice = double.tryParse(ctrls.price.text.trim());
       final displayedDiscount = double.tryParse(ctrls.discount.text.trim());
       final discountType =
@@ -543,6 +597,17 @@ class _ItemsTableState extends State<ItemsTable> {
         return;
       }
 
+      if (item['original_sale_item_id'] != null) {
+        const returnKeys = <String>[
+          'original_sale_id', 'original_sale_item_id', 'return_source_invoice',
+          'return_reason', 'returnable_quantity', 'return_original_outstanding',
+          'return_credit', 'return_merchandise_subtotal',
+          'return_invoice_discount', 'return_tax', 'return_linked_quantity',
+        ];
+        for (final key in returnKeys) {
+          item.remove(key);
+        }
+      }
       item['packaging_quantity'] = packageQty;
       item['quantity'] = baseQty;
       item['packaging_unit_price'] = packagePrice;
@@ -622,7 +687,11 @@ class _ItemsTableState extends State<ItemsTable> {
     setState(() {});
   }
 
-  Future<void> _startReturnLink(int i, double returnQuantity) async {
+  Future<void> _startReturnLink(
+    int i,
+    double displayReturnQuantity, {
+    double? baseReturnQuantity,
+  }) async {
     if (_returnLinkInProgress.contains(i) ||
         i < 0 ||
         i >= widget.items.length ||
@@ -632,15 +701,21 @@ class _ItemsTableState extends State<ItemsTable> {
 
     _returnLinkInProgress.add(i);
     final ctrls = _rowCtrls[i];
-    final originalQty = _num(widget.items[i]['quantity']);
+    final originalQty = _isPackaged(widget.items[i])
+        ? _num(widget.items[i]['packaging_quantity'])
+        : _num(widget.items[i]['quantity']);
     try {
       // Release the editor before opening the modal so its stale '-1' text
       // cannot remain the focused source of truth while parent state changes.
       ctrls?.qtyFocus.unfocus();
-      final linked = await widget.onReturnLinkRequested!(i, returnQuantity);
+      final linked = await widget.onReturnLinkRequested!(
+        i,
+        baseReturnQuantity ?? displayReturnQuantity,
+        baseReturnQuantity == null ? null : displayReturnQuantity,
+      );
       if (!mounted) return;
 
-      final displayQty = linked ? -returnQuantity : originalQty;
+      final displayQty = linked ? -displayReturnQuantity : originalQty;
       if (ctrls != null) {
         final text = _formatQty(displayQty);
         ctrls.qty.value = TextEditingValue(
@@ -990,7 +1065,7 @@ class _ItemsTableState extends State<ItemsTable> {
                                         _buildSellingUnitMenu(i, item),
                                       if (item['original_sale_item_id'] != null)
                                         Text(
-                                          '↩ Return • ${(item['return_source_invoice'] ?? '').toString()}',
+                                          _returnLineSummary(item),
                                           maxLines: 1,
                                           overflow: TextOverflow.ellipsis,
                                           style: const TextStyle(fontSize: 9, fontWeight: FontWeight.w700, color: AppTheme.warning),
@@ -1053,7 +1128,7 @@ class _ItemsTableState extends State<ItemsTable> {
                           child: _CellNumberField(
                             controller: ctrls.qty,
                             focusNode: ctrls.qtyFocus,
-                            allowNegative: !_isPackaged(item),
+                            allowNegative: !_isPackaged(item) || widget.onReturnLinkRequested != null,
                             rule: _isPackaged(item)
                                 ? const QuantityRule(allowDecimal: false)
                                 : _ruleFor(i),
@@ -1213,7 +1288,7 @@ class _ItemsTableState extends State<ItemsTable> {
                           _buildSellingUnitMenu(i, item, compact: true),
                         if (item['original_sale_item_id'] != null)
                           Text(
-                            '↩ Return • ${(item['return_source_invoice'] ?? '').toString()}',
+                            _returnLineSummary(item),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(fontSize: 9, fontWeight: FontWeight.w700, color: AppTheme.warning),
@@ -1305,7 +1380,7 @@ class _ItemsTableState extends State<ItemsTable> {
             child: _CellNumberField(
               controller: ctrls.qty,
               focusNode: ctrls.qtyFocus,
-              allowNegative: !_isPackaged(item),
+              allowNegative: !_isPackaged(item) || widget.onReturnLinkRequested != null,
               compact: true,
               rule: _isPackaged(item)
                   ? const QuantityRule(allowDecimal: false)

@@ -35,7 +35,7 @@ enum InvoiceTemplate {
         InvoiceTemplate.compact =>
           'Narrow 58 mm customer receipt for small thermal printers.',
         InvoiceTemplate.kitchen =>
-          'Operational secondary ticket for kitchen, packing or preparation.',
+          'Operational secondary ticket for kitchen, packing or preparation. Shows quantities and package sizes without selling prices.',
         InvoiceTemplate.standardInvoice =>
           'Professional paged invoice for normal printers. Supports A4, A5 and Letter paper, discount column, payments, optional logo and QR code.',
         InvoiceTemplate.arabicThermal =>
@@ -88,7 +88,7 @@ enum InvoiceTemplate {
         InvoiceTemplate.kitchen => const InvoiceSections(
             header: false,
             customer: true,
-            itemPrices: true,
+            itemPrices: false,
             totalsBreakdown: false,
             footer: false,
           ),

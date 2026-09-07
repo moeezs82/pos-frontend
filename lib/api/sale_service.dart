@@ -73,6 +73,8 @@ class SaleService {
     required String invoice,
     required int productId,
     required double quantity,
+    int? packagingId,
+    double? packagingQuantity,
   }) async {
     final res = await _client.get(
       '/sales/return-source',
@@ -80,6 +82,9 @@ class SaleService {
         'invoice': invoice.trim(),
         'product_id': '$productId',
         'quantity': quantity.toString(),
+        if (packagingId != null) 'packaging_id': '$packagingId',
+        if (packagingQuantity != null)
+          'packaging_quantity': packagingQuantity.toString(),
       },
     );
     if (res['success'] == true && res['data'] is Map<String, dynamic>) {
@@ -207,6 +212,13 @@ class SaleService {
               'product_id': it['product_id'],
               'quantity': (double.tryParse(it['quantity']?.toString() ?? '') ?? 0).abs(),
               'reason': (it['return_reason'] ?? '').toString().trim(),
+              if (it['packaging_id'] != null) ...{
+                'packaging_id': it['packaging_id'],
+                'packaging_factor_snapshot': it['packaging_factor_snapshot'],
+                'packaging_quantity':
+                    (double.tryParse(it['packaging_quantity']?.toString() ?? '') ?? 0)
+                        .abs(),
+              },
             })
         .toList();
 

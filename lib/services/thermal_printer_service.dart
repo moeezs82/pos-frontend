@@ -414,6 +414,8 @@ class ThermalPrinterService {
     final itemDiscountDisplay = itemDiscountDisplayFromValue(
       meta?['item_discount_display']?.toString(),
     );
+    final operationalTicket =
+        !sections.itemPrices && !sections.totalsBreakdown;
 
     final delivery = (meta?['delivery'] is num)
         ? (meta!['delivery'] as num).toDouble()
@@ -478,12 +480,11 @@ class ThermalPrinterService {
 
       for (final it in items) {
         printer.text(it.name);
-        final compactDiscount = itemDiscountDisplay == ItemDiscountDisplay.compact
-            ? it.compactDiscountLabel()
-            : '';
-        final detailText = compactDiscount.isEmpty
-            ? ' ${_q(it.qty)} x ${_m(it.price)}'
-            : ' ${_q(it.qty)} x ${_m(it.price)}  $compactDiscount';
+        final detailText = ' ${_thermalItemDetail(
+          it,
+          itemDiscountDisplay,
+          is58mm: is58mm,
+        )}';
         printer.row([
           PosColumn(text: detailText, width: 8),
           PosColumn(text: _m(it.total), width: 3, styles: const PosStyles(align: PosAlign.right)),
@@ -500,10 +501,12 @@ class ThermalPrinterService {
     } else {
       printer.text('ITEMS', styles: const PosStyles(bold: true));
       for (final it in items) {
-        printer.text(
-          '${_q(it.qty)} x ${it.name}',
-          styles: const PosStyles(bold: true),
-        );
+        printer.text(it.name, styles: const PosStyles(bold: true));
+        printer.text(' ${_kitchenQuantityLine(it)}');
+        if (it.hasPackagingSnapshot &&
+            it.packageConversionText.isNotEmpty) {
+          printer.text(' ${it.packageConversionText}');
+        }
       }
     }
     printer.hr();
@@ -538,11 +541,13 @@ class ThermalPrinterService {
       printer.hr();
     }
 
-    printer.row([
-      PosColumn(text: 'Grand Total', width: 8, styles: const PosStyles(bold: true, height: PosTextSize.size2)),
-      PosColumn(text: _m(grandTotal), width: 3, styles: const PosStyles(bold: true, height: PosTextSize.size2, align: PosAlign.right)),
-      PosColumn(text: '', width: 1),
-    ]);
+    if (!operationalTicket) {
+      printer.row([
+        PosColumn(text: 'Grand Total', width: 8, styles: const PosStyles(bold: true, height: PosTextSize.size2)),
+        PosColumn(text: _m(grandTotal), width: 3, styles: const PosStyles(bold: true, height: PosTextSize.size2, align: PosAlign.right)),
+        PosColumn(text: '', width: 1),
+      ]);
+    }
 
     // Payment method breakdown (split tender / non-cash tenders).
     final paymentsSnap = (meta?['payments_snapshot'] is List)
@@ -552,7 +557,7 @@ class ThermalPrinterService {
         (paymentsSnap.length == 1 &&
             paymentsSnap.first is Map &&
             (((paymentsSnap.first as Map)['method']?.toString() ?? 'cash') != 'cash'));
-    if (showBreakdown) {
+    if (!operationalTicket && showBreakdown) {
       for (final p in paymentsSnap) {
         final map = (p is Map) ? p : const {};
         final label = (map['label'] ?? map['method'] ?? 'Paid').toString();
@@ -568,23 +573,23 @@ class ThermalPrinterService {
       }
     }
 
-    if (cashReceived > 0) {
+    if (!operationalTicket && cashReceived > 0) {
       printer.row([
         PosColumn(text: 'Cash Received', width: 8, styles: const PosStyles(bold: true)),
         PosColumn(text: _m(cashReceived), width: 3, styles: const PosStyles(bold: true, align: PosAlign.right)),
         PosColumn(text: '', width: 1),
       ]);
     }
-    if (changeAmount > 0) {
+    if (!operationalTicket && changeAmount > 0) {
       printer.row([
         PosColumn(text: 'Change', width: 8, styles: const PosStyles(bold: true)),
         PosColumn(text: _m(changeAmount), width: 3, styles: const PosStyles(bold: true, align: PosAlign.right)),
         PosColumn(text: '', width: 1),
       ]);
     }
-    printer.hr();
+    if (!operationalTicket) printer.hr();
 
-    if (showQr && _validQrUrl(qrUrl)) {
+    if (!operationalTicket && showQr && _validQrUrl(qrUrl)) {
       printer.qrcode(
         qrUrl!.trim(),
         size: is58mm ? QRSize.size3 : QRSize.size4,
@@ -710,6 +715,31 @@ class ThermalPrinterService {
   static String _fmtDate(DateTime d) =>
       "${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year} "
       "${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}";
+
+  static String _thermalItemDetail(
+    SaleReceiptItem item,
+    ItemDiscountDisplay discountDisplay, {
+    required bool is58mm,
+  }) {
+    final unit = item.hasPackagingSnapshot
+        ? item.thermalUnitName
+        : item.unitName.trim();
+    final unitPart = unit.isEmpty ? '' : ' $unit';
+    final packageSize = item.hasPackagingSnapshot ? item.packageSizeText : '';
+    final packPart = packageSize.isEmpty
+        ? ''
+        : (is58mm ? '[$packageSize]' : ' [$packageSize]');
+    final discount = discountDisplay == ItemDiscountDisplay.compact &&
+            item.hasDiscount
+        ? ' ${item.compactDiscountLabel()}'
+        : '';
+    return '${_q(item.qty)}$unitPart$packPart x ${_m(item.price)}$discount';
+  }
+
+  static String _kitchenQuantityLine(SaleReceiptItem item) {
+    final unit = item.invoiceUnitName;
+    return unit.isEmpty ? '${_q(item.qty)} x' : '${_q(item.qty)} x $unit';
+  }
 
   static String _m(num v) => v.toStringAsFixed(2);
   static String _q(num v) => (v % 1 == 0) ? v.toInt().toString() : v.toString();

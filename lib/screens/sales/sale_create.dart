@@ -176,6 +176,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
   final _barcodeFocusNode = FocusNode();
   bool _scannerEnabled = false;
   bool _showProfitInsight = false;
+  bool _itemEditorOpen = false;
 
   // Named focus nodes for keyboard-shortcut field-jumping.
   // Party autocomplete fields (controllers cleared before focus so the field
@@ -1543,7 +1544,14 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     // Existing posted package snapshots are intentionally edited through the
     // advanced amendment flow so historical conversion rules remain visible.
     if (_isEditing && current['sale_item_id'] != null) {
-      _editItem(index);
+      // This callback can originate from PopupMenuButton.onSelected. Pushing a
+      // dialog while the popup route is still reversing can strand its modal
+      // barrier on Windows (dim screen, no clickable dialog). Defer only the
+      // posted-amendment editor; normal sale unit switching stays immediate.
+      Future<void>.delayed(const Duration(milliseconds: 350), () {
+        if (!mounted || index < 0 || index >= _items.length) return;
+        _editItem(index);
+      });
       return;
     }
 
@@ -1657,6 +1665,9 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
   }
 
   void _editItem(int index) {
+    if (!mounted || index < 0 || index >= _items.length || _itemEditorOpen) {
+      return;
+    }
     final item = _items[index];
     final rule = QuantityRule.fromProduct(item);
     final existingSnapshot = _snapshotPackaging(item);
@@ -1711,8 +1722,10 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     String? priceError;
     String? discountError;
 
-    showDialog(
+    _itemEditorOpen = true;
+    showDialog<void>(
       context: context,
+      barrierDismissible: false,
       builder: (_) => StatefulBuilder(
         builder: (context, setLocal) {
           final selectedPackaging = options[selectedKey];
@@ -1779,33 +1792,49 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
             }
           }
 
+          // AlertDialog uses intrinsic sizing. Keep its content width explicit
+          // and do not place LayoutBuilder inside the dialog content: on
+          // Windows that combination can push the modal barrier successfully
+          // but fail while measuring the dialog, leaving a dimmed/untouchable
+          // screen with no visible editor. MediaQuery is safe here because it
+          // does not participate in intrinsic layout.
+          final dialogContentWidth = (MediaQuery.sizeOf(context).width - 96)
+              .clamp(320.0, 560.0)
+              .toDouble();
+
           return AlertDialog(
             title: Text("Edit ${item['name']}"),
-            content: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 560),
+            content: SizedBox(
+              width: dialogContentWidth,
               child: SingleChildScrollView(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    DropdownButtonFormField<String>(
-                      value: selectedKey,
-                      isExpanded: true,
+                    InputDecorator(
                       decoration: const InputDecoration(
                         labelText: 'Selling Unit',
+                        helperText: 'Select the selling unit for this line.',
                       ),
-                      items: options.entries.map((entry) {
-                        final package = entry.value;
-                        final historical = entry.key == 'snapshot' &&
-                            isExistingPostedPackage;
-                        final label = package == null
-                            ? unitLabel
-                            : '${_packagingDisplayLabel(package, rule)}${historical ? ' • invoice snapshot' : ''}';
-                        return DropdownMenuItem<String>(
-                          value: entry.key,
-                          child: Text(label, overflow: TextOverflow.ellipsis),
-                        );
-                      }).toList(growable: false),
-                      onChanged: (value) => setLocal(() => selectSellingUnit(value)),
+                      child: Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: options.entries.map((entry) {
+                          final package = entry.value;
+                          final historical = entry.key == 'snapshot' &&
+                              isExistingPostedPackage;
+                          final label = package == null
+                              ? unitLabel
+                              : '${_packagingDisplayLabel(package, rule)}${historical ? ' • invoice snapshot' : ''}';
+                          return ChoiceChip(
+                            label: Text(label),
+                            selected: selectedKey == entry.key,
+                            onSelected: (selected) {
+                              if (!selected) return;
+                              setLocal(() => selectSellingUnit(entry.key));
+                            },
+                          );
+                        }).toList(growable: false),
+                      ),
                     ),
                     if (isExistingPostedPackage) ...[
                       const SizedBox(height: 8),
@@ -1874,8 +1903,8 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
                       ),
                     ),
                     const SizedBox(height: 12),
-                    LayoutBuilder(
-                      builder: (context, constraints) {
+                    Builder(
+                      builder: (context) {
                         Widget buildDiscountField() => TextField(
                               controller: discountController,
                               keyboardType: const TextInputType.numberWithOptions(
@@ -1911,42 +1940,47 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
                               ),
                             );
 
-                        Widget buildDiscountTypeField() =>
-                            DropdownButtonFormField<String>(
-                              value: discountType,
-                              isExpanded: true,
+                        Widget buildDiscountTypeField() => InputDecorator(
                               decoration: const InputDecoration(
                                 labelText: 'Discount Type',
                               ),
-                              items: const [
-                                DropdownMenuItem(
-                                  value: 'percentage',
-                                  child: Text('Percentage'),
-                                ),
-                                DropdownMenuItem(
-                                  value: 'fixed',
-                                  child: Text('Fixed'),
-                                ),
-                              ],
-                              onChanged: (value) => setLocal(() {
-                                if (value == null) return;
-                                discountType = value;
-                                final parsed = double.tryParse(
-                                      discountController.text.trim(),
-                                    ) ??
-                                    0;
-                                final currentPrice =
-                                    double.tryParse(priceController.text.trim()) ?? 0;
-                                if ((value == 'percentage' && parsed > 100) ||
-                                    (value == 'fixed' &&
-                                        parsed > currentPrice + 0.0004)) {
-                                  discountController.text = '0';
-                                }
-                                discountError = null;
-                              }),
+                              child: Wrap(
+                                spacing: 8,
+                                runSpacing: 8,
+                                children: const <MapEntry<String, String>>[
+                                  MapEntry('percentage', 'Percentage'),
+                                  MapEntry('fixed', 'Fixed'),
+                                ].map((option) {
+                                  final value = option.key;
+                                  return ChoiceChip(
+                                    label: Text(option.value),
+                                    selected: discountType == value,
+                                    onSelected: (selected) {
+                                      if (!selected) return;
+                                      setLocal(() {
+                                        discountType = value;
+                                        final parsed = double.tryParse(
+                                              discountController.text.trim(),
+                                            ) ??
+                                            0;
+                                        final currentPrice = double.tryParse(
+                                              priceController.text.trim(),
+                                            ) ??
+                                            0;
+                                        if ((value == 'percentage' && parsed > 100) ||
+                                            (value == 'fixed' &&
+                                                parsed > currentPrice + 0.0004)) {
+                                          discountController.text = '0';
+                                        }
+                                        discountError = null;
+                                      });
+                                    },
+                                  );
+                                }).toList(growable: false),
+                              ),
                             );
 
-                        if (constraints.maxWidth < 430) {
+                        if (dialogContentWidth < 430) {
                           return Column(
                             children: [
                               buildDiscountField(),
@@ -2126,7 +2160,17 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
           );
         },
       ),
-    );
+    ).whenComplete(() {
+      // Route futures complete before the final reverse-transition frames can
+      // disappear on Windows. Keep controllers alive until that barrier has
+      // fully settled, and do not allow a second item editor to stack on top.
+      Future<void>.delayed(const Duration(milliseconds: 350), () {
+        qtyController.dispose();
+        priceController.dispose();
+        discountController.dispose();
+        if (mounted) _itemEditorOpen = false;
+      });
+    });
   }
 
   SaleProfitSummary _currentProfitSummary() {
@@ -2324,13 +2368,40 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     );
   }
 
-  Future<bool> _linkReturnForRow(int index, double quantity) async {
+  Future<bool> _linkReturnForRow(
+    int index,
+    double quantity,
+    double? packagingQuantity,
+  ) async {
     if (!mounted || index < 0 || index >= _items.length || quantity <= 0) return false;
     final current = Map<String, dynamic>.from(_items[index]);
     final productId = _metaInt(current['product_id']);
     if (productId == null || productId <= 0) return false;
 
     final wasLinked = current['original_sale_item_id'] != null;
+    final requestedPackagingId = _metaInt(current['packaging_id']);
+    double? requestedPackagingQuantity;
+    if (requestedPackagingId != null) {
+      final factor = _metaNum(current['packaging_factor_snapshot']);
+      if (factor <= 0) {
+        AppFeedback.warning(
+          context,
+          'This package conversion is invalid. Re-select the selling unit before returning it.',
+        );
+        return false;
+      }
+      requestedPackagingQuantity = packagingQuantity;
+      if (requestedPackagingQuantity == null ||
+          requestedPackagingQuantity <= 0 ||
+          !QuantityRule.isWhole(requestedPackagingQuantity)) {
+        AppFeedback.warning(
+          context,
+          'Package return quantity must be a positive whole package count.',
+        );
+        return false;
+      }
+      requestedPackagingQuantity = _roundTo(requestedPackagingQuantity, 4);
+    }
     String invoice = (current['return_source_invoice'] ?? '').toString().trim();
     String reason = (current['return_reason'] ?? '').toString().trim();
     if (!wasLinked) {
@@ -2344,12 +2415,8 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       final request = await _askReturnSource(initialInvoice: defaultInvoice);
       if (!mounted) return false;
       if (request == null) {
-        setState(() {
-          if (index < _items.length && _items[index]['original_sale_item_id'] == null) {
-            _items[index]['quantity'] = quantity;
-            _items[index]['total'] = _cartLineTotal(_items[index]);
-          }
-        });
+        // The row was never mutated before opening the return linker. Keep the
+        // exact pre-return package/base snapshot when the cashier cancels.
         return false;
       }
       invoice = request['invoice']!;
@@ -2361,7 +2428,6 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       final otherInvoice = (_items[i]['return_source_invoice'] ?? '').toString().trim();
       if (_items[i]['original_sale_item_id'] != null && otherInvoice.isNotEmpty && otherInvoice != invoice) {
         AppFeedback.warning(context, 'All returned items in one transaction must come from the same original invoice ($otherInvoice).');
-        if (!wasLinked) setState(() => _items[index]['quantity'] = quantity);
         return false;
       }
     }
@@ -2371,6 +2437,8 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         invoice: invoice,
         productId: productId,
         quantity: quantity,
+        packagingId: requestedPackagingId,
+        packagingQuantity: requestedPackagingQuantity,
       );
       if (!mounted) return false;
       final candidates = data['items'] is List ? data['items'] as List : const <dynamic>[];
@@ -2386,7 +2454,6 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       }
       picked ??= await _chooseReturnSourceItem(candidates);
       if (!mounted || picked == null) {
-        if (!wasLinked) setState(() => _items[index]['quantity'] = quantity);
         return false;
       }
       final sale = data['sale'] is Map ? Map<String, dynamic>.from(data['sale'] as Map) : <String, dynamic>{};
@@ -2400,6 +2467,10 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         _applyCustomerSelection(null);
       }
 
+      final authoritativeQty = _metaNum(picked['quantity']);
+      if (authoritativeQty <= 0) {
+        throw Exception('The original invoice returned an invalid return quantity.');
+      }
       final updated = Map<String, dynamic>.from(current)
         ..['original_sale_id'] = sourceSaleId
         ..['original_sale_item_id'] = _metaInt(picked['sale_item_id'])
@@ -2411,12 +2482,54 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         ..['return_merchandise_subtotal'] = _metaNum(picked['merchandise_subtotal'])
         ..['return_invoice_discount'] = _metaNum(picked['invoice_discount_allocated'])
         ..['return_tax'] = _metaNum(picked['tax_allocated'])
-        ..['return_linked_quantity'] = quantity
+        ..['return_linked_quantity'] = authoritativeQty
         ..['price'] = _metaNum(picked['original_price'])
         ..['discount_pct'] = _metaNum(picked['line_discount'])
         ..['discount_type'] = (picked['discount_type'] ?? 'percentage').toString()
-        ..['quantity'] = -quantity
+        ..['quantity'] = -authoritativeQty
         ..['total'] = -_metaNum(picked['return_credit']).abs();
+
+      if (requestedPackagingId != null) {
+        final sourcePackagingId = _metaInt(picked['packaging_id']);
+        final sourceFactor = _metaNum(picked['packaging_factor_snapshot']);
+        if (sourcePackagingId != requestedPackagingId || sourceFactor <= 0) {
+          throw Exception(
+            'The selected package does not match the original invoice package. Use the base unit or choose the original package.',
+          );
+        }
+        final sourceName = (picked['packaging_name_snapshot'] ?? '').toString().trim();
+        if (sourceName.isEmpty) {
+          throw Exception('The original package snapshot is incomplete.');
+        }
+        final packageReturnQty = _roundTo(authoritativeQty / sourceFactor, 4);
+        if (!QuantityRule.isWhole(packageReturnQty)) {
+          throw Exception(
+            'The requested return is not a whole number of the original invoice package. Use the base unit for a partial return.',
+          );
+        }
+        updated['packaging_id'] = sourcePackagingId;
+        updated['packaging_name_snapshot'] = sourceName;
+        final sourceShort =
+            (picked['packaging_short_name_snapshot'] ?? '').toString().trim();
+        if (sourceShort.isEmpty) {
+          updated.remove('packaging_short_name_snapshot');
+        } else {
+          updated['packaging_short_name_snapshot'] = sourceShort;
+        }
+        updated['packaging_factor_snapshot'] = sourceFactor;
+        updated['packaging_quantity'] = -packageReturnQty;
+        updated['packaging_unit_price'] =
+            _metaNum(picked['packaging_unit_price']);
+        final returnDiscountType =
+            (picked['discount_type'] ?? 'percentage').toString().toLowerCase();
+        if (returnDiscountType == 'fixed' &&
+            picked['packaging_discount_snapshot'] != null) {
+          updated['packaging_discount_snapshot'] =
+              _metaNum(picked['packaging_discount_snapshot']);
+        } else {
+          updated.remove('packaging_discount_snapshot');
+        }
+      }
       setState(() {
         _items[index] = updated;
         // Return linkage can materially change what is payable/refundable.
@@ -2436,9 +2549,10 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
           _items[index] = current;
           if (previous > 0) _items[index]['quantity'] = -previous;
         } else {
-          _items[index]['quantity'] = quantity;
-          _items[index].remove('original_sale_id');
-          _items[index].remove('original_sale_item_id');
+          // No return linkage was committed yet. Restore the exact row snapshot
+          // so package quantity/factor/base quantity cannot drift after an API
+          // rejection or cancelled source selection.
+          _items[index] = Map<String, dynamic>.from(current);
         }
         _items[index]['total'] = _cartLineTotal(_items[index]);
       });
@@ -2802,8 +2916,15 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
             double.tryParse(row['packaging_quantity']?.toString() ?? '');
         final factor =
             double.tryParse(row['packaging_factor_snapshot']?.toString() ?? '');
-        if (packageQty == null || packageQty <= 0 ||
+        final linkedReturn = qty < 0 && row['original_sale_item_id'] != null;
+        if (packageQty == null || packageQty == 0 ||
             !QuantityRule.isWhole(packageQty)) {
+          return 'Line ${i + 1} — $name: package quantity must be a non-zero whole number.';
+        }
+        if (linkedReturn && packageQty >= 0) {
+          return 'Line ${i + 1} — $name: linked package return quantity must be negative.';
+        }
+        if (!linkedReturn && packageQty <= 0) {
           return 'Line ${i + 1} — $name: package quantity must be a positive whole number.';
         }
         if (factor == null || factor <= 0) {
@@ -3293,6 +3414,16 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
           unitName: packaged && packageLabel.isNotEmpty
               ? packageLabel
               : baseUnitName,
+          packagingName: packaged
+              ? (i['packaging_name_snapshot'] ?? '').toString().trim()
+              : null,
+          packagingShortName: packaged
+              ? (i['packaging_short_name_snapshot'] ?? '').toString().trim()
+              : null,
+          packagingFactor: packaged
+              ? _metaNum(i['packaging_factor_snapshot'])
+              : null,
+          baseUnitName: baseUnitName,
           discountAmount: lineDiscount,
           discountType: discountType,
           discountValue: discountType == 'fixed' && packaged

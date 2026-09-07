@@ -596,6 +596,8 @@ class ReceiptPreviewService {
                   cPhone.isNotEmpty ||
                   cOtherPhones.isNotEmpty ||
                   cAddr.isNotEmpty);
+          final bool operationalTicket =
+              !sections.itemPrices && !sections.totalsBreakdown;
 
           final activeFooterLines = _footerRenderLines(
             footerLines,
@@ -698,9 +700,11 @@ class ReceiptPreviewService {
                             children: [
                               pw.Expanded(
                                 child: pw.Text(
-                                  itemDiscountDisplay == ItemDiscountDisplay.compact && it.hasDiscount
-                                      ? '${_q(it.qty)} x ${_m(it.price)}  ${it.compactDiscountLabel()}'
-                                      : '${_q(it.qty)} x ${_m(it.price)}',
+                                  _thermalItemDetail(
+                                    it,
+                                    itemDiscountDisplay,
+                                    is58mm: is58mm,
+                                  ),
                                   style: small,
                                 ),
                               ),
@@ -734,10 +738,34 @@ class ReceiptPreviewService {
                 pw.SizedBox(height: 4),
                 ...items.map(
                   (it) => pw.Padding(
-                    padding: const pw.EdgeInsets.only(bottom: 5),
-                    child: pw.Text(
-                      '${_q(it.qty)} x ${it.name}',
-                      style: bold,
+                    padding: const pw.EdgeInsets.only(bottom: 6),
+                    child: pw.Column(
+                      crossAxisAlignment: pw.CrossAxisAlignment.stretch,
+                      children: [
+                        pw.Text(it.name, style: bold),
+                        pw.Padding(
+                          padding: pw.EdgeInsets.only(
+                            left: detailLeftInset,
+                            top: 1,
+                          ),
+                          child: pw.Text(
+                            _kitchenQuantityLine(it),
+                            style: normal,
+                          ),
+                        ),
+                        if (it.hasPackagingSnapshot &&
+                            it.packageConversionText.isNotEmpty)
+                          pw.Padding(
+                            padding: pw.EdgeInsets.only(
+                              left: detailLeftInset,
+                              top: 1,
+                            ),
+                            child: pw.Text(
+                              it.packageConversionText,
+                              style: small,
+                            ),
+                          ),
+                      ],
                     ),
                   ),
                 ),
@@ -754,30 +782,31 @@ class ReceiptPreviewService {
                 divider(),
               ],
 
-              // Grand total always shows.
-              kv("Grand Total", _m(grandTotal), bold2: true),
+              if (!operationalTicket) ...[
+                kv("Grand Total", _m(grandTotal), bold2: true),
 
-              // Payment method breakdown — printed for split tenders or any
-              // non-cash tender (e.g. Cash 1000, Bank 500, KNET 250 (TXN…)).
-              if (paymentsSnap.length > 1 ||
-                  (paymentsSnap.length == 1 &&
-                      (paymentsSnap.first is Map) &&
-                      (((paymentsSnap.first as Map)['method']?.toString() ?? 'cash') != 'cash')))
-                ...paymentsSnap.map((p) {
-                  final map = (p is Map) ? p : const <String, dynamic>{};
-                  final label = (map['label'] ?? map['method'] ?? 'Paid').toString();
-                  final amt = (map['amount'] is num)
-                      ? (map['amount'] as num).toDouble()
-                      : double.tryParse((map['amount'] ?? '').toString()) ?? 0.0;
-                  final ref = (map['reference'] ?? '').toString().trim();
-                  return kv(ref.isEmpty ? label : "$label ($ref)", _m(amt));
-                }),
+                // Payment method breakdown — printed for split tenders or any
+                // non-cash tender (e.g. Cash 1000, Bank 500, KNET 250 (TXN…)).
+                if (paymentsSnap.length > 1 ||
+                    (paymentsSnap.length == 1 &&
+                        (paymentsSnap.first is Map) &&
+                        (((paymentsSnap.first as Map)['method']?.toString() ?? 'cash') != 'cash')))
+                  ...paymentsSnap.map((p) {
+                    final map = (p is Map) ? p : const <String, dynamic>{};
+                    final label = (map['label'] ?? map['method'] ?? 'Paid').toString();
+                    final amt = (map['amount'] is num)
+                        ? (map['amount'] as num).toDouble()
+                        : double.tryParse((map['amount'] ?? '').toString()) ?? 0.0;
+                    final ref = (map['reference'] ?? '').toString().trim();
+                    return kv(ref.isEmpty ? label : "$label ($ref)", _m(amt));
+                  }),
 
-              if (cashReceived > 0) kv("Cash", _m(cashReceived), bold2: true),
-              if (changeAmount > 0) kv("Change", _m(changeAmount), bold2: true),
+                if (cashReceived > 0) kv("Cash", _m(cashReceived), bold2: true),
+                if (changeAmount > 0) kv("Change", _m(changeAmount), bold2: true),
+              ],
 
               // ── OPTIONAL CUSTOMER QR ──────────────────────────────────────────
-              if (showQr && _validQrUrl(qrUrl)) ...[
+              if (!operationalTicket && showQr && _validQrUrl(qrUrl)) ...[
                 divider(),
                 pw.Center(
                   child: pw.BarcodeWidget(
@@ -1182,25 +1211,29 @@ class ReceiptPreviewService {
                       style: style(is58 ? 7.1 : 8.1, bold: secondary.isEmpty),
                       textAlign: pw.TextAlign.right,
                     ),
-                    pw.SizedBox(height: 3),
+                    pw.SizedBox(height: 2),
                     pw.Row(
+                      crossAxisAlignment: pw.CrossAxisAlignment.start,
                       children: [
                         pw.Expanded(
-                          child: bilingualLabel('الكمية', 'Qty', arSize: 7.2, enSize: 5.8),
-                        ),
-                        pw.Text(_q(item.qty), style: style(is58 ? 7 : 8, bold: true)),
-                        pw.SizedBox(width: 7),
-                        pw.Expanded(
-                          child: bilingualLabel('السعر', 'Price', arSize: 7.2, enSize: 5.8),
-                        ),
-                        pw.Text(_m(item.price), style: style(is58 ? 7 : 8, bold: true)),
-                        if (itemDiscountDisplay == ItemDiscountDisplay.compact && item.hasDiscount) ...[
-                          pw.SizedBox(width: 7),
-                          pw.Text(
-                            item.compactDiscountLabel(),
-                            style: style(is58 ? 6.6 : 7.6, bold: true, color: accent),
+                          child: pw.Text(
+                            _thermalItemDetail(
+                              item,
+                              itemDiscountDisplay,
+                              is58mm: is58,
+                            ),
+                            style: style(is58 ? 6.8 : 7.8, bold: true),
+                            textDirection: pw.TextDirection.ltr,
+                            textAlign: pw.TextAlign.left,
                           ),
-                        ],
+                        ),
+                        pw.SizedBox(width: is58 ? 4 : 6),
+                        pw.Text(
+                          _m(item.total),
+                          style: style(is58 ? 7.2 : 8.2, bold: true, color: accent),
+                          textDirection: pw.TextDirection.ltr,
+                          textAlign: pw.TextAlign.right,
+                        ),
                       ],
                     ),
                     if (itemDiscountDisplay == ItemDiscountDisplay.detailed && item.hasDiscount)
@@ -1208,10 +1241,6 @@ class ReceiptPreviewService {
                         padding: const pw.EdgeInsets.only(top: 2),
                         child: valueRow('الخصم', 'Discount', '-${_m(item.discountAmount)}'),
                       ),
-                    pw.Padding(
-                      padding: const pw.EdgeInsets.only(top: 1),
-                      child: valueRow('المبلغ', 'Amount', _m(item.total), strong: true),
-                    ),
                   ],
                 ),
               );
@@ -1509,9 +1538,26 @@ class ReceiptPreviewService {
             ],
             pw.Text(
               item.name,
-              style: style(isA5 ? 6.2 : 7.2, bold: secondary.isEmpty, color: secondary.isEmpty ? ink : muted),
+              style: style(
+                isA5 ? 6.2 : 7.2,
+                bold: secondary.isEmpty,
+                color: secondary.isEmpty ? ink : muted,
+              ),
               textAlign: pw.TextAlign.right,
             ),
+            if (item.hasPackagingSnapshot &&
+                item.packageConversionText.isNotEmpty) ...[
+              pw.SizedBox(height: 2),
+              _configuredPdfText(
+                'التعبئة|Pack: ${item.packageConversionText}',
+                fonts: fonts,
+                arabicFirst: true,
+                fontSize: isA5 ? 5.7 : 6.6,
+                color: muted,
+                align: pw.TextAlign.right,
+                lineGap: .5,
+              ),
+            ],
           ],
         ),
       );
@@ -1701,7 +1747,9 @@ class ReceiptPreviewService {
                   children: [
                     tableValue('${index + 1}'),
                     productCell(item),
-                    tableValue(item.unitName.isEmpty ? '-' : item.unitName),
+                    tableValue(
+                      item.invoiceUnitName.isEmpty ? '-' : item.invoiceUnitName,
+                    ),
                     tableValue(_q(item.qty)),
                     tableValue(_m(item.price), align: pw.TextAlign.right),
                     if (itemDiscountDisplay != ItemDiscountDisplay.hidden)
@@ -2033,17 +2081,43 @@ class ReceiptPreviewService {
       );
     }
 
-    pw.Widget productCell(String name) {
-      final parts = name.split(' / ').map((part) => part.trim()).where((part) => part.isNotEmpty).toList();
-      if (parts.length < 2) return tableCell(name);
+    pw.Widget productCell(ReceiptItem item) {
+      final parts = item.name
+          .split(' / ')
+          .map((part) => part.trim())
+          .where((part) => part.isNotEmpty)
+          .toList();
       return pw.Padding(
-        padding: pw.EdgeInsets.symmetric(horizontal: isA5 ? 3 : 5, vertical: isA5 ? 5 : 6),
+        padding: pw.EdgeInsets.symmetric(
+          horizontal: isA5 ? 3 : 5,
+          vertical: isA5 ? 5 : 6,
+        ),
         child: pw.Column(
           crossAxisAlignment: pw.CrossAxisAlignment.start,
           children: [
-            pw.Text(parts.first, style: textStyle(isA5 ? 7.7 : 8.8, bold: true)),
-            pw.SizedBox(height: 1.5),
-            pw.Text(parts.skip(1).join(' / '), style: textStyle(isA5 ? 6.8 : 7.8, color: muted)),
+            if (parts.length >= 2) ...[
+              pw.Text(
+                parts.first,
+                style: textStyle(isA5 ? 7.7 : 8.8, bold: true),
+              ),
+              pw.SizedBox(height: 1.5),
+              pw.Text(
+                parts.skip(1).join(' / '),
+                style: textStyle(isA5 ? 6.8 : 7.8, color: muted),
+              ),
+            ] else
+              pw.Text(
+                item.name,
+                style: textStyle(isA5 ? 7.7 : 8.8),
+              ),
+            if (item.hasPackagingSnapshot &&
+                item.packageConversionText.isNotEmpty) ...[
+              pw.SizedBox(height: 2),
+              pw.Text(
+                'Pack: ${item.packageConversionText}',
+                style: textStyle(isA5 ? 6.2 : 7.1, color: muted),
+              ),
+            ],
           ],
         ),
       );
@@ -2243,8 +2317,11 @@ class ReceiptPreviewService {
                 return pw.TableRow(
                   children: [
                     tableCell('${index + 1}'),
-                    productCell(item.name),
-                    tableCell(item.unitName.isEmpty ? '-' : item.unitName, align: pw.TextAlign.center),
+                    productCell(item),
+                    tableCell(
+                      item.invoiceUnitName.isEmpty ? '-' : item.invoiceUnitName,
+                      align: pw.TextAlign.center,
+                    ),
                     tableCell(_q(item.qty), align: pw.TextAlign.right),
                     tableCell(_m(item.price), align: pw.TextAlign.right),
                     if (itemDiscountDisplay != ItemDiscountDisplay.hidden)
@@ -2376,6 +2453,31 @@ class ReceiptPreviewService {
   static bool _validQrUrl(String? value) {
     final uri = Uri.tryParse((value ?? '').trim());
     return uri != null && (uri.scheme == 'http' || uri.scheme == 'https') && uri.host.isNotEmpty;
+  }
+
+  static String _thermalItemDetail(
+    ReceiptItem item,
+    ItemDiscountDisplay discountDisplay, {
+    required bool is58mm,
+  }) {
+    final unit = item.hasPackagingSnapshot
+        ? item.thermalUnitName
+        : item.unitName.trim();
+    final unitPart = unit.isEmpty ? '' : ' $unit';
+    final packageSize = item.hasPackagingSnapshot ? item.packageSizeText : '';
+    final packPart = packageSize.isEmpty
+        ? ''
+        : (is58mm ? '[$packageSize]' : ' [$packageSize]');
+    final discount = discountDisplay == ItemDiscountDisplay.compact &&
+            item.hasDiscount
+        ? ' ${item.compactDiscountLabel()}'
+        : '';
+    return '${_q(item.qty)}$unitPart$packPart x ${_m(item.price)}$discount';
+  }
+
+  static String _kitchenQuantityLine(ReceiptItem item) {
+    final unit = item.invoiceUnitName;
+    return unit.isEmpty ? '${_q(item.qty)} x' : '${_q(item.qty)} x $unit';
   }
 
   static String _m(num v) => v.toStringAsFixed(2);

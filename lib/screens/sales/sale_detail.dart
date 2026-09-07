@@ -398,6 +398,16 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
         qty: qty,
         total: lineTotal,
         unitName: unitName,
+        packagingName: packaged
+            ? (m['packaging_name_snapshot'] ?? '').toString().trim()
+            : null,
+        packagingShortName: packaged
+            ? (m['packaging_short_name_snapshot'] ?? '').toString().trim()
+            : null,
+        packagingFactor: packaged
+            ? _d(m['packaging_factor_snapshot'])
+            : null,
+        baseUnitName: baseUnitName,
         discountAmount: lineDiscount,
         discountType: (m['discount_type'] ?? 'percentage').toString(),
         discountValue: (m['discount_type'] ?? 'percentage').toString() == 'fixed' && packaged
