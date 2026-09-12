@@ -52,6 +52,8 @@ class ItemsTable extends StatefulWidget {
     double baseReturnQuantity,
     double? packagingQuantity,
   )? onReturnLinkRequested;
+  final String unitActionLabel;
+  final String priceActionLabel;
 
   /// When [compact] is true the table renders as a plain borderless table
   /// (no EnterprisePanel card, no section header, tighter row padding)
@@ -68,6 +70,8 @@ class ItemsTable extends StatefulWidget {
     this.onEditSellingUnit,
     this.onSellingUnitChanged,
     this.onReturnLinkRequested,
+    this.unitActionLabel = 'selling unit',
+    this.priceActionLabel = 'sale price',
     this.compact = false,
   });
 
@@ -271,7 +275,10 @@ class _ItemsTableState extends State<ItemsTable> {
     return false;
   }
 
-  static String _sellingUnitSummary(Map<String, dynamic> item) {
+  static String _sellingUnitSummary(
+    Map<String, dynamic> item, {
+    String actionLabel = 'selling unit',
+  }) {
     if (_isPackaged(item)) {
       final name = (item['packaging_short_name_snapshot'] ??
               item['packaging_name_snapshot'] ??
@@ -285,7 +292,7 @@ class _ItemsTableState extends State<ItemsTable> {
           : '$name • 1 = $factorText $baseUnit';
     }
     final baseUnit = (item['unit_name'] ?? '').toString().trim();
-    return baseUnit.isEmpty ? 'Base unit • Change selling unit' : '$baseUnit • Change selling unit';
+    return baseUnit.isEmpty ? 'Base unit • Change $actionLabel' : '$baseUnit • Change $actionLabel';
   }
 
   static String _returnLineSummary(Map<String, dynamic> item) {
@@ -385,7 +392,7 @@ class _ItemsTableState extends State<ItemsTable> {
       );
 
     return PopupMenuButton<int>(
-      tooltip: 'Change selling unit',
+      tooltip: 'Change ${widget.unitActionLabel}',
       padding: EdgeInsets.zero,
       position: PopupMenuPosition.under,
       onOpened: () {
@@ -425,7 +432,7 @@ class _ItemsTableState extends State<ItemsTable> {
         children: [
           Flexible(
             child: Text(
-              _sellingUnitSummary(item),
+              _sellingUnitSummary(item, actionLabel: widget.unitActionLabel),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
@@ -579,7 +586,7 @@ class _ItemsTableState extends State<ItemsTable> {
       final discountType =
           (item['discount_type'] ?? 'percentage').toString();
       if (packagePrice == null || packagePrice < 0) {
-        AppFeedback.warning(context, 'Enter a valid package sale price.');
+        AppFeedback.warning(context, 'Enter a valid package ${widget.priceActionLabel}.');
         ctrls.dirty = false;
         return;
       }
@@ -841,6 +848,7 @@ class _ItemsTableState extends State<ItemsTable> {
       'discount_type': discType,
       'quantity': 1.0,
       'total': _calcLineTotal(price: p.tp, qty: 1.0, discountPct: discPct, discountType: discType),
+      'packagings': raw['packagings'],
       ...SaleProfitCalculator.costFieldsFromProduct(raw),
       // Carry the quantity contract on the line: the search result that knew
       // it is discarded as soon as this returns.

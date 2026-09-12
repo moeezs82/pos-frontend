@@ -618,12 +618,21 @@ class _ItemsTable extends StatelessWidget {
       final price = _toD(item['price']);
       final discount = _toD(item['discount']);
       final qty = _toD(item['quantity']);
+      final packaged = item['packaging_id'] != null;
+      final packageQty = _toD(item['packaging_quantity']);
+      final packageName = (item['packaging_short_name_snapshot'] ??
+              item['packaging_name_snapshot'] ??
+              'Package')
+          .toString();
+      final factor = _toD(item['packaging_factor_snapshot']);
       final total = _toD(item['total']);
 
       final batch = (item['batch_no'] ?? '').toString();
       final expiry = (item['expiry_date'] ?? '').toString();
       final remarks = (item['remarks'] ?? '').toString();
       final notes = [
+        if (packaged)
+          '${_fmtQty(packageQty)} $packageName × ${_fmtQty(factor)} = ${_fmtQty(qty)} base units',
         if (batch.isNotEmpty) "Batch: $batch",
         if (expiry.isNotEmpty) "Exp: $expiry",
         if (remarks.isNotEmpty) remarks,
@@ -657,7 +666,9 @@ class _ItemsTable extends StatelessWidget {
           ),
           DataCell(_right(currency.format(price))),
           DataCell(_right(currency.format(discount))),
-          DataCell(_right(_fmtQty(qty))),
+          DataCell(_right(packaged
+              ? '${_fmtQty(packageQty)} $packageName'
+              : _fmtQty(qty))),
           DataCell(_right(currency.format(total), weight: FontWeight.w600)),
           DataCell(
             SizedBox(

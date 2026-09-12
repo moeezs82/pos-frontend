@@ -7,6 +7,7 @@ import 'package:enterprise_pos/providers/branch_provider.dart';
 import 'package:enterprise_pos/providers/payment_method_provider.dart';
 import 'package:enterprise_pos/models/payment_method.dart';
 import 'package:enterprise_pos/models/product_unit.dart';
+import 'package:enterprise_pos/models/product_packaging.dart';
 import 'package:enterprise_pos/screens/sales/parts/create_sale_items_section.dart';
 import 'package:enterprise_pos/screens/purchases/parts/purchase_product_panel.dart';
 import 'package:enterprise_pos/widgets/purchase_status_bar.dart';
@@ -192,6 +193,9 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
           id: id,
           name: (m['name'] ?? m['title'] ?? 'Unnamed').toString(),
           tp: purchasePrice(m),
+          sku: m['sku']?.toString(),
+          barcode: m['barcode']?.toString(),
+          raw: m,
         );
       }).toList(growable: false);
     } catch (_) {
@@ -206,13 +210,16 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
       AppFeedback.warning(context, 'Please select a working branch from Branch Control before selecting items.');
       return;
     }
-    final alreadySelectedIds = _items
+
+    final baseRows = _items
+        .where((item) => item['packaging_id'] == null)
+        .toList(growable: false);
+    final alreadySelectedIds = baseRows
         .map((e) => int.tryParse(e['product_id'].toString()) ?? 0)
         .where((id) => id > 0)
         .toList();
-
     final alreadySelectedQty = <int, double>{
-      for (final item in _items)
+      for (final item in baseRows)
         (int.tryParse(item['product_id'].toString()) ?? 0):
             (double.tryParse(item['quantity'].toString()) ?? 1.0),
     }..removeWhere((key, _) => key == 0);
@@ -223,7 +230,7 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
       vendorId: _selectedVendorId,
       alreadySelectedIds: alreadySelectedIds,
       alreadySelectedQty: alreadySelectedQty,
-      alreadySelectedProducts: _items.map((item) {
+      alreadySelectedProducts: baseRows.map((item) {
         return {
           'id': item['product_id'],
           'name': item['name'],
@@ -237,21 +244,25 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
     if (!mounted || picked == null) return;
 
     setState(() {
-      final next = <Map<String, dynamic>>[];
+      final packagedRows = _items
+          .where((item) => item['packaging_id'] != null)
+          .map(Map<String, dynamic>.from)
+          .toList(growable: false);
+      final nextBase = <Map<String, dynamic>>[];
       for (final selection in picked) {
         final product = (selection['product'] as Map?)?.cast<String, dynamic>();
         if (product == null) continue;
-
         final productId = int.tryParse(product['id']?.toString() ?? '') ?? 0;
         if (productId <= 0) continue;
-
         final qty = (selection['qty'] as num?)?.toDouble() ?? 1.0;
-        final unitCost = _purchaseUnitCost(product);
-        final existing = _items.where((item) => item['product_id']?.toString() == productId.toString()).firstOrNull;
-        final price = existing == null ? unitCost : _toNum(existing['price']);
-        final discountPct = existing == null ? 0.0 : _toNum(existing['discount_pct'] ?? existing['discount']);
-
-        next.add({
+        final existing = baseRows
+            .where((item) => item['product_id']?.toString() == productId.toString())
+            .firstOrNull;
+        final price = existing == null ? _purchaseUnitCost(product) : _toNum(existing['price']);
+        final discountPct = existing == null
+            ? 0.0
+            : _toNum(existing['discount_pct'] ?? existing['discount']);
+        nextBase.add({
           'product_id': productId,
           'name': product['name'] ?? product['title'] ?? 'Unnamed product',
           'cost_price': product['cost_price'],
@@ -261,12 +272,11 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
           'discount_pct': discountPct,
           'received_qty': _receiveNow ? qty : 0.0,
           'total': _lineTotal(price: price, qty: qty, discPct: discountPct),
-          // Carry the quantity contract on the line; the picker's product map
-          // is not retained.
+          'packagings': product['packagings'],
           ...QuantityRule.fromProduct(product).toRowFields(),
         });
       }
-      _items = next;
+      _items = [...packagedRows, ...nextBase];
     });
   }
 
@@ -279,7 +289,9 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
         double.tryParse(product['_picker_add_qty']?.toString() ?? '');
 
     final idx = _items.indexWhere(
-      (item) => item['product_id']?.toString() == productId.toString(),
+      (item) =>
+          item['product_id']?.toString() == productId.toString() &&
+          item['packaging_id'] == null,
     );
 
     if (idx != -1) {
@@ -293,6 +305,7 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
       _items[idx]['total'] =
           _lineTotal(price: price, qty: targetQty, discPct: discPct);
       _items[idx].addAll(QuantityRule.fromProduct(product).toRowFields());
+      _items[idx]['packagings'] = product['packagings'];
     } else {
       final unitCost = _purchaseUnitCost(product);
       final targetQty = pickerAddQty != null && pickerAddQty > 0
@@ -308,6 +321,7 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
         'discount_pct': 0.0,
         'received_qty': _receiveNow ? targetQty : 0.0,
         'total': _lineTotal(price: unitCost, qty: targetQty, discPct: 0.0),
+        'packagings': product['packagings'],
         ...QuantityRule.fromProduct(product).toRowFields(),
       });
     }
@@ -322,6 +336,152 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
       }
     }
     return 0.0;
+  }
+
+  double _roundTo(double value, int scale) {
+    var factor = 1.0;
+    for (var i = 0; i < scale; i++) {
+      factor *= 10;
+    }
+    return (value * factor).roundToDouble() / factor;
+  }
+
+  List<ProductPackaging> _activePurchasePackagings(Map<String, dynamic> item) {
+    final values = ProductPackaging.listFromJson(item['packagings'])
+        .where((p) => p.id != null && p.isActive && p.baseQuantity > 0)
+        .toList(growable: false);
+    values.sort((a, b) {
+      final byOrder = a.sortOrder.compareTo(b.sortOrder);
+      if (byOrder != 0) return byOrder;
+      return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+    });
+    return values;
+  }
+
+  void _changePurchaseUnitQuick(int index, int? packagingId) {
+    if (index < 0 || index >= _items.length) return;
+    final current = Map<String, dynamic>.from(_items[index]);
+    final currentId = int.tryParse(current['packaging_id']?.toString() ?? '');
+    if ((packagingId == null && currentId == null) ||
+        (packagingId != null && currentId == packagingId)) {
+      return;
+    }
+
+    final rule = QuantityRule.fromProduct(current);
+    final wasPackaged = currentId != null;
+    final displayedQty = wasPackaged
+        ? _toNum(current['packaging_quantity'])
+        : _toNum(current['quantity']);
+    final currentFactor = _toNum(current['packaging_factor_snapshot']);
+    final basePrice = wasPackaged && currentFactor > 0
+        ? _toNum(current['packaging_unit_price']) / currentFactor
+        : _toNum(current['price']);
+    final discountPct = _toNum(current['discount_pct'] ?? current['discount']);
+
+    if (packagingId == null) {
+      if (displayedQty <= 0 || !rule.allows(displayedQty)) {
+        AppFeedback.warning(context, rule.message);
+        return;
+      }
+      final next = Map<String, dynamic>.from(current);
+      next['quantity'] = _roundTo(displayedQty, 3);
+      next['price'] = _roundTo(basePrice, 4);
+      next.remove('packaging_id');
+      next.remove('packaging_name_snapshot');
+      next.remove('packaging_short_name_snapshot');
+      next.remove('packaging_factor_snapshot');
+      next.remove('packaging_quantity');
+      next.remove('packaging_unit_price');
+      next['total'] = _purchaseLineTotal(next);
+      setState(() => _items[index] = next);
+      return;
+    }
+
+    ProductPackaging? selected;
+    for (final p in _activePurchasePackagings(current)) {
+      if (p.id == packagingId) {
+        selected = p;
+        break;
+      }
+    }
+    if (selected == null) {
+      AppFeedback.warning(context, 'That packaging is no longer available. Refresh the product and try again.');
+      return;
+    }
+    if (displayedQty <= 0 || !QuantityRule.isWhole(displayedQty)) {
+      AppFeedback.warning(
+        context,
+        'Package quantity must be a positive whole number. Use the base unit for loose quantity.',
+      );
+      return;
+    }
+
+    final factor = selected.baseQuantity;
+    final baseQty = _roundTo(displayedQty * factor, 3);
+    if (!rule.allows(baseQty)) {
+      AppFeedback.warning(context, rule.message);
+      return;
+    }
+    final packagePrice = _roundTo(basePrice * factor, 4);
+    final next = Map<String, dynamic>.from(current);
+    next['quantity'] = baseQty;
+    next['price'] = _roundTo(packagePrice / factor, 4);
+    next['packaging_id'] = selected.id;
+    next['packaging_name_snapshot'] = selected.name;
+    final short = (selected.shortName ?? '').trim();
+    if (short.isEmpty) {
+      next.remove('packaging_short_name_snapshot');
+    } else {
+      next['packaging_short_name_snapshot'] = short;
+    }
+    next['packaging_factor_snapshot'] = factor;
+    next['packaging_quantity'] = displayedQty;
+    next['packaging_unit_price'] = packagePrice;
+    next['total'] = _purchaseLineTotal(next);
+    setState(() => _items[index] = next);
+  }
+
+  Future<void> _editPurchaseUnit(int index) async {
+    if (index < 0 || index >= _items.length) return;
+    final item = _items[index];
+    final packages = _activePurchasePackagings(item);
+    final currentId = int.tryParse(item['packaging_id']?.toString() ?? '') ?? 0;
+    final baseUnit = (item['unit_name'] ?? 'Base unit').toString().trim();
+    final selected = await showDialog<int>(
+      context: context,
+      builder: (ctx) => SimpleDialog(
+        title: Text('Purchase unit — ${item['name'] ?? 'Item'}'),
+        children: [
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(ctx, 0),
+            child: Row(
+              children: [
+                Icon(currentId == 0 ? Icons.check_rounded : Icons.inventory_2_outlined),
+                const SizedBox(width: 10),
+                Text(baseUnit.isEmpty ? 'Base unit' : baseUnit),
+              ],
+            ),
+          ),
+          for (final p in packages)
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(ctx, p.id),
+              child: Row(
+                children: [
+                  Icon(currentId == p.id ? Icons.check_rounded : Icons.inventory_2_outlined),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      '${p.shortName?.trim().isNotEmpty == true ? p.shortName : p.name} · 1 = ${p.baseQuantity % 1 == 0 ? p.baseQuantity.toInt() : p.baseQuantity} base units',
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+    if (!mounted || selected == null) return;
+    _changePurchaseUnitQuick(index, selected == 0 ? null : selected);
   }
 
   Future<void> _addPaymentDialog() async {
@@ -434,7 +594,9 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
     final unitCost = _purchaseUnitCost(product);
 
     setState(() {
-      final idx = _items.indexWhere((item) => item['product_id']?.toString() == productId.toString());
+      final idx = _items.indexWhere((item) =>
+          item['product_id']?.toString() == productId.toString() &&
+          item['packaging_id'] == null);
       if (idx >= 0) {
         final oldQty = _toNum(_items[idx]['quantity']);
         final nextQty = oldQty + 1;
@@ -456,6 +618,7 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
           'discount_pct': 0.0,
           'received_qty': _receiveNow ? 1.0 : 0.0,
           'total': _lineTotal(price: unitCost, qty: 1.0, discPct: 0.0),
+          'packagings': product['packagings'],
           ...QuantityRule.fromProduct(product).toRowFields(),
         });
       }
@@ -541,6 +704,14 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
           'quantity': quantity,
           'price': _toNum(item['price']),
           'discount': _toNum(item['discount_pct'] ?? item['discount']),
+          if (item['packaging_id'] != null) ...{
+            'packaging_id': item['packaging_id'],
+            'packaging_name_snapshot': item['packaging_name_snapshot'],
+            'packaging_short_name_snapshot': item['packaging_short_name_snapshot'],
+            'packaging_factor_snapshot': _toNum(item['packaging_factor_snapshot']),
+            'packaging_quantity': _toNum(item['packaging_quantity']),
+            'packaging_unit_price': _toNum(item['packaging_unit_price']),
+          },
         };
         if (_receiveNow) {
           final received = item.containsKey('received_qty')
@@ -670,13 +841,23 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
     return total.isFinite ? total : 0.0;
   }
 
-  double get _subtotal => _items.fold<double>(0.0, (sum, item) {
-        return sum + _lineTotal(
-          price: _toNum(item['price']),
-          qty: _toNum(item['quantity']),
-          discPct: _toNum(item['discount_pct'] ?? item['discount']),
-        );
-      });
+  double _purchaseLineTotal(Map<String, dynamic> item) {
+    if (item['packaging_id'] != null) {
+      return _lineTotal(
+        price: _toNum(item['packaging_unit_price']),
+        qty: _toNum(item['packaging_quantity']),
+        discPct: _toNum(item['discount_pct'] ?? item['discount']),
+      );
+    }
+    return _lineTotal(
+      price: _toNum(item['price']),
+      qty: _toNum(item['quantity']),
+      discPct: _toNum(item['discount_pct'] ?? item['discount']),
+    );
+  }
+
+  double get _subtotal =>
+      _items.fold<double>(0.0, (sum, item) => sum + _purchaseLineTotal(item));
 
   double get _discount => double.tryParse(discountController.text.trim())?.absOrZero() ?? 0.0;
   double get _tax => double.tryParse(taxController.text.trim())?.absOrZero() ?? 0.0;
@@ -1041,6 +1222,10 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
               items: _items,
               onAddItem: _addItemManual,
               onQueryProducts: _queryProducts,
+              onEditSellingUnit: _editPurchaseUnit,
+              onSellingUnitChanged: _changePurchaseUnitQuick,
+              unitActionLabel: 'purchase unit',
+              priceActionLabel: 'purchase price',
               onItemsChanged: (next) {
                 setState(() {
                   _items = next.map((item) {

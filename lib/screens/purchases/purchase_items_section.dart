@@ -20,8 +20,9 @@ class PurchaseItemsSection extends StatelessWidget {
   String _money(num v) => AppCurrency.format(v);
 
   double _lineTotal(Map i) {
-    final price = _num(i['price']);
-    final qty = _num(i['quantity']);
+    final packaged = i['packaging_id'] != null;
+    final price = packaged ? _num(i['packaging_unit_price']) : _num(i['price']);
+    final qty = packaged ? _num(i['packaging_quantity']) : _num(i['quantity']);
     final pct = _num(i['discount'] ?? 0);
     final d = (pct / 100.0).clamp(0, 1);
     return max(0.0, qty * price * (1 - d));
@@ -79,10 +80,17 @@ class PurchaseItemsSection extends StatelessWidget {
             else
               ...items.map((i) {
                 final productName = i['product']?['name'] ?? i['name'] ?? 'Product Deleted';
-                final pp  = _num(i['price']); // Purchase Price
+                final packaged = i['packaging_id'] != null;
+                final pp = packaged ? _num(i['packaging_unit_price']) : _num(i['price']);
                 final pct = _num(i['discount'] ?? 0);
-                final qty = _num(i['quantity']);
+                final baseQty = _num(i['quantity']);
+                final qty = packaged ? _num(i['packaging_quantity']) : baseQty;
                 final rec = _num(i['received_qty'] ?? 0);
+                final packageName = (i['packaging_short_name_snapshot'] ??
+                        i['packaging_name_snapshot'] ??
+                        'Package')
+                    .toString();
+                final factor = _num(i['packaging_factor_snapshot']);
                 final total = _lineTotal(i);
 
                 return InkWell(
@@ -107,8 +115,13 @@ class PurchaseItemsSection extends StatelessWidget {
                                       overflow: TextOverflow.ellipsis,
                                       style: const TextStyle(fontWeight: FontWeight.w600),
                                     ),
-                                    // Received caption (subtle)
-                                    if (rec > 0 || qty > 0)
+                                    if (packaged)
+                                      Text(
+                                        '${qty == qty.roundToDouble() ? qty.toStringAsFixed(0) : qty.toStringAsFixed(2)} $packageName × ${factor == factor.roundToDouble() ? factor.toStringAsFixed(0) : factor.toStringAsFixed(2)} = ${baseQty == baseQty.roundToDouble() ? baseQty.toStringAsFixed(0) : baseQty.toStringAsFixed(2)} base units',
+                                        style: t.textTheme.bodySmall?.copyWith(color: t.hintColor),
+                                        overflow: TextOverflow.ellipsis,
+                                      )
+                                    else if (rec > 0 || qty > 0)
                                       Text(
                                         "Ordered: ${qty == qty.roundToDouble() ? qty.toStringAsFixed(0) : qty.toStringAsFixed(2)} • Received: ${rec == rec.roundToDouble() ? rec.toStringAsFixed(0) : rec.toStringAsFixed(2)}",
                                         style: t.textTheme.bodySmall?.copyWith(color: t.hintColor),
@@ -152,7 +165,9 @@ class PurchaseItemsSection extends StatelessWidget {
                               child: Align(
                                 alignment: Alignment.centerRight,
                                 child: Text(
-                                  qty.toStringAsFixed(qty == qty.roundToDouble() ? 0 : 2),
+                                  packaged
+                                      ? '${qty.toStringAsFixed(qty == qty.roundToDouble() ? 0 : 2)} $packageName'
+                                      : qty.toStringAsFixed(qty == qty.roundToDouble() ? 0 : 2),
                                   style: const TextStyle(
                                     fontWeight: FontWeight.w600,
                                     fontFeatures: [FontFeature.tabularFigures()],
