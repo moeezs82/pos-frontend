@@ -2490,42 +2490,64 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         ..['total'] = -_metaNum(picked['return_credit']).abs();
 
       if (requestedPackagingId != null) {
-        final sourcePackagingId = _metaInt(picked['packaging_id']);
-        final sourceFactor = _metaNum(picked['packaging_factor_snapshot']);
-        if (sourcePackagingId != requestedPackagingId || sourceFactor <= 0) {
+        final returnPackagingId = _metaInt(picked['return_packaging_id']);
+        final returnFactor =
+            _metaNum(picked['return_packaging_factor_snapshot']);
+        final packageReturnQty =
+            _metaNum(picked['return_packaging_quantity']);
+        if (returnPackagingId != requestedPackagingId ||
+            returnFactor <= 0 ||
+            packageReturnQty <= 0 ||
+            !QuantityRule.isWhole(packageReturnQty)) {
           throw Exception(
-            'The selected package does not match the original invoice package. Use the base unit or choose the original package.',
+            'The selected return package changed or is no longer valid. Refresh the product and choose the package again.',
           );
         }
-        final sourceName = (picked['packaging_name_snapshot'] ?? '').toString().trim();
-        if (sourceName.isEmpty) {
-          throw Exception('The original package snapshot is incomplete.');
-        }
-        final packageReturnQty = _roundTo(authoritativeQty / sourceFactor, 4);
-        if (!QuantityRule.isWhole(packageReturnQty)) {
+        final expectedBaseQty =
+            _roundTo(packageReturnQty * returnFactor, 3);
+        if ((expectedBaseQty - authoritativeQty).abs() > 0.0005) {
           throw Exception(
-            'The requested return is not a whole number of the original invoice package. Use the base unit for a partial return.',
+            'The selected return package no longer matches the requested base quantity. Refresh the product and try again.',
           );
         }
-        updated['packaging_id'] = sourcePackagingId;
-        updated['packaging_name_snapshot'] = sourceName;
-        final sourceShort =
-            (picked['packaging_short_name_snapshot'] ?? '').toString().trim();
-        if (sourceShort.isEmpty) {
+        final returnName =
+            (picked['return_packaging_name_snapshot'] ?? '').toString().trim();
+        if (returnName.isEmpty) {
+          throw Exception('The selected return package snapshot is incomplete.');
+        }
+
+        // Keep the package the cashier actually receives (e.g. 2 Boxes) as
+        // the return-facing snapshot. Refund economics still come entirely
+        // from the original sale line; package selection only converts the
+        // physical quantity into canonical base units.
+        updated['packaging_id'] = returnPackagingId;
+        updated['packaging_name_snapshot'] = returnName;
+        final returnShort =
+            (picked['return_packaging_short_name_snapshot'] ?? '')
+                .toString()
+                .trim();
+        if (returnShort.isEmpty) {
           updated.remove('packaging_short_name_snapshot');
         } else {
-          updated['packaging_short_name_snapshot'] = sourceShort;
+          updated['packaging_short_name_snapshot'] = returnShort;
         }
-        updated['packaging_factor_snapshot'] = sourceFactor;
+        updated['packaging_factor_snapshot'] = returnFactor;
         updated['packaging_quantity'] = -packageReturnQty;
+
+        // Display the selected return package using the ORIGINAL sale's
+        // base-unit economics scaled to this package factor. This keeps the
+        // cashier-facing T.P/discount coherent without allowing today's
+        // package price to affect the refund credit.
+        final originalBasePrice = _metaNum(picked['original_price']);
         updated['packaging_unit_price'] =
-            _metaNum(picked['packaging_unit_price']);
+            _roundTo(originalBasePrice * returnFactor, 4);
         final returnDiscountType =
             (picked['discount_type'] ?? 'percentage').toString().toLowerCase();
-        if (returnDiscountType == 'fixed' &&
-            picked['packaging_discount_snapshot'] != null) {
-          updated['packaging_discount_snapshot'] =
-              _metaNum(picked['packaging_discount_snapshot']);
+        if (returnDiscountType == 'fixed') {
+          updated['packaging_discount_snapshot'] = _roundTo(
+            _metaNum(picked['line_discount']) * returnFactor,
+            4,
+          );
         } else {
           updated.remove('packaging_discount_snapshot');
         }
