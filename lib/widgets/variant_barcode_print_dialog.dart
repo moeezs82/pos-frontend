@@ -19,6 +19,7 @@ class VariantBarcodePrintDialog extends StatefulWidget {
   final PrinterConfig config;
   final ProductGroupService service;
   final int? initialProductId;
+  final bool canManageProducts;
 
   const VariantBarcodePrintDialog({
     super.key,
@@ -28,6 +29,7 @@ class VariantBarcodePrintDialog extends StatefulWidget {
     required this.config,
     required this.service,
     this.initialProductId,
+    required this.canManageProducts,
   });
 
   @override
@@ -580,23 +582,32 @@ class _VariantBarcodePrintDialogState extends State<VariantBarcodePrintDialog> {
           const SizedBox(height: 12),
           Row(
             children: [
-              TextButton.icon(
-                onPressed: _generating || missingCount == 0
-                    ? null
-                    : _generateMissingBarcodes,
-                icon: _generating
-                    ? const SizedBox(
-                        width: 14,
-                        height: 14,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.auto_awesome_rounded, size: 17),
-                label: Text(
-                  missingCount == 0
-                      ? 'All variants have barcodes'
-                      : 'Generate $missingCount missing barcode${missingCount == 1 ? '' : 's'}',
+              if (widget.canManageProducts)
+                TextButton.icon(
+                  onPressed: _generating || missingCount == 0
+                      ? null
+                      : _generateMissingBarcodes,
+                  icon: _generating
+                      ? const SizedBox(
+                          width: 14,
+                          height: 14,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.auto_awesome_rounded, size: 17),
+                  label: Text(
+                    missingCount == 0
+                        ? 'All variants have barcodes'
+                        : 'Generate $missingCount missing barcode${missingCount == 1 ? '' : 's'}',
+                  ),
+                )
+              else if (missingCount > 0)
+                Text(
+                  '$missingCount variant${missingCount == 1 ? '' : 's'} missing a barcode',
+                  style: const TextStyle(
+                    fontSize: 11.5,
+                    color: AppTheme.textMuted,
+                  ),
                 ),
-              ),
               const Spacer(),
               TextButton(
                 onPressed: () {
@@ -727,17 +738,18 @@ class _VariantBarcodePrintDialogState extends State<VariantBarcodePrintDialog> {
                                     ),
                                   ),
                                 ),
-                                IconButton(
-                                  tooltip: 'Generate barcode',
-                                  onPressed: _generating
-                                      ? null
-                                      : () => _generateBarcode(row),
-                                  icon: const Icon(
-                                    Icons.auto_awesome_rounded,
-                                    size: 17,
-                                    color: AppTheme.primary,
+                                if (widget.canManageProducts)
+                                  IconButton(
+                                    tooltip: 'Generate barcode',
+                                    onPressed: _generating
+                                        ? null
+                                        : () => _generateBarcode(row),
+                                    icon: const Icon(
+                                      Icons.auto_awesome_rounded,
+                                      size: 17,
+                                      color: AppTheme.primary,
+                                    ),
                                   ),
-                                ),
                               ],
                             ),
                     ),

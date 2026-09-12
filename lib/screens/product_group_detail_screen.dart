@@ -154,6 +154,8 @@ class _ProductGroupDetailScreenState extends State<ProductGroupDetailScreen> {
         variants: _variants,
         config: config,
         service: _service,
+        canManageProducts:
+            context.read<AuthProvider>().hasPermission('manage-products'),
       ),
     );
     if (!mounted) return;

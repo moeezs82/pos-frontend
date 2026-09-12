@@ -290,6 +290,8 @@ class ManagementItem {
   final String? barcode;
   final double? price;
   final double? costPrice;
+  final double? discount;
+  final String? discountType;
   final String? brandName;
   final String? categoryName;
   final bool isActive;
@@ -308,6 +310,8 @@ class ManagementItem {
     this.barcode,
     this.price,
     this.costPrice,
+    this.discount,
+    this.discountType,
     this.brandName,
     this.categoryName,
     required this.isActive,
@@ -328,6 +332,8 @@ class ManagementItem {
       barcode: j['barcode']?.toString(),
       price: _dNull(j['price']),
       costPrice: _dNull(j['cost_price']),
+      discount: _dNull(j['discount']),
+      discountType: j['discount_type']?.toString(),
       brandName: j['brand_name']?.toString(),
       categoryName: j['category_name']?.toString(),
       isActive: j['is_active'] == 1 || j['is_active'] == true,

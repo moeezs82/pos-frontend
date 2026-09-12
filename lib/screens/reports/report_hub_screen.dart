@@ -253,6 +253,7 @@ final _enterpriseShortcuts = <_ReportShortcut>[
   _ReportShortcut(title: 'Stock Valuation', icon: Icons.price_check_rounded, builder: (_) => const EnterpriseReportsWorkspaceScreen(initialReportKey: 'stock-valuation')),
   // _ReportShortcut(title: 'Cashbook', icon: Icons.account_balance_wallet_rounded, builder: (_) => const EnterpriseReportsWorkspaceScreen(initialReportKey: 'cashbook')),
   _ReportShortcut(title: 'P&L', icon: Icons.trending_up_rounded, builder: (_) => const EnterpriseReportsWorkspaceScreen(initialReportKey: 'profit-loss')),
+  _ReportShortcut(title: 'Expense Report', icon: Icons.receipt_long_rounded, builder: (_) => const EnterpriseReportsWorkspaceScreen(initialReportKey: 'expense-report')),
   _ReportShortcut(title: 'Trial Balance', icon: Icons.balance_rounded, builder: (_) => const EnterpriseReportsWorkspaceScreen(initialReportKey: 'trial-balance')),
 ];
 

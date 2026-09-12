@@ -42,10 +42,15 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
   int? _saleSourceId;
   int? _areaId;
   int? _productVendorId;
+  int? _expenseAccountId;
+  int? _expenseCreatedById;
   String? _customerType;
   List<Map<String, dynamic>> _saleSources = const [];
   List<Map<String, dynamic>> _customerAreas = const [];
   List<Map<String, dynamic>> _productVendors = const [];
+  List<Map<String, dynamic>> _expenseAccounts = const [];
+  List<Map<String, dynamic>> _expensePaymentMethods = const [];
+  List<Map<String, dynamic>> _expenseCreators = const [];
   final Map<String, Set<String>> _hiddenColumnsByReport = <String, Set<String>>{};
   int? _observedBranchId;
   bool _branchRefreshScheduled = false;
@@ -111,6 +116,7 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
   bool get _supportsArea => _areaReportKeys.contains(_selectedReport.key);
   bool get _supportsProductVendor => _productVendorReportKeys.contains(_selectedReport.key);
   bool get _supportsCustomerType => _selectedReport.key == 'area-customer-potential';
+  bool get _supportsExpenseFilters => _selectedReport.key == 'expense-report';
   Set<String> get _hiddenColumns => _hiddenColumnsByReport.putIfAbsent(_selectedReport.key, () => <String>{});
 
   List<_EnterpriseReportMeta> _effectiveReports(bool deliveryEnabled) {
@@ -139,6 +145,7 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
       _loadSaleSources();
       _loadCustomerAreas();
       _loadProductVendors();
+      _loadExpenseReportFilters();
       // Branch scoping is resolved by backend from the logged-in user's active branch.
       _ready = true;
       _fetch();
@@ -154,15 +161,20 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
     _saleSourceId = null;
     _areaId = null;
     _productVendorId = null;
+    _expenseAccountId = null;
+    _expenseCreatedById = null;
     _saleSources = const [];
     _customerAreas = const [];
     _productVendors = const [];
+    _expenseAccounts = const [];
+    _expensePaymentMethods = const [];
+    _expenseCreators = const [];
     if (_ready && !_branchRefreshScheduled) {
       _branchRefreshScheduled = true;
       WidgetsBinding.instance.addPostFrameCallback((_) async {
         _branchRefreshScheduled = false;
         if (!mounted) return;
-        await Future.wait([_loadSaleSources(), _loadCustomerAreas(), _loadProductVendors()]);
+        await Future.wait([_loadSaleSources(), _loadCustomerAreas(), _loadProductVendors(), _loadExpenseReportFilters()]);
         if (mounted) {
           _page = 1;
           await _fetch();
@@ -209,6 +221,29 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
     }
   }
 
+  Future<void> _loadExpenseReportFilters() async {
+    try {
+      final data = await _service.getExpenseReportFilters();
+      if (!mounted) return;
+      setState(() {
+        _expenseAccounts = (data['expense_accounts'] as List? ?? const [])
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList(growable: false);
+        _expensePaymentMethods = (data['payment_methods'] as List? ?? const [])
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList(growable: false);
+        _expenseCreators = (data['creators'] as List? ?? const [])
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList(growable: false);
+      });
+    } catch (_) {
+      // Expense report remains usable even if reference-data filters fail.
+    }
+  }
+
   String get _activeReportDescription {
     if (_supportsProductVendor && _productVendorId != null) {
       Map<String, dynamic>? selected;
@@ -242,9 +277,11 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
       if (_supportsArea && _areaId != null) 'area_id': _areaId,
       if (_supportsProductVendor && _productVendorId != null) 'product_vendor_id': _productVendorId,
       if (_supportsCustomerType && _customerType != null && _customerType!.isNotEmpty) 'customer_type': _customerType,
+      if (_supportsExpenseFilters && _expenseAccountId != null) 'account_id': _expenseAccountId,
+      if (_supportsExpenseFilters && _expenseCreatedById != null) 'created_by': _expenseCreatedById,
       if (export && _hiddenColumns.isNotEmpty) 'hidden_columns': _hiddenColumns.join(','),
       'page': export ? 1 : _page,
-      'per_page': export ? 1000 : (_searchCtrl.text.trim().isNotEmpty ? 250 : _perPage),
+      'per_page': export ? (_supportsExpenseFilters ? 5000 : 1000) : (_searchCtrl.text.trim().isNotEmpty ? 250 : _perPage),
       'direction': 'desc',
     };
   }
@@ -352,6 +389,8 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
       _status = null;
       _method = null;
       _customerType = null;
+      _expenseAccountId = null;
+      _expenseCreatedById = null;
     });
     _fetch();
   }
@@ -403,6 +442,7 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
                   else ...[
                     _buildAreaInsights(),
                     _buildTotals(),
+                    _buildExpenseAccountSummary(),
                     _buildTable(),
                     _buildPagination(),
                   ],
@@ -518,7 +558,7 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
           },
           decoration: InputDecoration(
             prefixIcon: const Icon(Icons.search_rounded),
-            hintText: 'Search invoices, parties, products...',
+            hintText: _supportsExpenseFilters ? 'Search payee, note, account, method, creator...' : 'Search invoices, parties, products...',
             isDense: true,
             border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
             suffixIcon: _searchCtrl.text.isEmpty
@@ -685,6 +725,137 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
               onChanged: (value) {
                 setState(() {
                   _customerType = value == null || value.isEmpty ? null : value;
+                  _page = 1;
+                });
+                _fetch();
+              },
+            ),
+          ),
+        ),
+      if (_supportsExpenseFilters)
+        Container(
+          constraints: const BoxConstraints(minWidth: 210, maxWidth: 280),
+          padding: const EdgeInsets.symmetric(horizontal: 11),
+          decoration: BoxDecoration(
+            border: Border.all(color: Theme.of(context).dividerColor),
+            borderRadius: BorderRadius.circular(14),
+          ),
+          child: DropdownButtonHideUnderline(
+            child: DropdownButton<int>(
+              value: _expenseAccountId ?? 0,
+              isExpanded: true,
+              items: <DropdownMenuItem<int>>[
+                const DropdownMenuItem(value: 0, child: Text('All Expense Accounts')),
+                ..._expenseAccounts.map((account) {
+                  final id = int.tryParse(account['id']?.toString() ?? '');
+                  final code = (account['code'] ?? '').toString().trim();
+                  final name = (account['name'] ?? 'Expense').toString().trim();
+                  final active = account['is_active'] == true || account['is_active'] == 1 || account['is_active']?.toString() == '1';
+                  final label = code.isEmpty ? name : '$code · $name';
+                  return DropdownMenuItem<int>(
+                    value: id,
+                    child: Text('$label${active ? '' : ' (Inactive)'}', overflow: TextOverflow.ellipsis),
+                  );
+                }),
+              ],
+              onChanged: (value) {
+                setState(() {
+                  _expenseAccountId = value == 0 ? null : value;
+                  _page = 1;
+                });
+                _fetch();
+              },
+            ),
+          ),
+        ),
+      if (_supportsExpenseFilters)
+        Container(
+          constraints: const BoxConstraints(minWidth: 175, maxWidth: 230),
+          padding: const EdgeInsets.symmetric(horizontal: 11),
+          decoration: BoxDecoration(
+            border: Border.all(color: Theme.of(context).dividerColor),
+            borderRadius: BorderRadius.circular(14),
+          ),
+          child: DropdownButtonHideUnderline(
+            child: DropdownButton<String>(
+              value: _method ?? '',
+              isExpanded: true,
+              items: <DropdownMenuItem<String>>[
+                const DropdownMenuItem(value: '', child: Text('All Payment Methods')),
+                ..._expensePaymentMethods.map((method) {
+                  final code = (method['method'] ?? '').toString();
+                  final label = (method['display_name'] ?? code).toString();
+                  final active = method['is_active'] == true || method['is_active'] == 1 || method['is_active']?.toString() == '1';
+                  return DropdownMenuItem<String>(
+                    value: code,
+                    child: Text('$label${active ? '' : ' (Inactive)'}', overflow: TextOverflow.ellipsis),
+                  );
+                }),
+              ],
+              onChanged: (value) {
+                setState(() {
+                  _method = value == null || value.isEmpty ? null : value;
+                  _page = 1;
+                });
+                _fetch();
+              },
+            ),
+          ),
+        ),
+      if (_supportsExpenseFilters)
+        Container(
+          constraints: const BoxConstraints(minWidth: 175, maxWidth: 230),
+          padding: const EdgeInsets.symmetric(horizontal: 11),
+          decoration: BoxDecoration(
+            border: Border.all(color: Theme.of(context).dividerColor),
+            borderRadius: BorderRadius.circular(14),
+          ),
+          child: DropdownButtonHideUnderline(
+            child: DropdownButton<int>(
+              value: _expenseCreatedById ?? 0,
+              isExpanded: true,
+              items: <DropdownMenuItem<int>>[
+                const DropdownMenuItem(value: 0, child: Text('All Creators')),
+                ..._expenseCreators.map((user) {
+                  final id = int.tryParse(user['id']?.toString() ?? '');
+                  final name = (user['name'] ?? 'User').toString();
+                  final active = user['is_active'] == true || user['is_active'] == 1 || user['is_active']?.toString() == '1';
+                  return DropdownMenuItem<int>(
+                    value: id,
+                    child: Text('$name${active ? '' : ' (Inactive)'}', overflow: TextOverflow.ellipsis),
+                  );
+                }),
+              ],
+              onChanged: (value) {
+                setState(() {
+                  _expenseCreatedById = value == 0 ? null : value;
+                  _page = 1;
+                });
+                _fetch();
+              },
+            ),
+          ),
+        ),
+      if (_supportsExpenseFilters)
+        Container(
+          constraints: const BoxConstraints(minWidth: 150, maxWidth: 185),
+          padding: const EdgeInsets.symmetric(horizontal: 11),
+          decoration: BoxDecoration(
+            border: Border.all(color: Theme.of(context).dividerColor),
+            borderRadius: BorderRadius.circular(14),
+          ),
+          child: DropdownButtonHideUnderline(
+            child: DropdownButton<String>(
+              value: _status ?? '',
+              isExpanded: true,
+              items: const [
+                DropdownMenuItem(value: '', child: Text('All Statuses')),
+                DropdownMenuItem(value: 'posted', child: Text('Posted')),
+                DropdownMenuItem(value: 'void', child: Text('Voided')),
+              ],
+              onChanged: (value) {
+                setState(() {
+                  _status = value == null || value.isEmpty ? null : value;
                   _page = 1;
                 });
                 _fetch();
@@ -883,7 +1054,13 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
   SliverToBoxAdapter _buildTotals() {
     final totals = _result?.totals ?? const <String, dynamic>{};
     if (totals.isEmpty) return const SliverToBoxAdapter(child: SizedBox.shrink());
-    final visible = totals.entries.where((e) => !_hiddenColumns.contains(e.key)).take(8).toList();
+    final entries = totals.entries.where((e) => !_hiddenColumns.contains(e.key)).toList();
+    final visible = _supportsExpenseFilters
+        ? <String>['total_expenses', 'reversed_amount', 'net_expenses', 'entry_count', 'posted_entries', 'voided_entries']
+            .where(totals.containsKey)
+            .map((key) => MapEntry(key, totals[key]))
+            .toList()
+        : entries.take(8).toList();
     return SliverToBoxAdapter(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
@@ -891,6 +1068,60 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
           spacing: 10,
           runSpacing: 10,
           children: visible.map((e) => _TotalCard(label: _labelize(e.key), value: _formatValue(e.value, e.key))).toList(),
+        ),
+      ),
+    );
+  }
+
+  SliverToBoxAdapter _buildExpenseAccountSummary() {
+    if (!_supportsExpenseFilters) return const SliverToBoxAdapter(child: SizedBox.shrink());
+    final rows = _result?.breakdowns['by_account'] ?? const <Map<String, dynamic>>[];
+    if (rows.isEmpty) return const SliverToBoxAdapter(child: SizedBox.shrink());
+    return SliverToBoxAdapter(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 4, 16, 10),
+        child: Card(
+          elevation: 0,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(18),
+            side: BorderSide(color: Theme.of(context).dividerColor.withOpacity(.7)),
+          ),
+          clipBehavior: Clip.antiAlias,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
+                child: Text('Expense Account Summary', style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800)),
+              ),
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: DataTable(
+                  headingRowHeight: 40,
+                  dataRowMinHeight: 40,
+                  columns: const [
+                    DataColumn(label: Text('Account')),
+                    DataColumn(label: Text('Entries'), numeric: true),
+                    DataColumn(label: Text('Total'), numeric: true),
+                    DataColumn(label: Text('Reversed'), numeric: true),
+                    DataColumn(label: Text('Net'), numeric: true),
+                  ],
+                  rows: rows.map((row) {
+                    final code = (row['account_code'] ?? '').toString();
+                    final name = (row['expense_account'] ?? '').toString();
+                    final label = code.isEmpty ? name : '$code · $name';
+                    return DataRow(cells: [
+                      DataCell(Text(label)),
+                      DataCell(Text(_formatValue(row['entries'], 'entries'))),
+                      DataCell(Text(_formatValue(row['total_expenses'], 'total_expenses'))),
+                      DataCell(Text(_formatValue(row['reversed_amount'], 'reversed_amount'))),
+                      DataCell(Text(_formatValue(row['net_expenses'], 'net_expenses'))),
+                    ]);
+                  }).toList(),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -1007,7 +1238,7 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
     // render it as a plain number (for example: `0 customers`).
     if (k == 'no_purchase') return false;
 
-    return k.contains('total') || k.contains('amount') || k.contains('balance') || k.contains('paid') || k.contains('tax') || k.contains('discount') || k.contains('profit') || k.contains('revenue') || k.contains('cost') || k.contains('debit') || k.contains('credit') || k.contains('cash') || k.contains('valuation') || k.contains('sales') || k.contains('purchase');
+    return k == 'net_expenses' || k.contains('total') || k.contains('amount') || k.contains('balance') || k.contains('paid') || k.contains('tax') || k.contains('discount') || k.contains('profit') || k.contains('revenue') || k.contains('cost') || k.contains('debit') || k.contains('credit') || k.contains('cash') || k.contains('valuation') || k.contains('sales') || k.contains('purchase');
   }
 
   String _labelize(String key) => key.replaceAll('_', ' ').split(' ').map((e) => e.isEmpty ? e : '${e[0].toUpperCase()}${e.substring(1)}').join(' ');
@@ -1018,9 +1249,10 @@ class _EnterpriseReportResponse {
   final List<_ReportColumn> columns;
   final List<Map<String, dynamic>> rows;
   final Map<String, dynamic> totals;
+  final Map<String, List<Map<String, dynamic>>> breakdowns;
   final _ReportPagination? pagination;
 
-  _EnterpriseReportResponse({required this.title, required this.columns, required this.rows, required this.totals, this.pagination});
+  _EnterpriseReportResponse({required this.title, required this.columns, required this.rows, required this.totals, required this.breakdowns, this.pagination});
 
   factory _EnterpriseReportResponse.fromJson(Map<String, dynamic> json) {
     return _EnterpriseReportResponse(
@@ -1028,6 +1260,13 @@ class _EnterpriseReportResponse {
       columns: (json['columns'] as List? ?? []).map((e) => _ReportColumn.fromJson(Map<String, dynamic>.from(e as Map))).toList(),
       rows: (json['rows'] as List? ?? []).map((e) => Map<String, dynamic>.from(e as Map)).toList(),
       totals: Map<String, dynamic>.from((json['totals'] as Map?) ?? const {}),
+      breakdowns: (json['breakdowns'] as Map? ?? const {}).map<String, List<Map<String, dynamic>>>((key, value) {
+        final rows = (value as List? ?? const [])
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList(growable: false);
+        return MapEntry(key.toString(), rows);
+      }),
       pagination: json['pagination'] is Map ? _ReportPagination.fromJson(Map<String, dynamic>.from(json['pagination'] as Map)) : null,
     );
   }
@@ -1267,6 +1506,7 @@ const _enterpriseReports = <_EnterpriseReportMeta>[
   // _EnterpriseReportMeta(key: 'cashbook', title: 'Cashbook', group: 'Accounting', description: 'Receipts, payments and cash movement.', icon: Icons.account_balance_wallet_rounded),
   // _EnterpriseReportMeta(key: 'daybook', title: 'Daybook', group: 'Accounting', description: 'Full day transaction book.', icon: Icons.calendar_view_day_rounded),
   _EnterpriseReportMeta(key: 'profit-loss', title: 'Profit & Loss', group: 'Accounting', description: 'Income, expenses and net result.', icon: Icons.trending_up_rounded),
+  _EnterpriseReportMeta(key: 'expense-report', title: 'Expense Report', group: 'Accounting', description: 'Recorded operating expenses by account, method, creator and status.', icon: Icons.receipt_long_rounded),
   _EnterpriseReportMeta(key: 'customer-receivables', title: 'Customer Receivables', group: 'Accounting', description: 'All customer balances and AR base.', icon: Icons.person_search_rounded),
   _EnterpriseReportMeta(key: 'vendor-payables', title: 'Vendor Payables', group: 'Accounting', description: 'All vendor balances and AP base.', icon: Icons.group_work_rounded),
   _EnterpriseReportMeta(key: 'trial-balance', title: 'Trial Balance', group: 'Accounting', description: 'Debit, credit and balance by account.', icon: Icons.balance_rounded),

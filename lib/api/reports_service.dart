@@ -31,6 +31,14 @@ class ReportsService {
     throw Exception(res['message'] ?? 'Failed to load product vendors');
   }
 
+  Future<Map<String, dynamic>> getExpenseReportFilters() async {
+    final res = await _client.get('/reports/expense-filters');
+    if (res['success'] == true && res['data'] is Map<String, dynamic>) {
+      return Map<String, dynamic>.from(res['data'] as Map<String, dynamic>);
+    }
+    throw Exception(res['message'] ?? 'Failed to load expense report filters');
+  }
+
   Future<Map<String, dynamic>> getEnterpriseCatalog() async {
     final res = await _client.get('/reports/catalog');
     if (res['success'] == true && res['data'] is Map<String, dynamic>) {

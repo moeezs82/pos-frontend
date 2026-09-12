@@ -12,6 +12,7 @@ import 'package:enterprise_pos/services/report_file_saver.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/app_feedback.dart';
 import 'package:enterprise_pos/widgets/barcode_print_dialog.dart';
+import 'package:enterprise_pos/widgets/multi_product_barcode_print_dialog.dart';
 import 'package:enterprise_pos/widgets/variant_barcode_print_dialog.dart';
 import 'package:enterprise_pos/widgets/branch_indicator.dart';
 import 'package:enterprise_pos/widgets/enterprise/enterprise_ui.dart';
@@ -686,6 +687,8 @@ class _ProductsScreenState extends State<ProductsScreen> {
           variants: variants,
           config: config,
           service: _groupService,
+          canManageProducts:
+              context.read<AuthProvider>().hasPermission('manage-products'),
         ),
       );
       if (copies != null && mounted) {
@@ -719,6 +722,33 @@ class _ProductsScreenState extends State<ProductsScreen> {
     );
     if (mounted && copies != null) {
       AppFeedback.success(context, '$copies barcode label${copies == 1 ? '' : 's'} sent to print.');
+    }
+  }
+
+  Future<void> _printMultipleBarcodes() async {
+    final config = await _loadBarcodePrinterConfig();
+    if (config == null || !mounted) return;
+
+    final auth = context.read<AuthProvider>();
+    final copies = await showDialog<int>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => MultiProductBarcodePrintDialog(
+        config: config,
+        groupService: _groupService,
+        productService: _productService,
+        canManageProducts: auth.hasPermission('manage-products'),
+      ),
+    );
+    if (copies != null && mounted) {
+      AppFeedback.success(
+        context,
+        '$copies barcode label${copies == 1 ? '' : 's'} sent to print.',
+      );
+      // Barcode generation is available inside the bulk dialog for product
+      // managers. Refresh the management list so newly generated values are
+      // immediately reflected on the main Products screen as well.
+      _fetchProducts(reset: true);
     }
   }
 
@@ -902,6 +932,14 @@ class _ProductsScreenState extends State<ProductsScreen> {
         ),
       ],
       actions: [
+        if (canPrintBarcodes) ...[
+          OutlinedButton.icon(
+            onPressed: _printMultipleBarcodes,
+            icon: const Icon(Icons.qr_code_2_rounded),
+            label: const Text('Print Barcodes'),
+          ),
+          const SizedBox(width: 8),
+        ],
         if (canManageProducts) ...[
           OutlinedButton.icon(
             onPressed: _importExportBusy ? null : _showImportExportMenu,
