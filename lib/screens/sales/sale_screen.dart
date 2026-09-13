@@ -44,6 +44,19 @@ class _SalesScreenState extends State<SalesScreen> {
   String _searchQuery = "";
   DateTime? _fromDate;
   DateTime? _toDate;
+  String? _paymentStatusFilter;
+  String? _saleTypeFilter;
+  int? _saleSourceId;
+  int? _areaId;
+  int? _salesmanId;
+  int? _deliveryBoyId;
+  int? _createdById;
+  List<Map<String, dynamic>> _saleSources = const [];
+  List<Map<String, dynamic>> _areas = const [];
+  List<Map<String, dynamic>> _salesmen = const [];
+  List<Map<String, dynamic>> _deliveryBoys = const [];
+  List<Map<String, dynamic>> _creators = const [];
+  List<String> _saleTypes = const [];
 
   // UI
   final _scrollController = ScrollController();
@@ -88,7 +101,11 @@ class _SalesScreenState extends State<SalesScreen> {
       _sales.clear();
       _currentPage = 1;
     });
-    await Future.wait([_fetchBranches(), _fetchSales(page: 1, replace: true)]);
+    await Future.wait([
+      _fetchBranches(),
+      _fetchFilterOptions(),
+      _fetchSales(page: 1, replace: true),
+    ]);
     if (mounted) setState(() => _initialLoading = false);
   }
 
@@ -113,6 +130,13 @@ class _SalesScreenState extends State<SalesScreen> {
       if (_searchQuery.isNotEmpty) "search": _searchQuery,
       if (_fromDate != null) "date_from": _fmtDate(_fromDate!),
       if (_toDate != null) "date_to": _fmtDate(_toDate!),
+      if (_paymentStatusFilter != null) "payment_status": _paymentStatusFilter!,
+      if (_saleTypeFilter != null) "sale_type": _saleTypeFilter!,
+      if (_saleSourceId != null) "sale_source_id": _saleSourceId.toString(),
+      if (_areaId != null) "area_id": _areaId.toString(),
+      if (_salesmanId != null) "salesman_id": _salesmanId.toString(),
+      if (_deliveryBoyId != null) "delivery_boy_id": _deliveryBoyId.toString(),
+      if (_createdById != null) "created_by": _createdById.toString(),
     };
 
     final uri = Uri.parse(
@@ -152,6 +176,219 @@ class _SalesScreenState extends State<SalesScreen> {
     });
   }
 
+  Future<void> _fetchFilterOptions() async {
+    try {
+      final token = Provider.of<AuthProvider>(context, listen: false).token!;
+      final res = await http.get(
+        Uri.parse("${ApiClient.baseUrl}/sales/filter-options"),
+        headers: {"Authorization": "Bearer $token", "Accept": "application/json"},
+      );
+      if (res.statusCode != 200 || !mounted) return;
+      final decoded = jsonDecode(res.body);
+      final raw = decoded is Map ? decoded['data'] : null;
+      if (raw is! Map) return;
+      List<Map<String, dynamic>> refs(String key) {
+        final list = raw[key];
+        if (list is! List) return const [];
+        return list.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
+      }
+      final types = raw['sale_types'];
+      setState(() {
+        _saleSources = refs('sale_sources');
+        _areas = refs('areas');
+        _salesmen = refs('salesmen');
+        _deliveryBoys = refs('delivery_boys');
+        _creators = refs('creators');
+        _saleTypes = types is List ? types.map((e) => e.toString()).where((e) => e.isNotEmpty).toList() : const [];
+      });
+    } catch (_) {
+      // Filters are convenience only; sales remain usable if references fail.
+    }
+  }
+
+  int get _advancedFilterCount => [
+        _paymentStatusFilter,
+        _saleTypeFilter,
+        _saleSourceId,
+        _areaId,
+        _salesmanId,
+        _deliveryBoyId,
+        _createdById,
+      ].where((e) => e != null).length;
+
+  String _refName(List<Map<String, dynamic>> rows, int? id) {
+    if (id == null) return '';
+    for (final row in rows) {
+      if (_toInt(row['id']) == id) return (row['name'] ?? '#$id').toString();
+    }
+    return '#$id';
+  }
+
+  Future<void> _openAdvancedFilters() async {
+    var payment = _paymentStatusFilter;
+    var saleType = _saleTypeFilter;
+    var sourceId = _saleSourceId;
+    var areaId = _areaId;
+    var salesmanId = _salesmanId;
+    var deliveryBoyId = _deliveryBoyId;
+    var createdById = _createdById;
+
+    final applied = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setLocalState) {
+          DropdownMenuItem<int?> allItem(String label) => DropdownMenuItem<int?>(value: null, child: Text(label));
+          List<DropdownMenuItem<int?>> refItems(List<Map<String, dynamic>> rows, String allLabel) => [
+                allItem(allLabel),
+                ...rows.map((r) => DropdownMenuItem<int?>(
+                      value: _toInt(r['id']),
+                      child: Text((r['name'] ?? '').toString(), overflow: TextOverflow.ellipsis),
+                    )),
+              ];
+          return AlertDialog(
+            title: const Text('Sale Filters'),
+            content: SizedBox(
+              width: 620,
+              child: SingleChildScrollView(
+                child: Wrap(
+                  spacing: 12,
+                  runSpacing: 12,
+                  children: [
+                    SizedBox(
+                      width: 285,
+                      child: DropdownButtonFormField<String?>(
+                        value: payment,
+                        decoration: const InputDecoration(labelText: 'Payment Status', border: OutlineInputBorder()),
+                        items: const [
+                          DropdownMenuItem<String?>(value: null, child: Text('All Statuses')),
+                          DropdownMenuItem(value: 'paid', child: Text('Paid')),
+                          DropdownMenuItem(value: 'partial', child: Text('Partial')),
+                          DropdownMenuItem(value: 'unpaid', child: Text('Unpaid')),
+                        ],
+                        onChanged: (v) => setLocalState(() => payment = v),
+                      ),
+                    ),
+                    SizedBox(
+                      width: 285,
+                      child: DropdownButtonFormField<String?>(
+                        value: saleType,
+                        decoration: const InputDecoration(labelText: 'Sale Type', border: OutlineInputBorder()),
+                        items: [
+                          const DropdownMenuItem<String?>(value: null, child: Text('All Types')),
+                          ..._saleTypes.map((v) => DropdownMenuItem<String?>(value: v, child: Text(_prettyLabel(v)))),
+                        ],
+                        onChanged: (v) => setLocalState(() => saleType = v),
+                      ),
+                    ),
+                    SizedBox(
+                      width: 285,
+                      child: DropdownButtonFormField<int?>(
+                        value: sourceId,
+                        decoration: const InputDecoration(labelText: 'Sale From', border: OutlineInputBorder()),
+                        items: refItems(_saleSources, 'All Sources'),
+                        onChanged: (v) => setLocalState(() => sourceId = v),
+                      ),
+                    ),
+                    SizedBox(
+                      width: 285,
+                      child: DropdownButtonFormField<int?>(
+                        value: areaId,
+                        decoration: const InputDecoration(labelText: 'Town / Area', border: OutlineInputBorder()),
+                        items: refItems(_areas, 'All Areas'),
+                        onChanged: (v) => setLocalState(() => areaId = v),
+                      ),
+                    ),
+                    SizedBox(
+                      width: 285,
+                      child: DropdownButtonFormField<int?>(
+                        value: salesmanId,
+                        decoration: const InputDecoration(labelText: 'Salesman', border: OutlineInputBorder()),
+                        items: refItems(_salesmen, 'All Salesmen'),
+                        onChanged: (v) => setLocalState(() => salesmanId = v),
+                      ),
+                    ),
+                    SizedBox(
+                      width: 285,
+                      child: DropdownButtonFormField<int?>(
+                        value: deliveryBoyId,
+                        decoration: const InputDecoration(labelText: 'Delivery Boy', border: OutlineInputBorder()),
+                        items: refItems(_deliveryBoys, 'All Delivery Boys'),
+                        onChanged: (v) => setLocalState(() => deliveryBoyId = v),
+                      ),
+                    ),
+                    SizedBox(
+                      width: 285,
+                      child: DropdownButtonFormField<int?>(
+                        value: createdById,
+                        decoration: const InputDecoration(labelText: 'Created By / Cashier', border: OutlineInputBorder()),
+                        items: refItems(_creators, 'All Users'),
+                        onChanged: (v) => setLocalState(() => createdById = v),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  setLocalState(() {
+                    payment = null;
+                    saleType = null;
+                    sourceId = null;
+                    areaId = null;
+                    salesmanId = null;
+                    deliveryBoyId = null;
+                    createdById = null;
+                  });
+                },
+                child: const Text('Clear'),
+              ),
+              TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancel')),
+              FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Apply')),
+            ],
+          );
+        },
+      ),
+    );
+    if (applied != true || !mounted) return;
+    setState(() {
+      _paymentStatusFilter = payment;
+      _saleTypeFilter = saleType;
+      _saleSourceId = sourceId;
+      _areaId = areaId;
+      _salesmanId = salesmanId;
+      _deliveryBoyId = deliveryBoyId;
+      _createdById = createdById;
+    });
+    await _fetchInitial();
+  }
+
+  String _prettyLabel(String value) {
+    if (value.trim().isEmpty) return value;
+    return value
+        .replaceAll('_', ' ')
+        .split(' ')
+        .where((p) => p.isNotEmpty)
+        .map((p) => '${p[0].toUpperCase()}${p.substring(1).toLowerCase()}')
+        .join(' ');
+  }
+
+  Future<void> _clearAdvancedFilter(String key) async {
+    setState(() {
+      switch (key) {
+        case 'payment': _paymentStatusFilter = null; break;
+        case 'type': _saleTypeFilter = null; break;
+        case 'source': _saleSourceId = null; break;
+        case 'area': _areaId = null; break;
+        case 'salesman': _salesmanId = null; break;
+        case 'delivery': _deliveryBoyId = null; break;
+        case 'creator': _createdById = null; break;
+      }
+    });
+    await _fetchInitial();
+  }
+
   Future<void> _loadMore() async {
     if (!_hasMore) return;
     setState(() => _loadingMore = true);
@@ -187,10 +424,14 @@ class _SalesScreenState extends State<SalesScreen> {
   }
 
   ({String label, Color color}) _paymentStatus(dynamic sale) {
+    final raw = (sale['payment_status'] ?? '').toString().toLowerCase();
+    if (raw == 'paid') return (label: "PAID", color: Colors.green);
+    if (raw == 'partial') return (label: "PARTIAL", color: Colors.orange);
+    if (raw == 'unpaid' || raw == 'pending') return (label: "UNPAID", color: Colors.red);
     final total = _toDouble(sale['total']);
     final paid = _toDouble(sale['paid_amount']);
-    if (total > 0 && paid >= total) return (label: "PAID", color: Colors.green);
-    if (paid <= 0) return (label: "UNPAID", color: Colors.red);
+    if (total <= 0.004 || paid >= total - 0.004) return (label: "PAID", color: Colors.green);
+    if (paid <= 0.004) return (label: "UNPAID", color: Colors.red);
     return (label: "PARTIAL", color: Colors.orange);
   }
 
@@ -422,7 +663,7 @@ class _SalesScreenState extends State<SalesScreen> {
                     controller: _searchController,
                     onChanged: _onSearchChanged,
                     decoration: InputDecoration(
-                      hintText: "Invoice or customer",
+                      hintText: "Invoice, customer, product, SKU or barcode",
                       prefixIcon: const Icon(Icons.search),
                       isDense: true,
                       border: const OutlineInputBorder(),
@@ -454,10 +695,16 @@ class _SalesScreenState extends State<SalesScreen> {
                     PopupMenuItem(value: 'clear', child: Text('Clear')),
                   ],
                 ),
+                const SizedBox(width: 4),
+                OutlinedButton.icon(
+                  onPressed: _openAdvancedFilters,
+                  icon: const Icon(Icons.filter_alt_outlined, size: 18),
+                  label: Text(_advancedFilterCount == 0 ? 'Filters' : 'Filters ($_advancedFilterCount)'),
+                ),
               ],
             ),
           ),
-          if (_fromDate != null || _toDate != null)
+          if (_fromDate != null || _toDate != null || _advancedFilterCount > 0)
             Padding(
               padding: const EdgeInsets.fromLTRB(8, 0, 8, 6),
               child: Wrap(
@@ -481,6 +728,20 @@ class _SalesScreenState extends State<SalesScreen> {
                         await _fetchInitial();
                       },
                     ),
+                  if (_paymentStatusFilter != null)
+                    InputChip(label: Text('Payment: ${_prettyLabel(_paymentStatusFilter!)}'), onDeleted: () => _clearAdvancedFilter('payment')),
+                  if (_saleTypeFilter != null)
+                    InputChip(label: Text('Type: ${_prettyLabel(_saleTypeFilter!)}'), onDeleted: () => _clearAdvancedFilter('type')),
+                  if (_saleSourceId != null)
+                    InputChip(label: Text('From: ${_refName(_saleSources, _saleSourceId)}'), onDeleted: () => _clearAdvancedFilter('source')),
+                  if (_areaId != null)
+                    InputChip(label: Text('Area: ${_refName(_areas, _areaId)}'), onDeleted: () => _clearAdvancedFilter('area')),
+                  if (_salesmanId != null)
+                    InputChip(label: Text('Salesman: ${_refName(_salesmen, _salesmanId)}'), onDeleted: () => _clearAdvancedFilter('salesman')),
+                  if (_deliveryBoyId != null)
+                    InputChip(label: Text('Rider: ${_refName(_deliveryBoys, _deliveryBoyId)}'), onDeleted: () => _clearAdvancedFilter('delivery')),
+                  if (_createdById != null)
+                    InputChip(label: Text('Created By: ${_refName(_creators, _createdById)}'), onDeleted: () => _clearAdvancedFilter('creator')),
                 ],
               ),
             ),
@@ -523,10 +784,9 @@ class _SalesScreenState extends State<SalesScreen> {
                                       .toString();
                               final total = _toDouble(s['total']);
                               final paid = _toDouble(s['paid_amount']);
-                              final balance = (total - paid).clamp(
-                                0,
-                                double.infinity,
-                              );
+                              final balance = s['balance_amount'] != null
+                                  ? _toDouble(s['balance_amount'])
+                                  : (total - paid).clamp(0, double.infinity).toDouble();
                               final st = _paymentStatus(s);
 
                               final createdAtStr =
@@ -665,24 +925,18 @@ class _SalesScreenState extends State<SalesScreen> {
                                       Colors.red,
                                       icon: Icons.summarize,
                                     ),
-                                    // Container(
-                                    //   padding: const EdgeInsets.symmetric(
-                                    //     horizontal: 6,
-                                    //     vertical: 2,
-                                    //   ),
-                                    //   decoration: BoxDecoration(
-                                    //     color: st.color,
-                                    //     borderRadius: BorderRadius.circular(6),
-                                    //   ),
-                                    //   child: Text(
-                                    //     st.label,
-                                    //     style: const TextStyle(
-                                    //       color: Colors.white,
-                                    //       fontSize: 11,
-                                    //       fontWeight: FontWeight.w700,
-                                    //     ),
-                                    //   ),
-                                    // ),
+                                    const SizedBox(width: 4),
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                      decoration: BoxDecoration(
+                                        color: st.color,
+                                        borderRadius: BorderRadius.circular(6),
+                                      ),
+                                      child: Text(
+                                        st.label,
+                                        style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w800),
+                                      ),
+                                    ),
                                   ],
                                 ),
 
@@ -751,6 +1005,14 @@ class _SalesScreenState extends State<SalesScreen> {
                                           //       : Icons
                                           //             .account_balance_wallet_outlined,
                                           // ),
+                                          if (balance > 0.004)
+                                            _amountChip(
+                                              context,
+                                              "Due",
+                                              _currency.format(balance),
+                                              Colors.deepOrange,
+                                              icon: Icons.account_balance_wallet_outlined,
+                                            ),
                                         ],
                                       ),
                                     ],

@@ -19,7 +19,8 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 enum PartyPaymentKind { customer, vendor, deliveryBoy }
-enum PartyBalanceFilter { all, advanceCredit,outstanding }
+enum PartyBalanceFilter { all, advanceCredit, outstanding }
+enum PaymentAllocationMode { auto, manual, unallocated }
 
 class PartyPaymentsScreen extends StatefulWidget {
   const PartyPaymentsScreen({super.key});
@@ -62,9 +63,13 @@ class _PartyPaymentsScreenState extends State<PartyPaymentsScreen> {
 
   final List<Map<String, dynamic>> _parties = [];
   final List<Map<String, dynamic>> _ledger = [];
+  final List<Map<String, dynamic>> _openDocuments = [];
+  final Map<int, double> _manualAllocations = {};
+  PaymentAllocationMode _allocationMode = PaymentAllocationMode.auto;
   Map<String, dynamic>? _selectedParty;
   Map<String, dynamic>? _detail;
   double _opening = 0;
+  double _unallocatedCredit = 0;
   int _ledgerTotal = 0;
 
   @override
@@ -79,6 +84,7 @@ class _PartyPaymentsScreenState extends State<PartyPaymentsScreen> {
     _branchListener = () => _reloadAll(keepSelection: true);
     branchProvider.addListener(_branchListener!);
     _partyScrollController.addListener(_onPartyScroll);
+    _amountController.addListener(_onPaymentAmountChanged);
 
     WidgetsBinding.instance.addPostFrameCallback((_) => _loadParties(resetSelection: true));
   }
@@ -86,6 +92,7 @@ class _PartyPaymentsScreenState extends State<PartyPaymentsScreen> {
   @override
   void dispose() {
     _searchController.dispose();
+    _amountController.removeListener(_onPaymentAmountChanged);
     _amountController.dispose();
     _referenceController.dispose();
     _partyScrollController
@@ -108,6 +115,9 @@ class _PartyPaymentsScreenState extends State<PartyPaymentsScreen> {
           _selectedParty = null;
           _detail = null;
           _ledger.clear();
+          _openDocuments.clear();
+          _manualAllocations.clear();
+          _unallocatedCredit = 0;
         });
       }
     }
@@ -139,6 +149,10 @@ class _PartyPaymentsScreenState extends State<PartyPaymentsScreen> {
         _selectedParty = null;
         _detail = null;
         _ledger.clear();
+        _openDocuments.clear();
+        _manualAllocations.clear();
+        _allocationMode = PaymentAllocationMode.auto;
+        _unallocatedCredit = 0;
         _detailError = null;
       }
     });
@@ -243,7 +257,11 @@ class _PartyPaymentsScreenState extends State<PartyPaymentsScreen> {
       _selectedParty = party;
       _detail = null;
       _ledger.clear();
+      _openDocuments.clear();
+      _manualAllocations.clear();
+      _allocationMode = PaymentAllocationMode.auto;
       _opening = 0;
+      _unallocatedCredit = 0;
       _ledgerTotal = 0;
       _detailError = null;
       _loadingDetail = true;
@@ -284,10 +302,27 @@ class _PartyPaymentsScreenState extends State<PartyPaymentsScreen> {
       final ledgerRes = _kind == PartyPaymentKind.customer
           ? await _customerService.getCustomerLedger(id: id, page: 1, perPage: 8, branchId: branchId, latest: true)
           : await _vendorService.getVendorLedger(id: id, page: 1, perPage: 8, branchId: branchId, latest: true);
+      final openDocuments = await _fetchAllOpenDocuments(id, branchId: branchId);
+      final auth = context.read<AuthProvider>();
+      Map<String, dynamic> creditRes = const {
+        'data': {'available_credit': 0}
+      };
+      final canManagePayment = _kind == PartyPaymentKind.customer
+          ? auth.hasPermission('manage-receipts')
+          : auth.hasPermission('manage-payments');
+      if (canManagePayment) {
+        creditRes = _kind == PartyPaymentKind.customer
+            ? await _customerService.getUnallocatedCredit(customerId: id)
+            : await _vendorService.getUnallocatedCredit(vendorId: id);
+      }
 
       if (!mounted || gen != _detailGen) return;
       setState(() {
         _detail = _extractDetail(detailRes);
+        _openDocuments
+          ..clear()
+          ..addAll(openDocuments);
+        _unallocatedCredit = _extractAvailableCredit(creditRes);
         final ledgerWrap = (ledgerRes['data'] as Map?)?.cast<String, dynamic>() ?? const <String, dynamic>{};
         final rows = (ledgerWrap['items'] as List?) ?? const [];
         _ledger
@@ -360,6 +395,12 @@ class _PartyPaymentsScreenState extends State<PartyPaymentsScreen> {
     return fallback;
   }
 
+  double _extractAvailableCredit(Map<String, dynamic> res) {
+    final data = res['data'];
+    if (data is Map) return _toDouble(data['available_credit']);
+    return _toDouble(res['available_credit']);
+  }
+
   void _switchKind(PartyPaymentKind kind) {
     if (_kind == kind) return;
     setState(() {
@@ -372,6 +413,10 @@ class _PartyPaymentsScreenState extends State<PartyPaymentsScreen> {
       _selectedParty = null;
       _detail = null;
       _ledger.clear();
+      _openDocuments.clear();
+      _manualAllocations.clear();
+      _allocationMode = PaymentAllocationMode.auto;
+      _unallocatedCredit = 0;
       _detailError = null;
       _partyPage = 1;
       _partyLastPage = 1;
@@ -391,6 +436,10 @@ class _PartyPaymentsScreenState extends State<PartyPaymentsScreen> {
       _selectedParty = null;
       _detail = null;
       _ledger.clear();
+      _openDocuments.clear();
+      _manualAllocations.clear();
+      _allocationMode = PaymentAllocationMode.auto;
+      _unallocatedCredit = 0;
       _detailError = null;
     });
     _loadParties(resetSelection: true);
@@ -407,6 +456,519 @@ class _PartyPaymentsScreenState extends State<PartyPaymentsScreen> {
     _loadParties(resetSelection: true);
   }
 
+  void _onPaymentAmountChanged() {
+    if (!mounted || _kind == PartyPaymentKind.deliveryBoy) return;
+    setState(() {});
+  }
+
+  Future<List<Map<String, dynamic>>> _fetchAllOpenDocuments(
+    int partyId, {
+    int? branchId,
+  }) async {
+    final rows = <Map<String, dynamic>>[];
+    var page = 1;
+    var lastPage = 1;
+    do {
+      final res = _kind == PartyPaymentKind.customer
+          ? await _customerService.getCustomerSales(
+              id: partyId,
+              page: page,
+              perPage: 100,
+              branchId: branchId,
+              openOnly: true,
+            )
+          : await _vendorService.getVendorPurchases(
+              id: partyId,
+              page: page,
+              perPage: 100,
+              branchId: branchId,
+              openOnly: true,
+            );
+      rows.addAll(_extractItems(res));
+      final data = res['data'];
+      if (data is Map) {
+        lastPage = _toInt(data['last_page']) ?? page;
+      } else {
+        lastPage = page;
+      }
+      page++;
+    } while (page <= lastPage && page <= 100);
+    return rows;
+  }
+
+  List<Map<String, dynamic>> _allocationPreview() {
+    final amount = _toDouble(_amountController.text);
+    if (amount <= 0 || _kind == PartyPaymentKind.deliveryBoy) return const [];
+    if (_allocationMode == PaymentAllocationMode.unallocated) return const [];
+
+    if (_allocationMode == PaymentAllocationMode.manual) {
+      final docsById = <int, Map<String, dynamic>>{
+        for (final d in _openDocuments)
+          if (_idOf(d) != null) _idOf(d)!: d,
+      };
+      final out = <Map<String, dynamic>>[];
+      for (final entry in _manualAllocations.entries) {
+        final doc = docsById[entry.key];
+        if (doc == null || entry.value <= 0) continue;
+        out.add({...doc, 'allocation_amount': entry.value});
+      }
+      return out;
+    }
+
+    var remaining = amount;
+    final out = <Map<String, dynamic>>[];
+    for (final doc in _openDocuments) {
+      if (remaining <= 0.004) break;
+      final due = _toDouble(doc['open_amount']);
+      if (due <= 0.004) continue;
+      final applied = due < remaining ? due : remaining;
+      out.add({...doc, 'allocation_amount': applied});
+      remaining -= applied;
+    }
+    return out;
+  }
+
+  double get _previewAllocated => _allocationPreview().fold<double>(
+        0,
+        (sum, row) => sum + _toDouble(row['allocation_amount']),
+      );
+
+  double get _previewUnallocated {
+    final amount = _toDouble(_amountController.text);
+    final value = amount - _previewAllocated;
+    return value > 0 ? value : 0;
+  }
+
+  Future<Map<int, double>?> _selectManualAllocations({
+    required double allocationLimit,
+    required String sourceLabel,
+    Map<int, double> initial = const {},
+  }) async {
+    if (allocationLimit <= 0) {
+      AppFeedback.error(context, 'There is no amount available to allocate.');
+      return null;
+    }
+    if (_openDocuments.isEmpty) {
+      AppFeedback.error(context, 'There are no outstanding invoices to allocate.');
+      return null;
+    }
+
+    final controllers = <int, TextEditingController>{};
+    for (final doc in _openDocuments) {
+      final id = _idOf(doc);
+      if (id == null) continue;
+      final value = initial[id];
+      controllers[id] = TextEditingController(
+        text: value != null && value > 0 ? value.toStringAsFixed(2) : '',
+      );
+    }
+
+    final result = await showDialog<Map<int, double>>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          double allocated() => controllers.values.fold<double>(
+                0,
+                (sum, c) => sum + _toDouble(c.text),
+              );
+          return AlertDialog(
+            title: Text(_kind == PartyPaymentKind.customer
+                ? 'Allocate Customer Credit'
+                : 'Allocate Vendor Credit'),
+            content: SizedBox(
+              width: 700,
+              height: 520,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Wrap(
+                    spacing: 10,
+                    runSpacing: 8,
+                    children: [
+                      EnterpriseStatPill(
+                        label: sourceLabel,
+                        value: _money(allocationLimit),
+                        icon: Icons.payments_rounded,
+                        color: AppTheme.primary,
+                      ),
+                      EnterpriseStatPill(
+                        label: 'Allocated',
+                        value: _money(allocated()),
+                        icon: Icons.call_split_rounded,
+                        color: AppTheme.success,
+                      ),
+                      EnterpriseStatPill(
+                        label: 'Remaining',
+                        value: _money((allocationLimit - allocated()).clamp(0, double.infinity)),
+                        icon: Icons.savings_outlined,
+                        color: AppTheme.warning,
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    'Choose how much of this ${sourceLabel.toLowerCase()} should settle each invoice. Any remainder stays as party credit / advance.',
+                    style: const TextStyle(color: AppTheme.textMuted, fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(height: 10),
+                  Expanded(
+                    child: ListView.separated(
+                      itemCount: _openDocuments.length,
+                      separatorBuilder: (_, __) => const Divider(height: 1),
+                      itemBuilder: (_, index) {
+                        final doc = _openDocuments[index];
+                        final id = _idOf(doc)!;
+                        final invoice = (doc['invoice_no'] ?? '#$id').toString();
+                        final date = (doc['invoice_date'] ?? '').toString();
+                        final due = _toDouble(doc['open_amount']);
+                        return Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(invoice, style: const TextStyle(fontWeight: FontWeight.w900)),
+                                    const SizedBox(height: 3),
+                                    Text(
+                                      '${date.isEmpty ? 'Invoice' : date} • Due ${_money(due)}',
+                                      style: const TextStyle(color: AppTheme.textMuted, fontSize: 12, fontWeight: FontWeight.w600),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              SizedBox(
+                                width: 160,
+                                child: TextField(
+                                  controller: controllers[id],
+                                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                                  inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.]'))],
+                                  decoration: const InputDecoration(labelText: 'Apply', hintText: '0.00'),
+                                  onChanged: (_) => setDialogState(() {}),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              TextButton(
+                                onPressed: () {
+                                  final alreadyOther = allocated() - _toDouble(controllers[id]!.text);
+                                  final remainingSource = (allocationLimit - alreadyOther).clamp(0, double.infinity);
+                                  final max = due < remainingSource ? due : remainingSource;
+                                  controllers[id]!.text = max <= 0 ? '' : max.toStringAsFixed(2);
+                                  setDialogState(() {});
+                                },
+                                child: const Text('Max'),
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Cancel')),
+              FilledButton(
+                onPressed: () {
+                  final values = <int, double>{};
+                  var total = 0.0;
+                  for (final doc in _openDocuments) {
+                    final id = _idOf(doc)!;
+                    final value = _toDouble(controllers[id]?.text);
+                    if (value <= 0) continue;
+                    final due = _toDouble(doc['open_amount']);
+                    if (value > due + 0.004) {
+                      AppFeedback.error(context, 'Allocation for ${doc['invoice_no']} exceeds due amount ${_money(due)}.');
+                      return;
+                    }
+                    total += value;
+                    values[id] = value;
+                  }
+                  if (total <= 0) {
+                    AppFeedback.error(context, 'Allocate an amount to at least one invoice.');
+                    return;
+                  }
+                  if (total > allocationLimit + 0.004) {
+                    AppFeedback.error(context, 'Allocated amount cannot exceed ${_money(allocationLimit)}.');
+                    return;
+                  }
+                  Navigator.pop(dialogContext, values);
+                },
+                child: const Text('Apply Allocation'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+    for (final c in controllers.values) {
+      c.dispose();
+    }
+    return result;
+  }
+
+  Future<void> _openManualAllocationDialog() async {
+    final paymentAmount = _toDouble(_amountController.text);
+    if (paymentAmount <= 0) {
+      AppFeedback.error(context, 'Enter the payment amount first.');
+      return;
+    }
+    final result = await _selectManualAllocations(
+      allocationLimit: paymentAmount,
+      sourceLabel: 'Payment',
+      initial: _manualAllocations,
+    );
+    if (result != null && mounted) {
+      setState(() {
+        _manualAllocations
+          ..clear()
+          ..addAll(result);
+        _allocationMode = PaymentAllocationMode.manual;
+      });
+    }
+  }
+
+  Future<void> _applyExistingCredit() async {
+    if (_selectedParty == null || _posting || _unallocatedCredit <= 0.004) return;
+    if (_openDocuments.isEmpty) {
+      AppFeedback.error(context, 'There are no outstanding invoices to settle.');
+      return;
+    }
+    final partyId = _idOf(_selectedParty!);
+    if (partyId == null) return;
+
+    final choice = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Apply Existing Credit'),
+        content: Text(
+          'Available unallocated credit: ${_money(_unallocatedCredit)}\n\n'
+          'Auto Allocate settles the oldest invoices first. Manual lets you choose the invoices and amounts.',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Cancel')),
+          OutlinedButton.icon(
+            onPressed: () => Navigator.pop(dialogContext, 'manual'),
+            icon: const Icon(Icons.tune_rounded),
+            label: const Text('Manual'),
+          ),
+          FilledButton.icon(
+            onPressed: () => Navigator.pop(dialogContext, 'auto'),
+            icon: const Icon(Icons.auto_awesome_rounded),
+            label: const Text('Auto Allocate'),
+          ),
+        ],
+      ),
+    );
+    if (choice == null || !mounted) return;
+
+    var allocations = const <Map<String, dynamic>>[];
+    if (choice == 'manual') {
+      final selected = await _selectManualAllocations(
+        allocationLimit: _unallocatedCredit,
+        sourceLabel: 'Existing Credit',
+      );
+      if (selected == null || !mounted) return;
+      final key = _kind == PartyPaymentKind.customer ? 'sale_id' : 'purchase_id';
+      allocations = selected.entries
+          .where((e) => e.value > 0)
+          .map((e) => <String, dynamic>{key: e.key, 'amount': e.value})
+          .toList(growable: false);
+    }
+
+    setState(() => _posting = true);
+    try {
+      if (_kind == PartyPaymentKind.customer) {
+        await _customerService.applyExistingCredit(
+          customerId: partyId,
+          allocationMode: choice,
+          allocations: allocations,
+        );
+      } else if (_kind == PartyPaymentKind.vendor) {
+        await _vendorService.applyExistingCredit(
+          vendorId: partyId,
+          allocationMode: choice,
+          allocations: allocations,
+        );
+      }
+      if (!mounted) return;
+      AppFeedback.success(context, 'Existing credit allocated successfully');
+      await _reloadAll(keepSelection: true);
+    } catch (e) {
+      if (mounted) AppFeedback.error(context, 'Failed to allocate existing credit: $e');
+    } finally {
+      if (mounted) setState(() => _posting = false);
+    }
+  }
+
+  String get _allocationModeCode => switch (_allocationMode) {
+        PaymentAllocationMode.auto => 'auto',
+        PaymentAllocationMode.manual => 'manual',
+        PaymentAllocationMode.unallocated => 'unallocated',
+      };
+
+  List<Map<String, dynamic>> _allocationPayload() {
+    if (_allocationMode != PaymentAllocationMode.manual) return const [];
+    final key = _kind == PartyPaymentKind.customer ? 'sale_id' : 'purchase_id';
+    return _manualAllocations.entries
+        .where((e) => e.value > 0)
+        .map((e) => <String, dynamic>{key: e.key, 'amount': e.value})
+        .toList(growable: false);
+  }
+
+  Widget _buildAllocationSection() {
+    if (_kind == PartyPaymentKind.deliveryBoy) return const SizedBox.shrink();
+    final preview = _allocationPreview();
+    final amount = _toDouble(_amountController.text);
+    final allocated = preview.fold<double>(0, (sum, row) => sum + _toDouble(row['allocation_amount']));
+    final unallocated = (amount - allocated).clamp(0, double.infinity).toDouble();
+    final documentLabel = _kind == PartyPaymentKind.customer ? 'sales' : 'purchases';
+
+    return Container(
+      margin: const EdgeInsets.only(top: 14),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppTheme.surfaceSoft,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppTheme.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.account_tree_outlined, size: 19, color: AppTheme.primary),
+              const SizedBox(width: 8),
+              const Expanded(
+                child: Text('Invoice Allocation', style: TextStyle(fontWeight: FontWeight.w900)),
+              ),
+              Text(
+                '${_openDocuments.length} open $documentLabel',
+                style: const TextStyle(color: AppTheme.textMuted, fontSize: 12, fontWeight: FontWeight.w700),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          if (_unallocatedCredit > 0.004 && _openDocuments.isNotEmpty) ...[
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: AppTheme.success.withValues(alpha: 0.07),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: AppTheme.success.withValues(alpha: 0.25)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.account_balance_wallet_outlined, size: 18, color: AppTheme.success),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Existing unallocated credit ${_money(_unallocatedCredit)}',
+                      style: const TextStyle(fontWeight: FontWeight.w800),
+                    ),
+                  ),
+                  TextButton.icon(
+                    onPressed: _posting ? null : _applyExistingCredit,
+                    icon: const Icon(Icons.call_split_rounded, size: 17),
+                    label: const Text('Apply Existing Credit'),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 10),
+          ],
+          SegmentedButton<PaymentAllocationMode>(
+            segments: const [
+              ButtonSegment(value: PaymentAllocationMode.auto, icon: Icon(Icons.auto_awesome_rounded), label: Text('Auto · Oldest First')),
+              ButtonSegment(value: PaymentAllocationMode.manual, icon: Icon(Icons.tune_rounded), label: Text('Manual')),
+              ButtonSegment(value: PaymentAllocationMode.unallocated, icon: Icon(Icons.savings_outlined), label: Text('Leave Unallocated')),
+            ],
+            selected: {_allocationMode},
+            onSelectionChanged: _posting
+                ? null
+                : (value) async {
+                    final mode = value.first;
+                    if (mode == PaymentAllocationMode.manual) {
+                      await _openManualAllocationDialog();
+                    } else {
+                      setState(() {
+                        _allocationMode = mode;
+                        if (mode != PaymentAllocationMode.manual) _manualAllocations.clear();
+                      });
+                    }
+                  },
+          ),
+          const SizedBox(height: 10),
+          if (_openDocuments.isEmpty)
+            const Text(
+              'No outstanding invoices. This payment will remain as party credit / advance.',
+              style: TextStyle(color: AppTheme.textMuted, fontWeight: FontWeight.w600),
+            )
+          else if (_allocationMode == PaymentAllocationMode.unallocated)
+            const Text(
+              'No invoice will be settled. The full payment remains unallocated party credit / advance.',
+              style: TextStyle(color: AppTheme.warning, fontWeight: FontWeight.w700),
+            )
+          else ...[
+            if (_allocationMode == PaymentAllocationMode.manual)
+              Align(
+                alignment: Alignment.centerLeft,
+                child: OutlinedButton.icon(
+                  onPressed: _posting ? null : _openManualAllocationDialog,
+                  icon: const Icon(Icons.edit_rounded, size: 17),
+                  label: const Text('Adjust Allocation'),
+                ),
+              ),
+            if (preview.isEmpty)
+              Text(
+                amount <= 0 ? 'Enter an amount to preview invoice allocation.' : 'No allocation selected.',
+                style: const TextStyle(color: AppTheme.textMuted, fontWeight: FontWeight.w600),
+              )
+            else
+              ...preview.take(4).map((row) => Padding(
+                    padding: const EdgeInsets.only(top: 5),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            (row['invoice_no'] ?? '#${row['id']}').toString(),
+                            style: const TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                        ),
+                        Text(
+                          _money(row['allocation_amount']),
+                          style: const TextStyle(fontWeight: FontWeight.w900, color: AppTheme.success),
+                        ),
+                      ],
+                    ),
+                  )),
+            if (preview.length > 4)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text('+ ${preview.length - 4} more invoices', style: const TextStyle(color: AppTheme.textMuted, fontSize: 12)),
+              ),
+          ],
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 12,
+            runSpacing: 6,
+            children: [
+              Text('Allocated ${_money(allocated)}', style: const TextStyle(fontWeight: FontWeight.w800)),
+              Text(
+                'Unallocated ${_money(unallocated)}',
+                style: TextStyle(fontWeight: FontWeight.w800, color: unallocated > 0.004 ? AppTheme.warning : AppTheme.textMuted),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _submitPayment() async {
     if (_selectedParty == null || _posting) return;
     if (!(_formKey.currentState?.validate() ?? false)) return;
@@ -419,6 +981,32 @@ class _PartyPaymentsScreenState extends State<PartyPaymentsScreen> {
       final amount = _toDouble(_amountController.text);
       final reference = _referenceController.text.trim();
 
+      if (_kind != PartyPaymentKind.deliveryBoy && _allocationMode == PaymentAllocationMode.manual) {
+        final allocated = _manualAllocations.values.fold<double>(0, (sum, value) => sum + value);
+        if (allocated <= 0.004) {
+          AppFeedback.error(context, 'Allocate an amount to at least one invoice, or choose Leave Unallocated.');
+          setState(() => _posting = false);
+          return;
+        }
+        if (allocated > amount + 0.004) {
+          AppFeedback.error(context, 'Allocated amount cannot exceed the payment amount.');
+          setState(() => _posting = false);
+          return;
+        }
+        final dueById = <int, double>{
+          for (final doc in _openDocuments)
+            if (_idOf(doc) != null) _idOf(doc)!: _toDouble(doc['open_amount']),
+        };
+        for (final entry in _manualAllocations.entries) {
+          final due = dueById[entry.key];
+          if (due == null || entry.value > due + 0.004) {
+            AppFeedback.error(context, 'One of the selected invoice allocations is no longer valid. Refresh and try again.');
+            setState(() => _posting = false);
+            return;
+          }
+        }
+      }
+
       switch (_kind) {
         case PartyPaymentKind.customer:
           await _customerService.createReceipt(
@@ -427,6 +1015,8 @@ class _PartyPaymentsScreenState extends State<PartyPaymentsScreen> {
             branchId: branchId,
             method: _method,
             reference: reference,
+            allocationMode: _allocationModeCode,
+            allocations: _allocationPayload(),
           );
           break;
         case PartyPaymentKind.vendor:
@@ -436,6 +1026,8 @@ class _PartyPaymentsScreenState extends State<PartyPaymentsScreen> {
             branchId: branchId,
             method: _method,
             reference: reference,
+            allocationMode: _allocationModeCode,
+            allocations: _allocationPayload(),
           );
           break;
         case PartyPaymentKind.deliveryBoy:
@@ -946,6 +1538,7 @@ class _PartyPaymentsScreenState extends State<PartyPaymentsScreen> {
             posting: _posting,
             onMethodChanged: (value) => setState(() => _method = value ?? 'cash'),
             onSubmit: _submitPayment,
+            allocationSection: _kind == PartyPaymentKind.deliveryBoy ? null : _buildAllocationSection(),
           ),
           const SizedBox(height: 12),
           _LedgerPanel(
@@ -1215,6 +1808,7 @@ class _PaymentPanel extends StatelessWidget {
     required this.posting,
     required this.onMethodChanged,
     required this.onSubmit,
+    this.allocationSection,
   });
 
   final GlobalKey<FormState> formKey;
@@ -1227,6 +1821,7 @@ class _PaymentPanel extends StatelessWidget {
   final bool posting;
   final ValueChanged<String?> onMethodChanged;
   final VoidCallback onSubmit;
+  final Widget? allocationSection;
 
   @override
   Widget build(BuildContext context) {
@@ -1324,6 +1919,7 @@ class _PaymentPanel extends StatelessWidget {
             ),
             const SizedBox(height: 14),
             fields,
+            if (allocationSection != null) allocationSection!,
           ],
         ),
       ),

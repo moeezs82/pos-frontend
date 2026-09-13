@@ -88,10 +88,12 @@ class CustomerService {
     int page = 1,
     int perPage = 1,
     int? branchId,
+    bool openOnly = false,
   }) async {
     final params = {
       'page': '$page',
       'per_page': '$perPage',
+      if (openOnly) 'open_only': '1',
       // if (branchId != null) 'branch_id': '$branchId',
     };
     return await _client.get('/customers/$id/sales', query: params);
@@ -116,14 +118,36 @@ class CustomerService {
     required String method,
     String? reference,
     int? branchId,
+    String allocationMode = 'auto',
+    List<Map<String, dynamic>> allocations = const [],
   }) async {
     final params = {
       "amount": amount,
       "method": method,
+      "allocation_mode": allocationMode,
+      if (allocationMode == 'manual') "allocations": allocations,
       if (reference != null && reference.isNotEmpty) "reference": reference,
       // if (branchId != null) "branch_id": branchId,
     };
     return await _client.post('/customers/$customerId/receipts', body: params);
+  }
+
+  Future<Map<String, dynamic>> getUnallocatedCredit({required int customerId}) async {
+    return await _client.get('/customers/$customerId/unallocated-credit');
+  }
+
+  Future<Map<String, dynamic>> applyExistingCredit({
+    required int customerId,
+    String allocationMode = 'auto',
+    List<Map<String, dynamic>> allocations = const [],
+  }) async {
+    return await _client.post(
+      '/customers/$customerId/apply-credit',
+      body: {
+        'allocation_mode': allocationMode,
+        if (allocationMode == 'manual') 'allocations': allocations,
+      },
+    );
   }
 
   Future<Map<String, dynamic>> reverseReceipt({

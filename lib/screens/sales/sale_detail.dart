@@ -1035,6 +1035,7 @@ class _SalePaymentHistoryCard extends StatelessWidget {
               ...payments.map((payment) {
                 final reversed = payment['reversed_at'] != null &&
                     payment['reversed_at'].toString().trim().isNotEmpty;
+                final allocated = payment['is_allocation'] == true;
                 final method = (payment['method'] ?? '').toString();
                 final reference =
                     (payment['reference'] ?? '').toString().trim();
@@ -1073,6 +1074,7 @@ class _SalePaymentHistoryCard extends StatelessWidget {
                             Text(
                               [
                                 'Receipt #${payment['id'] ?? '-'}',
+                                if (allocated) 'Allocated to this invoice',
                                 payment['received_at']?.toString() ?? '',
                                 if (reference.isNotEmpty) reference,
                                 if (reversed) 'Reversed: ${payment['reversal_reason'] ?? '-'}',
@@ -1086,7 +1088,7 @@ class _SalePaymentHistoryCard extends StatelessWidget {
                           ],
                         ),
                       ),
-                      if (canCorrect && !reversed)
+                      if (canCorrect && !reversed && !allocated)
                         TextButton.icon(
                           onPressed: () => onCorrect(payment),
                           icon: const Icon(Icons.change_circle_outlined, size: 17),
@@ -1096,6 +1098,15 @@ class _SalePaymentHistoryCard extends StatelessWidget {
                   ),
                 );
               }),
+            if (payments.any((p) => p['is_allocation'] == true)) ...[
+              const SizedBox(height: 3),
+              Text(
+                'Allocated receipts were recorded in Payments and applied to this invoice. Correct or reverse the original receipt from the customer Payments ledger.',
+                style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+              ),
+            ],
             if (payments.any((p) => p['reversed_at'] != null)) ...[
               const SizedBox(height: 3),
               Text(
