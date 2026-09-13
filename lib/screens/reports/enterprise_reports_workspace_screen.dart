@@ -42,12 +42,17 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
   int? _saleSourceId;
   int? _areaId;
   int? _productVendorId;
+  int? _stockCategoryId;
+  int? _stockBrandId;
+  int? _stockVendorId;
   int? _expenseAccountId;
   int? _expenseCreatedById;
   String? _customerType;
   List<Map<String, dynamic>> _saleSources = const [];
   List<Map<String, dynamic>> _customerAreas = const [];
   List<Map<String, dynamic>> _productVendors = const [];
+  List<Map<String, dynamic>> _stockCategories = const [];
+  List<Map<String, dynamic>> _stockBrands = const [];
   List<Map<String, dynamic>> _expenseAccounts = const [];
   List<Map<String, dynamic>> _expensePaymentMethods = const [];
   List<Map<String, dynamic>> _expenseCreators = const [];
@@ -112,9 +117,16 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
     'sales-by-vendor',
   };
 
+  static const _stockDimensionReportKeys = <String>{
+    'current-stock',
+    'low-stock',
+    'stock-valuation',
+  };
+
   bool get _supportsSaleSource => _saleSourceReportKeys.contains(_selectedReport.key);
   bool get _supportsArea => _areaReportKeys.contains(_selectedReport.key);
   bool get _supportsProductVendor => _productVendorReportKeys.contains(_selectedReport.key);
+  bool get _supportsStockDimensions => _stockDimensionReportKeys.contains(_selectedReport.key);
   bool get _supportsCustomerType => _selectedReport.key == 'area-customer-potential';
   bool get _supportsExpenseFilters => _selectedReport.key == 'expense-report';
   Set<String> get _hiddenColumns => _hiddenColumnsByReport.putIfAbsent(_selectedReport.key, () => <String>{});
@@ -145,6 +157,7 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
       _loadSaleSources();
       _loadCustomerAreas();
       _loadProductVendors();
+      _loadInventoryReportFilters();
       _loadExpenseReportFilters();
       // Branch scoping is resolved by backend from the logged-in user's active branch.
       _ready = true;
@@ -161,11 +174,16 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
     _saleSourceId = null;
     _areaId = null;
     _productVendorId = null;
+    _stockCategoryId = null;
+    _stockBrandId = null;
+    _stockVendorId = null;
     _expenseAccountId = null;
     _expenseCreatedById = null;
     _saleSources = const [];
     _customerAreas = const [];
     _productVendors = const [];
+    _stockCategories = const [];
+    _stockBrands = const [];
     _expenseAccounts = const [];
     _expensePaymentMethods = const [];
     _expenseCreators = const [];
@@ -174,7 +192,7 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
       WidgetsBinding.instance.addPostFrameCallback((_) async {
         _branchRefreshScheduled = false;
         if (!mounted) return;
-        await Future.wait([_loadSaleSources(), _loadCustomerAreas(), _loadProductVendors(), _loadExpenseReportFilters()]);
+        await Future.wait([_loadSaleSources(), _loadCustomerAreas(), _loadProductVendors(), _loadInventoryReportFilters(), _loadExpenseReportFilters()]);
         if (mounted) {
           _page = 1;
           await _fetch();
@@ -218,6 +236,25 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
       setState(() => _productVendors = list);
     } catch (_) {
       // Reports remain usable if the vendor reference list is unavailable.
+    }
+  }
+
+  Future<void> _loadInventoryReportFilters() async {
+    try {
+      final data = await _service.getInventoryReportFilters();
+      if (!mounted) return;
+      setState(() {
+        _stockCategories = (data['categories'] as List? ?? const [])
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList(growable: false);
+        _stockBrands = (data['brands'] as List? ?? const [])
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList(growable: false);
+      });
+    } catch (_) {
+      // Inventory reports remain usable if reference-data filters fail.
     }
   }
 
@@ -276,6 +313,9 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
       if (_supportsSaleSource && _saleSourceId != null) 'sale_source_id': _saleSourceId,
       if (_supportsArea && _areaId != null) 'area_id': _areaId,
       if (_supportsProductVendor && _productVendorId != null) 'product_vendor_id': _productVendorId,
+      if (_supportsStockDimensions && _stockCategoryId != null) 'category_id': _stockCategoryId,
+      if (_supportsStockDimensions && _stockBrandId != null) 'brand_id': _stockBrandId,
+      if (_supportsStockDimensions && _stockVendorId != null) 'vendor_id': _stockVendorId,
       if (_supportsCustomerType && _customerType != null && _customerType!.isNotEmpty) 'customer_type': _customerType,
       if (_supportsExpenseFilters && _expenseAccountId != null) 'account_id': _expenseAccountId,
       if (_supportsExpenseFilters && _expenseCreatedById != null) 'created_by': _expenseCreatedById,
@@ -389,6 +429,9 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
       _status = null;
       _method = null;
       _customerType = null;
+      _stockCategoryId = null;
+      _stockBrandId = null;
+      _stockVendorId = null;
       _expenseAccountId = null;
       _expenseCreatedById = null;
     });
@@ -697,6 +740,129 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
               onChanged: (value) {
                 setState(() {
                   _productVendorId = value == 0 ? null : value;
+                  _page = 1;
+                });
+                _fetch();
+              },
+            ),
+          ),
+        ),
+      if (_supportsStockDimensions)
+        Container(
+          constraints: const BoxConstraints(minWidth: 185, maxWidth: 240),
+          padding: const EdgeInsets.symmetric(horizontal: 11),
+          decoration: BoxDecoration(
+            border: Border.all(color: Theme.of(context).dividerColor),
+            borderRadius: BorderRadius.circular(14),
+          ),
+          child: DropdownButtonHideUnderline(
+            child: DropdownButton<int>(
+              value: _stockCategoryId ?? 0,
+              isExpanded: true,
+              icon: const Icon(Icons.keyboard_arrow_down_rounded),
+              items: <DropdownMenuItem<int>>[
+                const DropdownMenuItem<int>(
+                  value: 0,
+                  child: Row(children: [
+                    Icon(Icons.category_outlined, size: 16),
+                    SizedBox(width: 7),
+                    Text('All Categories'),
+                  ]),
+                ),
+                ..._stockCategories.map((category) {
+                  final id = int.tryParse(category['id']?.toString() ?? '');
+                  return DropdownMenuItem<int>(
+                    value: id,
+                    child: Text((category['name'] ?? 'Category').toString(), overflow: TextOverflow.ellipsis),
+                  );
+                }),
+              ],
+              onChanged: (value) {
+                setState(() {
+                  _stockCategoryId = value == 0 ? null : value;
+                  _page = 1;
+                });
+                _fetch();
+              },
+            ),
+          ),
+        ),
+      if (_supportsStockDimensions)
+        Container(
+          constraints: const BoxConstraints(minWidth: 175, maxWidth: 230),
+          padding: const EdgeInsets.symmetric(horizontal: 11),
+          decoration: BoxDecoration(
+            border: Border.all(color: Theme.of(context).dividerColor),
+            borderRadius: BorderRadius.circular(14),
+          ),
+          child: DropdownButtonHideUnderline(
+            child: DropdownButton<int>(
+              value: _stockBrandId ?? 0,
+              isExpanded: true,
+              icon: const Icon(Icons.keyboard_arrow_down_rounded),
+              items: <DropdownMenuItem<int>>[
+                const DropdownMenuItem<int>(
+                  value: 0,
+                  child: Row(children: [
+                    Icon(Icons.sell_outlined, size: 16),
+                    SizedBox(width: 7),
+                    Text('All Brands'),
+                  ]),
+                ),
+                ..._stockBrands.map((brand) {
+                  final id = int.tryParse(brand['id']?.toString() ?? '');
+                  return DropdownMenuItem<int>(
+                    value: id,
+                    child: Text((brand['name'] ?? 'Brand').toString(), overflow: TextOverflow.ellipsis),
+                  );
+                }),
+              ],
+              onChanged: (value) {
+                setState(() {
+                  _stockBrandId = value == 0 ? null : value;
+                  _page = 1;
+                });
+                _fetch();
+              },
+            ),
+          ),
+        ),
+      if (_supportsStockDimensions)
+        Container(
+          constraints: const BoxConstraints(minWidth: 195, maxWidth: 270),
+          padding: const EdgeInsets.symmetric(horizontal: 11),
+          decoration: BoxDecoration(
+            border: Border.all(color: Theme.of(context).dividerColor),
+            borderRadius: BorderRadius.circular(14),
+          ),
+          child: DropdownButtonHideUnderline(
+            child: DropdownButton<int>(
+              value: _stockVendorId ?? 0,
+              isExpanded: true,
+              icon: const Icon(Icons.keyboard_arrow_down_rounded),
+              items: <DropdownMenuItem<int>>[
+                const DropdownMenuItem<int>(
+                  value: 0,
+                  child: Row(children: [
+                    Icon(Icons.local_shipping_outlined, size: 16),
+                    SizedBox(width: 7),
+                    Text('All Vendors'),
+                  ]),
+                ),
+                ..._productVendors.map((vendor) {
+                  final id = int.tryParse(vendor['id']?.toString() ?? '');
+                  return DropdownMenuItem<int>(
+                    value: id,
+                    child: Text(
+                      '${_vendorLabel(vendor)}${vendor['is_active'] == false ? ' (Inactive)' : ''}',
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  );
+                }),
+              ],
+              onChanged: (value) {
+                setState(() {
+                  _stockVendorId = value == 0 ? null : value;
                   _page = 1;
                 });
                 _fetch();
