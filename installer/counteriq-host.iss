@@ -1,5 +1,5 @@
 #define MyAppName "CounterIQ"
-#define MyAppVersion "1.0.8"
+#define MyAppVersion "1.0.10"
 #define MyAppPublisher "Moeez"
 #define MyAppExeName "CounterIQ.exe"
 
@@ -67,11 +67,6 @@ Name: "{autodesktop}\CounterIQ"; \
 
 ; ============================================================
 ; Install/update Microsoft Visual C++ Runtime
-;
-; We deliberately run the official redistributable every time.
-; Microsoft handles an already-installed/current runtime safely.
-; This is better than checking only whether "some" old VC runtime
-; exists, because an older runtime may still miss VCRUNTIME140_1.dll.
 ; ============================================================
 
 Filename: "{tmp}\VC_redist.x64.exe"; \
@@ -96,12 +91,26 @@ Filename: "{cmd}"; \
     Flags: runhidden waituntilterminated
 
 ; ============================================================
-; Launch CounterIQ
+; Normal/manual installation:
+; keep the existing post-install "Launch CounterIQ" behavior.
+; skipifsilent ensures this entry does not run during /VERYSILENT.
+; runasoriginaluser prevents CounterIQ from reopening elevated.
 ; ============================================================
 
 Filename: "{app}\{#MyAppExeName}"; \
     Description: "Launch CounterIQ"; \
-    Flags: nowait postinstall skipifsilent
+    Flags: nowait postinstall skipifsilent runasoriginaluser; \
+    Check: not IsAutoUpdate
+
+; ============================================================
+; Automatic update:
+; when Flutter launches setup with /AUTOUPDATE, reopen CounterIQ
+; automatically after the silent update finishes.
+; ============================================================
+
+Filename: "{app}\{#MyAppExeName}"; \
+    Flags: nowait runasoriginaluser; \
+    Check: IsAutoUpdate
 
 
 [UninstallRun]
@@ -116,6 +125,23 @@ Filename: "{cmd}"; \
 
 
 [Code]
+
+function IsAutoUpdate: Boolean;
+var
+  I: Integer;
+begin
+  Result := False;
+
+  for I := 1 to ParamCount do
+  begin
+    if CompareText(ParamStr(I), '/AUTOUPDATE') = 0 then
+    begin
+      Result := True;
+      Exit;
+    end;
+  end;
+end;
+
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var

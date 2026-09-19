@@ -25,6 +25,7 @@ import 'services/app_navigator.dart';
 import 'widgets/app_keyboard_shortcuts.dart';
 import 'widgets/app_exit_guard.dart';
 import 'widgets/subscription_warning_banner.dart';
+import 'widgets/app_update_coordinator.dart';
 
 void main() {
   // The offline sales queue (handover doc §2.1) is driven through
@@ -265,9 +266,11 @@ class MyApp extends StatelessWidget {
         // called again — leaving RegisterShiftProvider._token and
         // ConnectivityAutoSyncService stuck on the first user's revoked
         // token for every subsequent session.
-        builder: (context, child) => _AuthOrchestrator(
-          child: AppExitGuard(
-            child: AppKeyboardShortcuts(child: child ?? const SizedBox.shrink()),
+        builder: (context, child) => AppUpdateCoordinator(
+          child: _AuthOrchestrator(
+            child: AppExitGuard(
+              child: AppKeyboardShortcuts(child: child ?? const SizedBox.shrink()),
+            ),
           ),
         ),
         home: Consumer<AuthProvider>(
