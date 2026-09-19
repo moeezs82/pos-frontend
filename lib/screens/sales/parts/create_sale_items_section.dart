@@ -2,6 +2,7 @@ import 'dart:async' show Timer;
 import 'package:flutter/material.dart';
 import 'package:enterprise_pos/services/app_currency.dart';
 import 'package:enterprise_pos/services/sale_profit.dart';
+import 'package:enterprise_pos/services/product_stock.dart';
 import 'dart:ui' show FontFeature;
 import 'package:flutter/services.dart';
 import 'package:enterprise_pos/models/product_unit.dart';
@@ -293,6 +294,80 @@ class _ItemsTableState extends State<ItemsTable> {
     }
     final baseUnit = (item['unit_name'] ?? '').toString().trim();
     return baseUnit.isEmpty ? 'Base unit • Change $actionLabel' : '$baseUnit • Change $actionLabel';
+  }
+
+  Widget _buildProductMetaLine(
+    int index,
+    Map<String, dynamic> item, {
+    bool compact = false,
+  }) {
+    if (item['original_sale_item_id'] != null) {
+      return Text(
+        _returnLineSummary(item),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(
+          fontSize: 9,
+          fontWeight: FontWeight.w700,
+          color: AppTheme.warning,
+        ),
+      );
+    }
+
+    final canChangeUnit = widget.onEditSellingUnit != null &&
+        (_isPackaged(item) || _hasPackagingChoices(item));
+    final stock = ProductStock.quantity(item);
+
+    if (!canChangeUnit && stock == null) {
+      return const SizedBox.shrink();
+    }
+
+    final stockColor = stock == null
+        ? AppTheme.textMuted
+        : stock <= 0
+            ? AppTheme.danger
+            : stock <= 5
+                ? AppTheme.warning
+                : AppTheme.success;
+    final unit = ProductStock.unitLabel(item);
+    final stockLabel = stock == null
+        ? ''
+        : 'Stock ${ProductStock.formatQuantity(stock)}${unit.isEmpty ? '' : ' $unit'}';
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (canChangeUnit)
+          Flexible(
+            child: _buildSellingUnitMenu(index, item, compact: compact),
+          ),
+        if (canChangeUnit && stock != null) ...[
+          const SizedBox(width: 5),
+          Text(
+            '•',
+            style: TextStyle(
+              fontSize: compact ? 9 : 10,
+              color: AppTheme.textMuted,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(width: 5),
+        ],
+        if (stock != null)
+          Flexible(
+            child: Text(
+              stockLabel,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: compact ? 9 : 10,
+                fontWeight: FontWeight.w800,
+                color: stockColor,
+              ),
+            ),
+          ),
+      ],
+    );
   }
 
   static String _returnLineSummary(Map<String, dynamic> item) {
@@ -850,6 +925,7 @@ class _ItemsTableState extends State<ItemsTable> {
       'total': _calcLineTotal(price: p.tp, qty: 1.0, discountPct: discPct, discountType: discType),
       'packagings': raw['packagings'],
       ...SaleProfitCalculator.costFieldsFromProduct(raw),
+      ...ProductStock.toTransactionRowFields(raw),
       // Carry the quantity contract on the line: the search result that knew
       // it is discarded as soon as this returns.
       ...p.quantityRule.toRowFields(),
@@ -1067,17 +1143,7 @@ class _ItemsTableState extends State<ItemsTable> {
                                         overflow: TextOverflow.ellipsis,
                                         style: const TextStyle(fontWeight: FontWeight.w800),
                                       ),
-                                      if (item['original_sale_item_id'] == null &&
-                                          widget.onEditSellingUnit != null &&
-                                          (_isPackaged(item) || _hasPackagingChoices(item)))
-                                        _buildSellingUnitMenu(i, item),
-                                      if (item['original_sale_item_id'] != null)
-                                        Text(
-                                          _returnLineSummary(item),
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: const TextStyle(fontSize: 9, fontWeight: FontWeight.w700, color: AppTheme.warning),
-                                        ),
+                                      _buildProductMetaLine(i, item),
                                     ],
                                   ),
                                 ),
@@ -1290,17 +1356,7 @@ class _ItemsTableState extends State<ItemsTable> {
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12),
                         ),
-                        if (item['original_sale_item_id'] == null &&
-                            widget.onEditSellingUnit != null &&
-                            (_isPackaged(item) || _hasPackagingChoices(item)))
-                          _buildSellingUnitMenu(i, item, compact: true),
-                        if (item['original_sale_item_id'] != null)
-                          Text(
-                            _returnLineSummary(item),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontSize: 9, fontWeight: FontWeight.w700, color: AppTheme.warning),
-                          ),
+                        _buildProductMetaLine(i, item, compact: true),
                       ],
                     ),
                   ),
@@ -1678,6 +1734,14 @@ class _AddProductBoxState extends State<_AddProductBox> {
     Future.microtask(() => widget.focusNode.requestFocus());
   }
 
+  String _stockText(ProductRef product) {
+    final qty = product.stock;
+    if (qty == null) return '';
+    final unit = ProductStock.unitLabel(product.raw);
+    final value = ProductStock.formatQuantity(qty);
+    return unit.isEmpty ? 'Stock: $value' : 'Stock: $value $unit';
+  }
+
   Widget _buildOverlay() {
     if (!mounted) return const SizedBox.shrink();
 
@@ -1751,12 +1815,36 @@ class _AddProductBoxState extends State<_AddProductBox> {
                           child: Row(
                             children: [
                               Expanded(
-                                child: Text(
-                                  p.name,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Text(
+                                      p.name,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                    if (p.stock != null) ...[
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        _stockText(p),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: TextStyle(
+                                          fontSize: 11,
+                                          fontWeight: FontWeight.w700,
+                                          color: p.stock! <= 0
+                                              ? const Color(0xFFD32F2F)
+                                              : p.stock! <= 5
+                                                  ? const Color(0xFFE65100)
+                                                  : AppTheme.textMuted,
+                                        ),
+                                      ),
+                                    ],
+                                  ],
                                 ),
                               ),
+                              const SizedBox(width: 10),
                               Text(
                                 AppCurrency.format(p.tp),
                                 style: const TextStyle(

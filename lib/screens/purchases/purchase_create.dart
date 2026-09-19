@@ -19,6 +19,7 @@ import 'package:enterprise_pos/widgets/product_picker_grid_sheet.dart';
 import 'package:enterprise_pos/widgets/vendor_picker_sheet.dart';
 import 'package:enterprise_pos/services/party_prefetch.dart';
 import 'package:enterprise_pos/services/party_pick_caches.dart';
+import 'package:enterprise_pos/services/product_stock.dart';
 import 'package:enterprise_pos/widgets/party_autocomplete_field.dart';
 import 'package:flutter/material.dart';
 import 'package:enterprise_pos/services/app_currency.dart';
@@ -195,6 +196,7 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
           tp: purchasePrice(m),
           sku: m['sku']?.toString(),
           barcode: m['barcode']?.toString(),
+          stock: ProductStock.quantity(m),
           raw: m,
         );
       }).toList(growable: false);
@@ -237,6 +239,7 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
           'price': item['price'],
           'cost_price': item['cost_price'],
           'wholesale_price': item['wholesale_price'],
+          ...ProductStock.toTransactionRowFields(item),
         };
       }).toList(),
     );
@@ -273,6 +276,7 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
           'received_qty': _receiveNow ? qty : 0.0,
           'total': _lineTotal(price: price, qty: qty, discPct: discountPct),
           'packagings': product['packagings'],
+          ...ProductStock.toTransactionRowFields(product),
           ...QuantityRule.fromProduct(product).toRowFields(),
         });
       }
@@ -305,6 +309,7 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
       _items[idx]['total'] =
           _lineTotal(price: price, qty: targetQty, discPct: discPct);
       _items[idx].addAll(QuantityRule.fromProduct(product).toRowFields());
+      _items[idx].addAll(ProductStock.toTransactionRowFields(product));
       _items[idx]['packagings'] = product['packagings'];
     } else {
       final unitCost = _purchaseUnitCost(product);
@@ -322,6 +327,7 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
         'received_qty': _receiveNow ? targetQty : 0.0,
         'total': _lineTotal(price: unitCost, qty: targetQty, discPct: 0.0),
         'packagings': product['packagings'],
+        ...ProductStock.toTransactionRowFields(product),
         ...QuantityRule.fromProduct(product).toRowFields(),
       });
     }

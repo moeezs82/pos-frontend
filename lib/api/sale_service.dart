@@ -93,6 +93,21 @@ class SaleService {
     throw Exception(res['message'] ?? 'Failed to load return source');
   }
 
+  /// Resolves an existing branch customer by the walk-in primary phone.
+  /// This is intentionally a Sales endpoint (guarded by create-sales), so a
+  /// cashier does not need customer-management permission merely to identify
+  /// the customer before posting a sale.
+  Future<Map<String, dynamic>> resolveCustomerByPhone(String phone) async {
+    final res = await _client.get(
+      '/sales/customer-by-phone',
+      query: {'phone': phone.trim()},
+    );
+    if (res['success'] == true && res['data'] is Map) {
+      return Map<String, dynamic>.from(res['data'] as Map);
+    }
+    throw Exception(res['message'] ?? 'Failed to resolve customer phone');
+  }
+
   /// Creates a sale. Encodes array params with bracketed keys expected by your API.
   ///
   /// [branchId] is required.

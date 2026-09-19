@@ -3,6 +3,7 @@ import 'package:enterprise_pos/api/product_service.dart';
 import 'package:enterprise_pos/forms/product_form_screen.dart';
 import 'package:enterprise_pos/models/product_unit.dart';
 import 'package:enterprise_pos/services/party_pick_caches.dart';
+import 'package:enterprise_pos/services/product_stock.dart';
 import 'package:enterprise_pos/services/sale_pricing.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/enterprise/enterprise_panel.dart';
@@ -702,6 +703,8 @@ Padding(
                                     customerType: widget.customerType,
                                   )),
                                   imageUrl: _imageUrl(p),
+                                  stock: ProductStock.quantity(p),
+                                  stockUnit: ProductStock.unitLabel(p),
                                   selected: selected,
                                   qty: qty,
                                   onTap: () {
@@ -878,6 +881,8 @@ class _ProductGridCard extends StatelessWidget {
   final String title;
   final String price;
   final String? imageUrl;
+  final double? stock;
+  final String stockUnit;
   final bool selected;
   final double qty;
   final VoidCallback onTap;
@@ -886,6 +891,8 @@ class _ProductGridCard extends StatelessWidget {
     required this.title,
     required this.price,
     required this.imageUrl,
+    this.stock,
+    this.stockUnit = '',
     required this.selected,
     required this.qty,
     required this.onTap,
@@ -965,6 +972,16 @@ class _ProductGridCard extends StatelessWidget {
               ],
             ),
 
+            if (stock != null)
+              Positioned(
+                top: 10,
+                left: 10,
+                child: _PickerStockBadge(
+                  stock: stock!,
+                  unit: stockUnit,
+                ),
+              ),
+
             Positioned(
               top: 10,
               right: 10,
@@ -988,6 +1005,51 @@ class _ProductGridCard extends StatelessWidget {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _PickerStockBadge extends StatelessWidget {
+  final double stock;
+  final String unit;
+
+  const _PickerStockBadge({
+    required this.stock,
+    this.unit = '',
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final out = stock <= 0;
+    final low = stock > 0 && stock <= 5;
+    final bg = out
+        ? const Color(0xFFFFEBEE)
+        : low
+            ? const Color(0xFFFFF3E0)
+            : const Color(0xFFE8F5E9);
+    final fg = out
+        ? const Color(0xFFD32F2F)
+        : low
+            ? const Color(0xFFE65100)
+            : const Color(0xFF2E7D32);
+    final qty = ProductStock.formatQuantity(stock);
+    final value = unit.isEmpty ? qty : '$qty $unit';
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: fg.withOpacity(.18)),
+      ),
+      child: Text(
+        out ? 'Stock 0${unit.isEmpty ? '' : ' $unit'}' : 'Stock $value',
+        style: TextStyle(
+          color: fg,
+          fontSize: 10.5,
+          fontWeight: FontWeight.w900,
         ),
       ),
     );

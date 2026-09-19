@@ -6,6 +6,7 @@ import 'package:enterprise_pos/api/product_service.dart';
 import 'package:enterprise_pos/forms/product_form_screen.dart';
 import 'package:enterprise_pos/services/catalog_cache_service.dart';
 import 'package:enterprise_pos/services/party_pick_caches.dart';
+import 'package:enterprise_pos/services/product_stock.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/variant_picker_dialog.dart';
 import 'package:flutter/material.dart';
@@ -358,9 +359,9 @@ class _PurchaseProductPanelState extends State<PurchaseProductPanel> {
       final maxPrice = prices.isEmpty ? null : prices.reduce((a, b) => a > b ? a : b);
 
       var stockKnown = true;
-      var stockTotal = 0;
+      var stockTotal = 0.0;
       for (final sibling in siblings) {
-        final qty = _stockValue(sibling);
+        final qty = ProductStock.quantity(sibling);
         if (qty == null) {
           stockKnown = false;
           break;
@@ -751,8 +752,13 @@ class _PurchaseProductPanelState extends State<PurchaseProductPanel> {
               imageUrl: _imageUrl(p),
               inCart: inCart,
               stock: isVariable
-                  ? _asInt(p['_group_stock'])
-                  : _stockValue(p),
+                  ? (p['_group_stock'] as num?)?.toDouble()
+                  : ProductStock.quantity(p),
+              stockUnit: isVariable
+                  ? ProductStock.unitLabel(
+                      variants.isEmpty ? null : variants.first,
+                    )
+                  : ProductStock.unitLabel(p),
               isVariable: isVariable,
               variantCount: variantCount,
               onTap: () => _handleProductTap(p),
@@ -833,16 +839,6 @@ class _PurchaseProductPanelState extends State<PurchaseProductPanel> {
     if (result.catalogChanged) {
       _fetchProducts(page: 1, replace: true, silent: true);
     }
-  }
-
-  int? _stockValue(Map<String, dynamic> p) {
-    final raw = p['branch_stock'] ?? p['stock'] ?? p['quantity_in_stock'];
-    if (raw == null) return null;
-    if (raw is Map) {
-      final qty = raw['quantity'] ?? raw['qty'] ?? raw['in_stock'];
-      return _asInt(qty);
-    }
-    return _asInt(raw);
   }
 
   Widget _buildEmptyState() {
@@ -1017,7 +1013,8 @@ class _ProductCard extends StatelessWidget {
   final String price;
   final String? imageUrl;
   final bool inCart;
-  final int? stock;
+  final double? stock;
+  final String stockUnit;
   final bool isVariable;
   final int variantCount;
   final VoidCallback onTap;
@@ -1030,6 +1027,7 @@ class _ProductCard extends StatelessWidget {
     required this.onTap,
     this.imageUrl,
     this.stock,
+    this.stockUnit = '',
     this.isVariable = false,
     this.variantCount = 0,
   });
@@ -1197,21 +1195,12 @@ class _ProductCard extends StatelessWidget {
                 left: 5,
                 child: _StockBadge(
                   stock: stock!,
+                  unit: stockUnit,
                   low: stockLow,
                   out: stockOut,
                 ),
               ),
 
-            // ── Out-of-stock overlay ──────────────────────────────────────
-            if (stockOut)
-              Positioned.fill(
-                child: Container(
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(.55),
-                    borderRadius: BorderRadius.circular(3),
-                  ),
-                ),
-              ),
           ],
         ),
       ),
@@ -1240,12 +1229,14 @@ class _ImagePlaceholder extends StatelessWidget {
 
 // ── Stock badge ──────────────────────────────────────────────────────────────
 class _StockBadge extends StatelessWidget {
-  final int stock;
+  final double stock;
+  final String unit;
   final bool low;
   final bool out;
 
   const _StockBadge({
     required this.stock,
+    this.unit = '',
     required this.low,
     required this.out,
   });
@@ -1263,11 +1254,13 @@ class _StockBadge extends StatelessWidget {
     } else if (low) {
       bg = const Color(0xFFFFF3E0);
       fg = const Color(0xFFE65100);
-      label = '$stock left';
+      final qty = ProductStock.formatQuantity(stock);
+      label = unit.isEmpty ? '$qty left' : '$qty $unit left';
     } else {
       bg = const Color(0xFFE8F5E9);
       fg = const Color(0xFF2E7D32);
-      label = '$stock';
+      final qty = ProductStock.formatQuantity(stock);
+      label = unit.isEmpty ? qty : '$qty $unit';
     }
 
     return Container(

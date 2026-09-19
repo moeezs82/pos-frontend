@@ -37,6 +37,7 @@ import 'package:enterprise_pos/services/party_pick_caches.dart';
 import 'package:enterprise_pos/services/catalog_cache_service.dart';
 import 'package:enterprise_pos/services/sale_pricing.dart';
 import 'package:enterprise_pos/services/sale_profit.dart';
+import 'package:enterprise_pos/services/product_stock.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/enterprise/enterprise_panel.dart';
 import 'package:enterprise_pos/widgets/app_feedback.dart';
@@ -170,6 +171,8 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
   final TextEditingController customerPhoneController = TextEditingController();
   bool _customerLocked = false;
   bool _sendInvoiceOnWhatsApp = false;
+  Future<bool>? _walkInPhoneLookupFuture;
+  String? _lastWalkInPhoneLookupKey;
 
   // barcode (kept intact)
   final _barcodeController = TextEditingController();
@@ -276,6 +279,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     _barcodeFocusNode.addListener(() {
       setState(() => _scannerEnabled = _barcodeFocusNode.hasFocus);
     });
+    _walkInPhoneFocusNode.addListener(_handleWalkInPhoneFocusChange);
 
     if (!_isEditing && widget.initialCustomer != null) {
       final customer = widget.initialCustomer!;
@@ -1063,6 +1067,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     _vendorController.dispose();
     _productSearchController.dispose();
     _walkInNameFocusNode.dispose();
+    _walkInPhoneFocusNode.removeListener(_handleWalkInPhoneFocusChange);
     _walkInPhoneFocusNode.dispose();
     _walkInAddressFocusNode.dispose();
     _discountFocusNode.dispose();
@@ -1088,6 +1093,102 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
   //   }
   // }
 
+  void _handleWalkInPhoneFocusChange() {
+    if (_walkInPhoneFocusNode.hasFocus || _selectedCustomerId != null || _isEditing) {
+      return;
+    }
+    unawaited(_resolveWalkInCustomerByPhone());
+  }
+
+  Future<bool> _resolveWalkInCustomerByPhone({bool force = false}) async {
+    if (_isEditing || _selectedCustomerId != null) return true;
+
+    final phone = customerPhoneController.text.trim();
+    if (phone.isEmpty) return true;
+    final key = CustomerPhoneUtils.compareKey(phone);
+    if (key.isEmpty) return true;
+
+    // If focus-loss already started a lookup, Save must wait for it instead of
+    // racing ahead. Otherwise the late response could select the old customer
+    // after _resetForNextSale() has already cleared the completed transaction.
+    final inFlight = _walkInPhoneLookupFuture;
+    if (inFlight != null) {
+      final ok = await inFlight;
+      if (!mounted || !ok || _selectedCustomerId != null) return ok;
+      final currentKey = CustomerPhoneUtils.compareKey(
+        customerPhoneController.text.trim(),
+      );
+      if (currentKey != key) {
+        return _resolveWalkInCustomerByPhone(force: force);
+      }
+    }
+
+    if (!force && _lastWalkInPhoneLookupKey == key) return true;
+
+    final lookup = _performWalkInCustomerLookup(phone, key);
+    _walkInPhoneLookupFuture = lookup;
+    try {
+      return await lookup;
+    } finally {
+      if (identical(_walkInPhoneLookupFuture, lookup)) {
+        _walkInPhoneLookupFuture = null;
+      }
+    }
+  }
+
+  Future<bool> _performWalkInCustomerLookup(String phone, String key) async {
+    try {
+      final data = await _saleService.resolveCustomerByPhone(phone);
+      if (!mounted) return false;
+
+      // Ignore a stale response when the cashier changed/cleared the phone or
+      // explicitly selected a different customer while the request was away.
+      if (_selectedCustomerId != null ||
+          CustomerPhoneUtils.compareKey(customerPhoneController.text.trim()) !=
+              key) {
+        return true;
+      }
+      _lastWalkInPhoneLookupKey = key;
+
+      if (data['ambiguous'] == true) {
+        AppFeedback.warning(
+          context,
+          'This phone matches multiple customer records. Resolve the duplicate customers before saving this sale.',
+        );
+        return false;
+      }
+      if (data['archived'] == true) {
+        AppFeedback.warning(
+          context,
+          'An archived customer already uses this phone number. Restore or update that customer before saving.',
+        );
+        return false;
+      }
+
+      final raw = data['customer'];
+      if (raw is Map) {
+        final customer = Map<String, dynamic>.from(raw);
+        _applyCustomerSelection(customer);
+        if (!mounted) return false;
+        final type = SalePricing.normalizeCustomerType(customer['customer_type']);
+        final name = [
+          (customer['first_name'] ?? '').toString().trim(),
+          (customer['last_name'] ?? '').toString().trim(),
+        ].where((v) => v.isNotEmpty).join(' ').trim();
+        AppFeedback.info(
+          context,
+          '${name.isEmpty ? 'Existing customer' : name} selected from phone${type == 'retail' ? '' : ' • ${type[0].toUpperCase()}${type.substring(1)}'}.',
+        );
+      }
+      return true;
+    } catch (_) {
+      // No connectivity is not a reason to block sale composition. The exact
+      // same phone resolution/create step runs transactionally on the backend
+      // when an online or queued sale is eventually posted.
+      return true;
+    }
+  }
+
   /// Opens the full customer browse sheet and returns whatever was picked
   /// (null means "cleared / walk-in"). Used both as the manual "Select
   /// Customer" action and as the autocomplete field's "Browse all" fallback.
@@ -1108,6 +1209,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         _selectedCustomerId = null;
         _selectedAreaId = null;
         _customerLocked = false;
+        _lastWalkInPhoneLookupKey = null;
 
         // Option A: clear on unselect
         customerNameController.text = "";
@@ -1130,6 +1232,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         addressController.text = address;
 
         _customerLocked = true; // lock editing when customer picked
+        _lastWalkInPhoneLookupKey = CustomerPhoneUtils.compareKey(phone);
       });
     }
     _restoreSaleScreenFocus();
@@ -1146,6 +1249,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       _selectedCustomerId = null;
       _selectedAreaId = null;
       _customerLocked = false;
+      _lastWalkInPhoneLookupKey = null;
       customerNameController.text = "";
       customerPhoneController.text = "";
       addressController.text = "";
@@ -1293,6 +1397,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
           double.tryParse(_items[idx]['price']?.toString() ?? '') ?? price;
       _items[idx]['quantity'] = newQty;
       _items[idx].addAll(profitCostFields);
+      _items[idx].addAll(ProductStock.toTransactionRowFields(product));
       _items[idx]['product_vendor_id'] =
           int.tryParse(product['vendor_id']?.toString() ?? '');
       final productVendorName = (product['vendor_name'] ?? '').toString().trim();
@@ -1317,6 +1422,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         'cost_price': product['cost_price'],
         'wholesale_price': product['wholesale_price'],
         ...profitCostFields,
+        ...ProductStock.toTransactionRowFields(product),
         'quantity': addQty,
         'price': price,
         'discount_pct': scanDiscPct,
@@ -1362,6 +1468,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     if (idx != -1) {
       _items[idx]["quantity"] = qty;
       _items[idx].addAll(profitCostFields);
+      _items[idx].addAll(ProductStock.toTransactionRowFields(product));
       _items[idx]['product_vendor_id'] =
           int.tryParse(product['vendor_id']?.toString() ?? '');
       final productVendorName = (product['vendor_name'] ?? '').toString().trim();
@@ -1394,6 +1501,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         "cost_price": product['cost_price'],
         "wholesale_price": product['wholesale_price'],
         ...profitCostFields,
+        ...ProductStock.toTransactionRowFields(product),
         "quantity": qty,
         "price": price,
         "discount_pct": pickDiscPct,
@@ -1451,6 +1559,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
               item[SaleProfitCalculator.estimatedKey],
           SaleProfitCalculator.sourceKey:
               item[SaleProfitCalculator.sourceKey],
+          ...ProductStock.toTransactionRowFields(item),
         };
       }).toList(),
     );
@@ -3052,6 +3161,16 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       );
       return;
     }
+
+    // Final online preflight for the compact walk-in phone field. Focus-loss
+    // usually resolves an existing customer earlier, but keyboard shortcuts or
+    // an immediate Save can bypass that event. Backend resolution remains the
+    // authority and also covers offline queued sales.
+    if (_selectedCustomerId == null && customerPhoneController.text.trim().isNotEmpty) {
+      final canContinue = await _resolveWalkInCustomerByPhone(force: true);
+      if (!canContinue || !mounted) return;
+    }
+
     final originUserId = int.tryParse(auth.user?['id']?.toString() ?? '');
     double _rowNum(v) => double.tryParse(v?.toString() ?? '') ?? 0.0;
 
@@ -4084,6 +4203,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         _selectedCustomerId = null;
         _selectedAreaId = null;
         _customerLocked = false;
+        _lastWalkInPhoneLookupKey = null;
         customerNameController.clear();
         customerPhoneController.clear();
         addressController.clear();
@@ -4125,16 +4245,6 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         return 0.0;
       }
 
-      double? _stock(Map m) {
-        final raw = m['branch_stock'] ?? m['stock'] ?? m['quantity_in_stock'];
-        if (raw == null) return null;
-        if (raw is Map) {
-          final qty = raw['quantity'] ?? raw['qty'] ?? raw['in_stock'];
-          return double.tryParse(qty?.toString() ?? '');
-        }
-        return double.tryParse(raw.toString());
-      }
-
       return list
           .map<ProductRef>((raw) {
             final m = raw as Map<String, dynamic>;
@@ -4148,7 +4258,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
               barcode: (m['barcode'] ?? '').toString().trim().isEmpty
                   ? null
                   : m['barcode'].toString().trim(),
-              stock: _stock(m),
+              stock: ProductStock.quantity(m),
               raw: m,
             );
           })
@@ -5008,6 +5118,10 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
                     keyboardType: TextInputType.phone,
                     decoration: inputDecoration.copyWith(hintText: 'Phone'),
                     style: const TextStyle(fontSize: 12),
+                    onEditingComplete: () {
+                      unawaited(_resolveWalkInCustomerByPhone());
+                      _walkInAddressFocusNode.requestFocus();
+                    },
                   ),
                 ),
               ),

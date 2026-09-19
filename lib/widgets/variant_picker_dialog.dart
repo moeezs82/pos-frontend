@@ -1,5 +1,6 @@
 import 'package:enterprise_pos/api/product_group_service.dart';
 import 'package:enterprise_pos/services/app_currency.dart' show AppCurrency;
+import 'package:enterprise_pos/services/product_stock.dart';
 import 'package:enterprise_pos/services/sale_pricing.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/app_feedback.dart';
@@ -973,22 +974,8 @@ class _VariantPickerDialogState extends State<VariantPickerDialog> {
     return value == '1' || value == 'true' || value == 'yes';
   }
 
-  static double? _stockQuantity(Map<String, dynamic> variant) {
-    dynamic raw = variant['branch_stock'] ??
-        variant['stock'] ??
-        variant['quantity_in_stock'];
-    if (raw is Map) {
-      raw = raw['quantity'] ?? raw['qty'] ?? raw['in_stock'];
-    }
-    if (raw == null && variant['stocks'] is List) {
-      final stocks = variant['stocks'] as List;
-      if (stocks.isNotEmpty && stocks.first is Map) {
-        final first = stocks.first as Map;
-        raw = first['quantity'] ?? first['qty'] ?? first['in_stock'];
-      }
-    }
-    return _asDouble(raw);
-  }
+  static double? _stockQuantity(Map<String, dynamic> variant) =>
+      ProductStock.quantity(variant);
 
   static String _text(dynamic value) => value?.toString().trim() ?? '';
 
