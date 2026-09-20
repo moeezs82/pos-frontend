@@ -159,6 +159,18 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
       if (p['vendor'] is Map) {
         _selectedVendor = Map<String, dynamic>.from(p['vendor'] as Map);
         _selectedVendorId = _asInt(_selectedVendor?['id']) ?? _selectedVendorId;
+      } else {
+        // /products/{id} already includes vendor_name for the current product.
+        // Seed a lightweight vendor object from that snapshot immediately so
+        // edit screens never flash/fall back to an opaque "Vendor #ID" label
+        // while the optional vendor-detail lookup is still pending (or denied).
+        final vendorName = (p['vendor_name'] ?? '').toString().trim();
+        if (_selectedVendorId != null && vendorName.isNotEmpty) {
+          _selectedVendor = <String, dynamic>{
+            'id': _selectedVendorId,
+            'name': vendorName,
+          };
+        }
       }
     }
 
