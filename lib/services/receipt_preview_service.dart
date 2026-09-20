@@ -7,6 +7,7 @@ import 'package:enterprise_pos/models/sale_receipt_item.dart';
 import 'package:enterprise_pos/services/pdf_arabic_font_loader.dart';
 import 'package:enterprise_pos/utils/customer_phone_utils.dart';
 import 'package:enterprise_pos/utils/print_text_utils.dart';
+import 'package:enterprise_pos/utils/thermal_receipt_layout.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
@@ -521,44 +522,103 @@ class ReceiptPreviewService {
         pageFormat: pageFormat,
         margin: receiptMargin,
         build: (_) {
-          pw.Widget divider() => pw.Container(
-            margin: const pw.EdgeInsets.symmetric(vertical: 5),
-            height: 0.8,
-            color: PdfColors.grey400,
+          // Thermal heads are 1-bit. Grey dithers into a broken, speckled
+          // line, so every rule on this template is solid black and the
+          // quiet/loud distinction is carried by size alone.
+          pw.Widget hairline() =>
+              pw.Container(height: .6, color: PdfColors.black);
+          pw.Widget heavyRule() =>
+              pw.Container(height: 1.5, color: PdfColors.black);
+          pw.Widget gap(double h) => pw.SizedBox(height: h);
+
+          final double fsShop = is58mm ? 12.5 : 15;
+          final double fsShopMeta = is58mm ? 7 : 7.5;
+          final double fsHeading = is58mm ? 6.5 : 7;
+          final double lsHeading = is58mm ? 1.1 : 1.3;
+          final double fsMeta = is58mm ? 7.5 : 8;
+          final double fsMicro = is58mm ? 6 : 6.5;
+          final double lsMicro = is58mm ? .8 : 1;
+          final double fsCustomer = is58mm ? 8 : 8.5;
+          final double fsCustomerMeta = is58mm ? 7 : 7.5;
+          final double fsSl = is58mm ? 7.5 : 8.5;
+          final double fsItem = is58mm ? 8.5 : 9.5;
+          final double fsNumber = is58mm ? 6.5 : 7.5;
+          final double fsAmount = is58mm ? 7.5 : 8.5;
+          final double fsSuffix = is58mm ? 6.5 : 7;
+          final double fsTotals = is58mm ? 7.5 : 8.5;
+          final double fsTotalLabel = is58mm ? 9.5 : 11;
+          final double fsTotalValue = is58mm ? 12.5 : 15;
+
+          final bool operationalTicket =
+              !sections.itemPrices && !sections.totalsBreakdown;
+          final bool showMrp = ThermalReceiptLayout.showsMrp(
+            is58mm: is58mm,
+            discountDisplay: itemDiscountDisplay,
           );
 
-          pw.Widget dashedDivider() => pw.Container(
-            margin: const pw.EdgeInsets.symmetric(vertical: 5),
-            child: pw.Row(
-              children: List.generate(
-                32,
-                (_) => pw.Expanded(
-                  child: pw.Container(
-                    height: 0.8,
-                    margin: const pw.EdgeInsets.symmetric(horizontal: 1),
-                    color: PdfColors.grey500,
-                  ),
+          // Item table geometry. The SL gutter sets the indent the numbers
+          // line up against; RATE/MRP/AMOUNT are fixed so decimal points
+          // stack down the receipt, and QTY takes whatever is left.
+          final double slWidth = is58mm ? 12 : 14;
+          final double slGap = is58mm ? 3 : 4;
+          final double numbersIndent = slWidth + slGap;
+          // Wide enough for a six-figure amount at the sizes below, which is
+          // what forced the same rebalance on the ESC/POS column grid.
+          final double rateWidth = is58mm ? 42 : (showMrp ? 44 : 52);
+          final double mrpWidth = showMrp ? 44 : 0;
+          final double amountWidth = is58mm ? 50 : (showMrp ? 60 : 64);
+
+          pw.TextStyle text(
+            double size, {
+            bool bold = false,
+            double? letterSpacing,
+          }) =>
+              pw.TextStyle(
+                fontSize: size,
+                fontWeight: bold ? pw.FontWeight.bold : null,
+                letterSpacing: letterSpacing,
+              );
+
+          pw.Widget micro(String value, {bool right = false}) => pw.Text(
+                value,
+                style: text(fsMicro, bold: true, letterSpacing: lsMicro),
+                textAlign: right ? pw.TextAlign.right : pw.TextAlign.left,
+              );
+
+          pw.Widget numberCell(
+            String value,
+            double width, {
+            double? size,
+          }) =>
+              pw.SizedBox(
+                width: width,
+                child: pw.Text(
+                  value,
+                  style: text(size ?? fsNumber),
+                  textAlign: pw.TextAlign.right,
                 ),
-              ),
-            ),
-          );
+              );
 
-          final pw.TextStyle shopStyle = pw.TextStyle(
-            fontSize: 14,
-            fontWeight: pw.FontWeight.bold,
-          );
-          final pw.TextStyle bold = pw.TextStyle(
-            fontSize: 9,
-            fontWeight: pw.FontWeight.bold,
-          );
-          final pw.TextStyle columnHeader = pw.TextStyle(
-            fontSize: is58mm ? 8 : 8.5,
-            fontWeight: pw.FontWeight.bold,
-          );
-          const pw.TextStyle normal = pw.TextStyle(fontSize: 9);
-          const pw.TextStyle small = pw.TextStyle(fontSize: 8);
-
-          final secondaryHeader = (receiptHeader ?? '').trim();
+          // Label left, value right, both on the page's single right edge.
+          // The old per-widget moneyRightInset is gone: the inset that keeps
+          // amounts off a faint print head now lives in the page margin, so
+          // wrapped item names and amounts share one edge.
+          pw.Widget kv(
+            String label,
+            String value, {
+            bool strong = false,
+          }) =>
+              pw.Padding(
+                padding: const pw.EdgeInsets.only(bottom: 1.5),
+                child: pw.Row(
+                  children: [
+                    pw.Expanded(
+                      child: pw.Text(label, style: text(fsTotals, bold: strong)),
+                    ),
+                    pw.Text(value, style: text(fsTotals, bold: strong)),
+                  ],
+                ),
+              );
 
           final String dt =
               "${dateTime.day.toString().padLeft(2, '0')}/"
@@ -566,38 +626,16 @@ class ReceiptPreviewService {
               "${dateTime.hour.toString().padLeft(2, '0')}:"
               "${dateTime.minute.toString().padLeft(2, '0')}";
 
-          // Keep right-aligned money slightly inside the printable edge. Some
-          // Windows thermal drivers clip the last few dots even when the page
-          // width is correct. We keep the physical page margins unchanged and
-          // pull only monetary values inward.
-          // Keep the entire money/Total column farther away from the physical
-          // right edge. On some 80 mm thermal heads the final few millimetres
-          // print noticeably lighter even though they are technically inside
-          // the driver's printable area. This moves only the right-aligned
-          // monetary column left; product names, calculation indentation, and
-          // the page's balanced physical margins stay exactly as they are.
-          final double moneyRightInset = is58mm ? 10 : 17;
-          final double detailLeftInset = is58mm ? 3 : 4;
-
-          pw.Widget rightMoney(String value, pw.TextStyle style) => pw.Padding(
-            padding: pw.EdgeInsets.only(right: moneyRightInset),
-            child: pw.Text(value, style: style, textAlign: pw.TextAlign.right),
-          );
-
-          pw.Widget kv(String k, String v, {bool bold2 = false}) => pw.Row(
-            children: [
-              pw.Expanded(child: pw.Text(k, style: bold2 ? bold : normal)),
-              rightMoney(v, bold2 ? bold : normal),
-            ],
-          );
+          final secondaryHeader = (receiptHeader ?? '').trim();
+          final heading = invoiceHeading.trim().isEmpty
+              ? 'SALES INVOICE'
+              : invoiceHeading.trim().toUpperCase();
 
           final bool hasCustomerInfo = sections.customer &&
               (cName.isNotEmpty ||
                   cPhone.isNotEmpty ||
                   cOtherPhones.isNotEmpty ||
                   cAddr.isNotEmpty);
-          final bool operationalTicket =
-              !sections.itemPrices && !sections.totalsBreakdown;
 
           final activeFooterLines = _footerRenderLines(
             footerLines,
@@ -607,21 +645,203 @@ class ReceiptPreviewService {
             devCreditText: devCreditText,
           );
 
+          // -- ITEM TABLE --------------------------------------------------
+          pw.Widget tableHead() => pw.Column(
+                crossAxisAlignment: pw.CrossAxisAlignment.stretch,
+                children: [
+                  pw.Row(
+                    children: [
+                      pw.SizedBox(width: slWidth, child: micro('SL')),
+                      pw.SizedBox(width: slGap),
+                      pw.Expanded(child: micro('ITEM NAME')),
+                      if (operationalTicket) micro('QTY', right: true),
+                    ],
+                  ),
+                  if (!operationalTicket) ...[
+                    gap(1.5),
+                    pw.Padding(
+                      padding: pw.EdgeInsets.only(left: numbersIndent),
+                      child: pw.Row(
+                        children: [
+                          pw.Expanded(child: micro('QTY', right: true)),
+                          pw.SizedBox(
+                            width: rateWidth,
+                            child: micro('RATE', right: true),
+                          ),
+                          if (showMrp)
+                            pw.SizedBox(
+                              width: mrpWidth,
+                              child: micro('MRP', right: true),
+                            ),
+                          pw.SizedBox(
+                            width: amountWidth,
+                            child: micro('AMOUNT', right: true),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                  gap(2.5),
+                  hairline(),
+                  gap(4),
+                ],
+              );
+
+          pw.Widget detailRow(String label, String value) => pw.Padding(
+                padding: pw.EdgeInsets.only(left: numbersIndent, top: 1),
+                child: pw.Row(
+                  children: [
+                    pw.Expanded(child: pw.Text(label, style: text(fsNumber))),
+                    numberCell(value, amountWidth),
+                  ],
+                ),
+              );
+
+          pw.Widget pricedItem(int index, ReceiptItem it) {
+            final suffix = ThermalReceiptLayout.discountSuffix(
+              it,
+              itemDiscountDisplay,
+              is58mm: is58mm,
+            );
+            // The package size rides with the product name, where the line
+            // can wrap, instead of squeezing the narrow QTY column.
+            final pack = ThermalReceiptLayout.packageSuffix(it);
+            return pw.Padding(
+              padding: pw.EdgeInsets.only(bottom: is58mm ? 5 : 5.5),
+              child: pw.Column(
+                crossAxisAlignment: pw.CrossAxisAlignment.stretch,
+                children: [
+                  pw.Row(
+                    crossAxisAlignment: pw.CrossAxisAlignment.start,
+                    children: [
+                      pw.SizedBox(
+                        width: slWidth,
+                        child: pw.Text('$index', style: text(fsSl)),
+                      ),
+                      pw.SizedBox(width: slGap),
+                      pw.Expanded(
+                        child: pw.Text(
+                          pack.isEmpty ? it.name : '${it.name} $pack',
+                          style: text(fsItem),
+                        ),
+                      ),
+                      if (suffix.isNotEmpty) ...[
+                        pw.SizedBox(width: 4),
+                        pw.Text(suffix, style: text(fsSuffix)),
+                      ],
+                    ],
+                  ),
+                  gap(1.5),
+                  pw.Padding(
+                    padding: pw.EdgeInsets.only(left: numbersIndent),
+                    child: pw.Row(
+                      crossAxisAlignment: pw.CrossAxisAlignment.start,
+                      children: [
+                        pw.Expanded(
+                          child: pw.Text(
+                            ThermalReceiptLayout.qtyCell(it),
+                            style: text(fsNumber),
+                            textAlign: pw.TextAlign.right,
+                          ),
+                        ),
+                        numberCell(
+                          ThermalReceiptLayout.rateCell(it, showMrp: showMrp),
+                          rateWidth,
+                        ),
+                        if (showMrp)
+                          numberCell(
+                            ThermalReceiptLayout.mrpCell(it),
+                            mrpWidth,
+                          ),
+                        numberCell(
+                          ThermalReceiptLayout.amountCell(it),
+                          amountWidth,
+                          size: fsAmount,
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (itemDiscountDisplay == ItemDiscountDisplay.detailed &&
+                      it.hasDiscount)
+                    detailRow(
+                      it.detailedDiscountLabel(),
+                      '-${_m(it.discountAmount)}',
+                    ),
+                  if (itemDiscountDisplay == ItemDiscountDisplay.detailed &&
+                      it.hasExtraDiscount)
+                    detailRow(
+                      'Extra Discount',
+                      '-${_m(it.extraDiscountAmount.abs())}',
+                    ),
+                ],
+              ),
+            );
+          }
+
+          // Operational tickets drop every price column and set the quantity
+          // large, because it is the only figure a packer needs.
+          pw.Widget operationalItem(int index, ReceiptItem it) => pw.Padding(
+                padding: const pw.EdgeInsets.only(bottom: 6),
+                child: pw.Column(
+                  crossAxisAlignment: pw.CrossAxisAlignment.stretch,
+                  children: [
+                    pw.Row(
+                      crossAxisAlignment: pw.CrossAxisAlignment.start,
+                      children: [
+                        pw.SizedBox(
+                          width: slWidth,
+                          child: pw.Text('$index', style: text(fsSl)),
+                        ),
+                        pw.SizedBox(width: slGap),
+                        pw.Expanded(
+                          child: pw.Text(
+                            it.name,
+                            style: text(fsItem, bold: true),
+                          ),
+                        ),
+                      ],
+                    ),
+                    pw.Padding(
+                      padding: pw.EdgeInsets.only(left: numbersIndent, top: 1),
+                      child: pw.Text(
+                        ThermalReceiptLayout.operationalQtyCell(it),
+                        style: text(fsItem, bold: true),
+                      ),
+                    ),
+                    if (it.hasPackagingSnapshot &&
+                        it.packageConversionText.isNotEmpty)
+                      pw.Padding(
+                        padding:
+                            pw.EdgeInsets.only(left: numbersIndent, top: 1),
+                        child: pw.Text(
+                          it.packageConversionText,
+                          style: text(fsNumber),
+                        ),
+                      ),
+                  ],
+                ),
+              );
+
           return pw.Column(
             crossAxisAlignment: pw.CrossAxisAlignment.stretch,
             children: [
-              // ── HEADER ────────────────────────────────────────────────────
+              // -- HEADER ----------------------------------------------------
               // Secondary copies get their own explicit operational heading
-              // (KITCHEN COPY / PACKING COPY / BAR COPY / etc.) instead of
-              // mutating the business name.
+              // (KITCHEN COPY / PACKING COPY / BAR COPY) instead of mutating
+              // the business name.
               if (secondaryHeader.isNotEmpty) ...[
-                pw.Center(child: pw.Text(secondaryHeader, style: shopStyle)),
-                pw.SizedBox(height: 2),
+                pw.Center(
+                  child: pw.Text(
+                    secondaryHeader,
+                    style: text(fsShop, bold: true, letterSpacing: .5),
+                  ),
+                ),
+                gap(2.5),
               ],
               if (sections.header) ...[
                 if (showLogo && _decodeLogo(logoData) != null) ...[
                   pw.Center(
-                    child: pw.Container(
+                    child: pw.SizedBox(
                       height: is58mm ? 34 : 42,
                       child: pw.Image(
                         pw.MemoryImage(_decodeLogo(logoData)!),
@@ -629,201 +849,196 @@ class ReceiptPreviewService {
                       ),
                     ),
                   ),
-                  pw.SizedBox(height: 3),
+                  gap(3),
                 ],
-                pw.Center(child: pw.Text(shopName, style: shopStyle)),
-                if (shopAddress != null && shopAddress.trim().isNotEmpty)
-                  pw.Center(child: pw.Text(shopAddress, style: small)),
-                if (shopPhone != null && shopPhone.trim().isNotEmpty)
-                  pw.Center(child: pw.Text(shopPhone, style: small)),
-                divider(),
-              ] else ...[
-                pw.Center(child: pw.Text(shopName, style: bold)),
-                if (secondaryHeader.isNotEmpty) divider(),
-              ],
-
-              // ── RECEIPT META ───────────────────────────────────────────────
-              pw.Center(child: pw.Text("Receipt# $receiptNo", style: bold)),
-              // Show a subtle "Offline Receipt / Pending Sync" note when the
-              // receipt number is an offline reference (starts with OFF-).
-              if (receiptNo.startsWith('OFF-'))
                 pw.Center(
                   child: pw.Text(
-                    "Offline Receipt — Pending Sync",
-                    style: const pw.TextStyle(fontSize: 7),
+                    shopName,
+                    style: text(fsShop, bold: true, letterSpacing: .2),
+                    textAlign: pw.TextAlign.center,
                   ),
                 ),
-              pw.Center(child: pw.Text(dt, style: small)),
-              divider(),
-
-              // ── CUSTOMER ───────────────────────────────────────────────────
-              if (hasCustomerInfo) ...[
-                if (cName.isNotEmpty) pw.Text("Customer: $cName", style: normal),
-                if (cPhone.isNotEmpty) pw.Text("Phone: $cPhone", style: small),
-                if (cOtherPhones.isNotEmpty)
-                  pw.Text(
-                    "Other phones: ${cOtherPhones.join(', ')}",
-                    style: small,
+                gap(2),
+                if (shopAddress != null && shopAddress.trim().isNotEmpty)
+                  pw.Center(
+                    child: pw.Text(
+                      shopAddress.trim(),
+                      style: text(fsShopMeta),
+                      textAlign: pw.TextAlign.center,
+                    ),
                   ),
-                if (cAddr.isNotEmpty) pw.Text("Address: $cAddr", style: small),
-                divider(),
+                if (shopPhone != null && shopPhone.trim().isNotEmpty)
+                  pw.Center(
+                    child: pw.Text(shopPhone.trim(), style: text(fsShopMeta)),
+                  ),
+                gap(6),
+                hairline(),
+                gap(5),
+                pw.Center(
+                  child: pw.Text(
+                    heading,
+                    style: text(fsHeading, bold: true, letterSpacing: lsHeading),
+                    textAlign: pw.TextAlign.center,
+                  ),
+                ),
+                gap(8),
+              ] else ...[
+                pw.Center(
+                  child: pw.Text(shopName, style: text(fsCustomer, bold: true)),
+                ),
+                gap(6),
+                hairline(),
+                gap(6),
               ],
 
-              // ── ITEMS ──────────────────────────────────────────────────────
-              // Thermal receipts read better when the product gets the full
-              // paper width. Financial detail lives on an indented second row
-              // instead of squeezing Item / Price / Qty / Total into four
-              // narrow columns.
-              if (sections.itemPrices) ...[
-                pw.Row(
+              // -- RECEIPT META ----------------------------------------------
+              pw.Row(
+                children: [
+                  pw.Expanded(
+                    child: pw.Text('Receipt #', style: text(fsMeta)),
+                  ),
+                  pw.Text(receiptNo, style: text(fsMeta, bold: true)),
+                ],
+              ),
+              gap(1.5),
+              pw.Row(
+                children: [
+                  pw.Expanded(child: pw.Text('Date', style: text(fsMeta))),
+                  pw.Text(dt, style: text(fsMeta, bold: true)),
+                ],
+              ),
+              // Offline receipts carry a server-unconfirmed reference number.
+              if (receiptNo.startsWith('OFF-')) ...[
+                gap(2),
+                pw.Center(
+                  child: pw.Text(
+                    'OFFLINE RECEIPT - PENDING SYNC',
+                    style: text(fsMicro, bold: true, letterSpacing: lsMicro),
+                  ),
+                ),
+              ],
+
+              // -- CUSTOMER --------------------------------------------------
+              if (hasCustomerInfo) ...[
+                gap(8),
+                micro('BILL TO'),
+                gap(2),
+                if (cName.isNotEmpty)
+                  pw.Text(cName, style: text(fsCustomer)),
+                if (cPhone.isNotEmpty)
+                  pw.Text(cPhone, style: text(fsCustomerMeta)),
+                if (cOtherPhones.isNotEmpty)
+                  pw.Text(
+                    cOtherPhones.join(', '),
+                    style: text(fsCustomerMeta),
+                  ),
+                if (cAddr.isNotEmpty)
+                  pw.Text(cAddr, style: text(fsCustomerMeta)),
+              ],
+
+              // -- ITEMS -----------------------------------------------------
+              gap(9),
+              tableHead(),
+              ...List.generate(
+                items.length,
+                (i) => sections.itemPrices
+                    ? pricedItem(i + 1, items[i])
+                    : operationalItem(i + 1, items[i]),
+              ),
+
+              hairline(),
+              pw.Padding(
+                padding: const pw.EdgeInsets.symmetric(vertical: 3),
+                child: pw.Row(
                   children: [
-                    pw.Expanded(child: pw.Text('ITEM', style: columnHeader)),
-                    pw.Padding(
-                      padding: pw.EdgeInsets.only(right: moneyRightInset),
-                      child: pw.Text('TOTAL', style: columnHeader),
+                    pw.Expanded(
+                      child: pw.Text(
+                        ThermalReceiptLayout.totalItemsLabel(
+                          items,
+                          is58mm: is58mm,
+                        ),
+                        style: text(fsNumber),
+                      ),
+                    ),
+                    pw.Text(
+                      ThermalReceiptLayout.totalQtyLabel(
+                        items,
+                        is58mm: is58mm,
+                      ),
+                      style: text(fsNumber),
                     ),
                   ],
                 ),
-                pw.SizedBox(height: 4),
-                ...items.map(
-                  (it) => pw.Padding(
-                    padding: const pw.EdgeInsets.only(bottom: 5),
-                    child: pw.Column(
-                      crossAxisAlignment: pw.CrossAxisAlignment.stretch,
-                      children: [
-                        pw.Text(it.name, style: normal),
-                        pw.SizedBox(height: 1),
-                        pw.Padding(
-                          padding: pw.EdgeInsets.only(left: detailLeftInset),
-                          child: pw.Row(
-                            crossAxisAlignment: pw.CrossAxisAlignment.start,
-                            children: [
-                              pw.Expanded(
-                                child: pw.Text(
-                                  _thermalItemDetail(
-                                    it,
-                                    itemDiscountDisplay,
-                                    is58mm: is58mm,
-                                  ),
-                                  style: small,
-                                ),
-                              ),
-                              pw.SizedBox(width: is58mm ? 3 : 4),
-                              rightMoney(_m(it.total), normal),
-                            ],
-                          ),
-                        ),
-                        if (itemDiscountDisplay == ItemDiscountDisplay.detailed && it.hasDiscount)
-                          pw.Padding(
-                            padding: pw.EdgeInsets.only(left: detailLeftInset, top: 1),
-                            child: pw.Row(
-                              children: [
-                                pw.Expanded(
-                                  child: pw.Text(
-                                    it.detailedDiscountLabel(),
-                                    style: small,
-                                  ),
-                                ),
-                                pw.SizedBox(width: is58mm ? 3 : 4),
-                                rightMoney('-${_m(it.discountAmount)}', small),
-                              ],
-                            ),
-                          ),
-                        if (itemDiscountDisplay == ItemDiscountDisplay.detailed && it.hasExtraDiscount)
-                          pw.Padding(
-                            padding: pw.EdgeInsets.only(left: detailLeftInset, top: 1),
-                            child: pw.Row(
-                              children: [
-                                pw.Expanded(
-                                  child: pw.Text(
-                                    'Extra Discount',
-                                    style: small,
-                                  ),
-                                ),
-                                pw.SizedBox(width: is58mm ? 3 : 4),
-                                rightMoney('-${_m(it.extraDiscountAmount.abs())}', small),
-                              ],
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                ),
-              ] else ...[
-                pw.Text('ITEMS', style: columnHeader),
-                pw.SizedBox(height: 4),
-                ...items.map(
-                  (it) => pw.Padding(
-                    padding: const pw.EdgeInsets.only(bottom: 6),
-                    child: pw.Column(
-                      crossAxisAlignment: pw.CrossAxisAlignment.stretch,
-                      children: [
-                        pw.Text(it.name, style: bold),
-                        pw.Padding(
-                          padding: pw.EdgeInsets.only(
-                            left: detailLeftInset,
-                            top: 1,
-                          ),
-                          child: pw.Text(
-                            _kitchenQuantityLine(it),
-                            style: normal,
-                          ),
-                        ),
-                        if (it.hasPackagingSnapshot &&
-                            it.packageConversionText.isNotEmpty)
-                          pw.Padding(
-                            padding: pw.EdgeInsets.only(
-                              left: detailLeftInset,
-                              top: 1,
-                            ),
-                            child: pw.Text(
-                              it.packageConversionText,
-                              style: small,
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
+              ),
+              hairline(),
 
-              dashedDivider(),
-
-              // ── TOTALS ─────────────────────────────────────────────────────
+              // -- TOTALS ----------------------------------------------------
               if (sections.totalsBreakdown) ...[
-                kv("Subtotal", _m(subtotal), bold2: false),
-                if (discount > 0) kv("Discount", "-${_m(discount)}"),
-                if (tax > 0) kv("Tax", _m(tax)),
-                if (delivery > 0) kv("Shipping Charges", _m(delivery)),
-                divider(),
+                gap(5),
+                kv('Subtotal', _m(subtotal)),
+                if (discount > 0) kv('Discount', '-${_m(discount)}'),
+                if (tax > 0) kv('Tax', _m(tax)),
+                if (delivery > 0) kv('Shipping Charges', _m(delivery)),
               ],
 
               if (!operationalTicket) ...[
-                kv("Grand Total", _m(grandTotal), bold2: true),
+                gap(6),
+                heavyRule(),
+                pw.Padding(
+                  padding: const pw.EdgeInsets.symmetric(vertical: 3.5),
+                  child: pw.Row(
+                    crossAxisAlignment: pw.CrossAxisAlignment.end,
+                    children: [
+                      pw.Expanded(
+                        child: pw.Text(
+                          'TOTAL',
+                          style: text(
+                            fsTotalLabel,
+                            bold: true,
+                            letterSpacing: .6,
+                          ),
+                        ),
+                      ),
+                      pw.Text(
+                        _m(grandTotal),
+                        style: text(fsTotalValue, bold: true),
+                      ),
+                    ],
+                  ),
+                ),
+                hairline(),
+                gap(6),
 
-                // Payment method breakdown — printed for split tenders or any
-                // non-cash tender (e.g. Cash 1000, Bank 500, KNET 250 (TXN…)).
+                // Payment method breakdown - printed for split tenders or any
+                // non-cash tender (e.g. Cash 1000, Bank 500, KNET 250 (TXN)).
                 if (paymentsSnap.length > 1 ||
                     (paymentsSnap.length == 1 &&
                         (paymentsSnap.first is Map) &&
-                        (((paymentsSnap.first as Map)['method']?.toString() ?? 'cash') != 'cash')))
+                        (((paymentsSnap.first as Map)['method']?.toString() ??
+                                'cash') !=
+                            'cash')))
                   ...paymentsSnap.map((p) {
                     final map = (p is Map) ? p : const <String, dynamic>{};
-                    final label = (map['label'] ?? map['method'] ?? 'Paid').toString();
+                    final label =
+                        (map['label'] ?? map['method'] ?? 'Paid').toString();
                     final amt = (map['amount'] is num)
                         ? (map['amount'] as num).toDouble()
-                        : double.tryParse((map['amount'] ?? '').toString()) ?? 0.0;
+                        : double.tryParse((map['amount'] ?? '').toString()) ??
+                            0.0;
                     final ref = (map['reference'] ?? '').toString().trim();
-                    return kv(ref.isEmpty ? label : "$label ($ref)", _m(amt));
+                    return kv(
+                      ref.isEmpty ? label : '$label ($ref)',
+                      _m(amt),
+                    );
                   }),
 
-                if (cashReceived > 0) kv("Cash", _m(cashReceived), bold2: true),
-                if (changeAmount > 0) kv("Change", _m(changeAmount), bold2: true),
+                if (cashReceived > 0) kv('Cash', _m(cashReceived)),
+                if (changeAmount > 0) kv('Change', _m(changeAmount)),
               ],
 
-              // ── OPTIONAL CUSTOMER QR ──────────────────────────────────────────
+              // -- OPTIONAL CUSTOMER QR --------------------------------------
               if (!operationalTicket && showQr && _validQrUrl(qrUrl)) ...[
-                divider(),
+                gap(12),
                 pw.Center(
                   child: pw.BarcodeWidget(
                     barcode: pw.Barcode.qrCode(),
@@ -836,14 +1051,24 @@ class ReceiptPreviewService {
                   pw.Center(
                     child: pw.Padding(
                       padding: const pw.EdgeInsets.only(top: 3),
-                      child: pw.Text(qrCaption.trim(), style: small),
+                      child: pw.Text(
+                        qrCaption.trim().toUpperCase(),
+                        style: text(fsMicro, letterSpacing: lsMicro),
+                      ),
                     ),
                   ),
               ],
 
-              // ── FOOTER ─────────────────────────────────────────────────────
+              // -- FOOTER ----------------------------------------------------
               if (activeFooterLines.isNotEmpty) ...[
-                divider(),
+                gap(12),
+                pw.Center(
+                  child: pw.SizedBox(
+                    width: is58mm ? 36 : 44,
+                    child: hairline(),
+                  ),
+                ),
+                gap(6),
                 ...activeFooterLines.map(
                   (line) => line.isDevCredit
                       ? _devCreditFooterWidget(line.text, 7.5)
@@ -2548,11 +2773,6 @@ class ReceiptPreviewService {
         ? ' ${item.compactExtraDiscountLabel(short: is58mm)}'
         : '';
     return '${_q(item.qty)}$unitPart$packPart x ${_m(item.price)}$discount$extraDiscount';
-  }
-
-  static String _kitchenQuantityLine(ReceiptItem item) {
-    final unit = item.invoiceUnitName;
-    return unit.isEmpty ? '${_q(item.qty)} x' : '${_q(item.qty)} x $unit';
   }
 
   static String _m(num v) => v.toStringAsFixed(2);

@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:enterprise_pos/api/common_service.dart';
 import 'package:enterprise_pos/api/product_service.dart';
 import 'package:enterprise_pos/api/unit_service.dart';
+import 'package:enterprise_pos/api/vendor_service.dart';
 import 'package:enterprise_pos/models/product_unit.dart';
 import 'package:enterprise_pos/models/product_packaging.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
@@ -76,6 +77,7 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
 
   late ProductService _productService;
   late CommonService  _commonService;
+  late VendorService  _vendorService;
 
   bool get _isEdit => widget.product != null;
 
@@ -124,6 +126,7 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
     _productService = ProductService(token: token);
     _commonService  = CommonService(token: token);
     _unitService    = UnitService(token: token);
+    _vendorService  = VendorService(token: token);
 
     if (widget.product != null) {
       final p = widget.product!;
@@ -152,16 +155,19 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
       // Existing server image
       _currentImageUrl = p['image_url']?.toString();
 
-      _selectedVendorId = p['vendor_id'] is int ? p['vendor_id'] as int : null;
-      if (p['vendor'] is Map<String, dynamic>) {
-        _selectedVendor   = {'id': p['vendor']['id'], 'first_name': p['vendor']['first_name']};
-        _selectedVendorId = _selectedVendor?['id'] as int?;
+      _selectedVendorId = _asInt(p['vendor_id']);
+      if (p['vendor'] is Map) {
+        _selectedVendor = Map<String, dynamic>.from(p['vendor'] as Map);
+        _selectedVendorId = _asInt(_selectedVendor?['id']) ?? _selectedVendorId;
       }
     }
 
     if (widget.vendorId != null) {
       _selectedVendorId = widget.vendorId;
-      _selectedVendor   = {'id': widget.vendorId, 'first_name': 'Vendor #${widget.vendorId}'};
+      // Resolve the actual vendor below instead of presenting an ID as a name.
+      if (_selectedVendorId != _asInt(_selectedVendor?['id'])) {
+        _selectedVendor = null;
+      }
     }
 
     _priceController.addListener(_onPackageBasePriceChanged);
@@ -325,7 +331,46 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
       _loadCategories(),
       _loadBrands(),
       _loadUnits(),
+      _resolveSelectedVendor(),
     ]);
+  }
+
+  Future<void> _resolveSelectedVendor() async {
+    final id = _selectedVendorId;
+    if (id == null) return;
+
+    try {
+      final response = await _vendorService.getVendor(id);
+      final dynamic nested = response['vendor'];
+      final vendor = nested is Map
+          ? Map<String, dynamic>.from(nested)
+          : Map<String, dynamic>.from(response);
+      if (!mounted || _selectedVendorId != id) return;
+      setState(() => _selectedVendor = vendor);
+    } catch (e) {
+      // Editing must stay usable even when vendor lookup permission/network is
+      // unavailable. The ID remains selected and the picker can still be used.
+      debugPrint('Error resolving product vendor #$id: $e');
+    }
+  }
+
+  static int? _asInt(dynamic value) {
+    if (value == null) return null;
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    return int.tryParse(value.toString());
+  }
+
+  static String _vendorDisplayName(Map<String, dynamic> vendor) {
+    final company = (vendor['company_name'] ?? '').toString().trim();
+    final first = (vendor['first_name'] ?? '').toString().trim();
+    final last = (vendor['last_name'] ?? '').toString().trim();
+    final name = (vendor['name'] ?? '').toString().trim();
+    if (company.isNotEmpty) return company;
+    final full = '$first $last'.trim();
+    if (full.isNotEmpty) return full;
+    if (name.isNotEmpty) return name;
+    return 'Vendor #${vendor['id'] ?? ''}'.trim();
   }
 
   Future<void> _loadCategories() async {
@@ -603,10 +648,12 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
     final pickedId = (picked['id'] as num?)?.toInt();
     if (pickedId == _selectedVendorId) return;
 
-    final currentName = _selectedVendor?['first_name']?.toString() ??
-        (_selectedVendorId != null ? 'Vendor #$_selectedVendorId' : 'None selected');
-    final newName = picked['first_name']?.toString() ??
-        (pickedId != null ? 'Vendor #$pickedId' : 'None selected');
+    final currentName = _selectedVendor != null
+        ? _vendorDisplayName(_selectedVendor!)
+        : (_selectedVendorId != null ? 'Vendor #$_selectedVendorId' : 'None selected');
+    final newName = pickedId != null
+        ? _vendorDisplayName(picked)
+        : 'None selected';
 
     // Assigning the first vendor to an unassigned product is harmless. When an
     // existing assignment is being changed, make the master-data impact clear
@@ -628,8 +675,9 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
   Future<void> _clearVendor() async {
     if (_selectedVendorId == null) return;
 
-    final currentName = _selectedVendor?['first_name']?.toString() ??
-        'Vendor #$_selectedVendorId';
+    final currentName = _selectedVendor != null
+        ? _vendorDisplayName(_selectedVendor!)
+        : 'Vendor #$_selectedVendorId';
     final confirmed = await _confirmVendorMasterDataChange(
       currentName: currentName,
       newName: 'None selected',
@@ -824,10 +872,9 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
     // workflow such as purchasing.
     final showReadOnlyVendor = _isVariantProduct || fixedVendorId != null;
     final effectiveVendorId = fixedVendorId ?? _selectedVendorId;
-    final effectiveVendorName =
-        _selectedVendor?['first_name']?.toString() ??
-        widget.product?['vendor']?['first_name'] ??
-        (effectiveVendorId != null ? 'Vendor #$effectiveVendorId' : 'None selected');
+    final effectiveVendorName = _selectedVendor != null
+        ? _vendorDisplayName(_selectedVendor!)
+        : (effectiveVendorId != null ? 'Vendor #$effectiveVendorId' : 'None selected');
 
     return Scaffold(
       appBar: AppBar(title: Text(_isEdit ? 'Edit Product' : 'Add Product')),
@@ -1036,8 +1083,9 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
                   contentPadding: const EdgeInsets.symmetric(horizontal: 8),
                   title: const Text('Vendor (optional)'),
                   subtitle: Text(
-                    _selectedVendor?['first_name']?.toString() ??
-                        (_selectedVendorId != null
+                    _selectedVendor != null
+                        ? _vendorDisplayName(_selectedVendor!)
+                        : (_selectedVendorId != null
                             ? 'Vendor #$_selectedVendorId'
                             : 'None selected'),
                   ),

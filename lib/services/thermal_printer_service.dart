@@ -7,6 +7,7 @@ import 'package:enterprise_pos/models/sale_receipt_item.dart';
 import 'package:enterprise_pos/services/receipt_preview_service.dart';
 import 'package:enterprise_pos/utils/customer_phone_utils.dart';
 import 'package:enterprise_pos/utils/print_text_utils.dart';
+import 'package:enterprise_pos/utils/thermal_receipt_layout.dart';
 import 'package:esc_pos_printer_plus/esc_pos_printer_plus.dart';
 import 'package:esc_pos_utils_plus/esc_pos_utils_plus.dart';
 import 'package:image/image.dart' as img;
@@ -54,6 +55,7 @@ class ThermalPrinterService {
     List<String> footerLines = const [],
     List<ReceiptFooterStyle> footerLineStyles = const [],
     String? receiptHeader,
+    String invoiceHeading = 'SALES INVOICE',
     bool showLogo = false,
     String? logoData,
     bool showQr = false,
@@ -138,6 +140,7 @@ class ThermalPrinterService {
         footerLines: footerLines,
         footerLineStyles: footerLineStyles,
         receiptHeader: receiptHeader,
+        invoiceHeading: invoiceHeading,
         showQr: showQr,
         qrUrl: qrUrl,
         qrCaption: qrCaption,
@@ -398,6 +401,7 @@ class ThermalPrinterService {
     List<String> footerLines = const [],
     List<ReceiptFooterStyle> footerLineStyles = const [],
     String? receiptHeader,
+    String invoiceHeading = 'SALES INVOICE',
     bool showQr = false,
     String? qrUrl,
     String qrCaption = 'Scan to review us',
@@ -406,9 +410,11 @@ class ThermalPrinterService {
     String devCreditText = '',
   }) {
     final snapRaw = meta?['customer_snapshot'];
-    final snap = (snapRaw is Map) ? snapRaw.cast<String, dynamic>() : <String, dynamic>{};
+    final snap =
+        (snapRaw is Map) ? snapRaw.cast<String, dynamic>() : <String, dynamic>{};
     final cName = _customerDisplayName(snap);
     final cPhone = (snap['phone'] ?? '').toString().trim();
+    final cAddr = (snap['address'] ?? '').toString().trim();
     final cOtherPhones =
         CustomerPhoneUtils.printableSecondaryPhones(meta, snap);
     final itemDiscountDisplay = itemDiscountDisplayFromValue(
@@ -416,11 +422,59 @@ class ThermalPrinterService {
     );
     final operationalTicket =
         !sections.itemPrices && !sections.totalsBreakdown;
+    final showMrp = ThermalReceiptLayout.showsMrp(
+      is58mm: is58mm,
+      discountDisplay: itemDiscountDisplay,
+    );
 
     final delivery = (meta?['delivery'] is num)
         ? (meta!['delivery'] as num).toDouble()
         : double.tryParse((meta?['delivery'] ?? '').toString()) ?? 0.0;
 
+    // ESC/POS row() divides the paper into 12 units. The item table uses the
+    // same column order as the PDF renderer so the two paths stay in step:
+    // QTY, RATE, [MRP], AMOUNT, plus a one-unit right gutter that keeps
+    // amounts off print heads whose last millimetres print faintly.
+    //
+    // Unlike the PDF the numbers row is NOT indented under the SL gutter: a
+    // 48-column line (32 on 58 mm) has no spare characters once RATE, MRP
+    // and AMOUNT each need room for a six-figure amount, and a clipped price
+    // is far worse than a missing indent.
+    //
+    // Every row below must add up to exactly 12.
+    const int slUnits = 1;
+    const int gutterUnits = 1;
+    final int qtyUnits = showMrp ? 2 : 3;
+    final int rateUnits = showMrp ? 3 : 4;
+    final int mrpUnits = showMrp ? 3 : 0;
+    final int amountUnits = showMrp ? 3 : 4;
+    final int detailLabelUnits = 12 - amountUnits - gutterUnits;
+
+    const PosStyles boldLeft = PosStyles(bold: true);
+    const PosStyles right = PosStyles(align: PosAlign.right);
+    const PosStyles rightBold = PosStyles(bold: true, align: PosAlign.right);
+
+    void kv(String label, String value, {bool bold = false}) {
+      printer.row([
+        PosColumn(text: label, width: 6, styles: PosStyles(bold: bold)),
+        PosColumn(
+          text: value,
+          width: 5,
+          styles: PosStyles(bold: bold, align: PosAlign.right),
+        ),
+        PosColumn(text: '', width: gutterUnits),
+      ]);
+    }
+
+    void metaRow(String label, String value) {
+      printer.row([
+        PosColumn(text: label, width: 4),
+        PosColumn(text: value, width: 7, styles: rightBold),
+        PosColumn(text: '', width: gutterUnits),
+      ]);
+    }
+
+    // -- HEADER --------------------------------------------------------------
     final secondaryHeader = (receiptHeader ?? '').trim();
     if (secondaryHeader.isNotEmpty) {
       printer.text(
@@ -435,182 +489,257 @@ class ThermalPrinterService {
     }
 
     if (sections.header) {
-      printer.text(shopName, styles: const PosStyles(align: PosAlign.center, bold: true, height: PosTextSize.size2, width: PosTextSize.size2));
+      printer.text(
+        shopName,
+        styles: const PosStyles(
+          align: PosAlign.center,
+          bold: true,
+          height: PosTextSize.size2,
+          width: PosTextSize.size2,
+        ),
+      );
       if (shopAddress != null && shopAddress.trim().isNotEmpty) {
-        printer.text(shopAddress, styles: const PosStyles(align: PosAlign.center));
+        printer.text(
+          shopAddress.trim(),
+          styles: const PosStyles(align: PosAlign.center),
+        );
       }
       if (shopPhone != null && shopPhone.trim().isNotEmpty) {
-        printer.text(shopPhone, styles: const PosStyles(align: PosAlign.center));
+        printer.text(
+          shopPhone.trim(),
+          styles: const PosStyles(align: PosAlign.center),
+        );
       }
       printer.hr();
+      final heading = invoiceHeading.trim().isEmpty
+          ? 'SALES INVOICE'
+          : invoiceHeading.trim().toUpperCase();
+      printer.text(
+        heading,
+        styles: const PosStyles(align: PosAlign.center, bold: true),
+      );
+      printer.feed(1);
     } else {
-      printer.text(shopName, styles: const PosStyles(align: PosAlign.center, bold: true));
-      if (secondaryHeader.isNotEmpty) {
-        printer.hr();
-      }
+      printer.text(
+        shopName,
+        styles: const PosStyles(align: PosAlign.center, bold: true),
+      );
+      printer.hr();
     }
 
-    printer.text('Receipt# $receiptNo', styles: const PosStyles(align: PosAlign.center, bold: true));
-    // Show a subtle note for offline receipts (pending server sync).
+    // -- RECEIPT META --------------------------------------------------------
+    metaRow('Receipt #', receiptNo);
+    metaRow('Date', _fmtDate(dateTime));
+    // Offline receipts carry a server-unconfirmed reference number.
     if (receiptNo.startsWith('OFF-')) {
-      printer.text('Offline Receipt - Pending Sync', styles: const PosStyles(align: PosAlign.center));
+      printer.text(
+        'OFFLINE RECEIPT - PENDING SYNC',
+        styles: const PosStyles(align: PosAlign.center, bold: true),
+      );
     }
-    printer.text(_fmtDate(dateTime), styles: const PosStyles(align: PosAlign.center));
+
+    // -- CUSTOMER ------------------------------------------------------------
+    if (sections.customer &&
+        (cName.isNotEmpty ||
+            cPhone.isNotEmpty ||
+            cOtherPhones.isNotEmpty ||
+            cAddr.isNotEmpty)) {
+      printer.feed(1);
+      printer.text('BILL TO', styles: boldLeft);
+      if (cName.isNotEmpty) printer.text(cName);
+      if (cPhone.isNotEmpty) printer.text(cPhone);
+      if (cOtherPhones.isNotEmpty) printer.text(cOtherPhones.join(', '));
+      if (cAddr.isNotEmpty) printer.text(cAddr);
+    }
+    printer.feed(1);
+
+    // -- ITEM TABLE ----------------------------------------------------------
+    printer.row([
+      PosColumn(text: 'SL', width: slUnits, styles: boldLeft),
+      PosColumn(text: 'ITEM NAME', width: 12 - slUnits, styles: boldLeft),
+    ]);
+    if (!operationalTicket) {
+      printer.row([
+        PosColumn(text: 'QTY', width: qtyUnits, styles: rightBold),
+        PosColumn(text: 'RATE', width: rateUnits, styles: rightBold),
+        if (showMrp)
+          PosColumn(text: 'MRP', width: mrpUnits, styles: rightBold),
+        PosColumn(text: 'AMOUNT', width: amountUnits, styles: rightBold),
+        PosColumn(text: '', width: gutterUnits),
+      ]);
+    }
     printer.hr();
 
-    if (sections.customer &&
-        (cName.isNotEmpty || cPhone.isNotEmpty || cOtherPhones.isNotEmpty)) {
-      if (cName.isNotEmpty) printer.text('Customer: $cName');
-      if (cPhone.isNotEmpty) printer.text('Phone: $cPhone');
-      if (cOtherPhones.isNotEmpty) {
-        printer.text('Other phones: ${cOtherPhones.join(', ')}');
-      }
-      printer.hr();
-    }
+    for (var i = 0; i < items.length; i++) {
+      final it = items[i];
+      final index = i + 1;
 
-    if (sections.itemPrices) {
-      // Reserve the last ESC/POS column as a safety gutter. This prevents
-      // printers with a slightly narrower physical print head from clipping
-      // the final digits on the right side.
-      printer.row([
-        PosColumn(text: 'ITEM', width: 8, styles: const PosStyles(bold: true)),
-        PosColumn(text: 'TOTAL', width: 3, styles: const PosStyles(bold: true, align: PosAlign.right)),
-        PosColumn(text: '', width: 1),
-      ]);
-
-      for (final it in items) {
-        printer.text(it.name);
-        final detailText = ' ${_thermalItemDetail(
+      if (sections.itemPrices) {
+        final suffix = ThermalReceiptLayout.discountSuffix(
           it,
           itemDiscountDisplay,
           is58mm: is58mm,
-        )}';
+        );
+        final pack = ThermalReceiptLayout.packageSuffix(it);
+        // The product name goes out as a full-width line so long names, the
+        // package size and the compact discount label all wrap instead of
+        // being clipped inside a narrow row() column.
+        final nameLine = StringBuffer('$index  ${it.name}');
+        if (pack.isNotEmpty) nameLine.write(' $pack');
+        if (suffix.isNotEmpty) nameLine.write('  $suffix');
+        printer.text(nameLine.toString());
+
         printer.row([
-          PosColumn(text: detailText, width: 8),
-          PosColumn(text: _m(it.total), width: 3, styles: const PosStyles(align: PosAlign.right)),
-          PosColumn(text: '', width: 1),
+          PosColumn(
+            text: ThermalReceiptLayout.qtyCell(it),
+            width: qtyUnits,
+            styles: right,
+          ),
+          PosColumn(
+            text: ThermalReceiptLayout.rateCell(it, showMrp: showMrp),
+            width: rateUnits,
+            styles: right,
+          ),
+          if (showMrp)
+            PosColumn(
+              text: ThermalReceiptLayout.mrpCell(it),
+              width: mrpUnits,
+              styles: right,
+            ),
+          PosColumn(
+            text: ThermalReceiptLayout.amountCell(it),
+            width: amountUnits,
+            styles: rightBold,
+          ),
+          PosColumn(text: '', width: gutterUnits),
         ]);
-        if (itemDiscountDisplay == ItemDiscountDisplay.detailed && it.hasDiscount) {
+
+        if (itemDiscountDisplay == ItemDiscountDisplay.detailed &&
+            it.hasDiscount) {
           printer.row([
-            PosColumn(text: ' ${it.detailedDiscountLabel()}', width: 8),
-            PosColumn(text: '-${_m(it.discountAmount)}', width: 3, styles: const PosStyles(align: PosAlign.right)),
-            PosColumn(text: '', width: 1),
+            PosColumn(
+              text: '  ${it.detailedDiscountLabel()}',
+              width: detailLabelUnits,
+            ),
+            PosColumn(
+              text: '-${_m(it.discountAmount)}',
+              width: amountUnits,
+              styles: right,
+            ),
+            PosColumn(text: '', width: gutterUnits),
           ]);
         }
-        if (itemDiscountDisplay == ItemDiscountDisplay.detailed && it.hasExtraDiscount) {
+        if (itemDiscountDisplay == ItemDiscountDisplay.detailed &&
+            it.hasExtraDiscount) {
           printer.row([
-            PosColumn(text: ' Extra Discount', width: 8),
-            PosColumn(text: '-${_m(it.extraDiscountAmount.abs())}', width: 3, styles: const PosStyles(align: PosAlign.right)),
-            PosColumn(text: '', width: 1),
+            PosColumn(text: '  Extra Discount', width: detailLabelUnits),
+            PosColumn(
+              text: '-${_m(it.extraDiscountAmount.abs())}',
+              width: amountUnits,
+              styles: right,
+            ),
+            PosColumn(text: '', width: gutterUnits),
           ]);
         }
-      }
-    } else {
-      printer.text('ITEMS', styles: const PosStyles(bold: true));
-      for (final it in items) {
-        printer.text(it.name, styles: const PosStyles(bold: true));
-        printer.text(' ${_kitchenQuantityLine(it)}');
-        if (it.hasPackagingSnapshot &&
-            it.packageConversionText.isNotEmpty) {
-          printer.text(' ${it.packageConversionText}');
+      } else {
+        // Operational ticket: no prices, and the quantity is set double
+        // height because it is the only figure a packer needs.
+        printer.text('$index  ${it.name}', styles: boldLeft);
+        printer.text(
+          '  ${ThermalReceiptLayout.operationalQtyCell(it)}',
+          styles: const PosStyles(bold: true, height: PosTextSize.size2),
+        );
+        if (it.hasPackagingSnapshot && it.packageConversionText.isNotEmpty) {
+          printer.text('  ${it.packageConversionText}');
         }
       }
     }
+
+    printer.hr();
+    printer.row([
+      PosColumn(
+        text: ThermalReceiptLayout.totalItemsLabel(items, is58mm: is58mm),
+        width: 5,
+      ),
+      PosColumn(
+        text: ThermalReceiptLayout.totalQtyLabel(items, is58mm: is58mm),
+        width: 6,
+        styles: right,
+      ),
+      PosColumn(text: '', width: gutterUnits),
+    ]);
     printer.hr();
 
+    // -- TOTALS --------------------------------------------------------------
     if (sections.totalsBreakdown) {
-      printer.row([
-        PosColumn(text: 'Subtotal', width: 8, styles: const PosStyles(bold: true)),
-        PosColumn(text: _m(subtotal), width: 3, styles: const PosStyles(bold: true, align: PosAlign.right)),
-        PosColumn(text: '', width: 1),
-      ]);
-      if (discount > 0) {
-        printer.row([
-          PosColumn(text: 'Discount', width: 8, styles: const PosStyles(bold: true)),
-          PosColumn(text: '-${_m(discount)}', width: 3, styles: const PosStyles(bold: true, align: PosAlign.right)),
-          PosColumn(text: '', width: 1),
-        ]);
-      }
-      if (tax > 0) {
-        printer.row([
-          PosColumn(text: 'Tax', width: 8, styles: const PosStyles(bold: true)),
-          PosColumn(text: _m(tax), width: 3, styles: const PosStyles(bold: true, align: PosAlign.right)),
-          PosColumn(text: '', width: 1),
-        ]);
-      }
-      if (delivery > 0) {
-        printer.row([
-          PosColumn(text: 'Shipping Charges', width: 8, styles: const PosStyles(bold: true)),
-          PosColumn(text: _m(delivery), width: 3, styles: const PosStyles(bold: true, align: PosAlign.right)),
-          PosColumn(text: '', width: 1),
-        ]);
-      }
-      printer.hr();
+      kv('Subtotal', _m(subtotal));
+      if (discount > 0) kv('Discount', '-${_m(discount)}');
+      if (tax > 0) kv('Tax', _m(tax));
+      if (delivery > 0) kv('Shipping', _m(delivery));
     }
 
     if (!operationalTicket) {
+      printer.hr();
       printer.row([
-        PosColumn(text: 'Grand Total', width: 8, styles: const PosStyles(bold: true, height: PosTextSize.size2)),
-        PosColumn(text: _m(grandTotal), width: 3, styles: const PosStyles(bold: true, height: PosTextSize.size2, align: PosAlign.right)),
-        PosColumn(text: '', width: 1),
+        PosColumn(
+          text: 'TOTAL',
+          width: 5,
+          styles: const PosStyles(bold: true, height: PosTextSize.size2),
+        ),
+        PosColumn(
+          text: _m(grandTotal),
+          width: 6,
+          styles: const PosStyles(
+            bold: true,
+            height: PosTextSize.size2,
+            align: PosAlign.right,
+          ),
+        ),
+        PosColumn(text: '', width: gutterUnits),
       ]);
-    }
+      printer.hr();
 
-    // Payment method breakdown (split tender / non-cash tenders).
-    final paymentsSnap = (meta?['payments_snapshot'] is List)
-        ? (meta!['payments_snapshot'] as List)
-        : (meta?['payments'] is List ? (meta!['payments'] as List) : const []);
-    final showBreakdown = paymentsSnap.length > 1 ||
-        (paymentsSnap.length == 1 &&
-            paymentsSnap.first is Map &&
-            (((paymentsSnap.first as Map)['method']?.toString() ?? 'cash') != 'cash'));
-    if (!operationalTicket && showBreakdown) {
-      for (final p in paymentsSnap) {
-        final map = (p is Map) ? p : const {};
-        final label = (map['label'] ?? map['method'] ?? 'Paid').toString();
-        final amt = (map['amount'] is num)
-            ? (map['amount'] as num).toDouble()
-            : double.tryParse((map['amount'] ?? '').toString()) ?? 0.0;
-        final ref = (map['reference'] ?? '').toString().trim();
-        printer.row([
-          PosColumn(text: ref.isEmpty ? label : '$label ($ref)', width: 8),
-          PosColumn(text: _m(amt), width: 3, styles: const PosStyles(align: PosAlign.right)),
-          PosColumn(text: '', width: 1),
-        ]);
+      // Payment method breakdown (split tender / non-cash tenders).
+      final paymentsSnap = (meta?['payments_snapshot'] is List)
+          ? (meta!['payments_snapshot'] as List)
+          : (meta?['payments'] is List ? (meta!['payments'] as List) : const []);
+      final showBreakdown = paymentsSnap.length > 1 ||
+          (paymentsSnap.length == 1 &&
+              paymentsSnap.first is Map &&
+              (((paymentsSnap.first as Map)['method']?.toString() ?? 'cash') !=
+                  'cash'));
+      if (showBreakdown) {
+        for (final p in paymentsSnap) {
+          final map = (p is Map) ? p : const {};
+          final label = (map['label'] ?? map['method'] ?? 'Paid').toString();
+          final amt = (map['amount'] is num)
+              ? (map['amount'] as num).toDouble()
+              : double.tryParse((map['amount'] ?? '').toString()) ?? 0.0;
+          final ref = (map['reference'] ?? '').toString().trim();
+          kv(ref.isEmpty ? label : '$label ($ref)', _m(amt));
+        }
       }
-    }
 
-    if (!operationalTicket && cashReceived > 0) {
-      printer.row([
-        PosColumn(text: 'Cash Received', width: 8, styles: const PosStyles(bold: true)),
-        PosColumn(text: _m(cashReceived), width: 3, styles: const PosStyles(bold: true, align: PosAlign.right)),
-        PosColumn(text: '', width: 1),
-      ]);
+      if (cashReceived > 0) kv('Cash', _m(cashReceived));
+      if (changeAmount > 0) kv('Change', _m(changeAmount));
     }
-    if (!operationalTicket && changeAmount > 0) {
-      printer.row([
-        PosColumn(text: 'Change', width: 8, styles: const PosStyles(bold: true)),
-        PosColumn(text: _m(changeAmount), width: 3, styles: const PosStyles(bold: true, align: PosAlign.right)),
-        PosColumn(text: '', width: 1),
-      ]);
-    }
-    if (!operationalTicket) printer.hr();
 
     if (!operationalTicket && showQr && _validQrUrl(qrUrl)) {
+      printer.feed(1);
       printer.qrcode(
         qrUrl!.trim(),
         size: is58mm ? QRSize.size3 : QRSize.size4,
       );
       if (qrCaption.trim().isNotEmpty) {
         printer.text(
-          qrCaption.trim(),
+          qrCaption.trim().toUpperCase(),
           styles: const PosStyles(align: PosAlign.center),
         );
       }
-      printer.hr();
     }
 
     if (sections.footer) {
+      printer.feed(1);
       _writeFooterLines(
         printer,
         footerLines,
@@ -623,7 +752,6 @@ class ThermalPrinterService {
     printer.feed(2);
     printer.cut();
   }
-
   void _writeFooterLines(
     NetworkPrinter printer,
     List<String> footerLines,
@@ -723,35 +851,5 @@ class ThermalPrinterService {
       "${d.day.toString().padLeft(2, '0')}/${d.month.toString().padLeft(2, '0')}/${d.year} "
       "${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}";
 
-  static String _thermalItemDetail(
-    SaleReceiptItem item,
-    ItemDiscountDisplay discountDisplay, {
-    required bool is58mm,
-  }) {
-    final unit = item.hasPackagingSnapshot
-        ? item.thermalUnitName
-        : item.unitName.trim();
-    final unitPart = unit.isEmpty ? '' : ' $unit';
-    final packageSize = item.hasPackagingSnapshot ? item.packageSizeText : '';
-    final packPart = packageSize.isEmpty
-        ? ''
-        : (is58mm ? '[$packageSize]' : ' [$packageSize]');
-    final discount = discountDisplay == ItemDiscountDisplay.compact &&
-            item.hasDiscount
-        ? ' ${item.compactDiscountLabel()}'
-        : '';
-    final extraDiscount = discountDisplay == ItemDiscountDisplay.compact &&
-            item.hasExtraDiscount
-        ? ' ${item.compactExtraDiscountLabel(short: is58mm)}'
-        : '';
-    return '${_q(item.qty)}$unitPart$packPart x ${_m(item.price)}$discount$extraDiscount';
-  }
-
-  static String _kitchenQuantityLine(SaleReceiptItem item) {
-    final unit = item.invoiceUnitName;
-    return unit.isEmpty ? '${_q(item.qty)} x' : '${_q(item.qty)} x $unit';
-  }
-
   static String _m(num v) => v.toStringAsFixed(2);
-  static String _q(num v) => (v % 1 == 0) ? v.toInt().toString() : v.toString();
 }

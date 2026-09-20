@@ -4,6 +4,7 @@ import 'package:enterprise_pos/api/common_service.dart';
 import 'package:enterprise_pos/api/product_group_service.dart';
 import 'package:enterprise_pos/api/product_service.dart';
 import 'package:enterprise_pos/api/unit_service.dart';
+import 'package:enterprise_pos/api/vendor_service.dart';
 import 'package:enterprise_pos/models/product_unit.dart';
 import 'package:enterprise_pos/models/product_packaging.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
@@ -74,6 +75,7 @@ class _VariableProductFormScreenState extends State<VariableProductFormScreen> {
   late ProductService _productService;
   late CommonService _commonService;
   late UnitService _unitService;
+  late VendorService _vendorService;
 
   bool get _isEdit => widget.group != null;
   bool get _groupHasPackagings =>
@@ -95,6 +97,7 @@ class _VariableProductFormScreenState extends State<VariableProductFormScreen> {
     _productService = ProductService(token: token);
     _commonService = CommonService(token: token);
     _unitService = UnitService(token: token);
+    _vendorService = VendorService(token: token);
 
     if (widget.group != null) {
       final g = widget.group!;
@@ -108,6 +111,10 @@ class _VariableProductFormScreenState extends State<VariableProductFormScreen> {
       _selectedBrandId = _asInt(g['brand_id']);
       _selectedUnitId = _asInt(g['unit_id']);
       _selectedVendorId = _asInt(g['vendor_id']);
+      if (g['vendor'] is Map) {
+        _selectedVendor = Map<String, dynamic>.from(g['vendor'] as Map);
+        _selectedVendorId = _asInt(_selectedVendor?['id']) ?? _selectedVendorId;
+      }
     }
     if (widget.vendorId != null) _selectedVendorId = widget.vendorId;
     _defaultRetailCtrl.addListener(_onDefaultPackagePriceChanged);
@@ -141,8 +148,27 @@ class _VariableProductFormScreenState extends State<VariableProductFormScreen> {
       _loadCategories(),
       _loadBrands(),
       _loadUnits(),
+      _resolveSelectedVendor(),
     ]);
     if (mounted) setState(() => _loading = false);
+  }
+
+  Future<void> _resolveSelectedVendor() async {
+    final id = _selectedVendorId;
+    if (id == null) return;
+
+    try {
+      final response = await _vendorService.getVendor(id);
+      final dynamic nested = response['vendor'];
+      final vendor = nested is Map
+          ? Map<String, dynamic>.from(nested)
+          : Map<String, dynamic>.from(response);
+      if (!mounted || _selectedVendorId != id) return;
+      setState(() => _selectedVendor = vendor);
+    } catch (e) {
+      // Do not block family editing if vendor lookup is temporarily unavailable.
+      debugPrint('Error resolving product-family vendor #$id: $e');
+    }
   }
 
   Future<void> _loadCategories() async {
@@ -1581,7 +1607,9 @@ class _VariableProductFormScreenState extends State<VariableProductFormScreen> {
     final last = (vendor['last_name'] ?? '').toString().trim();
     if (company.isNotEmpty) return company;
     final full = '$first $last'.trim();
-    return full.isEmpty ? 'Vendor #${vendor['id']}' : full;
+    if (full.isNotEmpty) return full;
+    final name = (vendor['name'] ?? '').toString().trim();
+    return name.isEmpty ? 'Vendor #${vendor['id']}' : name;
   }
 
   static int? _asInt(dynamic value) {
