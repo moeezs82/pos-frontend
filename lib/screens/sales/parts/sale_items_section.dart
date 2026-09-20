@@ -44,11 +44,12 @@ class SaleItemsSection extends StatelessWidget {
           : _num(i['discount_pct'] ?? i['discount'] ?? 0);
       final discountType = (i['discount_type'] ?? 'percentage').toString();
       final gross = packagePrice * packageQty;
+      final extraDiscount = _num(i['extra_discount']);
       if (discountType == 'fixed') {
-        return max(0.0, gross - (packageQty * discountVal));
+        return max(0.0, gross - (packageQty * discountVal) - extraDiscount);
       }
       final d = (discountVal / 100.0).clamp(0.0, 1.0);
-      return max(0.0, gross * (1 - d));
+      return max(0.0, gross * (1 - d) - extraDiscount);
     }
 
     final price        = _num(i['price']);
@@ -56,11 +57,12 @@ class SaleItemsSection extends StatelessWidget {
     final discountVal  = _num(i['discount_pct'] ?? i['discount'] ?? 0);
     final discountType = (i['discount_type'] ?? 'percentage').toString();
 
+    final extraDiscount = _num(i['extra_discount']);
     if (discountType == 'fixed') {
-      return max(0.0, qty * (price - discountVal));
+      return max(0.0, qty * (price - discountVal) - extraDiscount);
     }
     final d = (discountVal / 100.0).clamp(0.0, 1.0);
-    return max(0.0, qty * price * (1 - d));
+    return max(0.0, qty * price * (1 - d) - extraDiscount);
   }
 
 
@@ -138,6 +140,7 @@ class SaleItemsSection extends StatelessWidget {
                 final discountVal = packaged && discountType == 'fixed'
                     ? _num(i['packaging_discount_snapshot'])
                     : _num(i['discount_pct'] ?? i['discount'] ?? 0);
+                final extraDiscount = _num(i['extra_discount']);
                 final qty = packaged
                     ? _num(i['packaging_quantity'])
                     : _num(i['quantity']);
@@ -226,6 +229,20 @@ class SaleItemsSection extends StatelessWidget {
                                 ),
                               ),
                             ),
+                            // Extra discount
+                            Expanded(
+                              flex: 2,
+                              child: Align(
+                                alignment: Alignment.centerRight,
+                                child: Text(
+                                  _money(extraDiscount),
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w600,
+                                    fontFeatures: [FontFeature.tabularFigures()],
+                                  ),
+                                ),
+                              ),
+                            ),
                             // Qty
                             Expanded(
                               flex: 2,
@@ -305,6 +322,7 @@ class _TableHeader extends StatelessWidget {
           const Expanded(flex: 6, child: Text("Product")),
           Expanded(flex: 2, child: Text("T.P", style: style, textAlign: TextAlign.right)),
           Expanded(flex: 2, child: Text("Discount", style: style, textAlign: TextAlign.right)),
+          Expanded(flex: 2, child: Text("Extra Disc", style: style, textAlign: TextAlign.right)),
           Expanded(flex: 2, child: Text("Qty", style: style, textAlign: TextAlign.right)),
           Expanded(flex: 2, child: Text("Total", style: style, textAlign: TextAlign.right)),
           if (editable) const SizedBox(width: 44),

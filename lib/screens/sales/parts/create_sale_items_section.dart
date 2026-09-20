@@ -181,6 +181,7 @@ class _ItemsTableState extends State<ItemsTable> {
           return [
             _CellKey(i, _CellField.price),
             _CellKey(i, _CellField.discount),
+            _CellKey(i, _CellField.extraDiscount),
             _CellKey(i, _CellField.qty),
           ];
         }).expand((e) => e),
@@ -201,6 +202,7 @@ class _ItemsTableState extends State<ItemsTable> {
     final discountText = _fmt(packaged && discountType == 'fixed'
         ? _num(item['packaging_discount_snapshot'])
         : _num(item['discount_pct'] ?? 0));
+    final extraDiscountText = _fmt(_num(item['extra_discount'] ?? 0));
     final qtyText = _formatQty(packaged
         ? _num(item['packaging_quantity'])
         : _num(item['quantity']));
@@ -224,6 +226,12 @@ class _ItemsTableState extends State<ItemsTable> {
       ctrls.discount,
       ctrls.discountFocus,
       discountText,
+      force: forceExternalSync,
+    );
+    _syncEditableController(
+      ctrls.extraDiscount,
+      ctrls.extraDiscountFocus,
+      extraDiscountText,
       force: forceExternalSync,
     );
     _syncEditableController(
@@ -532,15 +540,17 @@ class _ItemsTableState extends State<ItemsTable> {
     required double price,
     required double qty,
     required double discountPct,
+    double extraDiscount = 0,
     String discountType = 'percentage',
   }) {
-    final double total;
+    final double beforeExtra;
     if (discountType == 'fixed') {
-      total = qty * (price - discountPct);
+      beforeExtra = qty * (price - discountPct);
     } else {
       final d = (discountPct / 100.0).clamp(0.0, 100.0);
-      total = qty * price * (1.0 - d);
+      beforeExtra = qty * price * (1.0 - d);
     }
+    final total = beforeExtra - extraDiscount.clamp(0.0, double.infinity);
     return total.isFinite ? total : 0.0;
   }
 
@@ -550,6 +560,7 @@ class _ItemsTableState extends State<ItemsTable> {
     required double qty,
     required double discountPct,
     required String discountType,
+    double extraDiscount = 0,
   }) {
     if (qty < 0 && item['original_sale_item_id'] != null) {
       return -_num(item['return_credit']).abs();
@@ -564,12 +575,13 @@ class _ItemsTableState extends State<ItemsTable> {
       final lineDiscount = discountType == 'fixed'
           ? _round2(packageQty * discountPct)
           : _round2(gross * (discountPct.clamp(0.0, 100.0) / 100.0));
-      return _round2(gross - lineDiscount);
+      return _round2(gross - lineDiscount - extraDiscount.clamp(0.0, double.infinity));
     }
     return _calcLineTotal(
       price: price,
       qty: qty,
       discountPct: discountPct,
+      extraDiscount: extraDiscount,
       discountType: discountType,
     );
   }
@@ -702,12 +714,27 @@ class _ItemsTableState extends State<ItemsTable> {
         item.remove('packaging_discount_snapshot');
         item['discount_pct'] = displayedDiscount;
       }
+      final extraDiscount = _num(ctrls.extraDiscount.text);
+      final beforeExtra = _displayLineTotal(
+        item,
+        price: packagePrice,
+        qty: packageQty,
+        discountPct: displayedDiscount,
+        discountType: discountType,
+      );
+      if (extraDiscount > beforeExtra + 0.004) {
+        AppFeedback.warning(context, 'Extra discount cannot exceed the line total after the normal discount.');
+        ctrls.dirty = true;
+        return;
+      }
+      item['extra_discount'] = extraDiscount;
       item['total'] = _displayLineTotal(
         item,
         price: packagePrice,
         qty: packageQty,
         discountPct: displayedDiscount,
         discountType: discountType,
+        extraDiscount: extraDiscount,
       );
 
       final next = [...widget.items];
@@ -735,6 +762,7 @@ class _ItemsTableState extends State<ItemsTable> {
     final linkedReturn = item['original_sale_item_id'] != null;
     final price = linkedReturn ? _num(item['price']) : _num(ctrls.price.text);
     final disc = linkedReturn ? _num(item['discount_pct']) : _num(ctrls.discount.text);
+    final extraDiscount = linkedReturn ? _num(item['extra_discount']) : _num(ctrls.extraDiscount.text);
     final discountType = (item['discount_type'] ?? 'percentage').toString();
 
     if (qty >= 0 && linkedReturn) {
@@ -748,11 +776,21 @@ class _ItemsTableState extends State<ItemsTable> {
         item.remove(key);
       }
     }
+    final beforeExtra = _displayLineTotal(
+      item, price: price, qty: qty, discountPct: disc, discountType: discountType,
+    );
+    if (extraDiscount > beforeExtra + 0.004) {
+      AppFeedback.warning(context, 'Extra discount cannot exceed the line total after the normal discount.');
+      ctrls.dirty = true;
+      return;
+    }
     item['price'] = price;
     item['quantity'] = qty;
     item['discount_pct'] = disc;
+    item['extra_discount'] = extraDiscount;
     item['total'] = _displayLineTotal(
       item, price: price, qty: qty, discountPct: disc, discountType: discountType,
+      extraDiscount: extraDiscount,
     );
 
     final rule = QuantityRule.fromProduct(item);
@@ -862,6 +900,7 @@ class _ItemsTableState extends State<ItemsTable> {
         qty: packageQty,
         discountPct: displayedDiscount,
         discountType: nextType,
+        extraDiscount: _num(ctrls.extraDiscount.text),
       );
     } else {
       item['discount_pct'] = displayedDiscount;
@@ -871,6 +910,7 @@ class _ItemsTableState extends State<ItemsTable> {
         price: price,
         qty: qty,
         discountPct: displayedDiscount,
+        extraDiscount: _num(ctrls.extraDiscount.text),
         discountType: nextType,
       );
     }
@@ -921,6 +961,7 @@ class _ItemsTableState extends State<ItemsTable> {
       'price': p.tp,
       'discount_pct': discPct,
       'discount_type': discType,
+      'extra_discount': 0.0,
       'quantity': 1.0,
       'total': _calcLineTotal(price: p.tp, qty: 1.0, discountPct: discPct, discountType: discType),
       'packagings': raw['packagings'],
@@ -966,6 +1007,13 @@ class _ItemsTableState extends State<ItemsTable> {
           extentOffset: ctrls.discount.text.length,
         );
         break;
+      case _CellField.extraDiscount:
+        ctrls.extraDiscountFocus.requestFocus();
+        ctrls.extraDiscount.selection = TextSelection(
+          baseOffset: 0,
+          extentOffset: ctrls.extraDiscount.text.length,
+        );
+        break;
       case _CellField.qty:
         ctrls.qtyFocus.requestFocus();
         ctrls.qty.selection = TextSelection(
@@ -1004,6 +1052,7 @@ class _ItemsTableState extends State<ItemsTable> {
                 ? _num(it['packaging_discount_snapshot'])
                 : _num(it['discount_pct'] ?? 0),
             discountType: (it['discount_type'] ?? 'percentage').toString(),
+            extraDiscount: _num(it['extra_discount'] ?? 0),
           ),
     );
 
@@ -1104,6 +1153,7 @@ class _ItemsTableState extends State<ItemsTable> {
                     qty: _num(ctrls.qty.text),
                     discountPct: _num(ctrls.discount.text),
                     discountType: rowDiscType,
+                    extraDiscount: _num(ctrls.extraDiscount.text),
                   );
 
                   return Container(
@@ -1194,6 +1244,23 @@ class _ItemsTableState extends State<ItemsTable> {
                                 onTap: () => _toggleDiscountType(i),
                               ),
                             ],
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          flex: 2,
+                          child: _CellNumberField(
+                            controller: ctrls.extraDiscount,
+                            focusNode: ctrls.extraDiscountFocus,
+                            enabled: item['original_sale_item_id'] == null,
+                            onSubmitted: (_) {
+                              _commitRow(i);
+                              _focusNextFrom(i, _CellField.extraDiscount);
+                            },
+                            onChanged: (_) {
+                              setState(() {});
+                              _scheduleCommitRow(i);
+                            },
                           ),
                         ),
                         const SizedBox(width: 8),
@@ -1320,6 +1387,7 @@ class _ItemsTableState extends State<ItemsTable> {
       qty: _num(ctrls.qty.text),
       discountPct: _num(ctrls.discount.text),
       discountType: compactDiscType,
+      extraDiscount: _num(ctrls.extraDiscount.text),
     );
 
     return MouseRegion(
@@ -1438,9 +1506,28 @@ class _ItemsTableState extends State<ItemsTable> {
             ),
           ),
           const SizedBox(width: 4),
+          // Extra discount — fixed money amount for the complete cart line.
+          Expanded(
+            flex: 2,
+            child: _CellNumberField(
+              controller: ctrls.extraDiscount,
+              focusNode: ctrls.extraDiscountFocus,
+              compact: true,
+              enabled: item['original_sale_item_id'] == null,
+              onSubmitted: (_) {
+                _commitRow(i);
+                _focusNextFrom(i, _CellField.extraDiscount);
+              },
+              onChanged: (_) {
+                setState(() {});
+                _scheduleCommitRow(i);
+              },
+            ),
+          ),
+          const SizedBox(width: 4),
           // Qty — plain editable field (no ± buttons)
           Expanded(
-            flex: 3,
+            flex: 2,
             child: _CellNumberField(
               controller: ctrls.qty,
               focusNode: ctrls.qtyFocus,
@@ -1552,6 +1639,7 @@ class _InlineSearchRow extends StatelessWidget {
           ),
           const Expanded(flex: 2, child: SizedBox()), // T.P
           const Expanded(flex: 3, child: SizedBox()), // Discount
+          const Expanded(flex: 2, child: SizedBox()), // Extra Disc
           const Expanded(flex: 2, child: SizedBox()), // Qty
           const Expanded(flex: 2, child: SizedBox()), // Total
           const SizedBox(width: 44), // Remove
@@ -1581,6 +1669,10 @@ class _TableHeader extends StatelessWidget {
           Expanded(
             flex: 3,
             child: Text("Discount", style: style, textAlign: TextAlign.right),
+          ),
+          Expanded(
+            flex: 2,
+            child: Text("Extra Disc", style: style, textAlign: TextAlign.right),
           ),
           Expanded(
             flex: 2,
@@ -2138,17 +2230,19 @@ class _RowControllers {
   final name = TextEditingController();
   final price = TextEditingController();
   final discount = TextEditingController();
+  final extraDiscount = TextEditingController();
   final qty = TextEditingController();
 
   final priceFocus = FocusNode();
   final discountFocus = FocusNode();
+  final extraDiscountFocus = FocusNode();
   final qtyFocus = FocusNode();
 
   bool dirty = false;
 
   _RowControllers({VoidCallback? onEditingBlur}) {
     if (onEditingBlur != null) {
-      for (final focusNode in [priceFocus, discountFocus, qtyFocus]) {
+      for (final focusNode in [priceFocus, discountFocus, extraDiscountFocus, qtyFocus]) {
         focusNode.addListener(() {
           if (!focusNode.hasFocus) onEditingBlur();
         });
@@ -2160,14 +2254,16 @@ class _RowControllers {
     name.dispose();
     price.dispose();
     discount.dispose();
+    extraDiscount.dispose();
     qty.dispose();
     priceFocus.dispose();
     discountFocus.dispose();
+    extraDiscountFocus.dispose();
     qtyFocus.dispose();
   }
 }
 
-enum _CellField { price, discount, qty }
+enum _CellField { price, discount, extraDiscount, qty }
 
 class _CellKey {
   final int row;

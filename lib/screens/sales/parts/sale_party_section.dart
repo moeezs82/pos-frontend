@@ -84,6 +84,12 @@ class PartySectionCard extends StatelessWidget {
   final bool customerLocked;
   final String? customerLockMessage;
 
+  /// Dense POS composition used by Sale Create. It removes the explanatory
+  /// heading and keeps Customer + Salesman together whenever the available
+  /// width can safely support them. Other call sites retain the original
+  /// layout unless they explicitly opt in.
+  final bool compact;
+
   const PartySectionCard({
     super.key,
     required this.isAll,
@@ -124,6 +130,7 @@ class PartySectionCard extends StatelessWidget {
     this.showVendor = true,
     this.customerLocked = false,
     this.customerLockMessage,
+    this.compact = false,
   });
 
   String _customerLabel(PartyMap c) => CustomerDisplayUtils.fullName(c);
@@ -135,207 +142,292 @@ class PartySectionCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return EnterprisePanel(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          LayoutBuilder(
-            builder: (context, headerConstraints) {
-              final info = Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    showDeliveryBoy ? 'Customer, staff & delivery' : 'Customer & staff',
-                    style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
-                  ),
-                  const SizedBox(height: 4),
-                  const Text(
-                    'Start typing to find someone instantly, or use the list icon to browse.',
-                    style: TextStyle(fontSize: 12, color: AppTheme.textMuted),
-                  ),
-                ],
-              );
-              final source = SizedBox(
-                width: onManageSaleSources != null && canManageSaleSources ? 270 : 230,
-                child: _SaleSourceField(
-                  items: saleSources,
-                  selectedId: selectedSaleSourceId,
-                  onChanged: onSaleSourceChanged,
-                  onManage: canManageSaleSources ? onManageSaleSources : null,
+      padding: compact ? const EdgeInsets.fromLTRB(10, 8, 10, 8) : const EdgeInsets.all(16),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          // Built once per build — cheap (just wraps an ApiClient), and these
+          // are what actually let typing reach the full database instead of
+          // only the ~200-row warm cache.
+          final customerService = CustomerService(token: token);
+          final vendorService = VendorService(token: token);
+          final userService = UsersService(token: token);
+
+          final allFields = [
+            if (customerLocked)
+              _LockedPartyField(
+                label: 'Customer',
+                value: selectedCustomer != null
+                    ? _customerLabel(selectedCustomer!)
+                    : 'Walk-in customer',
+                subtitle: selectedCustomer != null
+                    ? _customerSubtitle(selectedCustomer!)
+                    : 'Customer identity is locked for this posted invoice',
+                message: customerLockMessage ??
+                    'Customer cannot be changed inside a posted-sale amendment because it affects accounts receivable and payment history.',
+              )
+            else
+              PartyAutocompleteField<PartyMap>(
+                label: 'Customer',
+                hintText: 'Type customer ID, name, area or phone…',
+                focusNode: customerFocusNode,
+                controller: customerController,
+                getCachedItems: () =>
+                    CustomerPickCache.cache.peek(CustomerPickCache.keyFor())?.items ?? const [],
+                onSearchRemote: (query) => CustomerPickCache.searchRemote(
+                  customerService,
+                  query,
+                  branchId: int.tryParse(branchId ?? ''),
                 ),
-              );
-              if (headerConstraints.maxWidth < 610) {
-                return Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    info,
-                    const SizedBox(height: 10),
-                    Align(alignment: Alignment.centerRight, child: source),
-                  ],
-                );
-              }
-              return Row(
-                crossAxisAlignment: CrossAxisAlignment.center,
-                children: [
-                  Expanded(child: info),
-                  const SizedBox(width: 14),
-                  source,
-                ],
-              );
-            },
-          ),
-          const SizedBox(height: 12),
-          LayoutBuilder(
-            builder: (context, constraints) {
-              final wide = constraints.maxWidth >= 760;
+                labelOf: _customerLabel,
+                subtitleOf: _customerSubtitle,
+                searchTextOf: CustomerDisplayUtils.searchText,
+                idOf: (c) => (c['id'] ?? '').toString(),
+                selectedLabel: selectedCustomer != null ? _customerLabel(selectedCustomer!) : null,
+                selectedSubtitle: selectedCustomer != null ? _customerSubtitle(selectedCustomer!) : null,
+                onSelectedTap: onPickCustomer,
+                onSelected: (c) => onApplyCustomer(c),
+                onCleared: () => onApplyCustomer(null),
+                onBrowseAll: onBrowseCustomerSheet,
+              ),
+            PartyAutocompleteField<PartyMap>(
+              label: 'Salesman',
+              hintText: 'Type salesman name…',
+              focusNode: salesmanFocusNode,
+              controller: salesmanController,
+              getCachedItems: () => UserPickCache.cache
+                      .peek(UserPickCache.keyFor(branchId: branchId, role: 'salesman'))
+                      ?.items ??
+                  const [],
+              onSearchRemote: (query) => UserPickCache.searchRemote(
+                userService,
+                query,
+                branchId: branchId,
+                role: 'salesman',
+              ),
+              labelOf: _personLabel,
+              subtitleOf: (u) => (u['phone'] ?? '').toString(),
+              idOf: (u) => (u['id'] ?? '').toString(),
+              selectedLabel: selectedUser != null ? _personLabel(selectedUser!) : null,
+              selectedSubtitle: selectedUser != null ? (selectedUser!['phone'] ?? '').toString() : null,
+              onSelectedTap: onPickUser,
+              onSelected: (u) => onApplyUser(u),
+              onCleared: () => onApplyUser(null),
+              onBrowseAll: onBrowseUserSheet,
+            ),
+            PartyAutocompleteField<PartyMap>(
+              label: 'Delivery Boy',
+              hintText: 'Type delivery boy name… (optional)',
+              focusNode: deliveryBoyFocusNode,
+              controller: deliveryBoyController,
+              getCachedItems: () => UserPickCache.cache
+                      .peek(UserPickCache.keyFor(branchId: branchId, role: 'delivery'))
+                      ?.items ??
+                  const [],
+              onSearchRemote: (query) => UserPickCache.searchRemote(
+                userService,
+                query,
+                branchId: branchId,
+                role: 'delivery',
+              ),
+              labelOf: _personLabel,
+              subtitleOf: (u) => (u['phone'] ?? '').toString(),
+              idOf: (u) => (u['id'] ?? '').toString(),
+              selectedLabel: selectedDeliveryBoy != null ? _personLabel(selectedDeliveryBoy!) : null,
+              selectedSubtitle: selectedDeliveryBoy != null ? (selectedDeliveryBoy!['phone'] ?? '').toString() : null,
+              onSelectedTap: onPickDeliveryBoy,
+              onSelected: (u) => onApplyDeliveryBoy(u),
+              onCleared: () => onApplyDeliveryBoy(null),
+              onBrowseAll: onBrowseDeliveryBoySheet,
+            ),
+            PartyAutocompleteField<PartyMap>(
+              label: 'Vendor',
+              hintText: 'Type vendor name… (optional)',
+              focusNode: vendorFocusNode,
+              controller: vendorController,
+              getCachedItems: () =>
+                  VendorPickCache.cache.peek(VendorPickCache.keyFor())?.items ?? const [],
+              onSearchRemote: (query) => VendorPickCache.searchRemote(vendorService, query),
+              labelOf: _customerLabel,
+              subtitleOf: (v) => (v['phone'] ?? '').toString(),
+              idOf: (v) => (v['id'] ?? '').toString(),
+              selectedLabel: selectedVendor != null ? _customerLabel(selectedVendor!) : null,
+              selectedSubtitle: selectedVendor != null ? (selectedVendor!['phone'] ?? '').toString() : null,
+              onSelectedTap: onPickVendor,
+              onSelected: (v) => onApplyVendor(v),
+              onCleared: onClearVendor,
+              onBrowseAll: onBrowseVendorSheet,
+            ),
+          ];
 
-              // Built once per build — cheap (just wraps an ApiClient), and
-              // these are what actually let typing reach the full database
-              // instead of only the ~200-row warm cache.
-              final customerService = CustomerService(token: token);
-              final vendorService = VendorService(token: token);
-              final userService = UsersService(token: token);
+          final fields = [
+            allFields[0], // Customer — always shown
+            allFields[1], // Salesman — always shown
+            if (showDeliveryBoy) allFields[2],
+            if (showVendor) allFields[3],
+          ];
 
-              final allFields = [
-                if (customerLocked)
-                  _LockedPartyField(
-                    label: 'Customer',
-                    value: selectedCustomer != null
-                        ? _customerLabel(selectedCustomer!)
-                        : 'Walk-in customer',
-                    subtitle: selectedCustomer != null
-                        ? _customerSubtitle(selectedCustomer!)
-                        : 'Customer identity is locked for this posted invoice',
-                    message: customerLockMessage ??
-                        'Customer cannot be changed inside a posted-sale amendment because it affects accounts receivable and payment history.',
-                  )
-                else
-                  PartyAutocompleteField<PartyMap>(
-                    label: 'Customer',
-                    hintText: 'Type customer ID, name, area or phone…',
-                    focusNode: customerFocusNode,
-                    controller: customerController,
-                    getCachedItems: () =>
-                        CustomerPickCache.cache.peek(CustomerPickCache.keyFor())?.items ?? const [],
-                    onSearchRemote: (query) => CustomerPickCache.searchRemote(
-                      customerService,
-                      query,
-                      branchId: int.tryParse(branchId ?? ''),
-                    ),
-                    labelOf: _customerLabel,
-                    subtitleOf: _customerSubtitle,
-                    searchTextOf: CustomerDisplayUtils.searchText,
-                    idOf: (c) => (c['id'] ?? '').toString(),
-                    selectedLabel: selectedCustomer != null ? _customerLabel(selectedCustomer!) : null,
-                    selectedSubtitle: selectedCustomer != null ? _customerSubtitle(selectedCustomer!) : null,
-                    onSelectedTap: onPickCustomer,
-                    onSelected: (c) => onApplyCustomer(c),
-                    onCleared: () => onApplyCustomer(null),
-                    onBrowseAll: onBrowseCustomerSheet,
-                  ),
-                PartyAutocompleteField<PartyMap>(
-                  label: 'Salesman',
-                  hintText: 'Type salesman name…',
-                  focusNode: salesmanFocusNode,
-                  controller: salesmanController,
-                  getCachedItems: () => UserPickCache.cache
-                          .peek(UserPickCache.keyFor(branchId: branchId, role: 'salesman'))
-                          ?.items ??
-                      const [],
-                  onSearchRemote: (query) => UserPickCache.searchRemote(
-                    userService,
-                    query,
-                    branchId: branchId,
-                    role: 'salesman',
-                  ),
-                  labelOf: _personLabel,
-                  subtitleOf: (u) => (u['phone'] ?? '').toString(),
-                  idOf: (u) => (u['id'] ?? '').toString(),
-                  selectedLabel: selectedUser != null ? _personLabel(selectedUser!) : null,
-                  selectedSubtitle: selectedUser != null ? (selectedUser!['phone'] ?? '').toString() : null,
-                  onSelectedTap: onPickUser,
-                  onSelected: (u) => onApplyUser(u),
-                  onCleared: () => onApplyUser(null),
-                  onBrowseAll: onBrowseUserSheet,
-                ),
-                PartyAutocompleteField<PartyMap>(
-                  label: 'Delivery Boy',
-                  hintText: 'Type delivery boy name… (optional)',
-                  focusNode: deliveryBoyFocusNode,
-                  controller: deliveryBoyController,
-                  getCachedItems: () => UserPickCache.cache
-                          .peek(UserPickCache.keyFor(branchId: branchId, role: 'delivery'))
-                          ?.items ??
-                      const [],
-                  onSearchRemote: (query) => UserPickCache.searchRemote(
-                    userService,
-                    query,
-                    branchId: branchId,
-                    role: 'delivery',
-                  ),
-                  labelOf: _personLabel,
-                  subtitleOf: (u) => (u['phone'] ?? '').toString(),
-                  idOf: (u) => (u['id'] ?? '').toString(),
-                  selectedLabel: selectedDeliveryBoy != null ? _personLabel(selectedDeliveryBoy!) : null,
-                  selectedSubtitle: selectedDeliveryBoy != null ? (selectedDeliveryBoy!['phone'] ?? '').toString() : null,
-                  onSelectedTap: onPickDeliveryBoy,
-                  onSelected: (u) => onApplyDeliveryBoy(u),
-                  onCleared: () => onApplyDeliveryBoy(null),
-                  onBrowseAll: onBrowseDeliveryBoySheet,
-                ),
-                PartyAutocompleteField<PartyMap>(
-                  label: 'Vendor',
-                  hintText: 'Type vendor name… (optional)',
-                  focusNode: vendorFocusNode,
-                  controller: vendorController,
-                  getCachedItems: () =>
-                      VendorPickCache.cache.peek(VendorPickCache.keyFor())?.items ?? const [],
-                  onSearchRemote: (query) => VendorPickCache.searchRemote(vendorService, query),
-                  labelOf: _customerLabel,
-                  subtitleOf: (v) => (v['phone'] ?? '').toString(),
-                  idOf: (v) => (v['id'] ?? '').toString(),
-                  selectedLabel: selectedVendor != null ? _customerLabel(selectedVendor!) : null,
-                  selectedSubtitle: selectedVendor != null ? (selectedVendor!['phone'] ?? '').toString() : null,
-                  onSelectedTap: onPickVendor,
-                  onSelected: (v) => onApplyVendor(v),
-                  onCleared: onClearVendor,
-                  onBrowseAll: onBrowseVendorSheet,
-                ),
-              ];
+          final source = _SaleSourceField(
+            items: saleSources,
+            selectedId: selectedSaleSourceId,
+            onChanged: onSaleSourceChanged,
+            onManage: canManageSaleSources ? onManageSaleSources : null,
+          );
 
-              final fields = [
-                allFields[0], // Customer — always shown
-                allFields[1], // Salesman — always shown
-                if (showDeliveryBoy) allFields[2],
-                if (showVendor) allFields[3],
-              ];
+          if (compact) {
+            return _buildCompactLayout(
+              constraints.maxWidth,
+              fields,
+              source,
+            );
+          }
 
-              if (!wide) {
-                return Column(
-                  children: [
-                    for (int i = 0; i < fields.length; i++) ...[
-                      fields[i],
-                      if (i != fields.length - 1) const SizedBox(height: 10),
-                    ],
-                  ],
-                );
-              }
-
-              return Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  for (int i = 0; i < fields.length; i++) ...[
-                    if (i > 0) const SizedBox(width: 10),
-                    Expanded(child: fields[i]),
-                  ],
-                ],
-              );
-            },
-          ),
-        ],
+          return _buildStandardLayout(
+            constraints.maxWidth,
+            fields,
+            source,
+          );
+        },
       ),
     );
   }
+
+  Widget _buildCompactLayout(
+    double width,
+    List<Widget> fields,
+    Widget source,
+  ) {
+    // At normal desktop widths, the most-used controls stay on one line.
+    // The 560px breakpoint is intentionally lower than the previous 760px
+    // breakpoint so 1366x768 / Windows-scaled client PCs do not unnecessarily
+    // push Customer and Salesman onto separate lines.
+    if (width >= 560 && fields.length == 2) {
+      return Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(child: fields[0]),
+          const SizedBox(width: 8),
+          Expanded(child: fields[1]),
+          const SizedBox(width: 8),
+          Expanded(child: source),
+        ],
+      );
+    }
+
+    if (width >= 560) {
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(child: fields[0]),
+              const SizedBox(width: 8),
+              Expanded(child: fields[1]),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              for (int i = 2; i < fields.length; i++) ...[
+                if (i > 2) const SizedBox(width: 8),
+                Expanded(child: fields[i]),
+              ],
+              if (fields.length > 2) const SizedBox(width: 8),
+              Expanded(child: source),
+            ],
+          ),
+        ],
+      );
+    }
+
+    // Very narrow windows still prefer safety over forced density. This avoids
+    // overflow on small tablets or aggressively scaled Windows displays.
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        for (int i = 0; i < fields.length; i++) ...[
+          fields[i],
+          const SizedBox(height: 8),
+        ],
+        source,
+      ],
+    );
+  }
+
+  Widget _buildStandardLayout(
+    double width,
+    List<Widget> fields,
+    Widget source,
+  ) {
+    final info = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          showDeliveryBoy ? 'Customer, staff & delivery' : 'Customer & staff',
+          style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
+        ),
+        const SizedBox(height: 4),
+        const Text(
+          'Start typing to find someone instantly, or use the list icon to browse.',
+          style: TextStyle(fontSize: 12, color: AppTheme.textMuted),
+        ),
+      ],
+    );
+
+    final sourceBox = SizedBox(
+      width: onManageSaleSources != null && canManageSaleSources ? 270 : 230,
+      child: source,
+    );
+
+    final header = width < 610
+        ? Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              info,
+              const SizedBox(height: 10),
+              Align(alignment: Alignment.centerRight, child: sourceBox),
+            ],
+          )
+        : Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Expanded(child: info),
+              const SizedBox(width: 14),
+              sourceBox,
+            ],
+          );
+
+    final wide = width >= 760;
+    final fieldLayout = !wide
+        ? Column(
+            children: [
+              for (int i = 0; i < fields.length; i++) ...[
+                fields[i],
+                if (i != fields.length - 1) const SizedBox(height: 10),
+              ],
+            ],
+          )
+        : Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              for (int i = 0; i < fields.length; i++) ...[
+                if (i > 0) const SizedBox(width: 10),
+                Expanded(child: fields[i]),
+              ],
+            ],
+          );
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        header,
+        const SizedBox(height: 12),
+        fieldLayout,
+      ],
+    );
+  }
+
 }
 
 class _SaleSourceField extends StatelessWidget {

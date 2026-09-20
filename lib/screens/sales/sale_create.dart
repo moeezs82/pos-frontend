@@ -579,6 +579,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
           'quantity': qty,
           'price': price,
           'discount_pct': discount,
+          'extra_discount': _editNum(line['extra_discount']),
           'discount_type': discountType,
           if (packagingId != null) ...{
             'packaging_id': packagingId,
@@ -605,6 +606,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
                 qty: qty,
                 discPct: discount,
                 discountType: discountType,
+                extraDiscount: _editNum(line['extra_discount']),
               );
         items.add(row);
       }
@@ -918,6 +920,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
               : _editNum(item['discount_pct']),
           'discount_type':
               (item['discount_type'] ?? 'percentage').toString(),
+          'extra_discount': _editNum(item['extra_discount']),
           if (item['packaging_id'] != null) ...{
             'packaging_id': _metaInt(item['packaging_id']),
             'packaging_name_snapshot': item['packaging_name_snapshot'],
@@ -2366,6 +2369,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     required double price,
     required double qty,
     required double discPct,
+    double extraDiscount = 0,
     String discountType = 'percentage',
   }) {
     final double t;
@@ -2376,7 +2380,8 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       final d = (discPct / 100.0).clamp(0.0, 100.0);
       t = qty * price * (1.0 - d);
     }
-    return t.isFinite ? t : 0.0;
+    final total = t - extraDiscount.clamp(0.0, double.infinity);
+    return total.isFinite ? total : 0.0;
   }
 
   double _cartLineTotal(Map<String, dynamic> item) {
@@ -2401,13 +2406,14 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
                   (_metaNum(item['discount_pct']).clamp(0.0, 100.0) / 100.0),
               2,
             );
-      return _roundTo(gross - discount, 2);
+      return _roundTo(gross - discount - _metaNum(item['extra_discount']), 2);
     }
 
     return _lineTotal(
       price: _metaNum(item['price']),
       qty: qty,
       discPct: _metaNum(item['discount_pct']),
+      extraDiscount: _metaNum(item['extra_discount']),
       discountType: (item['discount_type'] ?? 'percentage').toString(),
     );
   }
@@ -2594,6 +2600,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         ..['return_linked_quantity'] = authoritativeQty
         ..['price'] = _metaNum(picked['original_price'])
         ..['discount_pct'] = _metaNum(picked['line_discount'])
+        ..['extra_discount'] = _metaNum(picked['extra_discount_allocated'])
         ..['discount_type'] = (picked['discount_type'] ?? 'percentage').toString()
         ..['quantity'] = -authoritativeQty
         ..['total'] = -_metaNum(picked['return_credit']).abs();
@@ -4932,6 +4939,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
             salesmanController: _salesmanController,
             deliveryBoyController: _deliveryBoyController,
             vendorController: _vendorController,
+            compact: true,
           ),
 
           if ((widget.initialReturnInvoice ?? '').trim().isNotEmpty)
@@ -5038,11 +5046,16 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
           SizedBox(width: 4),
           Expanded(
             flex: 2,
-            child: Text('Disc (%)', style: style, textAlign: TextAlign.right),
+            child: Text('Disc', style: style, textAlign: TextAlign.right),
           ),
           SizedBox(width: 4),
           Expanded(
-            flex: 3,
+            flex: 2,
+            child: Text('Extra Disc', style: style, textAlign: TextAlign.right),
+          ),
+          SizedBox(width: 4),
+          Expanded(
+            flex: 2,
             child: Text('Qty', style: style, textAlign: TextAlign.center),
           ),
           SizedBox(width: 4),
@@ -5056,7 +5069,10 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     );
   }
 
-  // ── Compact walk-in section (two rows: name+phone | address) ────────────
+  // ── Compact walk-in section ────────────────────────────────────────────
+  // Town / Area intentionally remains a separate sale-level field. On wider
+  // POS workspaces the walk-in identity/contact inputs share one line; narrower
+  // or Windows-scaled screens fall back safely without horizontal overflow.
   Widget _buildWalkInCompact() {
     final inputDecoration = InputDecoration(
       isDense: true,
@@ -5070,307 +5086,355 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         borderSide: const BorderSide(color: AppTheme.border),
       ),
     );
-    return Container(
-      padding: const EdgeInsets.fromLTRB(10, 6, 10, 8),
-      decoration: const BoxDecoration(
-        border: Border(top: BorderSide(color: AppTheme.border)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Row 1: label + name + phone + clear
-          Row(
-            children: [
-              const Text(
-                'Walk-in',
-                style: TextStyle(
-                  fontSize: 10,
-                  fontWeight: FontWeight.w700,
-                  color: AppTheme.textMuted,
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Tooltip(
-                  message: 'Focus: Ctrl+Shift+N',
-                  child: SizedBox(
-                    height: 40,
-                    child: TextFormField(
-                      controller: customerNameController,
-                      focusNode: _walkInNameFocusNode,
-                      decoration: inputDecoration.copyWith(
-                        hintText: 'Customer name',
-                      ),
-                      style: const TextStyle(fontSize: 12),
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 6),
-              Tooltip(
-                message: 'Focus: Ctrl+Shift+H',
-                child: SizedBox(
-                  width: 120,
-                  height: 40,
-                  child: TextFormField(
-                    controller: customerPhoneController,
-                    focusNode: _walkInPhoneFocusNode,
-                    keyboardType: TextInputType.phone,
-                    decoration: inputDecoration.copyWith(hintText: 'Phone'),
-                    style: const TextStyle(fontSize: 12),
-                    onEditingComplete: () {
-                      unawaited(_resolveWalkInCustomerByPhone());
-                      _walkInAddressFocusNode.requestFocus();
-                    },
-                  ),
-                ),
-              ),
-              if (_selectedCustomerId != null) ...[
-                const SizedBox(width: 6),
-                InkWell(
-                  onTap: _clearCustomerSelection,
-                  borderRadius: BorderRadius.circular(4),
-                  child: const Icon(
-                    Icons.close_rounded,
-                    size: 14,
-                    color: AppTheme.danger,
-                  ),
-                ),
-              ],
-            ],
+
+    Widget nameField() => Tooltip(
+          message: 'Focus: Ctrl+Shift+N',
+          child: SizedBox(
+            height: 40,
+            child: TextFormField(
+              controller: customerNameController,
+              focusNode: _walkInNameFocusNode,
+              decoration: inputDecoration.copyWith(hintText: 'Customer name'),
+              style: const TextStyle(fontSize: 12),
+            ),
           ),
-          const SizedBox(height: 5),
-          // Row 2: address + optional WhatsApp invoice destination
-          Row(
-            children: [
-              Expanded(
-                child: Tooltip(
-                  message: 'Focus: Ctrl+Shift+A',
-                  child: SizedBox(
-                    height: 40,
-                    child: TextFormField(
-                      controller: addressController,
-                      focusNode: _walkInAddressFocusNode,
-                      decoration: inputDecoration.copyWith(
-                        hintText: 'Address (optional)',
-                        prefixIcon: const Icon(
-                          Icons.location_on_outlined,
-                          size: 14,
-                          color: AppTheme.textMuted,
-                        ),
-                      ),
-                      style: const TextStyle(fontSize: 12),
-                    ),
-                  ),
-                ),
-              ),
-              // The WhatsApp invoice toggle is only shown when the branch has
-              // the whatsapp_invoice addon active. When the addon is off the
-              // toggle is hidden and _sendInvoiceOnWhatsApp stays false, so the
-              // normal thermal/PDF printing path is completely unaffected.
-              if (context.watch<AuthProvider>().hasAddon('whatsapp_invoice')) ...[
-                const SizedBox(width: 8),
-                Tooltip(
-                  message:
-                      'Prepare this receipt for WhatsApp after the sale is saved. Registered customers always use their primary phone.',
-                  child: InkWell(
-                    onTap: _submitting
-                        ? null
-                        : () => setState(() {
-                              _sendInvoiceOnWhatsApp =
-                                  !_sendInvoiceOnWhatsApp;
-                            }),
-                    borderRadius: BorderRadius.circular(6),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Checkbox(
-                          value: _sendInvoiceOnWhatsApp,
-                          onChanged: _submitting
-                              ? null
-                              : (value) => setState(() {
-                                    _sendInvoiceOnWhatsApp = value ?? false;
-                                  }),
-                          visualDensity: VisualDensity.compact,
-                        ),
-                        const Text(
-                          'WhatsApp invoice',
-                          style: TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ], // end whatsapp_invoice addon gate
-              if (_sendInvoiceOnWhatsApp) ...[
-                const SizedBox(width: 6),
-                Container(
-                  constraints: const BoxConstraints(maxWidth: 230),
-                  height: 40,
-                  padding: const EdgeInsets.symmetric(horizontal: 10),
-                  decoration: BoxDecoration(
-                    border: Border.all(color: AppTheme.border),
-                    borderRadius: BorderRadius.circular(6),
-                    color: AppTheme.surfaceSoft,
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(
-                        Icons.chat_rounded,
-                        size: 14,
-                        color: Color(0xFF128C7E),
-                      ),
-                      const SizedBox(width: 6),
-                      Flexible(
-                        child: Text(
-                          _whatsAppDestinationPhone().isEmpty
-                              ? 'Primary phone required'
-                              : 'To: ${_whatsAppDestinationPhone()}',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w600,
-                            color: AppTheme.textMuted,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ],
+        );
+
+    Widget phoneField() => Tooltip(
+          message: 'Focus: Ctrl+Shift+H',
+          child: SizedBox(
+            height: 40,
+            child: TextFormField(
+              controller: customerPhoneController,
+              focusNode: _walkInPhoneFocusNode,
+              keyboardType: TextInputType.phone,
+              decoration: inputDecoration.copyWith(hintText: 'Phone'),
+              style: const TextStyle(fontSize: 12),
+              onEditingComplete: () {
+                unawaited(_resolveWalkInCustomerByPhone());
+                _walkInAddressFocusNode.requestFocus();
+              },
+            ),
           ),
-          const SizedBox(height: 5),
-          Row(
-            children: [
-              Expanded(
-                child: SizedBox(
-                  height: 40,
-                  child: DropdownButtonFormField<int>(
-                    value: _areaById(_selectedAreaId) == null
-                        ? null
-                        : _selectedAreaId,
-                    isExpanded: true,
-                    decoration: inputDecoration.copyWith(
-                      labelText: 'Town / Area',
-                      hintText: 'Select sale area',
-                      prefixIcon: const Icon(
-                        Icons.location_city_outlined,
-                        size: 15,
-                        color: AppTheme.textMuted,
-                      ),
-                    ),
-                    items: _customerAreas
-                        .where(_areaActive)
-                        .map(
-                          (area) => DropdownMenuItem<int>(
-                            value: _metaInt(area['id']),
-                            child: Text(
-                              (area['name'] ?? '').toString(),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(fontSize: 12),
-                            ),
-                          ),
-                        )
-                        .where((item) => item.value != null)
-                        .toList(growable: false),
-                    onChanged: _submitting
-                        ? null
-                        : (value) => setState(() => _selectedAreaId = value),
-                  ),
-                ),
-              ),
-              if (_selectedAreaId != null) ...[
-                const SizedBox(width: 6),
-                Tooltip(
-                  message: 'Clear sale area',
-                  child: SizedBox(
-                    width: 38,
-                    height: 40,
-                    child: OutlinedButton(
-                      onPressed: _submitting
-                          ? null
-                          : () => setState(() => _selectedAreaId = null),
-                      style: OutlinedButton.styleFrom(
-                        padding: EdgeInsets.zero,
-                        side: const BorderSide(color: AppTheme.border),
-                      ),
-                      child: const Icon(Icons.close_rounded, size: 16),
-                    ),
-                  ),
-                ),
-              ],
-              if (context.read<AuthProvider>().hasPermission('manage-customers')) ...[
-                const SizedBox(width: 6),
-                Tooltip(
-                  message: 'Create or rename Town / Area',
-                  child: SizedBox(
-                    width: 38,
-                    height: 40,
-                    child: OutlinedButton(
-                      onPressed: _submitting ? null : _manageCustomerAreas,
-                      style: OutlinedButton.styleFrom(
-                        padding: EdgeInsets.zero,
-                        side: const BorderSide(color: AppTheme.border),
-                      ),
-                      child: const Icon(Icons.tune_rounded, size: 17),
-                    ),
-                  ),
-                ),
-              ],
-              if (_selectedCustomerId != null &&
-                  _metaInt(_selectedCustomer?['area_id']) != null &&
-                  _selectedAreaId != _metaInt(_selectedCustomer?['area_id'])) ...[
-                const SizedBox(width: 8),
-                const Tooltip(
-                  message:
-                      'This changes only this sale. The customer default area is not modified.',
-                  child: Icon(
-                    Icons.info_outline_rounded,
-                    size: 16,
-                    color: AppTheme.textMuted,
-                  ),
-                ),
-              ],
-            ],
-          ),
-          if (_selectedCustomerId != null &&
-              _selectedCustomerSecondaryPhones.isNotEmpty) ...[
-            const SizedBox(height: 4),
-            Row(
-              children: [
-                const Icon(
-                  Icons.print_outlined,
+        );
+
+    Widget addressField() => Tooltip(
+          message: 'Focus: Ctrl+Shift+A',
+          child: SizedBox(
+            height: 40,
+            child: TextFormField(
+              controller: addressController,
+              focusNode: _walkInAddressFocusNode,
+              decoration: inputDecoration.copyWith(
+                hintText: 'Address (optional)',
+                prefixIcon: const Icon(
+                  Icons.location_on_outlined,
                   size: 14,
                   color: AppTheme.textMuted,
                 ),
-                const SizedBox(width: 6),
-                const Text(
-                  'Invoice phones:',
-                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
+              ),
+              style: const TextStyle(fontSize: 12),
+            ),
+          ),
+        );
+
+    Widget clearCustomerButton() {
+      if (_selectedCustomerId == null) return const SizedBox.shrink();
+      return InkWell(
+        onTap: _clearCustomerSelection,
+        borderRadius: BorderRadius.circular(4),
+        child: const Padding(
+          padding: EdgeInsets.all(2),
+          child: Icon(
+            Icons.close_rounded,
+            size: 14,
+            color: AppTheme.danger,
+          ),
+        ),
+      );
+    }
+
+    Widget whatsAppToggle() {
+      if (!context.watch<AuthProvider>().hasAddon('whatsapp_invoice')) {
+        return const SizedBox.shrink();
+      }
+      return Tooltip(
+        message:
+            'Prepare this receipt for WhatsApp after the sale is saved. Registered customers always use their primary phone.',
+        child: InkWell(
+          onTap: _submitting
+              ? null
+              : () => setState(() {
+                    _sendInvoiceOnWhatsApp = !_sendInvoiceOnWhatsApp;
+                  }),
+          borderRadius: BorderRadius.circular(6),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Checkbox(
+                value: _sendInvoiceOnWhatsApp,
+                onChanged: _submitting
+                    ? null
+                    : (value) => setState(() {
+                          _sendInvoiceOnWhatsApp = value ?? false;
+                        }),
+                visualDensity: VisualDensity.compact,
+              ),
+              const Text(
+                'WhatsApp invoice',
+                style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    Widget whatsAppDestination() {
+      if (!_sendInvoiceOnWhatsApp) return const SizedBox.shrink();
+      return Container(
+        constraints: const BoxConstraints(maxWidth: 230),
+        height: 34,
+        padding: const EdgeInsets.symmetric(horizontal: 10),
+        decoration: BoxDecoration(
+          border: Border.all(color: AppTheme.border),
+          borderRadius: BorderRadius.circular(6),
+          color: AppTheme.surfaceSoft,
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.chat_rounded, size: 14, color: Color(0xFF128C7E)),
+            const SizedBox(width: 6),
+            Flexible(
+              child: Text(
+                _whatsAppDestinationPhone().isEmpty
+                    ? 'Primary phone required'
+                    : 'To: ${_whatsAppDestinationPhone()}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: AppTheme.textMuted,
                 ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    _selectedCustomerSecondaryPhones.join(' • '),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: 10,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    Widget areaRow() => Row(
+          children: [
+            Expanded(
+              child: SizedBox(
+                height: 40,
+                child: DropdownButtonFormField<int>(
+                  value: _areaById(_selectedAreaId) == null ? null : _selectedAreaId,
+                  isExpanded: true,
+                  decoration: inputDecoration.copyWith(
+                    labelText: 'Town / Area',
+                    hintText: 'Select sale area',
+                    prefixIcon: const Icon(
+                      Icons.location_city_outlined,
+                      size: 15,
                       color: AppTheme.textMuted,
                     ),
                   ),
+                  items: _customerAreas
+                      .where(_areaActive)
+                      .map(
+                        (area) => DropdownMenuItem<int>(
+                          value: _metaInt(area['id']),
+                          child: Text(
+                            (area['name'] ?? '').toString(),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                        ),
+                      )
+                      .where((item) => item.value != null)
+                      .toList(growable: false),
+                  onChanged: _submitting
+                      ? null
+                      : (value) => setState(() => _selectedAreaId = value),
+                ),
+              ),
+            ),
+            if (_selectedAreaId != null) ...[
+              const SizedBox(width: 6),
+              Tooltip(
+                message: 'Clear sale area',
+                child: SizedBox(
+                  width: 38,
+                  height: 40,
+                  child: OutlinedButton(
+                    onPressed: _submitting
+                        ? null
+                        : () => setState(() => _selectedAreaId = null),
+                    style: OutlinedButton.styleFrom(
+                      padding: EdgeInsets.zero,
+                      side: const BorderSide(color: AppTheme.border),
+                    ),
+                    child: const Icon(Icons.close_rounded, size: 16),
+                  ),
+                ),
+              ),
+            ],
+            if (context.read<AuthProvider>().hasPermission('manage-customers')) ...[
+              const SizedBox(width: 6),
+              Tooltip(
+                message: 'Create or rename Town / Area',
+                child: SizedBox(
+                  width: 38,
+                  height: 40,
+                  child: OutlinedButton(
+                    onPressed: _submitting ? null : _manageCustomerAreas,
+                    style: OutlinedButton.styleFrom(
+                      padding: EdgeInsets.zero,
+                      side: const BorderSide(color: AppTheme.border),
+                    ),
+                    child: const Icon(Icons.tune_rounded, size: 17),
+                  ),
+                ),
+              ),
+            ],
+            if (_selectedCustomerId != null &&
+                _metaInt(_selectedCustomer?['area_id']) != null &&
+                _selectedAreaId != _metaInt(_selectedCustomer?['area_id'])) ...[
+              const SizedBox(width: 8),
+              const Tooltip(
+                message:
+                    'This changes only this sale. The customer default area is not modified.',
+                child: Icon(
+                  Icons.info_outline_rounded,
+                  size: 16,
+                  color: AppTheme.textMuted,
+                ),
+              ),
+            ],
+          ],
+        );
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(8, 5, 8, 6),
+      decoration: const BoxDecoration(
+        border: Border(top: BorderSide(color: AppTheme.border)),
+      ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final wide = constraints.maxWidth >= 720;
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (wide)
+                Row(
+                  children: [
+                    const SizedBox(
+                      width: 48,
+                      child: Text(
+                        'Walk-in',
+                        style: TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w700,
+                          color: AppTheme.textMuted,
+                        ),
+                      ),
+                    ),
+                    Expanded(flex: 3, child: nameField()),
+                    const SizedBox(width: 6),
+                    SizedBox(width: 126, child: phoneField()),
+                    if (_selectedCustomerId != null) ...[
+                      const SizedBox(width: 4),
+                      clearCustomerButton(),
+                    ],
+                    const SizedBox(width: 6),
+                    Expanded(flex: 4, child: addressField()),
+                    if (context.watch<AuthProvider>().hasAddon('whatsapp_invoice')) ...[
+                      const SizedBox(width: 6),
+                      whatsAppToggle(),
+                    ],
+                  ],
+                )
+              else ...[
+                Row(
+                  children: [
+                    const SizedBox(
+                      width: 48,
+                      child: Text(
+                        'Walk-in',
+                        style: TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w700,
+                          color: AppTheme.textMuted,
+                        ),
+                      ),
+                    ),
+                    Expanded(child: nameField()),
+                    const SizedBox(width: 6),
+                    SizedBox(width: 120, child: phoneField()),
+                    if (_selectedCustomerId != null) ...[
+                      const SizedBox(width: 4),
+                      clearCustomerButton(),
+                    ],
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    Expanded(child: addressField()),
+                    if (context.watch<AuthProvider>().hasAddon('whatsapp_invoice')) ...[
+                      const SizedBox(width: 6),
+                      whatsAppToggle(),
+                    ],
+                  ],
                 ),
               ],
-            ),
-          ],
-        ],
+              if (_sendInvoiceOnWhatsApp) ...[
+                const SizedBox(height: 4),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: whatsAppDestination(),
+                ),
+              ],
+              const SizedBox(height: 4),
+              areaRow(),
+              if (_selectedCustomerId != null &&
+                  _selectedCustomerSecondaryPhones.isNotEmpty) ...[
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    const Icon(
+                      Icons.print_outlined,
+                      size: 14,
+                      color: AppTheme.textMuted,
+                    ),
+                    const SizedBox(width: 6),
+                    const Text(
+                      'Invoice phones:',
+                      style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        _selectedCustomerSecondaryPhones.join(' • '),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 10,
+                          color: AppTheme.textMuted,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ],
+          );
+        },
       ),
     );
   }

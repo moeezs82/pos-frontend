@@ -286,6 +286,7 @@ class SaleService {
                   ? (it["packaging_discount_snapshot"] ?? it["discount_pct"])
                   : it["discount_pct"],
               "discount_type": it["discount_type"] ?? "percentage",
+              "extra_discount": it["extra_discount"] ?? 0,
               if (it["packaging_id"] != null) ...{
                 "packaging_id": it["packaging_id"],
                 "packaging_name_snapshot": it["packaging_name_snapshot"],

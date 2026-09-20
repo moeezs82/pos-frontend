@@ -186,9 +186,11 @@ class SaleProfitCalculator {
         : (packaged
             ? _round2(grossRevenue * (discountValue.clamp(0.0, 100.0) / 100.0))
             : grossRevenue * (discountValue.clamp(0.0, 100.0) / 100.0));
+    final extraDiscount = _num(item['extra_discount']).clamp(0.0, double.infinity);
+    final totalLineDiscount = discountAmount + extraDiscount;
     final netRevenue = packaged
-        ? _round2(grossRevenue - discountAmount)
-        : grossRevenue - discountAmount;
+        ? _round2(grossRevenue - totalLineDiscount)
+        : grossRevenue - totalLineDiscount;
 
     final basis = costBasisFromProduct(item);
     final costOfGoods = quantity * basis.unitCost;
@@ -200,7 +202,7 @@ class SaleProfitCalculator {
       quantity: quantity,
       unitPrice: unitPrice,
       grossRevenue: grossRevenue,
-      discountAmount: discountAmount,
+      discountAmount: totalLineDiscount,
       invoiceDiscountShare: 0,
       netRevenue: netRevenue,
       unitCost: basis.unitCost,
