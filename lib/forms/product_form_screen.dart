@@ -548,6 +548,46 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
 
   // ── Vendor ────────────────────────────────────────────────────────────────────
 
+  Future<bool> _confirmVendorMasterDataChange({
+    required String currentName,
+    required String newName,
+  }) async {
+    if (!_isEdit) return true;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Change product vendor?'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'This updates the product\'s current vendor only. Existing sales, '
+              'purchases, returns, and vendor ledger history are not changed.',
+            ),
+            const SizedBox(height: 16),
+            Text('Current: $currentName'),
+            const SizedBox(height: 4),
+            Text('New: $newName'),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Change Vendor'),
+          ),
+        ],
+      ),
+    );
+
+    return confirmed == true;
+  }
+
   Future<void> _pickVendor() async {
     final token = Provider.of<AuthProvider>(context, listen: false).token!;
     final picked = await showModalBottomSheet<Map<String, dynamic>>(
@@ -558,12 +598,48 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
         child: VendorPickerSheet(token: token),
       ),
     );
-    if (picked != null) {
-      setState(() {
-        _selectedVendor   = picked;
-        _selectedVendorId = picked['id'] as int?;
-      });
+    if (picked == null || !mounted) return;
+
+    final pickedId = (picked['id'] as num?)?.toInt();
+    if (pickedId == _selectedVendorId) return;
+
+    final currentName = _selectedVendor?['first_name']?.toString() ??
+        (_selectedVendorId != null ? 'Vendor #$_selectedVendorId' : 'None selected');
+    final newName = picked['first_name']?.toString() ??
+        (pickedId != null ? 'Vendor #$pickedId' : 'None selected');
+
+    // Assigning the first vendor to an unassigned product is harmless. When an
+    // existing assignment is being changed, make the master-data impact clear
+    // without touching historical transaction snapshots.
+    if (_selectedVendorId != null) {
+      final confirmed = await _confirmVendorMasterDataChange(
+        currentName: currentName,
+        newName: newName,
+      );
+      if (!confirmed || !mounted) return;
     }
+
+    setState(() {
+      _selectedVendor   = picked;
+      _selectedVendorId = pickedId;
+    });
+  }
+
+  Future<void> _clearVendor() async {
+    if (_selectedVendorId == null) return;
+
+    final currentName = _selectedVendor?['first_name']?.toString() ??
+        'Vendor #$_selectedVendorId';
+    final confirmed = await _confirmVendorMasterDataChange(
+      currentName: currentName,
+      newName: 'None selected',
+    );
+    if (!confirmed || !mounted) return;
+
+    setState(() {
+      _selectedVendor   = null;
+      _selectedVendorId = null;
+    });
   }
 
   Future<void> _manageCategories() async {
@@ -741,10 +817,13 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
     final canManageBrands = auth.hasPermission('manage-brands');
     final canManageUnits = auth.hasPermission('manage-units');
 
-    final fixedVendorId      = widget.vendorId;
-    final productVendorId    = widget.product?['vendor_id'];
-    final showReadOnlyVendor = _isEdit || fixedVendorId != null;
-    final effectiveVendorId  = fixedVendorId ?? productVendorId ?? _selectedVendorId;
+    final fixedVendorId = widget.vendorId;
+    // Vendor is editable for a normal standalone product, including on edit.
+    // Keep it locked only when the product is a variant (vendor is inherited
+    // from its product family) or when this form was opened from a fixed-vendor
+    // workflow such as purchasing.
+    final showReadOnlyVendor = _isVariantProduct || fixedVendorId != null;
+    final effectiveVendorId = fixedVendorId ?? _selectedVendorId;
     final effectiveVendorName =
         _selectedVendor?['first_name']?.toString() ??
         widget.product?['vendor']?['first_name'] ??
@@ -940,35 +1019,54 @@ class _ProductFormScreenState extends State<ProductFormScreen> {
                 ListTile(
                   contentPadding: const EdgeInsets.symmetric(horizontal: 8),
                   title: const Text('Vendor'),
-                  subtitle: Text(effectiveVendorName),
-                  trailing: const Icon(Icons.lock),
+                  subtitle: Text(
+                    _isVariantProduct
+                        ? '$effectiveVendorName · Inherited from product family'
+                        : effectiveVendorName,
+                  ),
+                  trailing: Tooltip(
+                    message: _isVariantProduct
+                        ? 'Change the vendor from the variable product / product group editor.'
+                        : 'Vendor is fixed by the current workflow.',
+                    child: const Icon(Icons.lock),
+                  ),
                 ),
               ] else ...[
                 ListTile(
                   contentPadding: const EdgeInsets.symmetric(horizontal: 8),
                   title: const Text('Vendor (optional)'),
-                  subtitle: Text(_selectedVendor?['first_name']?.toString() ?? 'None selected'),
+                  subtitle: Text(
+                    _selectedVendor?['first_name']?.toString() ??
+                        (_selectedVendorId != null
+                            ? 'Vendor #$_selectedVendorId'
+                            : 'None selected'),
+                  ),
                   trailing: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       if (_selectedVendorId != null)
                         IconButton(
-                          tooltip: 'Clear',
-                          onPressed: () => setState(() {
-                            _selectedVendor   = null;
-                            _selectedVendorId = null;
-                          }),
+                          tooltip: 'Clear vendor',
+                          onPressed: _loading ? null : _clearVendor,
                           icon: const Icon(Icons.clear),
                         ),
                       ElevatedButton.icon(
                         icon: const Icon(Icons.store),
                         label: Text(_selectedVendorId == null ? 'Pick' : 'Change'),
-                        onPressed: _pickVendor,
+                        onPressed: _loading ? null : _pickVendor,
                       ),
                     ],
                   ),
                 ),
-                const SizedBox(height: 12),
+                if (_isEdit)
+                  const Padding(
+                    padding: EdgeInsets.fromLTRB(8, 0, 8, 8),
+                    child: Text(
+                      'Changing this updates the product\'s current vendor only; historical transactions keep their original vendor.',
+                      style: TextStyle(fontSize: 12),
+                    ),
+                  ),
+                const SizedBox(height: 4),
               ],
 
               // ── Stock & pricing ───────────────────────────────────────────────

@@ -3539,7 +3539,9 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
             double.tryParse(i['total']?.toString() ?? '') ?? _cartLineTotal(i);
         final gross = (price * qty).abs();
         final net = lineTotal.abs();
-        final lineDiscount = gross > net ? gross - net : 0.0;
+        final extraDiscount = _metaNum(i['extra_discount']).abs();
+        final lineDiscount =
+            (gross - net - extraDiscount).clamp(0.0, double.infinity).toDouble();
         final unitRaw = i['unit_name'] ?? i['unit_symbol'] ?? i['unit'];
         final baseUnitName = unitRaw is Map
             ? (unitRaw['symbol'] ?? unitRaw['name'] ?? '').toString()
@@ -3577,6 +3579,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
           discountValue: discountType == 'fixed' && packaged
               ? _metaNum(i['packaging_discount_snapshot'])
               : _metaNum(i['discount_pct']),
+          extraDiscountAmount: extraDiscount,
         );
       }).toList();
       final printerConfig = context.read<PrinterConfigProvider>();

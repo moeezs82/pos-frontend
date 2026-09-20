@@ -370,7 +370,9 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
 
       final gross = (price * qty).abs();
       final net = lineTotal.abs();
-      final lineDiscount = gross > net ? gross - net : 0.0;
+      final extraDiscount = _d(m['extra_discount']).abs();
+      final lineDiscount =
+          (gross - net - extraDiscount).clamp(0.0, double.infinity).toDouble();
       final product = m['product'];
       final unitRaw = m['unit_name'] ??
           m['unit_symbol'] ??
@@ -413,6 +415,7 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
         discountValue: (m['discount_type'] ?? 'percentage').toString() == 'fixed' && packaged
             ? _d(m['packaging_discount_snapshot'])
             : _d(m['discount']),
+        extraDiscountAmount: extraDiscount,
       );
     }).toList();
 

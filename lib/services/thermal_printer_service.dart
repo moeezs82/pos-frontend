@@ -497,6 +497,13 @@ class ThermalPrinterService {
             PosColumn(text: '', width: 1),
           ]);
         }
+        if (itemDiscountDisplay == ItemDiscountDisplay.detailed && it.hasExtraDiscount) {
+          printer.row([
+            PosColumn(text: ' Extra Discount', width: 8),
+            PosColumn(text: '-${_m(it.extraDiscountAmount.abs())}', width: 3, styles: const PosStyles(align: PosAlign.right)),
+            PosColumn(text: '', width: 1),
+          ]);
+        }
       }
     } else {
       printer.text('ITEMS', styles: const PosStyles(bold: true));
@@ -733,7 +740,11 @@ class ThermalPrinterService {
             item.hasDiscount
         ? ' ${item.compactDiscountLabel()}'
         : '';
-    return '${_q(item.qty)}$unitPart$packPart x ${_m(item.price)}$discount';
+    final extraDiscount = discountDisplay == ItemDiscountDisplay.compact &&
+            item.hasExtraDiscount
+        ? ' ${item.compactExtraDiscountLabel(short: is58mm)}'
+        : '';
+    return '${_q(item.qty)}$unitPart$packPart x ${_m(item.price)}$discount$extraDiscount';
   }
 
   static String _kitchenQuantityLine(SaleReceiptItem item) {

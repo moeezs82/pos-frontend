@@ -729,6 +729,22 @@ class ReceiptPreviewService {
                               ],
                             ),
                           ),
+                        if (itemDiscountDisplay == ItemDiscountDisplay.detailed && it.hasExtraDiscount)
+                          pw.Padding(
+                            padding: pw.EdgeInsets.only(left: detailLeftInset, top: 1),
+                            child: pw.Row(
+                              children: [
+                                pw.Expanded(
+                                  child: pw.Text(
+                                    'Extra Discount',
+                                    style: small,
+                                  ),
+                                ),
+                                pw.SizedBox(width: is58mm ? 3 : 4),
+                                rightMoney('-${_m(it.extraDiscountAmount.abs())}', small),
+                              ],
+                            ),
+                          ),
                       ],
                     ),
                   ),
@@ -1241,6 +1257,15 @@ class ReceiptPreviewService {
                         padding: const pw.EdgeInsets.only(top: 2),
                         child: valueRow('الخصم', 'Discount', '-${_m(item.discountAmount)}'),
                       ),
+                    if (itemDiscountDisplay == ItemDiscountDisplay.detailed && item.hasExtraDiscount)
+                      pw.Padding(
+                        padding: const pw.EdgeInsets.only(top: 2),
+                        child: valueRow(
+                          'خصم إضافي',
+                          'Extra Discount',
+                          '-${_m(item.extraDiscountAmount.abs())}',
+                        ),
+                      ),
                   ],
                 ),
               );
@@ -1389,6 +1414,9 @@ class ReceiptPreviewService {
     final itemDiscountDisplay = itemDiscountDisplayFromValue(
       meta?['item_discount_display']?.toString(),
     );
+    final showExtraDiscountColumn =
+        itemDiscountDisplay != ItemDiscountDisplay.hidden &&
+            items.any((item) => item.hasExtraDiscount);
 
     double numericMeta(String key) {
       final raw = meta?[key];
@@ -1718,15 +1746,26 @@ class ReceiptPreviewService {
                     4: const pw.FlexColumnWidth(1.45),
                     5: const pw.FlexColumnWidth(1.45),
                   }
-                : {
-                    0: const pw.FixedColumnWidth(20),
-                    1: const pw.FlexColumnWidth(3.9),
-                    2: const pw.FlexColumnWidth(1.05),
-                    3: const pw.FlexColumnWidth(.85),
-                    4: const pw.FlexColumnWidth(1.45),
-                    5: const pw.FlexColumnWidth(1.25),
-                    6: const pw.FlexColumnWidth(1.45),
-                  },
+                : showExtraDiscountColumn
+                    ? {
+                        0: const pw.FixedColumnWidth(20),
+                        1: const pw.FlexColumnWidth(3.25),
+                        2: const pw.FlexColumnWidth(.95),
+                        3: const pw.FlexColumnWidth(.75),
+                        4: const pw.FlexColumnWidth(1.25),
+                        5: const pw.FlexColumnWidth(1.05),
+                        6: const pw.FlexColumnWidth(1.15),
+                        7: const pw.FlexColumnWidth(1.3),
+                      }
+                    : {
+                        0: const pw.FixedColumnWidth(20),
+                        1: const pw.FlexColumnWidth(3.9),
+                        2: const pw.FlexColumnWidth(1.05),
+                        3: const pw.FlexColumnWidth(.85),
+                        4: const pw.FlexColumnWidth(1.45),
+                        5: const pw.FlexColumnWidth(1.25),
+                        6: const pw.FlexColumnWidth(1.45),
+                      },
             children: [
               pw.TableRow(
                 decoration: pw.BoxDecoration(color: accent),
@@ -1738,6 +1777,8 @@ class ReceiptPreviewService {
                   tableHeader('سعر الوحدة', 'Unit Price'),
                   if (itemDiscountDisplay != ItemDiscountDisplay.hidden)
                     tableHeader('الخصم', 'Discount'),
+                  if (showExtraDiscountColumn)
+                    tableHeader('خصم إضافي', 'Extra Disc.'),
                   tableHeader('المبلغ', 'Amount'),
                 ],
               ),
@@ -1755,6 +1796,13 @@ class ReceiptPreviewService {
                     if (itemDiscountDisplay != ItemDiscountDisplay.hidden)
                       tableValue(
                         item.hasDiscount ? item.compactDiscountLabel() : '-',
+                        align: pw.TextAlign.right,
+                      ),
+                    if (showExtraDiscountColumn)
+                      tableValue(
+                        item.hasExtraDiscount
+                            ? '-${_m(item.extraDiscountAmount.abs())}'
+                            : '-',
                         align: pw.TextAlign.right,
                       ),
                     tableValue(_m(item.total), align: pw.TextAlign.right, bold: true),
@@ -1977,6 +2025,9 @@ class ReceiptPreviewService {
     final itemDiscountDisplay = itemDiscountDisplayFromValue(
       meta?['item_discount_display']?.toString(),
     );
+    final showExtraDiscountColumn =
+        itemDiscountDisplay != ItemDiscountDisplay.hidden &&
+            items.any((item) => item.hasExtraDiscount);
 
     final brandingNeedsArabic = <String>[
       shopName,
@@ -2289,15 +2340,26 @@ class ReceiptPreviewService {
                     4: const pw.FlexColumnWidth(1.5),
                     5: const pw.FlexColumnWidth(1.65),
                   }
-                : {
-                    0: const pw.FixedColumnWidth(22),
-                    1: const pw.FlexColumnWidth(4.4),
-                    2: const pw.FlexColumnWidth(1.1),
-                    3: const pw.FlexColumnWidth(.9),
-                    4: const pw.FlexColumnWidth(1.5),
-                    5: const pw.FlexColumnWidth(1.35),
-                    6: const pw.FlexColumnWidth(1.65),
-                  },
+                : showExtraDiscountColumn
+                    ? {
+                        0: const pw.FixedColumnWidth(22),
+                        1: const pw.FlexColumnWidth(3.65),
+                        2: const pw.FlexColumnWidth(1.0),
+                        3: const pw.FlexColumnWidth(.8),
+                        4: const pw.FlexColumnWidth(1.3),
+                        5: const pw.FlexColumnWidth(1.15),
+                        6: const pw.FlexColumnWidth(1.25),
+                        7: const pw.FlexColumnWidth(1.45),
+                      }
+                    : {
+                        0: const pw.FixedColumnWidth(22),
+                        1: const pw.FlexColumnWidth(4.4),
+                        2: const pw.FlexColumnWidth(1.1),
+                        3: const pw.FlexColumnWidth(.9),
+                        4: const pw.FlexColumnWidth(1.5),
+                        5: const pw.FlexColumnWidth(1.35),
+                        6: const pw.FlexColumnWidth(1.65),
+                      },
             children: [
               pw.TableRow(
                 decoration: pw.BoxDecoration(color: accent),
@@ -2309,6 +2371,8 @@ class ReceiptPreviewService {
                   tableCell('UNIT PRICE', header: true, align: pw.TextAlign.right),
                   if (itemDiscountDisplay != ItemDiscountDisplay.hidden)
                     tableCell('DISCOUNT', header: true, align: pw.TextAlign.right),
+                  if (showExtraDiscountColumn)
+                    tableCell('EXTRA DISC.', header: true, align: pw.TextAlign.right),
                   tableCell('AMOUNT', header: true, align: pw.TextAlign.right),
                 ],
               ),
@@ -2327,6 +2391,13 @@ class ReceiptPreviewService {
                     if (itemDiscountDisplay != ItemDiscountDisplay.hidden)
                       tableCell(
                         item.hasDiscount ? item.compactDiscountLabel() : '-',
+                        align: pw.TextAlign.right,
+                      ),
+                    if (showExtraDiscountColumn)
+                      tableCell(
+                        item.hasExtraDiscount
+                            ? '-${_m(item.extraDiscountAmount.abs())}'
+                            : '-',
                         align: pw.TextAlign.right,
                       ),
                     tableCell(_m(item.total), align: pw.TextAlign.right),
@@ -2472,7 +2543,11 @@ class ReceiptPreviewService {
             item.hasDiscount
         ? ' ${item.compactDiscountLabel()}'
         : '';
-    return '${_q(item.qty)}$unitPart$packPart x ${_m(item.price)}$discount';
+    final extraDiscount = discountDisplay == ItemDiscountDisplay.compact &&
+            item.hasExtraDiscount
+        ? ' ${item.compactExtraDiscountLabel(short: is58mm)}'
+        : '';
+    return '${_q(item.qty)}$unitPart$packPart x ${_m(item.price)}$discount$extraDiscount';
   }
 
   static String _kitchenQuantityLine(ReceiptItem item) {

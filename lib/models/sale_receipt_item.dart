@@ -14,6 +14,10 @@ class SaleReceiptItem {
   final String discountType;
   final double discountValue;
 
+  /// Additional fixed money discount applied to the complete sale line after
+  /// the normal item discount. It is never multiplied by quantity.
+  final double extraDiscountAmount;
+
   /// Immutable transaction packaging metadata used only for printing.
   ///
   /// These values come from the posted sale-item snapshot, never from the
@@ -35,6 +39,7 @@ class SaleReceiptItem {
     this.discountAmount = 0,
     this.discountType = 'percentage',
     this.discountValue = 0,
+    this.extraDiscountAmount = 0,
     this.packagingName,
     this.packagingShortName,
     this.packagingFactor,
@@ -111,7 +116,11 @@ class SaleReceiptItem {
 
   String get effectiveSecondaryName => (secondaryName ?? '').trim();
 
-  bool get hasDiscount => discountAmount > 0.004;
+  bool get hasDiscount => discountAmount.abs() > 0.004;
+
+  bool get hasExtraDiscount => extraDiscountAmount.abs() > 0.004;
+
+  bool get hasAnyDiscount => hasDiscount || hasExtraDiscount;
 
   String compactDiscountLabel() {
     if (!hasDiscount) return '';
@@ -137,5 +146,16 @@ class SaleReceiptItem {
   String detailedDiscountLabel() {
     final compact = compactDiscountLabel();
     return compact.isEmpty ? '' : 'Discount $compact';
+  }
+
+  String compactExtraDiscountLabel({bool short = false}) {
+    if (!hasExtraDiscount) return '';
+    final amount = extraDiscountAmount.abs().toStringAsFixed(2);
+    return short ? 'E-$amount' : 'Extra -$amount';
+  }
+
+  String detailedExtraDiscountLabel() {
+    final compact = compactExtraDiscountLabel();
+    return compact.isEmpty ? '' : 'Extra Discount -${extraDiscountAmount.abs().toStringAsFixed(2)}';
   }
 }
