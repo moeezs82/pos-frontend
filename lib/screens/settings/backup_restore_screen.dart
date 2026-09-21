@@ -6,12 +6,12 @@ import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/providers/offline_queue_provider.dart';
 import 'package:enterprise_pos/screens/login_screen.dart';
 import 'package:enterprise_pos/services/backend_startup_service.dart';
+import 'package:enterprise_pos/services/backup_runner_service.dart';
 import 'package:enterprise_pos/services/connectivity_auto_sync_service.dart';
 import 'package:enterprise_pos/services/local_backup_client_state_service.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 class BackupRestoreScreen extends StatefulWidget {
@@ -27,6 +27,8 @@ class _BackupRestoreScreenState extends State<BackupRestoreScreen> {
   bool _busy = false;
   String? _operationText;
   Map<String, dynamic>? _status;
+  Map<String, dynamic>? _reminder;
+  bool _savingReminder = false;
 
   bool get _canCreate => context.read<AuthProvider>().hasPermission('create-backups');
   bool get _canRestore => context.read<AuthProvider>().hasPermission('restore-backups');
@@ -50,79 +52,34 @@ class _BackupRestoreScreenState extends State<BackupRestoreScreen> {
       setState(() => _status = status);
     } catch (_) {
       // The main actions surface their own errors. Status history is optional.
-    } finally {
-      if (mounted) setState(() => _loading = false);
     }
+    try {
+      final reminder = await _service!.reminder();
+      if (!mounted) return;
+      setState(() => _reminder = reminder);
+    } catch (_) {
+      // Reminder settings are advisory; the card hides itself if unavailable.
+    }
+    if (mounted) setState(() => _loading = false);
   }
 
   Future<void> _createBackup() async {
     if (_busy || !_canCreate || _service == null) return;
-    if (BackendConfig.isLocalClient &&
-        context.read<OfflineQueueProvider>().pendingCount > 0) {
-      _showError(
-        'Sync required',
-        Exception(
-          'This workstation has sales waiting to sync. Sync them to the CounterIQ host before creating the business backup so the backup contains the latest sales.',
-        ),
-      );
-      return;
-    }
-    final path = await FilePicker.platform.saveFile(
-      dialogTitle: 'Save CounterIQ backup',
-      fileName: _suggestedFilename(),
-      type: FileType.custom,
-      allowedExtensions: const ['ciqbak'],
-    );
-    if (path == null || !mounted) return;
-    final destination =
-        path.toLowerCase().endsWith('.ciqbak') ? path : '$path.ciqbak';
-
-    String? staging;
-    setState(() {
-      _busy = true;
-      _operationText = BackendConfig.isLocalClient
-          ? 'Creating and downloading a verified backup from the CounterIQ host PC...'
-          : 'Creating a verified backup of the database and uploaded files...';
-    });
-    try {
-      // Frontend-owned offline state exists only on the workstation itself. It
-      // can safely be embedded when this is the HOST workstation because the
-      // staging directory is inside the same CounterIQData tree the backend
-      // owns. A LAN client never sends its C:\ path to the host.
-      if (BackendConfig.isLocalHost) {
-        staging = await LocalBackupClientStateService.instance
-            .createStagingSnapshot();
-      }
-
-      await _service!.exportBackupToFile(
-        destinationPath: destination,
-        clientStateDir: staging,
-      );
-
-      Map<String, dynamic> manifest = <String, dynamic>{};
-      try {
-        final status = await _service!.status();
-        final lastBackup = _asMap(status['last_backup']);
-        manifest = _asMap(lastBackup['manifest']);
-        if (mounted) setState(() => _status = status);
-      } catch (_) {}
-
-      if (!mounted) return;
-      await _showBackupCreated(destination, manifest);
-    } catch (error) {
-      if (mounted) _showError('Backup failed', error);
-    } finally {
-      if (BackendConfig.isLocalHost) {
-        await LocalBackupClientStateService.instance.cleanupStaging(staging);
-      }
-      if (mounted) {
+    final result = await BackupRunnerService.instance.run(
+      context,
+      service: _service!,
+      onBusy: (text) {
+        if (!mounted) return;
         setState(() {
-          _busy = false;
-          _operationText = null;
+          _busy = text != null;
+          _operationText = text;
         });
-      }
-    }
+      },
+    );
+    if (!mounted) return;
+    if (result.status != null) setState(() => _status = result.status);
   }
+
 
   Future<void> _restoreBackup() async {
     if (_busy || !_canRestore || _service == null) return;
@@ -330,55 +287,8 @@ class _BackupRestoreScreenState extends State<BackupRestoreScreen> {
     return result == true;
   }
 
-  Future<void> _showBackupCreated(String path, Map<String, dynamic> manifest) {
-    final counts = _asMap(manifest['counts']);
-    return showDialog<void>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        icon: const Icon(Icons.verified_rounded, color: AppTheme.success, size: 44),
-        title: const Text('Backup created'),
-        content: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 520),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('CounterIQ verified the backup after writing it.'),
-              const SizedBox(height: 12),
-              _infoRow('Customers', '${counts['customers'] ?? 0}'),
-              _infoRow('Products', '${counts['products'] ?? 0}'),
-              _infoRow('Sales', '${counts['sales'] ?? 0}'),
-              const SizedBox(height: 12),
-              Text(path, style: Theme.of(context).textTheme.bodySmall),
-              const SizedBox(height: 12),
-              const Text(
-                'Keep at least one backup outside this computer (for example on a USB drive, NAS or cloud-synced folder).',
-                style: TextStyle(fontWeight: FontWeight.w700),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          FilledButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Done')),
-        ],
-      ),
-    );
-  }
-
-  void _showError(String title, Object error) {
-    final message = error.toString().replaceFirst(RegExp(r'^(Exception|ApiException\([^)]*\)):\s*'), '');
-    showDialog<void>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        icon: const Icon(Icons.error_outline_rounded, color: AppTheme.danger),
-        title: Text(title),
-        content: Text(message),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Close')),
-        ],
-      ),
-    );
-  }
+  void _showError(String title, Object error) =>
+      BackupRunnerService.showError(context, title, error);
 
   @override
   Widget build(BuildContext context) {
@@ -446,6 +356,8 @@ class _BackupRestoreScreenState extends State<BackupRestoreScreen> {
                   'Your role can create backups but cannot restore them. Restore access can be granted separately from Roles & Permissions.',
                 ),
               ],
+              const SizedBox(height: 16),
+              _buildReminderCard(),
               const SizedBox(height: 24),
               _buildStatusCard(),
             ],
@@ -481,6 +393,131 @@ class _BackupRestoreScreenState extends State<BackupRestoreScreen> {
     );
   }
 
+  Future<void> _setReminderInterval(String interval) async {
+    if (_service == null || _savingReminder) return;
+    setState(() => _savingReminder = true);
+    try {
+      final updated = await _service!.updateReminder(interval);
+      if (!mounted) return;
+      setState(() => _reminder = updated);
+    } catch (error) {
+      if (mounted) _showError('Could not update reminder', error);
+    } finally {
+      if (mounted) setState(() => _savingReminder = false);
+    }
+  }
+
+  Widget _buildReminderCard() {
+    final reminder = _reminder;
+    if (reminder == null) return const SizedBox.shrink();
+
+    final canEdit = reminder['can_edit'] == true;
+    final interval = reminder['interval']?.toString() ?? 'every_6_hours';
+    final options = (reminder['options'] as List?)
+            ?.map((e) => e.toString())
+            .toList() ??
+        const <String>[];
+    final hours = (reminder['hours_since_backup'] as num?)?.toDouble();
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.schedule_rounded, color: AppTheme.primary),
+                const SizedBox(width: 10),
+                Text(
+                  'Backup Reminder',
+                  style: Theme.of(context)
+                      .textTheme
+                      .titleMedium
+                      ?.copyWith(fontWeight: FontWeight.w800),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              canEdit
+                  ? 'CounterIQ reminds this host PC to back up. It never creates a backup on its own \u2014 you always choose where the file is saved.'
+                  : 'CounterIQ reminds this host PC to back up. Only Master Admin can change how often.',
+            ),
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                const SizedBox(width: 170, child: Text('Remind me', style: TextStyle(fontWeight: FontWeight.w600))),
+                Expanded(
+                  child: DropdownButtonFormField<String>(
+                    value: options.contains(interval) ? interval : null,
+                    isExpanded: true,
+                    decoration: const InputDecoration(
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                      contentPadding:
+                          EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                    ),
+                    items: [
+                      for (final option in options)
+                        DropdownMenuItem(
+                          value: option,
+                          child: Text(_intervalLabel(option)),
+                        ),
+                    ],
+                    onChanged: (canEdit && !_savingReminder)
+                        ? (value) {
+                            if (value != null) _setReminderInterval(value);
+                          }
+                        : null,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            _infoRow('Last backup', _reminderAgeText(hours)),
+            if (reminder['snoozed_until'] != null)
+              _infoRow('Postponed until',
+                  _formatDate(reminder['snoozed_until']?.toString())),
+          ],
+        ),
+      ),
+    );
+  }
+
+  static String _reminderAgeText(double? hours) {
+    if (hours == null) return 'Never backed up';
+    if (hours < 48) {
+      final whole = hours.round();
+      return '$whole ${whole == 1 ? 'hour' : 'hours'} ago';
+    }
+    final days = (hours / 24).floor();
+    return '$days ${days == 1 ? 'day' : 'days'} ago';
+  }
+
+  static String _intervalLabel(String value) {
+    switch (value) {
+      case 'every_6_hours':
+        return 'Every 6 hours';
+      case 'every_12_hours':
+        return 'Every 12 hours';
+      case 'daily':
+        return 'Daily';
+      case 'every_3_days':
+        return 'Every 3 days';
+      case 'weekly':
+        return 'Weekly';
+      case 'every_15_days':
+        return 'Every 15 days';
+      case 'monthly':
+        return 'Monthly';
+      case 'off':
+        return 'Off';
+      default:
+        return value;
+    }
+  }
+
   Widget _buildStatusCard() {
     if (_loading) {
       return const Card(child: Padding(padding: EdgeInsets.all(20), child: LinearProgressIndicator()));
@@ -507,17 +544,8 @@ class _BackupRestoreScreenState extends State<BackupRestoreScreen> {
     );
   }
 
-  static Widget _infoRow(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 3),
-      child: Row(
-        children: [
-          SizedBox(width: 170, child: Text(label, style: const TextStyle(fontWeight: FontWeight.w600))),
-          Expanded(child: Text(value)),
-        ],
-      ),
-    );
-  }
+  static Widget _infoRow(String label, String value) =>
+      BackupRunnerService.infoRow(label, value);
 
   static Map<String, dynamic> _asMap(dynamic value) {
     if (value is Map<String, dynamic>) return value;
@@ -525,17 +553,8 @@ class _BackupRestoreScreenState extends State<BackupRestoreScreen> {
     return <String, dynamic>{};
   }
 
-  static String _formatDate(String? raw) {
-    final parsed = raw == null ? null : DateTime.tryParse(raw)?.toLocal();
-    if (parsed == null) return '-';
-    return DateFormat('dd MMM yyyy, hh:mm a').format(parsed);
-  }
-
-  static String _suggestedFilename() {
-    final now = DateTime.now();
-    final stamp = DateFormat('yyyyMMdd-HHmmss').format(now);
-    return 'CounterIQ-Backup-$stamp.ciqbak';
-  }
+  static String _formatDate(String? raw) =>
+      BackupRunnerService.formatDate(raw);
 }
 
 class _ActionCard extends StatelessWidget {

@@ -41,6 +41,32 @@ class BackupService {
     return data is Map<String, dynamic> ? data : <String, dynamic>{};
   }
 
+  /// Scheduled backup reminder schedule and whether a backup is currently due.
+  ///
+  /// `due`, `escalated` and `snoozed_until` are all computed on the host so
+  /// every workstation agrees, and so the rule lives in one place.
+  Future<Map<String, dynamic>> reminder() async {
+    final res = await _client.get('/backups/reminder');
+    final data = res['data'];
+    return data is Map<String, dynamic> ? data : <String, dynamic>{};
+  }
+
+  /// Master Admin only. [interval] is one of the values the reminder payload
+  /// returns in `options`.
+  Future<Map<String, dynamic>> updateReminder(String interval) async {
+    final res =
+        await _client.put('/backups/reminder', body: {'interval': interval});
+    final data = res['data'];
+    return data is Map<String, dynamic> ? data : <String, dynamic>{};
+  }
+
+  /// The "Later" half of the reminder dialog. Defers one cycle, capped at 24h.
+  Future<Map<String, dynamic>> snoozeReminder() async {
+    final res = await _client.post('/backups/reminder/snooze');
+    final data = res['data'];
+    return data is Map<String, dynamic> ? data : <String, dynamic>{};
+  }
+
   Future<Map<String, dynamic>> status() async {
     final res = await _client.get('/backups/status');
     final data = res['data'];

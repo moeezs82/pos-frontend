@@ -35,6 +35,7 @@ import 'package:enterprise_pos/screens/register_shifts/register_shift_screen.dar
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/branch_indicator.dart';
 import 'package:enterprise_pos/widgets/app_keyboard_shortcuts.dart';
+import 'package:enterprise_pos/widgets/backup_reminder_gate.dart';
 import 'package:enterprise_pos/widgets/subscription_warning_banner.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -276,6 +277,10 @@ class HomeScreen extends StatelessWidget {
           // locked.  It is placed outside the scrollable list so it stays
           // visible even when the user scrolls down the tile grid.
           const SubscriptionWarningBanner(),
+          // Renders nothing. Watches the host's backup schedule and raises the
+          // "Time to back up" dialog here, where it cannot land on top of a
+          // sale in progress.
+          const BackupReminderGate(),
           Expanded(
             child: ListView(
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 30),

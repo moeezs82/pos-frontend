@@ -3522,7 +3522,12 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
                   'N/A')
               .toString();
 
-      if (print) {
+      // WhatsApp delivery needs the receipt *document*, not a printer, so the
+      // document-building section below must also run on the Save-only path.
+      // Physical printing and the preview dialog stay gated on `print`.
+      final prepareWhatsAppInvoice = _sendInvoiceOnWhatsApp && !queuedOffline;
+
+      if (print || prepareWhatsAppInvoice) {
       final receiptSubtotal = subtotal - returnCredit;
       final receiptItems = _items.map((i) {
         final name = (i['name'] ?? '').toString();
@@ -3657,9 +3662,8 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       Future<Uint8List?>? whatsappPdfFuture;
       Object? whatsappPdfError;
       StackTrace? whatsappPdfStackTrace;
-      if (_sendInvoiceOnWhatsApp &&
-          !queuedOffline &&
-          (whatsappUsesDifferentPdf || mainRawNetworkWillPrint)) {
+      if (prepareWhatsAppInvoice &&
+          (!print || whatsappUsesDifferentPdf || mainRawNetworkWillPrint)) {
         final timing = Stopwatch()..start();
         whatsappPdfFuture = buildWhatsappPdf().then<Uint8List?>((bytes) {
           debugPrint(
@@ -3675,10 +3679,15 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         });
       }
 
+      // Reused by the WhatsApp task when the primary print produced a PDF
+      // identical to the configured WhatsApp document. Declared outside the
+      // print-only section because Save-only sales never populate it.
+      Uint8List? customerInvoicePdfBytes;
+
+      if (print) {
       debugPrint('Active printer connection: ${printerConfig.activeConnection}, template: ${mainTemplate.value}');
 
       var printedToHardware = false;
-      Uint8List? customerInvoicePdfBytes;
       if (printerConfig.isNetworkPrinter && mainTemplate.supportsRawNetwork && (printerConfig.networkIp ?? '').trim().isNotEmpty) {
         try {
           await ThermalPrinterService.instance.printSaleReceiptNetwork(
@@ -3853,8 +3862,9 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
           devCreditText: printerConfig.devCreditText,
         );
       }
+      } // if (print) — hardware printing / preview
 
-      if (_sendInvoiceOnWhatsApp && !queuedOffline) {
+      if (prepareWhatsAppInvoice) {
         final whatsappFormat = printerConfig.whatsappInvoiceFormat;
         final customerSnapshotRaw = meta['customer_snapshot'];
         final customerSnapshot = customerSnapshotRaw is Map
@@ -3944,10 +3954,10 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
           }
         }());
       }
-      } // if (print)
+      } // if (print || prepareWhatsAppInvoice)
 
       if (!mounted) return;
-      final whatsappWasRequested = _sendInvoiceOnWhatsApp && print;
+      final whatsappWasRequested = _sendInvoiceOnWhatsApp;
       _resetForNextSale(keepInitialCustomer: widget.initialCustomer != null);
       if (queuedOffline) {
         AppFeedback.warning(
