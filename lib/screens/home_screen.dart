@@ -8,6 +8,8 @@ import 'package:enterprise_pos/screens/cash_ledger/cash_ledger_create_screen.dar
 import 'package:enterprise_pos/screens/cash_ledger/cash_ledger_screen.dart';
 import 'package:enterprise_pos/screens/customers/customers_screen.dart';
 import 'package:enterprise_pos/screens/dashboard/today_snapshot_section.dart';
+import 'package:enterprise_pos/screens/intelligence/intelligence_hub_screen.dart';
+import 'package:enterprise_pos/screens/intelligence/intelligence_dashboard_card.dart';
 import 'package:enterprise_pos/screens/product_screen.dart';
 import 'package:enterprise_pos/screens/units_screen.dart';
 import 'package:enterprise_pos/screens/purchases/purchase_claim_screen.dart';
@@ -189,6 +191,17 @@ class HomeScreen extends StatelessWidget {
             routeId: PosRouteIds.createPurchase,
             builder: (_) => const CreatePurchaseScreen()),
       ),
+      if (auth.hasAddon('intelligence') && auth.hasPermission('view-intelligence')) _Tile(
+        icon: Icons.auto_awesome_rounded,
+        title: 'Intelligence',
+        subtitle: 'Money Finder & Replenishment',
+        color: AppTheme.purple,
+        emphasized: true,
+        onTap: () => Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => const IntelligenceHubScreen()),
+        ),
+      ),
       if (auth.hasPermission('view-reports')) _Tile(
         icon: Icons.analytics_rounded,
         title: 'Reports',
@@ -295,6 +308,10 @@ class HomeScreen extends StatelessWidget {
                   const _ShortcutHintBar(),
                   const SizedBox(height: 16),
                   const TodaySnapshotSection(),
+                  if (auth.hasAddon('intelligence') && auth.hasPermission('view-margin-intelligence')) ...[
+                    const SizedBox(height: 12),
+                    const IntelligenceDashboardCard(),
+                  ],
                   const SizedBox(height: 20),
                   const _SectionTitle(title: 'Quick actions', subtitle: 'Most-used tasks are one tap away'),
                   const SizedBox(height: 10),

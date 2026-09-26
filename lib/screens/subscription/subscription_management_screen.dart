@@ -231,6 +231,7 @@ class _SummaryCards extends StatelessWidget {
       _SummaryCard('Loans',          _n('loan_module_addon'),      AppTheme.teal),
       _SummaryCard('Qameti',         _n('qameti_module_addon'),    AppTheme.info),
       _SummaryCard('WhatsApp',       _n('whatsapp_invoice_addon'), const Color(0xFF128C7E)),
+      _SummaryCard('Intelligence',    _n('intelligence_addon'),     AppTheme.purple),
     ];
 
     return SizedBox(
@@ -322,12 +323,14 @@ class _BranchSubscriptionTile extends StatelessWidget {
       'loan_module':     'Loans',
       'qameti_module':   'Qameti',
       'whatsapp_invoice': 'WhatsApp',
+      'intelligence':     'Intelligence',
     };
     const _addonColors = <String, Color>{
       'barcode_labels':  AppTheme.purple,
       'loan_module':     AppTheme.teal,
       'qameti_module':   AppTheme.info,
       'whatsapp_invoice': Color(0xFF128C7E),
+      'intelligence':     AppTheme.purple,
     };
     final activeAddons = _addonLabels.keys
         .where((k) => addons[k] == true)
@@ -561,6 +564,7 @@ class _SubscriptionEditDialogState extends State<_SubscriptionEditDialog> {
   bool _loanModuleAddon     = false;
   bool _qametiModuleAddon   = false;
   bool _whatsappInvoiceAddon = false;
+  bool _intelligenceAddon    = false;
   final _reasonCtrl = TextEditingController();
   final _suspendReasonCtrl = TextEditingController();
   final _notesCtrl = TextEditingController();
@@ -612,6 +616,7 @@ class _SubscriptionEditDialogState extends State<_SubscriptionEditDialog> {
         _loanModuleAddon      = _addonBool('loan_module');
         _qametiModuleAddon    = _addonBool('qameti_module');
         _whatsappInvoiceAddon = _addonBool('whatsapp_invoice');
+        _intelligenceAddon     = _addonBool('intelligence');
         _loading = false;
       });
     } catch (e) {
@@ -649,6 +654,7 @@ class _SubscriptionEditDialogState extends State<_SubscriptionEditDialog> {
           'loan_module':     _loanModuleAddon,
           'qameti_module':   _qametiModuleAddon,
           'whatsapp_invoice': _whatsappInvoiceAddon,
+          'intelligence':      _intelligenceAddon,
         },
       };
 
@@ -843,6 +849,32 @@ class _SubscriptionEditDialogState extends State<_SubscriptionEditDialog> {
                         ),
                         subtitle: const Text(
                           'Prepares the sale PDF and opens WhatsApp so the cashier can send the invoice manually.',
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Container(
+                      decoration: BoxDecoration(
+                        color: AppTheme.purple.withOpacity(.05),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(
+                          color: AppTheme.purple.withOpacity(.2),
+                        ),
+                      ),
+                      child: SwitchListTile(
+                        value: _intelligenceAddon,
+                        onChanged: (value) =>
+                            setState(() => _intelligenceAddon = value),
+                        secondary: const Icon(
+                          Icons.auto_awesome_rounded,
+                          color: AppTheme.purple,
+                        ),
+                        title: const Text(
+                          'Business Intelligence',
+                          style: TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                        subtitle: const Text(
+                          'Enables Money Finder, Replenishment, business seasons, and derived sales/inventory intelligence for this branch.',
                         ),
                       ),
                     ),
