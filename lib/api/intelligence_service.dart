@@ -48,6 +48,22 @@ class IntelligenceService {
         'per_page': '$perPage',
       });
 
+  Future<IntelligenceEnvelope> marginLeakDetail({
+    required String groupKey,
+    String? from,
+    String? to,
+    String mode = 'gross',
+    String groupBy = 'product',
+    String? flag,
+  }) => _get('/intelligence/margin-leaks/detail', {
+        if (from != null) 'from': from,
+        if (to != null) 'to': to,
+        'mode': mode,
+        'group_by': groupBy,
+        'group_key': groupKey,
+        if (flag != null && flag.isNotEmpty) 'flag': flag,
+      });
+
   Future<IntelligenceEnvelope> discountAnomalies({
     String? from,
     String? to,

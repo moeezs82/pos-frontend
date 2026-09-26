@@ -192,63 +192,93 @@ class _MoneyFinderScreenState extends State<MoneyFinderScreen> {
     final visibleRows = rows.where((row) {
       final q = _marginSearch.trim().toLowerCase();
       if (q.isEmpty) return true;
-      return (row['group_label']?.toString() ?? '').toLowerCase().contains(q);
+      return (row['group_label']?.toString() ?? '').toLowerCase().contains(q) ||
+          (row['group_key']?.toString() ?? '').toLowerCase().contains(q);
     }).toList(growable: false);
 
     return _page(
       tab: 0,
       envelope: envelope,
       title: 'Margin Leaks',
-      subtitle: 'See where selling activity eroded profit and click any result to understand the reason behind the conclusion.',
+      subtitle: 'Find products sold below cost or below your minimum margin floor.',
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _heroIntro(
-            icon: Icons.savings_outlined,
-            color: AppTheme.danger,
-            title: 'Where is money leaking?',
-            message:
-                'CounterIQ reviews completed sale lines and highlights groups that sold below cost or below your configured minimum margin floor. Click any result row to see the reasoning and evidence behind it.',
+          Container(
+            padding: const EdgeInsets.all(18),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF6FAFF),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: const Color(0xFFD8E8FF)),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: 52,
+                  height: 52,
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                  child: const Icon(Icons.lightbulb_outline_rounded, color: AppTheme.primary),
+                ),
+                const SizedBox(width: 14),
+                const Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('What this means', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900)),
+                      SizedBox(height: 6),
+                      Text(
+                        'This report shows products or groups where completed sales slipped below cost or below your minimum margin threshold. It helps you review pricing, discounting or staff behaviour before the leakage grows.',
+                        style: TextStyle(color: AppTheme.textMuted, height: 1.45),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 18),
           _summaryGrid(
             children: [
               _summaryCard(
-                icon: Icons.currency_exchange_rounded,
+                icon: Icons.warning_amber_rounded,
                 iconColor: AppTheme.danger,
-                title: 'Recoverable margin',
+                title: 'Potential recoverable margin',
                 value: money(totals['recoverable']),
-                caption: 'Estimated from medium / high confidence rows only.',
+                caption: 'Built from medium and high confidence rows.',
               ),
               _summaryCard(
-                icon: Icons.flag_outlined,
-                iconColor: AppTheme.warning,
-                title: 'Flagged sale lines',
-                value: '${totals['lines_flagged'] ?? 0}',
-                caption: 'Lines that breached below-cost or below-floor rules.',
-              ),
-              _summaryCard(
-                icon: Icons.view_list_rounded,
+                icon: Icons.inventory_2_outlined,
                 iconColor: AppTheme.info,
                 title: 'Groups with issues',
                 value: '${rows.length}',
-                caption: 'Result groups in the current view.',
+                caption: 'Current result set for the selected grouping.',
               ),
               _summaryCard(
-                icon: Icons.help_outline_rounded,
-                iconColor: AppTheme.textMuted,
-                title: 'Excluded: missing cost',
-                value: '${totals['lines_excluded_missing_cost'] ?? 0}',
-                caption: 'Ignored because line cost was unavailable.',
+                icon: Icons.format_list_numbered_rounded,
+                iconColor: AppTheme.warning,
+                title: 'Leak sale lines',
+                value: '${totals['lines_flagged'] ?? 0}',
+                caption: 'Flagged below-cost or below-floor lines.',
+              ),
+              _summaryCard(
+                icon: Icons.query_stats_rounded,
+                iconColor: AppTheme.purple,
+                title: 'Average margin (flagged set)',
+                value: _averageMargin(rows),
+                caption: 'Across the rows currently shown.',
               ),
             ],
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 18),
           _controlPanel(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const _BlockTitle(title: 'Review setup', subtitle: 'Change grouping or search the result set.'),
+                const _BlockTitle(title: 'Review filters', subtitle: 'Group the result set differently or search within the current view.'),
                 const SizedBox(height: 14),
                 Wrap(
                   spacing: 12,
@@ -291,23 +321,18 @@ class _MoneyFinderScreenState extends State<MoneyFinderScreen> {
                       child: TextField(
                         onChanged: (value) => setState(() => _marginSearch = value),
                         decoration: const InputDecoration(
-                          labelText: 'Search result',
+                          labelText: 'Search',
                           prefixIcon: Icon(Icons.search_rounded),
-                          hintText: 'Product, customer, vendor or area',
+                          hintText: 'Product, vendor, category or area',
                         ),
                       ),
                     ),
                   ],
                 ),
-                const SizedBox(height: 10),
-                const Text(
-                  'Tip: group by product or vendor to review pricing issues, or group by cashier / salesman when you want a staff-related view.',
-                  style: TextStyle(color: AppTheme.textMuted, height: 1.35),
-                ),
               ],
             ),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 18),
           _responsiveSplit(
             main: visibleRows.isEmpty
                 ? const IntelligenceEmptyState(
@@ -315,20 +340,8 @@ class _MoneyFinderScreenState extends State<MoneyFinderScreen> {
                     subtitle: 'Nothing in this result set is currently breaching your margin rules for the selected period.',
                     icon: Icons.check_circle_outline_rounded,
                   )
-                : _resultsPanel(
-                    title: 'Results',
-                    subtitle: 'Click any result row to see why it was flagged.',
-                    child: Column(children: visibleRows.map(_marginRowCard).toList()),
-                  ),
-            side: _explanationPanel(
-              title: 'Confidence guide',
-              items: const [
-                _GuideItem('Collecting data', 'Not enough history yet. The row is still shown for visibility, but the estimate can change materially.', AppTheme.textMuted),
-                _GuideItem('Low', 'Some history is available. Good for review prompts, but still not fully stable.', AppTheme.warning),
-                _GuideItem('Medium', 'Good data coverage. These rows contribute to the headline recoverable figure.', AppTheme.info),
-                _GuideItem('High', 'Strong data coverage. These are the most reliable estimates in the report.', AppTheme.success),
-              ],
-            ),
+                : _buildMarginTable(visibleRows),
+            side: _buildConfidencePanel(),
           ),
           if ((totals['informal_return_lines'] ?? 0) != 0) ...[
             const SizedBox(height: 12),
@@ -356,11 +369,16 @@ class _MoneyFinderScreenState extends State<MoneyFinderScreen> {
     final qualifyingActors = result['qualifying_actors'] ?? rows.length;
     final baselineRate = double.tryParse(result['baseline_rate']?.toString() ?? '');
     double? biggestDiff;
+    int outOfShiftTotal = 0;
     for (final row in rows) {
       final rate = double.tryParse(row['discount_rate']?.toString() ?? '');
-      if (rate == null || baselineRate == null) continue;
-      final diff = rate - baselineRate;
-      if (biggestDiff == null || diff.abs() > biggestDiff.abs()) biggestDiff = diff;
+      if (rate != null && baselineRate != null) {
+        final diff = rate - baselineRate;
+        if (biggestDiff == null || diff.abs() > biggestDiff.abs()) biggestDiff = diff;
+      }
+      final out = asMap(row['out_of_shift']);
+      outOfShiftTotal += (out['no_shift_linked'] as num?)?.toInt() ?? 0;
+      outOfShiftTotal += (out['outside_window'] as num?)?.toInt() ?? 0;
     }
     final highConfidence = rows.where((row) => confidenceLevel(row['comparison_basis']) == 'high').length;
 
@@ -368,26 +386,26 @@ class _MoneyFinderScreenState extends State<MoneyFinderScreen> {
       tab: 1,
       envelope: envelope,
       title: 'Discount Observations',
-      subtitle: 'Compare discount behaviour against the branch baseline in a professional, non-accusatory way.',
+      subtitle: 'Compare discount behaviour against the branch baseline without labelling normal business activity as suspicious.',
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _heroIntro(
             icon: Icons.percent_rounded,
             color: AppTheme.purple,
-            title: 'Who discounts differently from the branch average?',
+            title: 'What this means',
             message:
-                'These are observations, not accusations. CounterIQ shows measured discount behaviour and, where possible, compares it against the branch baseline. Click a row to see the reasoning in detail.',
+                'This report shows how each ${_actor == 'salesman' ? 'salesperson' : 'cashier'} discounts compared with the branch baseline. A difference is an observation only; promotions, wholesale customers and approved discounts can all explain it.',
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 18),
           _summaryGrid(
             children: [
               _summaryCard(
-                icon: Icons.analytics_outlined,
+                icon: Icons.percent_rounded,
                 iconColor: AppTheme.purple,
                 title: 'Branch average discount',
                 value: percent(result['baseline_rate']),
-                caption: 'Average discount across the selected branch baseline.',
+                caption: 'Reference rate used for branch comparison.',
               ),
               _summaryCard(
                 icon: Icons.groups_rounded,
@@ -398,26 +416,26 @@ class _MoneyFinderScreenState extends State<MoneyFinderScreen> {
               ),
               _summaryCard(
                 icon: Icons.compare_arrows_rounded,
-                iconColor: biggestDiff == null ? AppTheme.textMuted : (biggestDiff >= 0 ? AppTheme.danger : AppTheme.success),
-                title: 'Strongest gap vs baseline',
+                iconColor: biggestDiff == null ? AppTheme.textMuted : AppTheme.warning,
+                title: 'Largest gap vs branch',
                 value: biggestDiff == null ? '—' : percent(biggestDiff, signed: true),
-                caption: biggestDiff == null ? 'Baseline still forming.' : 'Largest observed difference from the branch average.',
+                caption: biggestDiff == null ? 'Baseline still forming.' : 'Largest observed difference from branch average.',
               ),
               _summaryCard(
-                icon: Icons.verified_rounded,
-                iconColor: AppTheme.success,
-                title: 'High-confidence observations',
-                value: '$highConfidence',
-                caption: 'Rows backed by strong comparison evidence.',
+                icon: Icons.schedule_rounded,
+                iconColor: AppTheme.warning,
+                title: 'Out-of-shift events',
+                value: '$outOfShiftTotal',
+                caption: 'Discounted sales without a normal linked shift window.',
               ),
             ],
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 18),
           _controlPanel(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const _BlockTitle(title: 'Comparison setup', subtitle: 'Choose who to compare and search the result set.'),
+                const _BlockTitle(title: 'Review filters', subtitle: 'Choose the staff role to compare and search within the current result set.'),
                 const SizedBox(height: 14),
                 Wrap(
                   spacing: 12,
@@ -447,7 +465,7 @@ class _MoneyFinderScreenState extends State<MoneyFinderScreen> {
                       child: TextField(
                         onChanged: (value) => setState(() => _discountSearch = value),
                         decoration: InputDecoration(
-                          labelText: 'Search result',
+                          labelText: 'Search',
                           prefixIcon: const Icon(Icons.search_rounded),
                           hintText: _actor == 'cashier' ? 'Cashier name' : 'Salesperson name',
                         ),
@@ -457,33 +475,29 @@ class _MoneyFinderScreenState extends State<MoneyFinderScreen> {
                 ),
                 const SizedBox(height: 10),
                 Text(
-                  'Minimum baseline sample: ${result['min_sample_invoices'] ?? 20} invoices • qualifying actors: ${result['qualifying_actors'] ?? 0}',
+                  'Minimum branch-baseline sample: ${result['min_sample_invoices'] ?? 20} invoices • high-confidence comparisons: $highConfidence',
                   style: const TextStyle(color: AppTheme.textMuted),
                 ),
               ],
             ),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 18),
           _responsiveSplit(
             main: visibleRows.isEmpty
                 ? const IntelligenceEmptyState(
                     title: 'No discount comparison yet',
-                    subtitle: 'CounterIQ needs discount activity before it can compare behaviour against the branch baseline.',
+                    subtitle: 'CounterIQ needs more discount activity before it can compare behaviour against the branch baseline.',
                     icon: Icons.percent_rounded,
                   )
-                : _resultsPanel(
-                    title: 'Observations',
-                    subtitle: 'Click a row to see measured facts, comparison logic and supporting context.',
-                    child: Column(children: visibleRows.map((row) => _discountRowCard(row, result)).toList()),
-                  ),
+                : _buildDiscountTable(visibleRows, result),
             side: _explanationPanel(
-              title: 'How to interpret this page',
-              note:
-                  'A higher rate can have legitimate reasons such as promotions, wholesale customers, approved discounts or product mix. Review business context before drawing any conclusion.',
+              title: 'How to read this',
+              note: 'A higher discount rate is not wrongdoing. Use the detail view to understand the measured evidence and business context before taking action.',
               items: const [
-                _GuideItem('Measured rate', 'The average discount directly observed from this actor’s recorded invoices.', AppTheme.info),
-                _GuideItem('Branch comparison', 'A statistical comparison against the branch baseline, shown only when enough evidence exists.', AppTheme.purple),
-                _GuideItem('Out-of-shift context', 'Shows whether discount activity happened without a normal linked shift window.', AppTheme.warning),
+                _GuideItem('Measured rate', 'The actor’s own recorded average discount across invoices.', AppTheme.info),
+                _GuideItem('Difference vs branch', 'How far the measured rate sits above or below the branch average.', AppTheme.purple),
+                _GuideItem('Comparison confidence', 'Whether enough comparable branch activity exists for the statistical comparison to be meaningful.', AppTheme.success),
+                _GuideItem('Out-of-shift context', 'Discounted sales that were not inside a normal linked shift window.', AppTheme.warning),
               ],
             ),
           ),
@@ -501,56 +515,77 @@ class _MoneyFinderScreenState extends State<MoneyFinderScreen> {
       return (row['name']?.toString() ?? '').toLowerCase().contains(q);
     }).toList(growable: false);
     final belowCost = rows.where((r) => r['flag'] == 'below_cost').length;
+    final risingCost = rows.where((r) {
+      final trend = r['purchase_price_trend_pct'];
+      final value = trend is num ? trend.toDouble() : double.tryParse(trend?.toString() ?? '');
+      return value != null && value > 0;
+    }).length;
 
     return _page(
       tab: 2,
       envelope: envelope,
       title: 'Repricing Alerts',
-      subtitle: 'Identify products whose current selling price no longer supports your target margin.',
+      subtitle: 'Identify products whose current selling price no longer clears your target margin.',
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _heroIntro(
             icon: Icons.price_change_outlined,
             color: AppTheme.info,
-            title: 'Which products need a price review?',
+            title: 'What this means',
             message:
-                'This is advisory only. CounterIQ never changes a price from this screen. Click any row to see exactly why the alert exists and what suggested price would clear your current target margin.',
+                'CounterIQ compares current average cost with the current selling price and your target margin. Suggestions are advisory only; no product price is changed from this screen.',
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 18),
           _summaryGrid(
             children: [
               _summaryCard(icon: Icons.inventory_2_outlined, iconColor: AppTheme.info, title: 'Products to review', value: '${rows.length}', caption: 'Items currently on the repricing watchlist.'),
-              _summaryCard(icon: Icons.trending_down_rounded, iconColor: AppTheme.danger, title: 'Below cost', value: '$belowCost', caption: 'Urgent items now selling below cost.'),
-              _summaryCard(icon: Icons.show_chart_rounded, iconColor: AppTheme.warning, title: 'Below target margin', value: '${rows.length - belowCost}', caption: 'Profitable, but under the configured target margin.'),
+              _summaryCard(icon: Icons.trending_down_rounded, iconColor: AppTheme.danger, title: 'Below cost', value: '$belowCost', caption: 'Urgent products currently selling below average cost.'),
+              _summaryCard(icon: Icons.show_chart_rounded, iconColor: AppTheme.warning, title: 'Below target margin', value: '${rows.length - belowCost}', caption: 'Still profitable, but below your configured target margin.'),
+              _summaryCard(icon: Icons.trending_up_rounded, iconColor: AppTheme.purple, title: 'Rising purchase cost', value: '$risingCost', caption: 'Rows where recent purchase-price trend is positive.'),
             ],
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 18),
           _controlPanel(
-            child: SizedBox(
-              width: 340,
-              child: TextField(
-                onChanged: (value) => setState(() => _repricingSearch = value),
-                decoration: const InputDecoration(
-                  labelText: 'Search product',
-                  prefixIcon: Icon(Icons.search_rounded),
-                  hintText: 'Find a product in repricing alerts',
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const _BlockTitle(title: 'Review filters', subtitle: 'Search within the current repricing watchlist.'),
+                const SizedBox(height: 14),
+                SizedBox(
+                  width: 340,
+                  child: TextField(
+                    onChanged: (value) => setState(() => _repricingSearch = value),
+                    decoration: const InputDecoration(
+                      labelText: 'Search product',
+                      prefixIcon: Icon(Icons.search_rounded),
+                      hintText: 'Product name',
+                    ),
+                  ),
                 ),
-              ),
+              ],
             ),
           ),
-          const SizedBox(height: 16),
-          visibleRows.isEmpty
-              ? const IntelligenceEmptyState(
-                  title: 'No repricing alerts',
-                  subtitle: 'Current selling prices are clearing the configured target margin.',
-                  icon: Icons.check_circle_outline_rounded,
-                )
-              : _resultsPanel(
-                  title: 'Products needing review',
-                  subtitle: 'Click a row to see why the price is being flagged.',
-                  child: Column(children: visibleRows.map(_repricingRowCard).toList()),
-                ),
+          const SizedBox(height: 18),
+          _responsiveSplit(
+            main: visibleRows.isEmpty
+                ? const IntelligenceEmptyState(
+                    title: 'No repricing alerts',
+                    subtitle: 'Current selling prices are clearing the configured target margin.',
+                    icon: Icons.check_circle_outline_rounded,
+                  )
+                : _buildRepricingTable(visibleRows),
+            side: _explanationPanel(
+              title: 'How to read alerts',
+              note: 'Suggested price is a review aid only. CounterIQ never writes a new selling price from this screen.',
+              items: const [
+                _GuideItem('Below cost', 'Current selling price is lower than the current average cost.', AppTheme.danger),
+                _GuideItem('Below target margin', 'The item is profitable, but the price no longer clears your configured target margin.', AppTheme.warning),
+                _GuideItem('Purchase cost trend', 'Shows recent movement in weighted purchase price, not historical average-cost movement.', AppTheme.purple),
+                _GuideItem('Suggested price', 'The advisory price required to clear the configured target margin using current average cost.', AppTheme.info),
+              ],
+            ),
+          ),
         ],
       ),
     );
@@ -565,59 +600,153 @@ class _MoneyFinderScreenState extends State<MoneyFinderScreen> {
       return (row['name']?.toString() ?? '').toLowerCase().contains(q);
     }).toList(growable: false);
     final neverSold = rows.where((r) => r['never_sold'] == true).length;
+    int longestIdle = 0;
+    for (final row in rows) {
+      final idle = (row['days_idle'] as num?)?.toInt() ?? 0;
+      if (idle > longestIdle) longestIdle = idle;
+    }
 
     return _page(
       tab: 3,
       envelope: envelope,
       title: 'Dead Stock',
-      subtitle: 'Highlight inventory that is sitting still so you can see where cash is locked up.',
+      subtitle: 'See inventory that is sitting still and how much working capital is tied up in it.',
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _heroIntro(
             icon: Icons.inventory_2_outlined,
             color: AppTheme.warning,
-            title: 'What stock is not moving?',
+            title: 'What this means',
             message:
-                'Dead stock shows inventory currently on hand that has not moved for long enough to cross your configured rule. Click a row to see why the item is being classed as dead stock.',
+                'This report highlights positive on-hand stock that has not sold for long enough to cross your configured dead-stock rule. Never-sold products are kept separate from ordinary idle-day buckets.',
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 18),
           _summaryGrid(
             children: [
               _summaryCard(icon: Icons.lock_clock_outlined, iconColor: AppTheme.danger, title: 'Locked capital', value: money(result['locked_capital_total']), caption: 'Estimated from on-hand quantity × average cost.'),
-              _summaryCard(icon: Icons.inventory_2_outlined, iconColor: AppTheme.warning, title: 'Products flagged', value: '${rows.length}', caption: 'Products currently classed as dead stock.'),
+              _summaryCard(icon: Icons.inventory_2_outlined, iconColor: AppTheme.warning, title: 'Products flagged', value: '${rows.length}', caption: 'Current dead-stock result set.'),
               _summaryCard(icon: Icons.block_rounded, iconColor: AppTheme.textMuted, title: 'Never sold', value: '$neverSold', caption: 'On-hand products with no recorded sale history.'),
+              _summaryCard(icon: Icons.timelapse_rounded, iconColor: AppTheme.purple, title: 'Longest idle', value: longestIdle == 0 ? '—' : '$longestIdle days', caption: 'Longest measured idle period in the current result set.'),
             ],
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 18),
           _controlPanel(
-            child: SizedBox(
-              width: 340,
-              child: TextField(
-                onChanged: (value) => setState(() => _deadStockSearch = value),
-                decoration: const InputDecoration(
-                  labelText: 'Search product',
-                  prefixIcon: Icon(Icons.search_rounded),
-                  hintText: 'Find a product in dead stock',
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const _BlockTitle(title: 'Review filters', subtitle: 'Search within the current dead-stock result set.'),
+                const SizedBox(height: 14),
+                SizedBox(
+                  width: 340,
+                  child: TextField(
+                    onChanged: (value) => setState(() => _deadStockSearch = value),
+                    decoration: const InputDecoration(
+                      labelText: 'Search product',
+                      prefixIcon: Icon(Icons.search_rounded),
+                      hintText: 'Product name',
+                    ),
+                  ),
                 ),
-              ),
+              ],
             ),
           ),
-          const SizedBox(height: 16),
-          visibleRows.isEmpty
-              ? const IntelligenceEmptyState(
-                  title: 'No dead stock identified',
-                  subtitle: 'Nothing on hand is currently breaching your dead-stock threshold.',
-                  icon: Icons.check_circle_outline_rounded,
-                )
-              : _resultsPanel(
-                  title: 'Dead stock results',
-                  subtitle: 'Click a row to see what drove the conclusion.',
-                  child: Column(children: visibleRows.map(_deadStockRowCard).toList()),
-                ),
+          const SizedBox(height: 18),
+          _responsiveSplit(
+            main: visibleRows.isEmpty
+                ? const IntelligenceEmptyState(
+                    title: 'No dead stock identified',
+                    subtitle: 'Nothing on hand is currently breaching your dead-stock threshold.',
+                    icon: Icons.check_circle_outline_rounded,
+                  )
+                : _buildDeadStockTable(visibleRows),
+            side: _explanationPanel(
+              title: 'How to read this',
+              note: 'Dead stock is a review signal, not an automatic markdown or disposal instruction.',
+              items: const [
+                _GuideItem('Never sold', 'The item is currently on hand but has no recorded sale movement.', AppTheme.textMuted),
+                _GuideItem('Idle days', 'Whole business-calendar days since the last recorded sale movement.', AppTheme.warning),
+                _GuideItem('Locked capital', 'Current on-hand quantity multiplied by average cost.', AppTheme.danger),
+                _GuideItem('Bucket', 'Groups products by idle age so the oldest stock is easy to identify.', AppTheme.purple),
+              ],
+            ),
+          ),
         ],
       ),
     );
+  }
+
+  Widget _buildMarginTable(List<Map<String, dynamic>> rows) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: AppTheme.border),
+      ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final tableWidth = constraints.maxWidth < 1080 ? 1080.0 : constraints.maxWidth;
+          return SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: SizedBox(
+              width: tableWidth,
+              child: Column(
+                children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+                decoration: const BoxDecoration(
+                  border: Border(bottom: BorderSide(color: AppTheme.border)),
+                ),
+                child: const Row(
+                  children: [
+                    Expanded(flex: 34, child: Text('Product', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: AppTheme.textMuted))),
+                    Expanded(flex: 10, child: Text('Revenue', textAlign: TextAlign.right, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: AppTheme.textMuted))),
+                    Expanded(flex: 10, child: Text('Margin', textAlign: TextAlign.right, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: AppTheme.textMuted))),
+                    Expanded(flex: 8, child: Text('Margin %', textAlign: TextAlign.right, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: AppTheme.textMuted))),
+                    Expanded(flex: 9, child: Text('Sale Lines', textAlign: TextAlign.center, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: AppTheme.textMuted))),
+                    Expanded(flex: 18, child: Text('Issue Details', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: AppTheme.textMuted))),
+                    Expanded(flex: 11, child: Text('Recoverable', textAlign: TextAlign.right, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: AppTheme.textMuted))),
+                    Expanded(flex: 10, child: Text('Confidence', textAlign: TextAlign.center, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: AppTheme.textMuted))),
+                    SizedBox(width: 28),
+                  ],
+                ),
+              ),
+                  ...rows.map(_marginRowCard),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildConfidencePanel() {
+    return _explanationPanel(
+      title: 'Confidence level',
+      items: const [
+        _GuideItem('Collecting data', 'Not enough history yet (less than 14 days or fewer than 5 selling days). Value is shown for visibility and may still move.', AppTheme.textMuted),
+        _GuideItem('Low', 'Some history is available (at least 14 days and 5 selling days), but not yet enough for a stable estimate.', AppTheme.warning),
+        _GuideItem('Medium', 'Good data coverage (around 60 days and 20 observed selling days). Suitable for the recoverable headline.', AppTheme.info),
+        _GuideItem('High', 'Strong data coverage (around 180 days and 60 observed selling days). These are the most reliable estimates.', AppTheme.success),
+      ],
+    );
+  }
+
+  String _averageMargin(List<Map<String, dynamic>> rows) {
+    if (rows.isEmpty) return '0.0%';
+    double sum = 0;
+    int count = 0;
+    for (final row in rows) {
+      final value = row['margin_pct'];
+      final v = value is num ? value.toDouble() : double.tryParse(value?.toString() ?? '');
+      if (v == null) continue;
+      sum += v;
+      count++;
+    }
+    if (count == 0) return '0.0%';
+    final avg = sum / count;
+    return percent(avg);
   }
 
   Widget _marginRowCard(Map<String, dynamic> row) {
@@ -625,79 +754,162 @@ class _MoneyFinderScreenState extends State<MoneyFinderScreen> {
         ? (row['flags'] as List).map((e) => e.toString()).toSet().toList()
         : <String>[];
     final usableEstimate = confidenceHasUsableEstimate(row['basis']);
+    final marginValue = double.tryParse(row['margin']?.toString() ?? '') ?? 0;
 
-    return _clickableRowCard(
+    return InkWell(
       onTap: () => _showMarginDetail(row),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        row['group_label']?.toString() ?? 'Unknown',
-                        style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w900),
-                      ),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+        decoration: const BoxDecoration(
+          border: Border(bottom: BorderSide(color: AppTheme.border)),
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              flex: 34,
+              child: Row(
+                children: [
+                  Container(
+                    width: 42,
+                    height: 42,
+                    decoration: BoxDecoration(
+                      color: AppTheme.primarySoft,
+                      borderRadius: BorderRadius.circular(12),
                     ),
-                    const _ClickHint(),
-                  ],
-                ),
-                const SizedBox(height: 10),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    _statPill('Revenue', money(row['revenue'])),
-                    _statPill('Cost', money(row['cost'])),
-                    _statPill('Margin', money(row['margin']), color: (double.tryParse(row['margin']?.toString() ?? '') ?? 0) < 0 ? AppTheme.danger : null),
-                    _statPill('Margin %', percent(row['margin_pct'])),
-                    _statPill('Sale lines', '${row['lines'] ?? 0}'),
-                  ],
-                ),
-                if (flags.isNotEmpty) ...[
-                  const SizedBox(height: 10),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: flags.map((flag) {
-                      final belowCost = flag == 'below_cost';
-                      return IssueChip(
-                        label: belowCost ? 'Below cost detected' : 'Below minimum margin detected',
-                        color: belowCost ? AppTheme.danger : AppTheme.warning,
-                      );
-                    }).toList(),
+                    child: const Icon(Icons.inventory_2_outlined, color: AppTheme.primary, size: 20),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          row['group_label']?.toString() ?? 'Unknown',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          _groupSubtext(row),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontSize: 12, color: AppTheme.textMuted),
+                        ),
+                      ],
+                    ),
                   ),
                 ],
-              ],
+              ),
             ),
-          ),
-          const SizedBox(width: 16),
-          SizedBox(
-            width: 210,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                const Text('Potential recoverable', style: TextStyle(color: AppTheme.textMuted, fontSize: 12, fontWeight: FontWeight.w700)),
-                const SizedBox(height: 4),
-                Text(
-                  usableEstimate ? money(row['recoverable']) : '—',
-                  style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900, color: usableEstimate ? AppTheme.warning : AppTheme.textMuted),
-                ),
-                const SizedBox(height: 3),
-                Text(
-                  usableEstimate ? 'Based on current evidence' : 'Wait for more history',
-                  style: const TextStyle(fontSize: 11, color: AppTheme.textMuted),
-                ),
-                const SizedBox(height: 10),
-                Align(alignment: Alignment.centerRight, child: ConfidenceBadge(basis: row['basis'], compact: true)),
-              ],
+            Expanded(flex: 10, child: Text(money(row['revenue']), textAlign: TextAlign.right, style: const TextStyle(fontWeight: FontWeight.w700))),
+            Expanded(
+              flex: 10,
+              child: Text(
+                money(row['margin']),
+                textAlign: TextAlign.right,
+                style: TextStyle(fontWeight: FontWeight.w800, color: marginValue < 0 ? AppTheme.danger : AppTheme.navy),
+              ),
             ),
-          ),
-        ],
+            Expanded(flex: 8, child: Text(percent(row['margin_pct']), textAlign: TextAlign.right, style: const TextStyle(fontWeight: FontWeight.w700))),
+            Expanded(flex: 9, child: Text('${row['lines'] ?? 0}', textAlign: TextAlign.center, style: const TextStyle(fontWeight: FontWeight.w700))),
+            Expanded(
+              flex: 18,
+              child: Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                children: flags.map((flag) => _compactIssueChip(flag)).toList(),
+              ),
+            ),
+            Expanded(
+              flex: 11,
+              child: Text(
+                usableEstimate ? money(row['recoverable']) : '—',
+                textAlign: TextAlign.right,
+                style: TextStyle(fontWeight: FontWeight.w900, color: usableEstimate ? AppTheme.warning : AppTheme.textMuted),
+              ),
+            ),
+            Expanded(
+              flex: 10,
+              child: Align(alignment: Alignment.center, child: ConfidenceBadge(basis: row['basis'], compact: true)),
+            ),
+            const SizedBox(width: 12),
+            const Icon(Icons.chevron_right_rounded, color: AppTheme.textMuted),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _groupSubtext(Map<String, dynamic> row) {
+    final groupBy = _groupBy == 'product' ? 'SKU/Group' : 'Group key';
+    final key = row['group_key']?.toString() ?? '—';
+    return '$groupBy: $key • Click to view contributing line items';
+  }
+
+  Widget _compactIssueChip(String flag) {
+    late final String label;
+    late final Color color;
+    if (flag == 'below_cost') {
+      label = 'Below cost';
+      color = AppTheme.danger;
+    } else if (flag == 'below_floor') {
+      label = 'Below floor';
+      color = AppTheme.warning;
+    } else {
+      label = flag.replaceAll('_', ' ');
+      color = AppTheme.textMuted;
+    }
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: color.withOpacity(.10),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(label, style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w800, color: color)),
+    );
+  }
+
+  Widget _buildDiscountTable(List<Map<String, dynamic>> rows, Map<String, dynamic> result) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: AppTheme.border),
+      ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final tableWidth = constraints.maxWidth < 1120 ? 1120.0 : constraints.maxWidth;
+          return SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: SizedBox(
+              width: tableWidth,
+              child: Column(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+                    decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: AppTheme.border))),
+                    child: const Row(
+                      children: [
+                        Expanded(flex: 28, child: Text('Staff', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: AppTheme.textMuted))),
+                        Expanded(flex: 12, child: Text('Gross Sales', textAlign: TextAlign.right, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: AppTheme.textMuted))),
+                        Expanded(flex: 11, child: Text('Discount', textAlign: TextAlign.right, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: AppTheme.textMuted))),
+                        Expanded(flex: 11, child: Text('Avg %', textAlign: TextAlign.right, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: AppTheme.textMuted))),
+                        Expanded(flex: 11, child: Text('Branch %', textAlign: TextAlign.right, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: AppTheme.textMuted))),
+                        Expanded(flex: 11, child: Text('Difference', textAlign: TextAlign.right, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: AppTheme.textMuted))),
+                        Expanded(flex: 9, child: Text('Invoices', textAlign: TextAlign.center, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: AppTheme.textMuted))),
+                        Expanded(flex: 11, child: Text('Out of Shift', textAlign: TextAlign.center, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: AppTheme.textMuted))),
+                        Expanded(flex: 14, child: Text('Confidence', textAlign: TextAlign.center, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: AppTheme.textMuted))),
+                        SizedBox(width: 28),
+                      ],
+                    ),
+                  ),
+                  ...rows.map((row) => _discountRowCard(row, result)),
+                ],
+              ),
+            ),
+          );
+        },
       ),
     );
   }
@@ -706,241 +918,486 @@ class _MoneyFinderScreenState extends State<MoneyFinderScreen> {
     final discountRate = double.tryParse(row['discount_rate']?.toString() ?? '');
     final baselineRate = double.tryParse(result['baseline_rate']?.toString() ?? '');
     final difference = discountRate != null && baselineRate != null ? discountRate - baselineRate : null;
-    final comparisonReady = confidenceLevel(row['comparison_basis']) != 'none' && baselineRate != null;
+    final out = asMap(row['out_of_shift']);
+    final outCount = ((out['no_shift_linked'] as num?)?.toInt() ?? 0) + ((out['outside_window'] as num?)?.toInt() ?? 0);
 
-    return _clickableRowCard(
+    return InkWell(
       onTap: () => _showDiscountDetail(row, result),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(row['actor_name']?.toString() ?? 'Unknown', style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w900)),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+        decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: AppTheme.border))),
+        child: Row(
+          children: [
+            Expanded(
+              flex: 28,
+              child: Row(
+                children: [
+                  Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(color: AppTheme.purple.withOpacity(.10), borderRadius: BorderRadius.circular(12)),
+                    child: const Icon(Icons.person_outline_rounded, color: AppTheme.purple, size: 20),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(row['actor_name']?.toString() ?? 'Unknown', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 15.5, fontWeight: FontWeight.w900)),
+                        const SizedBox(height: 3),
+                        Text('ID ${row['actor_id'] ?? '—'} • Click for explanation', style: const TextStyle(fontSize: 11.5, color: AppTheme.textMuted)),
+                      ],
                     ),
-                    const _ClickHint(),
-                  ],
-                ),
-                const SizedBox(height: 10),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    _statPill('Invoices', '${row['invoice_count'] ?? 0}'),
-                    _statPill('Measured avg', percent(row['discount_rate'])),
-                    _statPill('Branch avg', percent(result['baseline_rate'])),
-                    _statPill(
-                      'Difference',
-                      difference == null ? '—' : percent(difference, signed: true),
-                      color: difference == null ? null : (difference >= 0 ? AppTheme.danger : AppTheme.success),
+                  ),
+                ],
+              ),
+            ),
+            Expanded(flex: 12, child: Text(money(row['gross']), textAlign: TextAlign.right, style: const TextStyle(fontWeight: FontWeight.w700))),
+            Expanded(flex: 11, child: Text(money(row['discount']), textAlign: TextAlign.right, style: const TextStyle(fontWeight: FontWeight.w700))),
+            Expanded(flex: 11, child: Text(percent(row['discount_rate']), textAlign: TextAlign.right, style: const TextStyle(fontWeight: FontWeight.w800))),
+            Expanded(flex: 11, child: Text(percent(result['baseline_rate']), textAlign: TextAlign.right, style: const TextStyle(fontWeight: FontWeight.w700))),
+            Expanded(
+              flex: 11,
+              child: Text(
+                difference == null ? '—' : percent(difference, signed: true),
+                textAlign: TextAlign.right,
+                style: TextStyle(fontWeight: FontWeight.w900, color: difference == null ? AppTheme.textMuted : (difference > 0 ? AppTheme.warning : AppTheme.success)),
+              ),
+            ),
+            Expanded(flex: 9, child: Text('${row['invoice_count'] ?? 0}', textAlign: TextAlign.center, style: const TextStyle(fontWeight: FontWeight.w700))),
+            Expanded(
+              flex: 11,
+              child: Text(
+                '$outCount',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontWeight: FontWeight.w800, color: outCount > 0 ? AppTheme.warning : AppTheme.navy),
+              ),
+            ),
+            Expanded(flex: 14, child: Align(alignment: Alignment.center, child: ConfidenceBadge(basis: row['comparison_basis'], compact: true))),
+            const SizedBox(width: 12),
+            const Icon(Icons.chevron_right_rounded, color: AppTheme.textMuted),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildRepricingTable(List<Map<String, dynamic>> rows) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: AppTheme.border),
+      ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final tableWidth = constraints.maxWidth < 1040 ? 1040.0 : constraints.maxWidth;
+          return SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: SizedBox(
+              width: tableWidth,
+              child: Column(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+                    decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: AppTheme.border))),
+                    child: const Row(
+                      children: [
+                        Expanded(flex: 32, child: Text('Product', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: AppTheme.textMuted))),
+                        Expanded(flex: 11, child: Text('Avg Cost', textAlign: TextAlign.right, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: AppTheme.textMuted))),
+                        Expanded(flex: 11, child: Text('Price', textAlign: TextAlign.right, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: AppTheme.textMuted))),
+                        Expanded(flex: 10, child: Text('Margin %', textAlign: TextAlign.right, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: AppTheme.textMuted))),
+                        Expanded(flex: 11, child: Text('Cost Trend', textAlign: TextAlign.right, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: AppTheme.textMuted))),
+                        Expanded(flex: 17, child: Text('Reason', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: AppTheme.textMuted))),
+                        Expanded(flex: 12, child: Text('Suggested', textAlign: TextAlign.right, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: AppTheme.textMuted))),
+                        Expanded(flex: 13, child: Text('Confidence', textAlign: TextAlign.center, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: AppTheme.textMuted))),
+                        SizedBox(width: 28),
+                      ],
                     ),
-                  ],
-                ),
-                const SizedBox(height: 10),
-                Text(
-                  comparisonReady
-                      ? 'Measured against the branch baseline with enough evidence for comparison.'
-                      : 'Measured rate is available, but branch comparison evidence is still forming.',
-                  style: const TextStyle(color: AppTheme.textMuted, height: 1.3),
-                ),
-              ],
+                  ),
+                  ...rows.map(_repricingRowCard),
+                ],
+              ),
             ),
-          ),
-          const SizedBox(width: 16),
-          SizedBox(
-            width: 230,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    const Text('Measured', style: TextStyle(fontSize: 11.5, color: AppTheme.textMuted, fontWeight: FontWeight.w700)),
-                    const SizedBox(width: 8),
-                    ConfidenceBadge(basis: row['rate_basis'], compact: true),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    const Text('Comparison', style: TextStyle(fontSize: 11.5, color: AppTheme.textMuted, fontWeight: FontWeight.w700)),
-                    const SizedBox(width: 8),
-                    ConfidenceBadge(basis: row['comparison_basis'], compact: true),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ],
+          );
+        },
       ),
     );
   }
 
   Widget _repricingRowCard(Map<String, dynamic> row) {
     final belowCost = row['flag'] == 'below_cost';
-    return _clickableRowCard(
+    final trendRaw = row['purchase_price_trend_pct'];
+    final trend = trendRaw is num ? trendRaw.toDouble() : double.tryParse(trendRaw?.toString() ?? '');
+    return InkWell(
       onTap: () => _showRepricingDetail(row),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(row['name']?.toString() ?? 'Product', style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w900)),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+        decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: AppTheme.border))),
+        child: Row(
+          children: [
+            Expanded(
+              flex: 32,
+              child: Row(
+                children: [
+                  Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(color: AppTheme.info.withOpacity(.10), borderRadius: BorderRadius.circular(12)),
+                    child: const Icon(Icons.inventory_2_outlined, color: AppTheme.info, size: 20),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(row['name']?.toString() ?? 'Product', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 15.5, fontWeight: FontWeight.w900)),
+                        const SizedBox(height: 3),
+                        Text('Product ID ${row['product_id'] ?? '—'} • Click for explanation', style: const TextStyle(fontSize: 11.5, color: AppTheme.textMuted)),
+                      ],
                     ),
-                    const _ClickHint(),
-                  ],
-                ),
-                const SizedBox(height: 10),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    _statPill('Avg cost', money(row['avg_cost'])),
-                    _statPill('Current price', money(row['price'])),
-                    _statPill('Current margin', percent(row['implied_margin_pct'])),
-                    if (row['purchase_price_trend_pct'] != null)
-                      _statPill('Cost trend', percent(row['purchase_price_trend_pct'], signed: true)),
-                  ],
-                ),
-                const SizedBox(height: 10),
-                IssueChip(label: belowCost ? 'Below cost' : 'Below target margin', color: belowCost ? AppTheme.danger : AppTheme.warning),
-              ],
+                  ),
+                ],
+              ),
             ),
-          ),
-          const SizedBox(width: 16),
-          SizedBox(
-            width: 190,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                const Text('Suggested price', style: TextStyle(color: AppTheme.textMuted, fontSize: 12, fontWeight: FontWeight.w700)),
-                const SizedBox(height: 4),
-                Text(money(row['suggested_price']), style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w900)),
-                const SizedBox(height: 10),
-                Align(alignment: Alignment.centerRight, child: ConfidenceBadge(basis: row['basis'], compact: true)),
-              ],
+            Expanded(flex: 11, child: Text(money(row['avg_cost']), textAlign: TextAlign.right, style: const TextStyle(fontWeight: FontWeight.w700))),
+            Expanded(flex: 11, child: Text(money(row['price']), textAlign: TextAlign.right, style: const TextStyle(fontWeight: FontWeight.w700))),
+            Expanded(flex: 10, child: Text(percent(row['implied_margin_pct']), textAlign: TextAlign.right, style: const TextStyle(fontWeight: FontWeight.w800))),
+            Expanded(
+              flex: 11,
+              child: Text(
+                trend == null ? '—' : percent(trend, signed: true),
+                textAlign: TextAlign.right,
+                style: TextStyle(fontWeight: FontWeight.w800, color: trend == null ? AppTheme.textMuted : (trend > 0 ? AppTheme.warning : AppTheme.success)),
+              ),
             ),
-          ),
-        ],
+            Expanded(
+              flex: 17,
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: IssueChip(label: belowCost ? 'Below cost' : 'Below target margin', color: belowCost ? AppTheme.danger : AppTheme.warning),
+              ),
+            ),
+            Expanded(flex: 12, child: Text(money(row['suggested_price']), textAlign: TextAlign.right, style: const TextStyle(fontWeight: FontWeight.w900, color: AppTheme.primary))),
+            Expanded(flex: 13, child: Align(alignment: Alignment.center, child: ConfidenceBadge(basis: row['basis'], compact: true))),
+            const SizedBox(width: 12),
+            const Icon(Icons.chevron_right_rounded, color: AppTheme.textMuted),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDeadStockTable(List<Map<String, dynamic>> rows) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(22),
+        border: Border.all(color: AppTheme.border),
+      ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final tableWidth = constraints.maxWidth < 1040 ? 1040.0 : constraints.maxWidth;
+          return SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: SizedBox(
+              width: tableWidth,
+              child: Column(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+                    decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: AppTheme.border))),
+                    child: const Row(
+                      children: [
+                        Expanded(flex: 32, child: Text('Product', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: AppTheme.textMuted))),
+                        Expanded(flex: 10, child: Text('On Hand', textAlign: TextAlign.right, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: AppTheme.textMuted))),
+                        Expanded(flex: 11, child: Text('Avg Cost', textAlign: TextAlign.right, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: AppTheme.textMuted))),
+                        Expanded(flex: 14, child: Text('Last Sold', textAlign: TextAlign.center, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: AppTheme.textMuted))),
+                        Expanded(flex: 10, child: Text('Idle', textAlign: TextAlign.center, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: AppTheme.textMuted))),
+                        Expanded(flex: 11, child: Text('Bucket', textAlign: TextAlign.center, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: AppTheme.textMuted))),
+                        Expanded(flex: 13, child: Text('Locked Capital', textAlign: TextAlign.right, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: AppTheme.textMuted))),
+                        Expanded(flex: 13, child: Text('Confidence', textAlign: TextAlign.center, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: AppTheme.textMuted))),
+                        SizedBox(width: 28),
+                      ],
+                    ),
+                  ),
+                  ...rows.map(_deadStockRowCard),
+                ],
+              ),
+            ),
+          );
+        },
       ),
     );
   }
 
   Widget _deadStockRowCard(Map<String, dynamic> row) {
-    return _clickableRowCard(
+    final neverSold = row['never_sold'] == true;
+    return InkWell(
       onTap: () => _showDeadStockDetail(row),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(row['name']?.toString() ?? 'Product', style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w900)),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+        decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: AppTheme.border))),
+        child: Row(
+          children: [
+            Expanded(
+              flex: 32,
+              child: Row(
+                children: [
+                  Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(color: AppTheme.warning.withOpacity(.10), borderRadius: BorderRadius.circular(12)),
+                    child: const Icon(Icons.inventory_2_outlined, color: AppTheme.warning, size: 20),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(row['name']?.toString() ?? 'Product', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 15.5, fontWeight: FontWeight.w900)),
+                        const SizedBox(height: 3),
+                        Text('Product ID ${row['product_id'] ?? '—'} • Click for explanation', style: const TextStyle(fontSize: 11.5, color: AppTheme.textMuted)),
+                      ],
                     ),
-                    const _ClickHint(),
-                  ],
-                ),
-                const SizedBox(height: 10),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    _statPill('On hand', qty(row['quantity'])),
-                    _statPill('Avg cost', money(row['avg_cost'])),
-                    _statPill('Bucket', titleCase(row['bucket']?.toString() ?? 'Unknown')),
-                    _statPill(
-                      row['never_sold'] == true ? 'Status' : 'Idle time',
-                      row['never_sold'] == true ? 'Never sold' : '${row['days_idle'] ?? '—'} days',
-                    ),
-                  ],
-                ),
-              ],
+                  ),
+                ],
+              ),
             ),
-          ),
-          const SizedBox(width: 16),
-          SizedBox(
-            width: 190,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                const Text('Locked capital', style: TextStyle(color: AppTheme.textMuted, fontSize: 12, fontWeight: FontWeight.w700)),
-                const SizedBox(height: 4),
-                Text(money(row['locked_capital']), style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w900, color: AppTheme.warning)),
-                const SizedBox(height: 10),
-                Align(alignment: Alignment.centerRight, child: ConfidenceBadge(basis: row['basis'], compact: true)),
-              ],
+            Expanded(flex: 10, child: Text(qty(row['quantity']), textAlign: TextAlign.right, style: const TextStyle(fontWeight: FontWeight.w700))),
+            Expanded(flex: 11, child: Text(money(row['avg_cost']), textAlign: TextAlign.right, style: const TextStyle(fontWeight: FontWeight.w700))),
+            Expanded(flex: 14, child: Text(neverSold ? 'Never sold' : (row['last_sold_at']?.toString() ?? '—'), textAlign: TextAlign.center, style: const TextStyle(fontWeight: FontWeight.w700))),
+            Expanded(flex: 10, child: Text(neverSold ? '—' : '${row['days_idle'] ?? '—'} d', textAlign: TextAlign.center, style: const TextStyle(fontWeight: FontWeight.w800))),
+            Expanded(
+              flex: 11,
+              child: Align(
+                alignment: Alignment.center,
+                child: _bucketChip(row['bucket']?.toString() ?? 'unknown', neverSold: neverSold),
+              ),
             ),
-          ),
-        ],
+            Expanded(flex: 13, child: Text(money(row['locked_capital']), textAlign: TextAlign.right, style: const TextStyle(fontWeight: FontWeight.w900, color: AppTheme.warning))),
+            Expanded(flex: 13, child: Align(alignment: Alignment.center, child: ConfidenceBadge(basis: row['basis'], compact: true))),
+            const SizedBox(width: 12),
+            const Icon(Icons.chevron_right_rounded, color: AppTheme.textMuted),
+          ],
+        ),
       ),
     );
   }
 
+  Widget _bucketChip(String bucket, {required bool neverSold}) {
+    final color = neverSold ? AppTheme.textMuted : AppTheme.warning;
+    final label = neverSold ? 'Never sold' : titleCase(bucket.replaceAll('+', ' plus'));
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+      decoration: BoxDecoration(color: color.withOpacity(.10), borderRadius: BorderRadius.circular(999)),
+      child: Text(label, style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w800, color: color)),
+    );
+  }
+
   Future<void> _showMarginDetail(Map<String, dynamic> row) async {
-    final flags = (row['flags'] is List)
-        ? (row['flags'] as List).map((e) => e.toString()).toSet().toList()
-        : <String>[];
-    final usableEstimate = confidenceHasUsableEstimate(row['basis']);
-    await _showDetailDialog(
-      title: row['group_label']?.toString() ?? 'Margin Leak Detail',
-      subtitle: 'Why this result was flagged',
-      leadingColor: AppTheme.danger,
-      body: [
-        _detailSummary(
-          title: 'Conclusion',
-          description: _marginConclusionText(row, flags),
-          chips: [
-            if (flags.contains('below_cost')) IssueChip(label: 'Below cost detected', color: AppTheme.danger),
-            if (flags.contains('below_floor')) IssueChip(label: 'Below minimum margin detected', color: AppTheme.warning),
-          ],
-        ),
-        _detailStatGrid([
-          _detailStat('Revenue', money(row['revenue'])),
-          _detailStat('Cost', money(row['cost'])),
-          _detailStat('Margin', money(row['margin'])),
-          _detailStat('Margin %', percent(row['margin_pct'])),
-          _detailStat('Sale lines reviewed', '${row['lines'] ?? 0}'),
-          _detailStat('Potential recoverable', usableEstimate ? money(row['recoverable']) : 'Waiting for more history'),
-        ]),
-        _detailSection(
-          title: 'How CounterIQ reached this conclusion',
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _bullet('Revenue from the reviewed sale lines was compared against captured line cost.'),
-              if (flags.contains('below_cost')) _bullet('At least one reviewed line sold below cost.'),
-              if (flags.contains('below_floor')) _bullet('The reviewed activity also fell below your configured minimum margin floor.'),
-              _bullet('The confidence badge shows how much history and how many observed selling days support this estimate.'),
-            ],
+    final groupKey = row['group_key']?.toString() ?? '';
+    final title = row['group_label']?.toString() ?? 'Margin Leak Detail';
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: true,
+      builder: (dialogContext) {
+        return Dialog(
+          insetPadding: const EdgeInsets.symmetric(horizontal: 40, vertical: 30),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+          child: Container(
+            width: 1080,
+            height: 760,
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(24)),
+            child: FutureBuilder<IntelligenceEnvelope>(
+              future: _api().marginLeakDetail(groupKey: groupKey, groupBy: _groupBy),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState != ConnectionState.done) {
+                  return const SizedBox(
+                    height: 360,
+                    child: Center(child: CircularProgressIndicator()),
+                  );
+                }
+                if (snapshot.hasError || !snapshot.hasData) {
+                  return SizedBox(
+                    height: 360,
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(Icons.error_outline_rounded, color: AppTheme.danger, size: 34),
+                        const SizedBox(height: 12),
+                        const Text('Unable to load contributing line items.', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
+                        const SizedBox(height: 8),
+                        Text(snapshot.error?.toString() ?? 'Unknown error', textAlign: TextAlign.center, style: const TextStyle(color: AppTheme.textMuted)),
+                        const SizedBox(height: 16),
+                        FilledButton(
+                          onPressed: () => Navigator.of(dialogContext).pop(),
+                          child: const Text('Close'),
+                        ),
+                      ],
+                    ),
+                  );
+                }
+
+                final detail = asMap(snapshot.data!.result);
+                final summary = asMap(detail['summary']);
+                final items = asMapList(detail['line_items']);
+                final flags = (summary['flags'] is List)
+                    ? (summary['flags'] as List).map((e) => e.toString()).toList()
+                    : <String>[];
+
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(title, style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w900)),
+                              const SizedBox(height: 6),
+                              const Text(
+                                'These are the contributing sale lines that caused this result to be flagged.',
+                                style: TextStyle(color: AppTheme.textMuted),
+                              ),
+                            ],
+                          ),
+                        ),
+                        IconButton(
+                          onPressed: () => Navigator.of(dialogContext).pop(),
+                          icon: const Icon(Icons.close_rounded),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 18),
+                    _detailSummary(
+                      title: 'Why this result is shown',
+                      description: _marginConclusionText(summary, flags),
+                      chips: flags.map((f) => _compactIssueChip(f)).toList(),
+                    ),
+                    const SizedBox(height: 14),
+                    _detailStatGrid([
+                      _detailStat('Revenue', money(summary['revenue'])),
+                      _detailStat('Cost', money(summary['cost'])),
+                      _detailStat('Margin', money(summary['margin'])),
+                      _detailStat('Margin %', percent(summary['margin_pct'])),
+                      _detailStat('Flagged line items', '${summary['line_items'] ?? items.length}'),
+                      _detailStat('Potential recoverable', money(summary['recoverable'])),
+                    ]),
+                    const SizedBox(height: 18),
+                    const Text('Contributing line items', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900)),
+                    const SizedBox(height: 10),
+                    Expanded(
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(color: AppTheme.border),
+                        ),
+                        child: LayoutBuilder(
+                          builder: (context, constraints) {
+                            final tableWidth = constraints.maxWidth < 980 ? 980.0 : constraints.maxWidth;
+                            return SingleChildScrollView(
+                              scrollDirection: Axis.horizontal,
+                              child: SizedBox(
+                                width: tableWidth,
+                                height: constraints.maxHeight,
+                                child: Column(
+                                  children: [
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+                                  decoration: const BoxDecoration(
+                                    border: Border(bottom: BorderSide(color: AppTheme.border)),
+                                  ),
+                                  child: const Row(
+                                    children: [
+                                      Expanded(flex: 22, child: Text('Invoice', style: TextStyle(fontWeight: FontWeight.w900, color: AppTheme.textMuted))),
+                                      Expanded(flex: 28, child: Text('Product', style: TextStyle(fontWeight: FontWeight.w900, color: AppTheme.textMuted))),
+                                      Expanded(flex: 8, child: Text('Qty', textAlign: TextAlign.right, style: TextStyle(fontWeight: FontWeight.w900, color: AppTheme.textMuted))),
+                                      Expanded(flex: 10, child: Text('Revenue', textAlign: TextAlign.right, style: TextStyle(fontWeight: FontWeight.w900, color: AppTheme.textMuted))),
+                                      Expanded(flex: 10, child: Text('Cost', textAlign: TextAlign.right, style: TextStyle(fontWeight: FontWeight.w900, color: AppTheme.textMuted))),
+                                      Expanded(flex: 10, child: Text('Margin', textAlign: TextAlign.right, style: TextStyle(fontWeight: FontWeight.w900, color: AppTheme.textMuted))),
+                                      Expanded(flex: 11, child: Text('Recoverable', textAlign: TextAlign.right, style: TextStyle(fontWeight: FontWeight.w900, color: AppTheme.textMuted))),
+                                      Expanded(flex: 21, child: Text('Reason', style: TextStyle(fontWeight: FontWeight.w900, color: AppTheme.textMuted))),
+                                    ],
+                                  ),
+                                ),
+                                if (items.isEmpty)
+                                  const Expanded(
+                                    child: Center(
+                                      child: Text('No flagged line items found for this group.', style: TextStyle(color: AppTheme.textMuted)),
+                                    ),
+                                  )
+                                else
+                                  Expanded(
+                                    child: ListView.separated(
+                                      itemCount: items.length,
+                                      separatorBuilder: (_, __) => const Divider(height: 1, color: AppTheme.border),
+                                      itemBuilder: (context, index) {
+                                        final item = items[index];
+                                        final itemFlags = (item['flags'] is List)
+                                            ? (item['flags'] as List).map((e) => e.toString()).toList()
+                                            : <String>[];
+                                        final lineMargin = double.tryParse(item['margin']?.toString() ?? '') ?? 0;
+                                        return Padding(
+                                          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+                                          child: Row(
+                                            children: [
+                                              Expanded(
+                                                flex: 22,
+                                                child: Column(
+                                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                                  children: [
+                                                    Text(item['invoice_no']?.toString() ?? '—', style: const TextStyle(fontWeight: FontWeight.w800)),
+                                                    const SizedBox(height: 2),
+                                                    Text(item['invoice_date']?.toString() ?? '—', style: const TextStyle(fontSize: 12, color: AppTheme.textMuted)),
+                                                  ],
+                                                ),
+                                              ),
+                                              Expanded(flex: 28, child: Text(item['product_name']?.toString() ?? '—', style: const TextStyle(fontWeight: FontWeight.w700))),
+                                              Expanded(flex: 8, child: Text(item['quantity']?.toString() ?? '—', textAlign: TextAlign.right)),
+                                              Expanded(flex: 10, child: Text(money(item['revenue']), textAlign: TextAlign.right)),
+                                              Expanded(flex: 10, child: Text(money(item['cost']), textAlign: TextAlign.right)),
+                                              Expanded(
+                                                flex: 10,
+                                                child: Text(
+                                                  money(item['margin']),
+                                                  textAlign: TextAlign.right,
+                                                  style: TextStyle(fontWeight: FontWeight.w800, color: lineMargin < 0 ? AppTheme.danger : AppTheme.navy),
+                                                ),
+                                              ),
+                                              Expanded(flex: 11, child: Text(money(item['recoverable']), textAlign: TextAlign.right, style: const TextStyle(fontWeight: FontWeight.w800))),
+                                              Expanded(
+                                                flex: 21,
+                                                child: Wrap(
+                                                  spacing: 6,
+                                                  runSpacing: 6,
+                                                  children: itemFlags.map((f) => _compactIssueChip(f)).toList(),
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        );
+                                      },
+                                    ),
+                                  ),
+                                  ],
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
           ),
-        ),
-        _detailSection(
-          title: 'Confidence and evidence',
-          child: Wrap(
-            spacing: 12,
-            runSpacing: 12,
-            children: [
-              Row(mainAxisSize: MainAxisSize.min, children: [const Text('Confidence: '), ConfidenceBadge(basis: row['basis'])]),
-              _statPill('History days', '${asMap(row['basis'])['history_days'] ?? '—'}'),
-              _statPill('Observed selling days', '${asMap(row['basis'])['observations'] ?? '—'}'),
-            ],
-          ),
-        ),
-      ],
+        );
+      },
     );
   }
 
@@ -1159,26 +1616,25 @@ class _MoneyFinderScreenState extends State<MoneyFinderScreen> {
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: const Color(0xFFF6FAFF),
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: AppTheme.border),
-        boxShadow: AppTheme.softShadow,
+        border: Border.all(color: const Color(0xFFD8E8FF)),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
-            width: 54,
-            height: 54,
-            decoration: BoxDecoration(color: color.withOpacity(.10), borderRadius: BorderRadius.circular(16)),
-            child: Icon(icon, color: color, size: 26),
+            width: 52,
+            height: 52,
+            decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16)),
+            child: Icon(icon, color: color, size: 25),
           ),
           const SizedBox(width: 14),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(title, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900)),
+                Text(title, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w900)),
                 const SizedBox(height: 6),
                 Text(message, style: const TextStyle(color: AppTheme.textMuted, height: 1.45)),
               ],
@@ -1195,29 +1651,35 @@ class _MoneyFinderScreenState extends State<MoneyFinderScreen> {
 
   Widget _summaryCard({required IconData icon, required Color iconColor, required String title, required String value, required String caption}) {
     return Container(
-      width: 260,
+      width: 270,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(18),
         border: Border.all(color: AppTheme.border),
-        boxShadow: AppTheme.softShadow,
       ),
-      child: Column(
+      child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
-            width: 42,
-            height: 42,
+            width: 48,
+            height: 48,
             decoration: BoxDecoration(color: iconColor.withOpacity(.10), borderRadius: BorderRadius.circular(14)),
-            child: Icon(icon, color: iconColor, size: 22),
+            child: Icon(icon, color: iconColor, size: 23),
           ),
-          const SizedBox(height: 14),
-          Text(title, style: const TextStyle(fontSize: 12.5, color: AppTheme.textMuted, fontWeight: FontWeight.w700)),
-          const SizedBox(height: 6),
-          Text(value, style: const TextStyle(fontSize: 28, fontWeight: FontWeight.w900, letterSpacing: -.4)),
-          const SizedBox(height: 6),
-          Text(caption, style: const TextStyle(fontSize: 12.5, color: AppTheme.textMuted, height: 1.35)),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(value, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.w900, letterSpacing: -.35)),
+                const SizedBox(height: 2),
+                Text(title, style: const TextStyle(fontSize: 12.5, color: AppTheme.textMuted, fontWeight: FontWeight.w800)),
+                const SizedBox(height: 6),
+                Text(caption, style: const TextStyle(fontSize: 11.5, color: AppTheme.textMuted, height: 1.3)),
+              ],
+            ),
+          ),
         ],
       ),
     );
@@ -1225,12 +1687,11 @@ class _MoneyFinderScreenState extends State<MoneyFinderScreen> {
 
   Widget _controlPanel({required Widget child}) {
     return Container(
-      padding: const EdgeInsets.all(18),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
+        borderRadius: BorderRadius.circular(18),
         border: Border.all(color: AppTheme.border),
-        boxShadow: AppTheme.softShadow,
       ),
       child: child,
     );
@@ -1288,7 +1749,6 @@ class _MoneyFinderScreenState extends State<MoneyFinderScreen> {
         color: Colors.white,
         borderRadius: BorderRadius.circular(22),
         border: Border.all(color: AppTheme.border),
-        boxShadow: AppTheme.softShadow,
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,

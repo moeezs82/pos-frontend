@@ -26,10 +26,31 @@ import 'package:enterprise_pos/services/app_currency.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
+class PurchasePrefillItem {
+  final int productId;
+  final double quantity;
+  final int? packagingId;
+  final double? packagingQuantity;
+
+  const PurchasePrefillItem({
+    required this.productId,
+    required this.quantity,
+    this.packagingId,
+    this.packagingQuantity,
+  });
+}
+
 class CreatePurchaseScreen extends StatefulWidget {
   final Map<String, dynamic>? initialVendor;
+  final List<PurchasePrefillItem> initialItems;
+  final bool preparedFromIntelligence;
 
-  const CreatePurchaseScreen({super.key, this.initialVendor});
+  const CreatePurchaseScreen({
+    super.key,
+    this.initialVendor,
+    this.initialItems = const <PurchasePrefillItem>[],
+    this.preparedFromIntelligence = false,
+  });
 
   @override
   State<CreatePurchaseScreen> createState() => _CreatePurchaseScreenState();
@@ -64,6 +85,9 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
   bool _receiveNow = false;
   bool _autoCashIfEmpty = true;
   bool _submitting = false;
+  bool _loadingInitialItems = false;
+  bool _showIntelligencePreparationNotice = false;
+  String? _initialPrefillError;
 
   late ProductService _productService;
   late PurchaseService _purchaseService;
@@ -94,6 +118,11 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
           : int.tryParse(vendor['id']?.toString() ?? '');
     }
 
+    _showIntelligencePreparationNotice = widget.preparedFromIntelligence;
+    if (widget.initialItems.isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _loadInitialItems());
+    }
+
     void recalc() {
       if (mounted) setState(() {});
     }
@@ -115,6 +144,136 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
     _vendorController.dispose();
     _productSearchController.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadInitialItems() async {
+    if (widget.initialItems.isEmpty || _loadingInitialItems) return;
+    setState(() {
+      _loadingInitialItems = true;
+      _initialPrefillError = null;
+    });
+    try {
+      final loaded = await Future.wait(
+        widget.initialItems.map((spec) async {
+          final product = await _productService.getProduct(spec.productId);
+          return MapEntry<PurchasePrefillItem, Map<String, dynamic>>(spec, product);
+        }),
+      );
+      if (!mounted) return;
+      final prepared = <Map<String, dynamic>>[];
+      final warnings = <String>[];
+      for (final entry in loaded) {
+        final row = _preparedPurchaseRow(entry.value, entry.key, warnings);
+        if (row != null) prepared.add(row);
+      }
+      setState(() {
+        _items = prepared;
+        if (warnings.isNotEmpty) _initialPrefillError = warnings.join(' ');
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _initialPrefillError =
+            'Some replenishment items could not be prepared. Please review and add them manually if needed.';
+      });
+    } finally {
+      if (mounted) setState(() => _loadingInitialItems = false);
+    }
+  }
+
+  Map<String, dynamic>? _preparedPurchaseRow(
+    Map<String, dynamic> product,
+    PurchasePrefillItem spec,
+    List<String> warnings,
+  ) {
+    final productId = int.tryParse(product['id']?.toString() ?? '') ?? 0;
+    if (productId <= 0 || productId != spec.productId || spec.quantity <= 0) {
+      warnings.add('One suggested product was skipped because its product data is no longer valid.');
+      return null;
+    }
+    final unitCost = _purchaseUnitCost(product);
+    final row = <String, dynamic>{
+      'product_id': productId,
+      'name': product['name'] ?? product['title'] ?? 'Unnamed product',
+      'cost_price': product['cost_price'],
+      'wholesale_price': product['wholesale_price'],
+      'quantity': spec.quantity,
+      'price': unitCost,
+      'discount_pct': 0.0,
+      'received_qty': 0.0,
+      'packagings': product['packagings'],
+      ...ProductStock.toTransactionRowFields(product),
+      ...QuantityRule.fromProduct(product).toRowFields(),
+    };
+
+    if (spec.packagingId != null) {
+      ProductPackaging? selected;
+      for (final packaging in _activePurchasePackagings(row)) {
+        if (packaging.id == spec.packagingId) {
+          selected = packaging;
+          break;
+        }
+      }
+      if (selected != null) {
+        final factor = selected.baseQuantity;
+        final packageQty = spec.packagingQuantity != null && spec.packagingQuantity! > 0
+            ? spec.packagingQuantity!
+            : spec.quantity / factor;
+        row['packaging_id'] = selected.id;
+        row['packaging_name_snapshot'] = selected.name;
+        final short = (selected.shortName ?? '').trim();
+        if (short.isNotEmpty) row['packaging_short_name_snapshot'] = short;
+        row['packaging_factor_snapshot'] = factor;
+        row['packaging_quantity'] = _roundTo(packageQty, 3);
+        row['packaging_unit_price'] = _roundTo(unitCost * factor, 4);
+      } else {
+        warnings.add('${row['name']}: suggested packaging is no longer active; base-unit quantity was used instead.');
+      }
+    }
+    row['total'] = _purchaseLineTotal(row);
+    return row;
+  }
+
+  Widget _buildIntelligencePreparationNotice() {
+    if (!_showIntelligencePreparationNotice) return const SizedBox.shrink();
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: AppTheme.primarySoft,
+        border: Border(bottom: BorderSide(color: AppTheme.primary.withOpacity(.18))),
+      ),
+      child: Row(
+        children: [
+          if (_loadingInitialItems)
+            const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+          else
+            const Icon(Icons.auto_awesome_rounded, color: AppTheme.primary, size: 20),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Prepared from Replenishment — review before saving',
+                  style: TextStyle(fontWeight: FontWeight.w900, color: AppTheme.navy),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  _loadingInitialItems
+                      ? 'Loading the suggested products and packaging into your normal Purchase Create screen…'
+                      : 'Nothing has been created yet. You can change vendor, products, quantities, packaging and prices. Saving uses the existing purchase flow and applies stock/accounting immediately, exactly as a normal purchase does.',
+                  style: const TextStyle(fontSize: 12, color: AppTheme.textMuted, height: 1.35),
+                ),
+                if (_initialPrefillError != null) ...[
+                  const SizedBox(height: 4),
+                  Text(_initialPrefillError!, style: const TextStyle(fontSize: 12, color: AppTheme.warning, fontWeight: FontWeight.w700)),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   void _showBranchControlNotice() {
@@ -827,6 +986,8 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
       taxController.text = '0';
       _receiveNow = false;
       _autoCashIfEmpty = true;
+      _showIntelligencePreparationNotice = false;
+      _initialPrefillError = null;
 
       if (!keepInitialVendor) {
         _selectedVendor = null;
@@ -1366,7 +1527,7 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
           SizedBox(
             height: 44,
             child: FilledButton.icon(
-              onPressed: _submitting ? null : _submitPurchase,
+              onPressed: (_submitting || _loadingInitialItems) ? null : _submitPurchase,
               icon: _submitting
                   ? const SizedBox(
                       width: 16,
@@ -1454,7 +1615,7 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
         child: CallbackShortcuts(
           bindings: <ShortcutActivator, VoidCallback>{
             ...posSaveShortcuts(() {
-              if (!_submitting) _submitPurchase();
+              if (!_submitting && !_loadingInitialItems) _submitPurchase();
             }),
             const SingleActivator(LogicalKeyboardKey.f2): _addItemManual,
             posCtrl(LogicalKeyboardKey.keyI): _addItemManual,
@@ -1495,7 +1656,13 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
                         light: true,
                         showBackButton: true,
                       ),
-                      Expanded(child: workspace),
+                      _buildIntelligencePreparationNotice(),
+                      Expanded(
+                        child: IgnorePointer(
+                          ignoring: _loadingInitialItems,
+                          child: workspace,
+                        ),
+                      ),
                       if (_payments.isNotEmpty) _buildPaymentStrip(),
                       _buildPurchaseBottomBar(),
                     ],
