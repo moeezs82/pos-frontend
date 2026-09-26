@@ -12,6 +12,7 @@ import 'package:enterprise_pos/screens/cashbook/widgets/cb_totals.dart';
 import 'package:enterprise_pos/screens/cashbook/widgets/cb_txn_list.dart';
 import 'package:enterprise_pos/widgets/branch_indicator.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
+import 'package:enterprise_pos/widgets/enterprise/enterprise_ui.dart';
 import 'package:flutter/material.dart';
 import 'package:enterprise_pos/services/app_currency.dart';
 import 'package:provider/provider.dart';
@@ -293,64 +294,76 @@ class _CashBookScreenState extends State<CashBookScreen> {
   @override
   Widget build(BuildContext context) {
     final noBranch = context.watch<BranchProvider>().isAll;
+    final canManageCashbook = context.watch<AuthProvider>().hasPermission('manage-cashbook');
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text("Cash Book"),
-        actions: [
-          CBModeToggle(
-            dailyMode: _dailyMode,
-            onChanged: (bool makeDaily) {
-              setState(() {
-                _dailyMode = makeDaily;
-                _currentPage = 1;
-              });
-              _fetch(page: 1);
-            },
-          ),
-          const SizedBox(width: 8),
-          const BranchIndicator(tappable: false),
-          IconButton(
-            onPressed: () => _fetch(page: 1),
-            icon: const Icon(Icons.refresh),
-          ),
-        ],
-      ),
-      floatingActionButton: 
-      FloatingActionButton.extended(
-              onPressed: _openExpenseCreate,
-              icon: const Icon(Icons.remove_circle),
-              label: const Text("Add Expense"),
-            ),
-      body: Column(
+    return EnterprisePage(
+      title: 'Expenses',
+      subtitle: 'Review approved cash movements and operating expenses without changing the underlying cash-ledger posting rules.',
+      icon: Icons.receipt_long_rounded,
+      appBarActions: const [
+        Padding(
+          padding: EdgeInsets.only(right: 8),
+          child: BranchIndicator(tappable: false),
+        ),
+      ],
+      actions: [
+        CBModeToggle(
+          dailyMode: _dailyMode,
+          onChanged: (bool makeDaily) {
+            setState(() {
+              _dailyMode = makeDaily;
+              _currentPage = 1;
+            });
+            _fetch(page: 1);
+          },
+        ),
+        OutlinedButton.icon(
+          onPressed: _loading ? null : () => _fetch(page: 1),
+          icon: const Icon(Icons.refresh_rounded),
+          label: const Text('Refresh'),
+        ),
+        FilledButton.icon(
+          onPressed: (!canManageCashbook || noBranch) ? null : _openExpenseCreate,
+          icon: const Icon(Icons.remove_circle_outline_rounded),
+          label: const Text('Add Expense'),
+        ),
+      ],
+      child: Column(
         children: [
-          CBFilters(
-            accounts: _accounts,
-            showBranchNote: false,
-            accountValue: _accountId,
-            methodValue: _method,
-            typeValue: _type,
-            methodOptions: _methodOptions,
-            typeOptions: _typeOptions,
-            showType: !_dailyMode,
-            onAccountChanged: (v) {
-              setState(() => _accountId = v);
-              _fetch(page: 1);
-            },
-            onMethodChanged: (v) {
-              setState(() => _method = v);
-              _fetch(page: 1);
-            },
-            onTypeChanged: (v) {
-              setState(() => _type = v);
-              _fetch(page: 1);
-            },
-            onSearchSubmit: (s) {
-              setState(() => _search = s);
-              _fetch(page: 1);
-            },
+          EnterpriseToolbar(
+            children: [
+              SizedBox(
+                width: 620,
+                child: CBFilters(
+                  accounts: _accounts,
+                  showBranchNote: false,
+                  accountValue: _accountId,
+                  methodValue: _method,
+                  typeValue: _type,
+                  methodOptions: _methodOptions,
+                  typeOptions: _typeOptions,
+                  showType: !_dailyMode,
+                  onAccountChanged: (v) {
+                    setState(() => _accountId = v);
+                    _fetch(page: 1);
+                  },
+                  onMethodChanged: (v) {
+                    setState(() => _method = v);
+                    _fetch(page: 1);
+                  },
+                  onTypeChanged: (v) {
+                    setState(() => _type = v);
+                    _fetch(page: 1);
+                  },
+                  onSearchSubmit: (value) {
+                    setState(() => _search = value);
+                    _fetch(page: 1);
+                  },
+                ),
+              ),
+            ],
           ),
-
+          const SizedBox(height: 10),
           CBDateRangeBar(
             from: _dateFrom,
             to: _dateTo,
@@ -365,7 +378,6 @@ class _CashBookScreenState extends State<CashBookScreen> {
               _fetch(page: 1);
             },
           ),
-
           CBTotals(
             dailyMode: _dailyMode,
             dOpening: _dOpening,
@@ -387,32 +399,27 @@ class _CashBookScreenState extends State<CashBookScreen> {
             pageOutflow: _pageOutflow,
             parse: _parse,
           ),
-
           if (_dailyMode && _dByMethod.isNotEmpty) _fundsByMethodCard(),
-
           Expanded(
             child: _loading
                 ? const Center(child: CircularProgressIndicator())
                 : (_dailyMode
-                      ? CashbookDailySummaryScreen(rows: _dailyRows, fetch: () async { await _fetchDailySummary(); },)
-                      : CBTxnList(txns: _txns)),
+                    ? CashbookDailySummaryScreen(
+                        rows: _dailyRows,
+                        fetch: () async => _fetchDailySummary(),
+                      )
+                    : CBTxnList(txns: _txns)),
           ),
-
           CBPagination(
             currentPage: _currentPage,
             lastPage: _lastPage,
-            onPrev: _currentPage > 1
-                ? () => _fetch(page: _currentPage - 1)
-                : null,
-            onNext: _currentPage < _lastPage
-                ? () => _fetch(page: _currentPage + 1)
-                : null,
+            onPrev: _currentPage > 1 ? () => _fetch(page: _currentPage - 1) : null,
+            onNext: _currentPage < _lastPage ? () => _fetch(page: _currentPage + 1) : null,
           ),
         ],
       ),
     );
   }
-
 
   Future<void> _openExpenseCreate() async {
     // Consolidated: expenses are recorded via Cash Ledger → Other Expense.

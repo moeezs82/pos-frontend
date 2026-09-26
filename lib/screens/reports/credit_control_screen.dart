@@ -7,6 +7,8 @@ import 'package:enterprise_pos/services/report_file_saver.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/app_feedback.dart';
 import 'package:enterprise_pos/widgets/branch_indicator.dart';
+import 'package:enterprise_pos/widgets/enterprise/enterprise_ui.dart';
+import 'package:enterprise_pos/widgets/enterprise/enterprise_panel.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
@@ -45,36 +47,35 @@ class _CreditControlScreenState extends State<CreditControlScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Credit Control'),
-        actions: [
-          const Padding(
-            padding: EdgeInsets.only(right: 4),
-            child: BranchIndicator(tappable: false),
-          ),
-          IconButton(
-            tooltip: 'Refresh',
-            onPressed: _loadingOverview ? null : _loadOverview,
-            icon: const Icon(Icons.refresh_rounded),
-          ),
-        ],
-      ),
-      body: RefreshIndicator(
+    return EnterprisePage(
+      title: 'Credit Control',
+      subtitle: 'Monitor party credit exposure, risk and the existing warning/override/block audit trail.',
+      icon: Icons.policy_rounded,
+      appBarActions: const [
+        Padding(
+          padding: EdgeInsets.only(right: 8),
+          child: BranchIndicator(tappable: false),
+        ),
+      ],
+      actions: [
+        OutlinedButton.icon(
+          onPressed: _loadingOverview ? null : _loadOverview,
+          icon: const Icon(Icons.refresh_rounded),
+          label: const Text('Refresh'),
+        ),
+      ],
+      child: RefreshIndicator(
         onRefresh: _loadOverview,
         child: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 14, 16, 28),
+          padding: const EdgeInsets.only(bottom: 24),
           children: [
             _OverviewCards(loading: _loadingOverview, data: _overview),
-            const SizedBox(height: 14),
+            const SizedBox(height: 12),
             _RiskSection(loading: _loadingOverview, rows: _list(_overview['highest_risk'])),
-            const SizedBox(height: 14),
-            const Card(
-              clipBehavior: Clip.antiAlias,
-              child: Padding(
-                padding: EdgeInsets.all(14),
-                child: CreditAuditPanel(showHeader: true),
-              ),
+            const SizedBox(height: 12),
+            EnterprisePanel(
+              padding: const EdgeInsets.all(14),
+              child: const CreditAuditPanel(showHeader: true),
             ),
           ],
         ),

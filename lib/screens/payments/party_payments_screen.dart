@@ -124,10 +124,8 @@ class _PartyPaymentsScreenState extends State<PartyPaymentsScreen> {
   }
 
   void _onPartyScroll() {
-    if (!_partyScrollController.hasClients || _loadingParties || _partyPage >= _partyLastPage) return;
-    if (_partyScrollController.position.extentAfter < 180) {
-      _loadParties(page: _partyPage + 1, append: true);
-    }
+    // Party Payments intentionally keeps one server page in memory.
+    // Do not append pages indefinitely on low-memory POS clients.
   }
 
   String get _balanceFilterCode => switch (_balanceFilter) {
@@ -1404,24 +1402,43 @@ class _PartyPaymentsScreenState extends State<PartyPaymentsScreen> {
                     : ListView.separated(
                         controller: _partyScrollController,
                         padding: const EdgeInsets.all(10),
-                        itemCount: _parties.length + (_partyPage < _partyLastPage ? 1 : 0),
+                        itemCount: _parties.length + (_partyLastPage > 1 ? 1 : 0),
                         separatorBuilder: (_, __) => const SizedBox(height: 8),
                         itemBuilder: (context, index) {
                           if (index == _parties.length) {
                             return Padding(
-                              padding: const EdgeInsets.all(12),
-                              child: Center(
-                                child: _loadingParties
-                                    ? const SizedBox(
-                                        width: 22,
-                                        height: 22,
-                                        child: CircularProgressIndicator(strokeWidth: 2),
-                                      )
-                                    : OutlinedButton.icon(
-                                        onPressed: () => _loadParties(page: _partyPage + 1, append: true),
-                                        icon: const Icon(Icons.expand_more_rounded),
-                                        label: const Text('Load more'),
-                                      ),
+                              padding: const EdgeInsets.fromLTRB(4, 8, 4, 4),
+                              child: Row(
+                                children: [
+                                  Expanded(
+                                    child: OutlinedButton.icon(
+                                      onPressed: !_loadingParties && _partyPage > 1
+                                          ? () => _loadParties(page: _partyPage - 1)
+                                          : null,
+                                      icon: const Icon(Icons.chevron_left_rounded),
+                                      label: const Text('Previous'),
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    '$_partyPage / $_partyLastPage',
+                                    style: const TextStyle(
+                                      color: AppTheme.textMuted,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: OutlinedButton.icon(
+                                      onPressed: !_loadingParties && _partyPage < _partyLastPage
+                                          ? () => _loadParties(page: _partyPage + 1)
+                                          : null,
+                                      icon: const Icon(Icons.chevron_right_rounded),
+                                      label: const Text('Next'),
+                                    ),
+                                  ),
+                                ],
                               ),
                             );
                           }

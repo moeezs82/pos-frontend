@@ -8,6 +8,7 @@ import 'package:enterprise_pos/screens/account_screen.dart';
 import 'package:enterprise_pos/screens/branches/branch_control_screen.dart';
 import 'package:enterprise_pos/screens/cash_ledger/cash_ledger_create_screen.dart';
 import 'package:enterprise_pos/screens/cash_ledger/cash_ledger_screen.dart';
+import 'package:enterprise_pos/screens/cashbook/cashbook_screen.dart';
 import 'package:enterprise_pos/screens/customers/customers_screen.dart';
 import 'package:enterprise_pos/screens/dashboard/command_center_dashboard.dart';
 import 'package:enterprise_pos/screens/intelligence/intelligence_hub_screen.dart';
@@ -60,6 +61,12 @@ class _HomeScreenState extends State<HomeScreen> {
     PosRouteIds.purchaseClaims,
     PosRouteIds.customers,
     PosRouteIds.vendors,
+    PosRouteIds.registerShift,
+    PosRouteIds.partyPayments,
+    PosRouteIds.creditControl,
+    PosRouteIds.expenses,
+    PosRouteIds.users,
+    PosRouteIds.units,
   };
 
   @override
@@ -113,6 +120,18 @@ class _HomeScreenState extends State<HomeScreen> {
         return const CustomersScreen(key: ValueKey(PosRouteIds.customers));
       case PosRouteIds.vendors:
         return const VendorsScreen(key: ValueKey(PosRouteIds.vendors));
+      case PosRouteIds.registerShift:
+        return const RegisterShiftScreen(key: ValueKey(PosRouteIds.registerShift));
+      case PosRouteIds.partyPayments:
+        return const PartyPaymentsScreen(key: ValueKey(PosRouteIds.partyPayments));
+      case PosRouteIds.creditControl:
+        return const CreditControlScreen(key: ValueKey(PosRouteIds.creditControl));
+      case PosRouteIds.expenses:
+        return const CashBookScreen(key: ValueKey(PosRouteIds.expenses));
+      case PosRouteIds.users:
+        return const UsersScreen(key: ValueKey(PosRouteIds.users));
+      case PosRouteIds.units:
+        return UnitsScreen(key: const ValueKey(PosRouteIds.units), token: auth.token!);
       case PosRouteIds.home:
       default:
         return SingleChildScrollView(
@@ -336,9 +355,9 @@ class _HomeScreenState extends State<HomeScreen> {
             _NavEntry(
               icon: Icons.policy_outlined,
               title: 'Credit Control',
-              onTap: () => Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const CreditControlScreen()),
+              onTap: () => PosNavigation.openSingleton(
+                routeId: PosRouteIds.creditControl,
+                builder: (_) => const CreditControlScreen(),
               ),
             ),
         ],
@@ -346,6 +365,15 @@ class _HomeScreenState extends State<HomeScreen> {
       _NavGroup(
         label: 'Finance & Analysis',
         entries: [
+          if (auth.hasPermission('view-cashbook'))
+            _NavEntry(
+              icon: Icons.receipt_long_rounded,
+              title: 'Expenses',
+              onTap: () => PosNavigation.openSingleton(
+                routeId: PosRouteIds.expenses,
+                builder: (_) => const CashBookScreen(),
+              ),
+            ),
           if (auth.hasPermission('view-cashbook'))
             _NavEntry(
               icon: Icons.account_balance_wallet_rounded,
@@ -392,9 +420,9 @@ class _HomeScreenState extends State<HomeScreen> {
             _NavEntry(
               icon: Icons.straighten_rounded,
               title: 'Units',
-              onTap: () => Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => UnitsScreen(token: auth.token!)),
+              onTap: () => PosNavigation.openSingleton(
+                routeId: PosRouteIds.units,
+                builder: (_) => UnitsScreen(token: auth.token!),
               ),
             ),
           if (auth.hasPermission('manage-printer-settings'))

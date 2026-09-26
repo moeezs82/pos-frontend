@@ -1,3 +1,7 @@
+import 'package:enterprise_pos/theme/app_theme.dart';
+import 'package:enterprise_pos/widgets/enterprise/enterprise_ui.dart';
+import 'package:enterprise_pos/providers/auth_provider.dart';
+import 'package:provider/provider.dart';
 import 'package:flutter/material.dart';
 
 import 'package:enterprise_pos/api/unit_service.dart';
@@ -158,113 +162,162 @@ class _UnitsScreenState extends State<UnitsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Units'),
-        actions: [
-          IconButton(
-            tooltip: 'Reload',
-            onPressed: _loading ? null : _load,
-            icon: const Icon(Icons.refresh),
-          ),
-        ],
-      ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: _create,
-        icon: const Icon(Icons.add),
-        label: const Text('Add unit'),
-      ),
-      body: _buildBody(),
+    final canManageUnits = context.watch<AuthProvider>().hasPermission('manage-units');
+    final active = _units.where((u) => u.isActive).length;
+    final decimal = _units.where((u) => u.allowDecimal).length;
+    return EnterprisePage(
+      title: 'Units',
+      subtitle: 'Maintain product measurement rules, including whether fractional sale and purchase quantities are allowed.',
+      icon: Icons.straighten_rounded,
+      actions: [
+        EnterpriseMetricChip(
+          label: 'Units',
+          value: '${_units.length}',
+          color: AppTheme.primary,
+          icon: Icons.straighten_rounded,
+        ),
+        EnterpriseMetricChip(
+          label: 'Active',
+          value: '$active',
+          color: AppTheme.success,
+          icon: Icons.check_circle_outline_rounded,
+        ),
+        EnterpriseMetricChip(
+          label: 'Decimal',
+          value: '$decimal',
+          color: AppTheme.teal,
+          icon: Icons.calculate_outlined,
+        ),
+        OutlinedButton.icon(
+          onPressed: _loading ? null : _load,
+          icon: const Icon(Icons.refresh_rounded),
+          label: const Text('Refresh'),
+        ),
+        FilledButton.icon(
+          onPressed: (_loading || !canManageUnits) ? null : _create,
+          icon: const Icon(Icons.add_rounded),
+          label: const Text('Add Unit'),
+        ),
+      ],
+      child: _buildBody(canManageUnits),
     );
   }
 
-  Widget _buildBody() {
-    if (_loading) {
-      return const Center(child: CircularProgressIndicator());
-    }
+  Widget _buildBody(bool canManageUnits) {
+    if (_loading) return const Center(child: CircularProgressIndicator());
     if (_error != null) {
-      return _Message(
-        icon: Icons.error_outline,
+      return EnterpriseEmptyState(
+        icon: Icons.error_outline_rounded,
         title: 'Could not load units',
-        detail: _error!,
+        subtitle: _error!,
         action: FilledButton(onPressed: _load, child: const Text('Try again')),
       );
     }
     if (_units.isEmpty) {
-      return const _Message(
-        icon: Icons.straighten,
+      return EnterpriseEmptyState(
+        icon: Icons.straighten_rounded,
         title: 'No units yet',
-        detail:
-            'Add a unit like Piece or Kilogram, then assign it to your products. '
-            'The unit decides whether that product can be sold in decimal quantities.',
+        subtitle: 'Add units such as Piece or Kilogram. Decimal rules continue to be enforced by the backend.',
+        action: FilledButton.icon(
+          onPressed: canManageUnits ? _create : null,
+          icon: const Icon(Icons.add_rounded),
+          label: const Text('Add Unit'),
+        ),
       );
     }
 
     return RefreshIndicator(
       onRefresh: _load,
-      child: ListView.separated(
-        padding: const EdgeInsets.only(bottom: 88),
-        itemCount: _units.length,
-        separatorBuilder: (_, __) => const Divider(height: 1),
-        itemBuilder: (_, i) {
-          final u = _units[i];
-          return ListTile(
-            leading: CircleAvatar(
-              backgroundColor: u.allowDecimal
-                  ? Colors.teal.withOpacity(.15)
-                  : Colors.blueGrey.withOpacity(.15),
-              child: Icon(
-                u.allowDecimal ? Icons.scale : Icons.tag,
-                size: 18,
-                color: u.allowDecimal ? Colors.teal : Colors.blueGrey,
-              ),
+      child: ListView(
+        children: [
+          Container(
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: AppTheme.border),
             ),
-            title: Row(
+            child: Column(
               children: [
-                Flexible(child: Text(u.name, overflow: TextOverflow.ellipsis)),
-                if (u.shortName != null) ...[
-                  const SizedBox(width: 6),
-                  Text('(${u.shortName})',
-                      style: TextStyle(color: Colors.grey.shade600, fontSize: 12)),
-                ],
-                if (!u.isActive) ...[
-                  const SizedBox(width: 8),
-                  const _Chip(text: 'Inactive', color: Colors.grey),
+                const _UnitTableHeader(),
+                const Divider(height: 1),
+                for (var i = 0; i < _units.length; i++) ...[
+                  _UnitTableRow(
+                    unit: _units[i],
+                    onEdit: () => _edit(_units[i]),
+                    canManage: canManageUnits,
+                    onDelete: () => _delete(_units[i]),
+                  ),
+                  if (i != _units.length - 1) const Divider(height: 1),
                 ],
               ],
             ),
-            // The whole point of the screen, stated plainly rather than as a
-            // bare "allow_decimal: true".
-            subtitle: Text(
-              u.allowDecimal
-                  ? 'Decimal quantities allowed — e.g. 1.5'
-                  : 'Whole quantities only — e.g. 1, 2, -1',
-              style: TextStyle(
-                fontSize: 12,
-                color: u.allowDecimal ? Colors.teal.shade700 : Colors.blueGrey.shade700,
-              ),
-            ),
-            trailing: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                IconButton(
-                  tooltip: 'Edit',
-                  icon: const Icon(Icons.edit_outlined, size: 20),
-                  onPressed: () => _edit(u),
-                ),
-                IconButton(
-                  tooltip: 'Delete',
-                  icon: Icon(Icons.delete_outline, size: 20, color: Colors.red.shade400),
-                  onPressed: () => _delete(u),
-                ),
-              ],
-            ),
-            onTap: () => _edit(u),
-          );
-        },
+          ),
+        ],
       ),
     );
   }
+}
+
+class _UnitTableHeader extends StatelessWidget {
+  const _UnitTableHeader();
+  @override
+  Widget build(BuildContext context) => const Padding(
+        padding: EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+        child: Row(
+          children: [
+            Expanded(flex: 4, child: Text('UNIT', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: AppTheme.textMuted))),
+            Expanded(flex: 2, child: Text('SHORT', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: AppTheme.textMuted))),
+            Expanded(flex: 3, child: Text('QUANTITY RULE', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: AppTheme.textMuted))),
+            Expanded(flex: 2, child: Text('STATUS', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: AppTheme.textMuted))),
+            SizedBox(width: 92, child: Text('ACTIONS', textAlign: TextAlign.right, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: AppTheme.textMuted))),
+          ],
+        ),
+      );
+}
+
+class _UnitTableRow extends StatelessWidget {
+  final ProductUnit unit;
+  final VoidCallback onEdit;
+  final bool canManage;
+  final VoidCallback onDelete;
+  const _UnitTableRow({required this.unit, required this.canManage, required this.onEdit, required this.onDelete});
+  @override
+  Widget build(BuildContext context) => InkWell(
+        onTap: canManage ? onEdit : null,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          child: Row(
+            children: [
+              Expanded(flex: 4, child: Text(unit.name, style: const TextStyle(fontWeight: FontWeight.w800))),
+              Expanded(flex: 2, child: Text(unit.shortName ?? '—', style: const TextStyle(color: AppTheme.textMuted))),
+              Expanded(
+                flex: 3,
+                child: EnterpriseStatusBadge(
+                  label: unit.allowDecimal ? 'DECIMALS ALLOWED' : 'WHOLE ONLY',
+                  color: unit.allowDecimal ? AppTheme.teal : AppTheme.info,
+                ),
+              ),
+              Expanded(
+                flex: 2,
+                child: EnterpriseStatusBadge(
+                  label: unit.isActive ? 'ACTIVE' : 'INACTIVE',
+                  color: unit.isActive ? AppTheme.success : AppTheme.textMuted,
+                ),
+              ),
+              SizedBox(
+                width: 92,
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    IconButton(tooltip: 'Edit', onPressed: canManage ? onEdit : null, icon: const Icon(Icons.edit_outlined, size: 19)),
+                    IconButton(tooltip: 'Delete', onPressed: canManage ? onDelete : null, icon: const Icon(Icons.delete_outline_rounded, size: 19, color: AppTheme.danger)),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
 }
 
 /// What the dialog hands back. A plain value object so the screen owns all the

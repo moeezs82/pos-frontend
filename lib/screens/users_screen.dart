@@ -236,28 +236,14 @@ class _UsersScreenState extends State<UsersScreen> {
                             ),
                           ],
                         )
-                      : ListView.separated(
-                          itemCount: _users.length,
-                          separatorBuilder: (_, __) => const SizedBox(height: 10),
-                          itemBuilder: (context, index) {
-                            final user = _users[index];
-                            final userId = _readInt(user['id']);
-                            final manageable =
-                                _readBoolWithFallback(user['is_manageable'], true);
-                            final canEdit = canManageUsers && manageable;
-                            return _UserCard(
-                              user: user,
-                              isCurrentUser: userId != null && userId == currentUserId,
-                              managementBlockReason:
-                                  user['management_block_reason']?.toString(),
-                              onEdit: canEdit ? () => _openForm(user) : null,
-                              onDelete: canEdit && userId != null && userId != currentUserId
-                                  ? () async {
-                                      final ok = await _confirmDelete(context, user);
-                                      if (ok == true) await _deleteUser(user);
-                                    }
-                                  : null,
-                            );
+                      : _UsersTable(
+                          users: _users,
+                          currentUserId: currentUserId,
+                          canManageUsers: canManageUsers,
+                          onEdit: _openForm,
+                          onDelete: (user) async {
+                            final ok = await _confirmDelete(context, user);
+                            if (ok == true) await _deleteUser(user);
                           },
                         ),
             ),
@@ -283,6 +269,163 @@ class _UsersScreenState extends State<UsersScreen> {
             label: const Text('Delete'),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _UsersTable extends StatelessWidget {
+  final List<Map<String, dynamic>> users;
+  final int? currentUserId;
+  final bool canManageUsers;
+  final ValueChanged<Map<String, dynamic>> onEdit;
+  final ValueChanged<Map<String, dynamic>> onDelete;
+
+  const _UsersTable({
+    required this.users,
+    required this.currentUserId,
+    required this.canManageUsers,
+    required this.onEdit,
+    required this.onDelete,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView(
+      children: [
+        Container(
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: AppTheme.border),
+          ),
+          child: Column(
+            children: [
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+                child: Row(
+                  children: [
+                    Expanded(flex: 4, child: Text('USER', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: AppTheme.textMuted))),
+                    Expanded(flex: 4, child: Text('CONTACT', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: AppTheme.textMuted))),
+                    Expanded(flex: 3, child: Text('ROLE', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: AppTheme.textMuted))),
+                    Expanded(flex: 2, child: Text('STATUS', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: AppTheme.textMuted))),
+                    SizedBox(width: 92, child: Text('ACTIONS', textAlign: TextAlign.right, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: AppTheme.textMuted))),
+                  ],
+                ),
+              ),
+              const Divider(height: 1),
+              for (var i = 0; i < users.length; i++) ...[
+                _UserTableRow(
+                  user: users[i],
+                  currentUserId: currentUserId,
+                  canManageUsers: canManageUsers,
+                  onEdit: onEdit,
+                  onDelete: onDelete,
+                ),
+                if (i != users.length - 1) const Divider(height: 1),
+              ],
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _UserTableRow extends StatelessWidget {
+  final Map<String, dynamic> user;
+  final int? currentUserId;
+  final bool canManageUsers;
+  final ValueChanged<Map<String, dynamic>> onEdit;
+  final ValueChanged<Map<String, dynamic>> onDelete;
+
+  const _UserTableRow({
+    required this.user,
+    required this.currentUserId,
+    required this.canManageUsers,
+    required this.onEdit,
+    required this.onDelete,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final id = _readInt(user['id']);
+    final name = _clean(user['name']) ?? 'Unnamed user';
+    final email = _clean(user['email']) ?? '—';
+    final phone = _clean(user['phone']) ?? '—';
+    final active = _readBool(user['is_active']);
+    final manageable = _readBoolWithFallback(user['is_manageable'], true);
+    final isCurrent = id != null && id == currentUserId;
+    final canEdit = canManageUsers && manageable;
+    final blocked = _clean(user['management_block_reason']);
+
+    return InkWell(
+      onTap: canEdit ? () => onEdit(user) : null,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        child: Row(
+          children: [
+            Expanded(
+              flex: 4,
+              child: Row(
+                children: [
+                  CircleAvatar(
+                    radius: 17,
+                    backgroundColor: AppTheme.primarySoft,
+                    foregroundColor: AppTheme.primary,
+                    child: Text(_initials(name), style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w900)),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w800)),
+                        if (isCurrent) const Text('Current user', style: TextStyle(fontSize: 11, color: AppTheme.info, fontWeight: FontWeight.w700)),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Expanded(
+              flex: 4,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(email, maxLines: 1, overflow: TextOverflow.ellipsis),
+                  Text(phone, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 11, color: AppTheme.textMuted)),
+                ],
+              ),
+            ),
+            Expanded(flex: 3, child: Text(_roleLabel(user), maxLines: 1, overflow: TextOverflow.ellipsis)),
+            Expanded(
+              flex: 2,
+              child: Wrap(
+                spacing: 6,
+                runSpacing: 4,
+                children: [
+                  EnterpriseStatusBadge(label: active ? 'ACTIVE' : 'INACTIVE', color: active ? AppTheme.success : AppTheme.warning),
+                  if (blocked != null) const EnterpriseStatusBadge(label: 'RESTRICTED', color: AppTheme.warning),
+                ],
+              ),
+            ),
+            SizedBox(
+              width: 92,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  IconButton(tooltip: canEdit ? 'Edit' : 'Restricted', onPressed: canEdit ? () => onEdit(user) : null, icon: const Icon(Icons.edit_outlined, size: 19)),
+                  IconButton(
+                    tooltip: 'Delete',
+                    onPressed: canEdit && id != null && !isCurrent ? () => onDelete(user) : null,
+                    icon: const Icon(Icons.delete_outline_rounded, size: 19, color: AppTheme.danger),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

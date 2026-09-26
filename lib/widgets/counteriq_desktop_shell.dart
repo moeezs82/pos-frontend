@@ -7,6 +7,7 @@ import 'package:enterprise_pos/providers/subscription_provider.dart';
 import 'package:enterprise_pos/screens/account_screen.dart';
 import 'package:enterprise_pos/screens/branches/branch_control_screen.dart';
 import 'package:enterprise_pos/screens/cash_ledger/cash_ledger_screen.dart';
+import 'package:enterprise_pos/screens/cashbook/cashbook_screen.dart';
 import 'package:enterprise_pos/screens/customers/customers_screen.dart';
 import 'package:enterprise_pos/screens/intelligence/intelligence_hub_screen.dart';
 import 'package:enterprise_pos/screens/payments/party_payments_screen.dart';
@@ -331,9 +332,10 @@ class _CounterIQDesktopShellState extends State<CounterIQDesktopShell> {
             _NavEntry(
               icon: Icons.policy_outlined,
               title: 'Credit Control',
-              onTap: () => Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const CreditControlScreen()),
+              active: _isActive(PosRouteIds.creditControl),
+              onTap: () => PosNavigation.openSingleton(
+                routeId: PosRouteIds.creditControl,
+                builder: (_) => const CreditControlScreen(),
               ),
             ),
         ],
@@ -341,6 +343,16 @@ class _CounterIQDesktopShellState extends State<CounterIQDesktopShell> {
       _NavGroup(
         label: 'Finance & Analysis',
         entries: [
+          if (auth.hasPermission('view-cashbook'))
+            _NavEntry(
+              icon: Icons.receipt_long_rounded,
+              title: 'Expenses',
+              active: _isActive(PosRouteIds.expenses),
+              onTap: () => PosNavigation.openSingleton(
+                routeId: PosRouteIds.expenses,
+                builder: (_) => const CashBookScreen(),
+              ),
+            ),
           if (auth.hasPermission('view-cashbook'))
             _NavEntry(
               icon: Icons.account_balance_wallet_rounded,
@@ -393,9 +405,10 @@ class _CounterIQDesktopShellState extends State<CounterIQDesktopShell> {
             _NavEntry(
               icon: Icons.straighten_rounded,
               title: 'Units',
-              onTap: () => Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => UnitsScreen(token: auth.token!)),
+              active: _isActive(PosRouteIds.units),
+              onTap: () => PosNavigation.openSingleton(
+                routeId: PosRouteIds.units,
+                builder: (_) => UnitsScreen(token: auth.token!),
               ),
             ),
           if (auth.hasPermission('manage-printer-settings'))

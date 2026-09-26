@@ -1,3 +1,5 @@
+import 'package:enterprise_pos/widgets/enterprise/enterprise_ui.dart';
+import 'package:enterprise_pos/widgets/branch_indicator.dart';
 import 'package:flutter/material.dart';
 import 'package:enterprise_pos/services/app_currency.dart';
 import 'package:provider/provider.dart';
@@ -34,7 +36,8 @@ class _RegisterShiftScreenState extends State<RegisterShiftScreen> {
     if (mounted) await context.read<RegisterShiftProvider>().refresh();
   }
 
-  @override Widget build(BuildContext context) {
+  @override
+  Widget build(BuildContext context) {
     final state = context.watch<RegisterShiftProvider>();
     final auth = context.watch<AuthProvider>();
     final canManageRegisters = auth.hasPermission('manage-register-shifts');
@@ -49,45 +52,86 @@ class _RegisterShiftScreenState extends State<RegisterShiftScreen> {
       'manage-register-shifts',
     ]);
     final availableRegisters = _availableRegisters(state);
-    return Scaffold(
-      appBar: AppBar(title: const Text('Register Shift'), actions: [
+
+    return EnterprisePage(
+      title: 'Register Shift',
+      subtitle: state.hasActiveShift
+          ? 'Live register position, payment-method totals, activity and controlled closing.'
+          : 'Open a register shift before counter sales. Existing variance and approval controls are preserved.',
+      icon: Icons.point_of_sale_rounded,
+      appBarActions: const [
+        Padding(
+          padding: EdgeInsets.only(right: 8),
+          child: BranchIndicator(tappable: false),
+        ),
+      ],
+      actions: [
         if (canViewVariances)
-          IconButton(
-            tooltip: 'Cash variances',
+          OutlinedButton.icon(
             onPressed: () => _showVariances(canResolveVariances),
             icon: const Icon(Icons.balance_rounded),
+            label: const Text('Variances'),
           ),
         if (canManageRegisters)
-          IconButton(tooltip: 'Manage open shifts', onPressed: _manageOpenShifts, icon: const Icon(Icons.pending_actions_rounded)),
+          OutlinedButton.icon(
+            onPressed: _manageOpenShifts,
+            icon: const Icon(Icons.pending_actions_rounded),
+            label: const Text('Open Shifts'),
+          ),
         if (canManageRegisters)
-          IconButton(tooltip: 'Manage registers', onPressed: _manageRegisters, icon: const Icon(Icons.settings_rounded)),
+          OutlinedButton.icon(
+            onPressed: _manageRegisters,
+            icon: const Icon(Icons.settings_rounded),
+            label: const Text('Registers'),
+          ),
         if (canViewHistory)
-          IconButton(tooltip: 'Shift history', onPressed: _showHistory, icon: const Icon(Icons.history_rounded)),
-        IconButton(onPressed: _load, icon: const Icon(Icons.refresh_rounded)),
-      ]),
-      body: state.loading && state.shift == null
+          OutlinedButton.icon(
+            onPressed: _showHistory,
+            icon: const Icon(Icons.history_rounded),
+            label: const Text('History'),
+          ),
+        IconButton(
+          tooltip: 'Refresh',
+          onPressed: _load,
+          icon: const Icon(Icons.refresh_rounded),
+        ),
+      ],
+      child: state.loading && state.shift == null
           ? const Center(child: CircularProgressIndicator())
-          : ListView(padding: const EdgeInsets.all(20), children: [
-              if (!state.hasActiveShift && state.hasOccupiedRegisters && availableRegisters.isEmpty)
-                _occupiedCard(state, canManageRegisters)
-              else if (!state.hasActiveShift)
-                _openCard(state, availableRegisters)
-              else ...[
-                _activeHeader(state),
-                if (state.closeRequest != null) ...[
-                  const SizedBox(height: 12),
-                  _closeRequestBanner(state.closeRequest!),
+          : RefreshIndicator(
+              onRefresh: _load,
+              child: ListView(
+                padding: const EdgeInsets.only(bottom: 24),
+                children: [
+                  if (!state.hasActiveShift && state.hasOccupiedRegisters && availableRegisters.isEmpty)
+                    _occupiedCard(state, canManageRegisters)
+                  else if (!state.hasActiveShift)
+                    _openCard(state, availableRegisters)
+                  else ...[
+                    _activeHeader(state),
+                    if (state.closeRequest != null) ...[
+                      const SizedBox(height: 12),
+                      _closeRequestBanner(state.closeRequest!),
+                    ],
+                    const SizedBox(height: 16),
+                    _summaryGrid(state),
+                    const SizedBox(height: 16),
+                    _methodTotals(state),
+                    _actions(state),
+                    const SizedBox(height: 16),
+                    _activityList(state),
+                  ],
+                  if (state.error != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 16),
+                      child: Text(
+                        'Last server check: ${state.error}',
+                        style: const TextStyle(color: AppTheme.warning),
+                      ),
+                    ),
                 ],
-                const SizedBox(height: 16),
-                _summaryGrid(state),
-                const SizedBox(height: 16),
-                _methodTotals(state),
-                _actions(state),
-                const SizedBox(height: 16),
-                _activityList(state),
-              ],
-              if (state.error != null) Padding(padding: const EdgeInsets.only(top: 16), child: Text('Last server check: ${state.error}', style: const TextStyle(color: AppTheme.warning))),
-            ]),
+              ),
+            ),
     );
   }
 

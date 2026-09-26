@@ -28,11 +28,14 @@ abstract final class PosRouteIds {
   static const offlineSync = '/sync/offline-sales';
   static const vendors = '/vendors';
   static const partyPayments = '/party-payments';
+  static const creditControl = '/credit-control';
+  static const expenses = '/expenses';
   static const cashLedger = '/cash-ledger';
   static const cashLedgerCreate = '/cash-ledger/create';
   static const expenseCreate = '/expenses/create';
   static const reports = '/reports';
   static const users = '/users';
+  static const units = '/units';
   static const saleReturns = '/sale-returns';
   static const branchControl = '/branch-control';
 }
