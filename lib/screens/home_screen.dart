@@ -1,335 +1,619 @@
-import 'package:enterprise_pos/screens/account_screen.dart';
 import 'package:enterprise_pos/config/backend_config.dart';
-import 'package:enterprise_pos/services/app_navigator.dart';
+import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/providers/branch_provider.dart';
+import 'package:enterprise_pos/providers/offline_queue_provider.dart';
+import 'package:enterprise_pos/providers/register_shift_provider.dart';
 import 'package:enterprise_pos/providers/subscription_provider.dart';
+import 'package:enterprise_pos/screens/account_screen.dart';
 import 'package:enterprise_pos/screens/branches/branch_control_screen.dart';
 import 'package:enterprise_pos/screens/cash_ledger/cash_ledger_create_screen.dart';
 import 'package:enterprise_pos/screens/cash_ledger/cash_ledger_screen.dart';
 import 'package:enterprise_pos/screens/customers/customers_screen.dart';
-import 'package:enterprise_pos/screens/dashboard/today_snapshot_section.dart';
+import 'package:enterprise_pos/screens/dashboard/command_center_dashboard.dart';
 import 'package:enterprise_pos/screens/intelligence/intelligence_hub_screen.dart';
-import 'package:enterprise_pos/screens/intelligence/intelligence_dashboard_card.dart';
+import 'package:enterprise_pos/screens/login_screen.dart';
+import 'package:enterprise_pos/screens/payments/party_payments_screen.dart';
 import 'package:enterprise_pos/screens/product_screen.dart';
-import 'package:enterprise_pos/screens/units_screen.dart';
 import 'package:enterprise_pos/screens/purchases/purchase_claim_screen.dart';
 import 'package:enterprise_pos/screens/purchases/purchase_create.dart';
 import 'package:enterprise_pos/screens/purchases/purchases_screen.dart';
-import 'package:enterprise_pos/screens/payments/party_payments_screen.dart';
-import 'package:enterprise_pos/screens/reports/report_hub_screen.dart';
+import 'package:enterprise_pos/screens/register_shifts/register_shift_screen.dart';
 import 'package:enterprise_pos/screens/reports/credit_control_screen.dart';
+import 'package:enterprise_pos/screens/reports/report_hub_screen.dart';
 import 'package:enterprise_pos/screens/sales/sale_create.dart';
-// Sale Return screens are intentionally retained in the project, but their
-// home navigation entry is disabled because returns are handled as -ve sales.
-// import 'package:enterprise_pos/screens/sales/sale_returns_screen.dart';
 import 'package:enterprise_pos/screens/sales/sale_screen.dart';
-import 'package:enterprise_pos/screens/settings/printer_settings_screen.dart';
 import 'package:enterprise_pos/screens/settings/backup_restore_screen.dart';
+import 'package:enterprise_pos/screens/settings/printer_settings_screen.dart';
 import 'package:enterprise_pos/screens/stock_screen.dart';
 import 'package:enterprise_pos/screens/subscription/branch_lock_screen.dart';
 import 'package:enterprise_pos/screens/subscription/subscription_management_screen.dart';
 import 'package:enterprise_pos/screens/sync/offline_sync_screen.dart';
+import 'package:enterprise_pos/screens/units_screen.dart';
 import 'package:enterprise_pos/screens/users_screen.dart';
 import 'package:enterprise_pos/screens/vendors/vendors_screen.dart';
-import 'package:enterprise_pos/providers/offline_queue_provider.dart';
-import 'package:enterprise_pos/providers/register_shift_provider.dart';
-import 'package:enterprise_pos/screens/register_shifts/register_shift_screen.dart';
+import 'package:enterprise_pos/services/app_navigator.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
-import 'package:enterprise_pos/widgets/branch_indicator.dart';
 import 'package:enterprise_pos/widgets/app_keyboard_shortcuts.dart';
 import 'package:enterprise_pos/widgets/backup_reminder_gate.dart';
 import 'package:enterprise_pos/widgets/subscription_warning_banner.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../providers/auth_provider.dart';
-import 'login_screen.dart';
 
-class HomeScreen extends StatelessWidget {
+class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
+
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  bool _sidebarCollapsed = false;
 
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthProvider>();
     final branch = context.watch<BranchProvider>();
     final sub = context.watch<SubscriptionProvider>();
-    final offlineQueue = context.watch<OfflineQueueProvider>();
-    final registerShift = context.watch<RegisterShiftProvider>();
-    final masterNeedsBranch = auth.isMasterAdmin && !branch.hasActiveBranch;
+    final offline = context.watch<OfflineQueueProvider>();
+    final shift = context.watch<RegisterShiftProvider>();
 
-    // ── Branch lock gate ─────────────────────────────────────────────────────
-    // When the current branch's subscription is expired or suspended, replace
-    // the entire home UI with the lock screen.  This is a widget swap inside
-    // the same authenticated scaffold — the Navigator stack, queued offline
-    // sales, and the Sanctum token are all preserved so the user can log out
-    // or switch to another active branch without data loss.
     if (sub.isLocked && branch.hasActiveBranch) {
       return const BranchLockScreen();
     }
-    final width = MediaQuery.of(context).size.width;
-    final cols = width >= 1280
-        ? 4
-        : width >= 900
-            ? 3
-            : width >= 620
-                ? 2
-                : 1;
 
+    final masterNeedsBranch = auth.isMasterAdmin && !branch.hasActiveBranch;
     final userName = (auth.user?['name'] ?? 'User').toString();
     final role = auth.roleLabel;
-
-    _Tile branchControlTile() => _Tile(
-          icon: Icons.account_tree_rounded,
-          title: 'Branch Control',
-          shortcut: 'Ctrl+Shift+B',
-          subtitle: branch.hasActiveBranch ? 'Switch active branch' : 'Select working branch',
-          color: AppTheme.navy,
-          emphasized: true,
-          onTap: () => PosNavigation.openSingleton(
-              routeId: PosRouteIds.branchControl,
-              builder: (_) => const BranchControlScreen()),
-        );
-
-    final quickActions = <_Tile>[
-      if (auth.isMasterAdmin) branchControlTile(),
-      if (auth.hasPermission('manage-printer-settings'))
-        _Tile(
-          icon: Icons.print_rounded,
-          title: 'Printer Settings',
-          subtitle: 'Configure and test the receipt printer',
-          color: AppTheme.navy,
-          onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PrinterSettingsScreen())),
-        ),
-      if (auth.isMasterAdmin)
-        _Tile(
-          icon: Icons.workspace_premium_rounded,
-          title: 'Branch Subscriptions',
-          subtitle: 'Manage subscription status for all branches',
-          color: AppTheme.purple,
-          onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const SubscriptionManagementScreen())),
-        ),
-      // Units of measure. Gated on view-units, not on Master Admin: a branch
-      // manager who maintains the catalogue needs this, and the backend
-      // enforces manage-units on the write endpoints anyway.
-      if (auth.hasPermission('view-units'))
-        _Tile(
-          icon: Icons.straighten_rounded,
-          title: 'Units',
-          subtitle: 'Manage units and decimal quantity rules',
-          color: AppTheme.navy,
-          onTap: () => Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => UnitsScreen(token: auth.token!),
-            ),
-          ),
-        ),
-      if (auth.hasAnyPermission(const [
-        'view-register-shifts',
-        'open-register-shift',
-        'close-own-register-shift',
-        'manage-register-shifts',
-      ])) _Tile(
-        icon: Icons.point_of_sale_rounded,
-        title: registerShift.hasActiveShift ? 'Active Shift' : 'Open Shift',
-        shortcut: 'F6',
-        subtitle: registerShift.hasActiveShift ? 'Shift #${registerShift.id} • Manage drawer' : 'Start register before sales',
-        color: registerShift.hasActiveShift ? AppTheme.success : AppTheme.warning,
-        emphasized: true,
-        onTap: () => PosNavigation.openSingleton(
-            routeId: PosRouteIds.registerShift,
-            builder: (_) => const RegisterShiftScreen()),
-      ),
-      if (auth.hasPermission('create-sales')) _Tile(
-        icon: Icons.point_of_sale_rounded,
-        title: 'Create Sale',
-        shortcut: 'Ctrl+N / F2',
-        subtitle: 'Fast checkout',
-        color: AppTheme.primary,
-        emphasized: true,
-        onTap: () {
-          if (!registerShift.hasActiveShift) {
-            PosNavigation.openSingleton(
-                routeId: PosRouteIds.registerShift,
-                builder: (_) => const RegisterShiftScreen());
-            return;
-          }
-          PosNavigation.openSingleton(
-              routeId: PosRouteIds.createSale,
-              builder: (_) => const CreateSaleScreen());
-        },
-      ),
-      if (auth.hasPermission('manage-cashbook')) _Tile(
-        icon: Icons.receipt_long_rounded,
-        title: 'Add Expense',
-        shortcut: 'Ctrl+E',
-        subtitle: 'Cash/account expense',
-        color: AppTheme.danger,
-        emphasized: true,
-        onTap: () => PosNavigation.openSingleton(
-            routeId: PosRouteIds.cashLedgerCreate,
-            builder: (_) => const CashLedgerCreateScreen(initialCategory: 'OTHER_EXPENSE')),
-      ),
-      if (auth.hasAnyPermission(const ['manage-receipts', 'manage-payments'])) _Tile(
-        icon: Icons.account_balance_wallet_rounded,
-        title: 'Party Payments',
-        shortcut: 'Ctrl+M',
-        subtitle: 'Customer/vendor payments',
-        color: AppTheme.success,
-        emphasized: true,
-        onTap: () => PosNavigation.openSingleton(
-            routeId: PosRouteIds.partyPayments,
-            builder: (_) => const PartyPaymentsScreen()),
-      ),
-      if (auth.hasPermission('manage-purchases')) _Tile(
-        icon: Icons.shopping_cart_checkout_rounded,
-        title: 'New Purchase',
-        shortcut: 'Ctrl+O',
-        subtitle: 'Supplier invoice',
-        color: AppTheme.warning,
-        emphasized: true,
-        onTap: () => PosNavigation.openSingleton(
-            routeId: PosRouteIds.createPurchase,
-            builder: (_) => const CreatePurchaseScreen()),
-      ),
-      if (auth.hasAddon('intelligence') && auth.hasPermission('view-intelligence')) _Tile(
-        icon: Icons.auto_awesome_rounded,
-        title: 'Intelligence',
-        subtitle: 'Money Finder & Replenishment',
-        color: AppTheme.purple,
-        emphasized: true,
-        onTap: () => Navigator.push(
-          context,
-          MaterialPageRoute(builder: (_) => const IntelligenceHubScreen()),
-        ),
-      ),
-      if (auth.hasPermission('view-reports')) _Tile(
-        icon: Icons.analytics_rounded,
-        title: 'Reports',
-        shortcut: 'Ctrl+R',
-        subtitle: 'Balances & exports',
-        color: AppTheme.purple,
-        emphasized: true,
-        onTap: () => PosNavigation.openSingleton(
-            routeId: PosRouteIds.reports,
-            builder: (_) => const ReportsHubScreen()),
-      ),
-    ];
-
-    final management = <_Tile>[
-      if (auth.hasPermission('view-sales')) _Tile(icon: Icons.shopping_bag_rounded, title: 'Sales', shortcut: 'Ctrl+L', subtitle: 'Invoices and payments', color: AppTheme.info, onTap: () => PosNavigation.openSingleton(routeId: PosRouteIds.sales, builder: (_) => const SalesScreen())),
-      if (auth.hasPermission('view-cashbook')) _Tile(icon: Icons.account_balance_wallet_rounded, title: 'Cash Ledger', shortcut: 'Ctrl+B', subtitle: 'All cash in/out, plus daily Day Book', color: AppTheme.primary, onTap: () => PosNavigation.openSingleton(routeId: PosRouteIds.cashLedger, builder: (_) => const CashLedgerScreen())),
-      if (auth.hasPermission('view-products')) _Tile(icon: Icons.inventory_2_rounded, title: 'Products', shortcut: 'Ctrl+P', subtitle: 'Catalog and prices', color: AppTheme.success, onTap: () => PosNavigation.openSingleton(routeId: PosRouteIds.products, builder: (_) => const ProductsScreen())),
-      if (auth.hasPermission('view-stock')) _Tile(icon: Icons.warehouse_rounded, title: 'Stock', shortcut: 'Ctrl+I', subtitle: 'Inventory on hand', color: AppTheme.danger, onTap: () => PosNavigation.openSingleton(routeId: PosRouteIds.stock, builder: (_) => const StockScreen())),
-      if (auth.hasPermission('view-customers')) _Tile(icon: Icons.people_alt_rounded, title: 'Customers', shortcut: 'Ctrl+Shift+C', subtitle: 'Receivables and profiles', color: AppTheme.warning, onTap: () => PosNavigation.openSingleton(routeId: PosRouteIds.customers, builder: (_) => const CustomersScreen())),
-      if (auth.hasPermission('view-vendors')) _Tile(icon: Icons.groups_2_rounded, title: 'Vendors', shortcut: 'Ctrl+Shift+V', subtitle: 'Suppliers and payables', color: AppTheme.purple, onTap: () => PosNavigation.openSingleton(routeId: PosRouteIds.vendors, builder: (_) => const VendorsScreen())),
-      if (auth.hasPermission('view-party-credit-limit-audits')) _Tile(icon: Icons.policy_rounded, title: 'Credit Control', subtitle: 'Exposure, overrides and blocked attempts', color: AppTheme.warning, onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const CreditControlScreen()))),
-      // Sale Returns intentionally hidden: returns are now entered as -ve sales.
-      // _Tile(icon: Icons.assignment_return_rounded, title: 'Sale Returns', shortcut: 'Ctrl+T', subtitle: 'Refund workflow', color: AppTheme.info, onTap: () => PosNavigation.openSingleton(routeId: PosRouteIds.saleReturns, builder: (_) => const SaleReturnsScreen())),
-      if (auth.hasPermission('view-purchases')) _Tile(icon: Icons.shopping_cart_rounded, title: 'Purchases', shortcut: 'Ctrl+Shift+O', subtitle: 'Bills and payments', color: AppTheme.primaryDark, onTap: () => PosNavigation.openSingleton(routeId: PosRouteIds.purchases, builder: (_) => const PurchasesScreen())),
-      if (auth.hasPermission('manage-purchases')) _Tile(icon: Icons.assignment_return_outlined, title: 'Purchase Claim', subtitle: 'Damage/shortage claims', color: AppTheme.warning, onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PurchaseClaimsScreen()))),
-      if (auth.hasPermission('view-users')) _Tile(icon: Icons.manage_accounts_rounded, title: 'Users', shortcut: 'Ctrl+U', subtitle: 'Staff and role access', color: AppTheme.info, onTap: () => PosNavigation.openSingleton(routeId: PosRouteIds.users, builder: (_) => const UsersScreen())),
-      if (BackendConfig.isLocal && auth.hasAnyPermission(const ['create-backups', 'restore-backups']))
-        _Tile(
-          icon: Icons.backup_rounded,
-          title: 'Backup & Restore',
-          subtitle: 'Protect and recover complete local business data',
-          color: AppTheme.navy,
-          onTap: () => Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => const BackupRestoreScreen()),
-          ),
-        ),
-      // Chart of Accounts is Master-Admin only (backend enforces; this hides the
-      // affordance so ordinary users never see or reach it).
-      if (auth.isMasterAdmin)
-        _Tile(icon: Icons.account_tree_rounded, title: 'Accounts', subtitle: 'Chart of accounts', color: AppTheme.navy, onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AccountsScreen()))),
-    ];
+    final navGroups = masterNeedsBranch
+        ? _branchRequiredNavigation(context, auth)
+        : _buildNavigation(context, auth, branch, shift);
+    final allEntries = navGroups.expand((group) => group.entries).toList(growable: false);
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('CounterIQ POS'),
-        actions: [
-          IconButton(
-            tooltip: 'Keyboard shortcuts (Ctrl + /)',
-            onPressed: () => showAppShortcutGuide(context),
-            icon: const Icon(Icons.keyboard_rounded),
+      backgroundColor: AppTheme.bg,
+      body: LayoutBuilder(
+        builder: (context, constraints) {
+          final forcedCompact = constraints.maxWidth < 1080;
+          final compactSidebar = forcedCompact || _sidebarCollapsed;
+          final sidebarWidth = compactSidebar ? 72.0 : 220.0;
+
+          return Row(
+            children: [
+              SizedBox(
+                width: sidebarWidth,
+                child: _DesktopSidebar(
+                  groups: navGroups,
+                  compact: compactSidebar,
+                  userName: userName,
+                  role: role,
+                ),
+              ),
+              Expanded(
+                child: Column(
+                  children: [
+                    _DesktopTopBar(
+                      compactSidebar: compactSidebar,
+                      canToggleSidebar: !forcedCompact,
+                      onToggleSidebar: () => setState(() => _sidebarCollapsed = !_sidebarCollapsed),
+                      branch: branch,
+                      auth: auth,
+                      shift: shift,
+                      offlinePending: offline.pendingCount,
+                      allEntries: allEntries,
+                      onLogout: () {
+                        _logout(context, auth);
+                      },
+                    ),
+                    const SubscriptionWarningBanner(),
+                    const BackupReminderGate(),
+                    Expanded(
+                      child: masterNeedsBranch
+                          ? _BranchRequiredView(
+                              onOpenBranchControl: () => _openBranchControl(),
+                            )
+                          : SingleChildScrollView(
+                              padding: const EdgeInsets.fromLTRB(18, 18, 18, 28),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  CommandCenterDashboard(key: ValueKey(branch.selectedBranchId), userName: userName, role: role),
+                                  const SizedBox(height: 12),
+                                  _QuickActionStrip(entries: _quickActions(context, auth, shift)),
+                                  const SizedBox(height: 16),
+                                  const Center(
+                                    child: Text(
+                                      'Powered by A Developers',
+                                      style: TextStyle(color: AppTheme.textMuted, fontSize: 10.5, fontWeight: FontWeight.w600),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  List<_NavGroup> _branchRequiredNavigation(
+    BuildContext context,
+    AuthProvider auth,
+  ) {
+    return [
+      _NavGroup(
+        label: '',
+        entries: [
+          _NavEntry(icon: Icons.home_rounded, title: 'Home', active: true, onTap: () {}),
+        ],
+      ),
+      _NavGroup(
+        label: 'Administration',
+        entries: [
+          _NavEntry(
+            icon: Icons.account_tree_outlined,
+            title: 'Branch Control',
+            onTap: _openBranchControl,
           ),
-          Padding(
-            padding: const EdgeInsets.only(right: 4),
-            child: _OfflineSyncBadge(
-              pendingCount: offlineQueue.pendingCount,
-              onTap: () async {
-                await Navigator.push(context, MaterialPageRoute(builder: (_) => const OfflineSyncScreen()));
-                if (context.mounted) context.read<OfflineQueueProvider>().refresh();
-              },
+          if (auth.isMasterAdmin)
+            _NavEntry(
+              icon: Icons.workspace_premium_outlined,
+              title: 'Subscriptions',
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const SubscriptionManagementScreen()),
+              ),
             ),
-          ),
-          const Padding(
-            padding: EdgeInsets.only(right: 8),
-            child: BranchIndicator(tappable: false),
-          ),
-          Padding(
-            padding: const EdgeInsets.only(right: 8),
-            child: TextButton.icon(
-              onPressed: () async {
-                await auth.logout();
-                if (!context.mounted) return;
-                Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const LoginScreen()));
-              },
-              icon: const Icon(Icons.logout_rounded),
-              label: const Text('Logout'),
-            ),
+        ],
+      ),
+    ];
+  }
+
+  List<_NavGroup> _buildNavigation(
+    BuildContext context,
+    AuthProvider auth,
+    BranchProvider branch,
+    RegisterShiftProvider shift,
+  ) {
+    return [
+      _NavGroup(
+        label: '',
+        entries: [
+          _NavEntry(
+            icon: Icons.home_rounded,
+            title: 'Home',
+            active: true,
+            onTap: () {},
           ),
         ],
       ),
-      body: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          // Non-blocking expiry warning — appears as a slim coloured strip
-          // when the subscription is within the alert window but not yet
-          // locked.  It is placed outside the scrollable list so it stays
-          // visible even when the user scrolls down the tile grid.
-          const SubscriptionWarningBanner(),
-          // Renders nothing. Watches the host's backup schedule and raises the
-          // "Time to back up" dialog here, where it cannot land on top of a
-          // sale in progress.
-          const BackupReminderGate(),
-          Expanded(
-            child: ListView(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 30),
-              children: [
-                _WelcomeHeader(userName: userName, role: role),
-                const SizedBox(height: 18),
-                if (masterNeedsBranch) ...[
-                  _MasterBranchRequiredCard(
-                    onOpenBranchControl: () => PosNavigation.openSingleton(routeId: PosRouteIds.branchControl, builder: (_) => const BranchControlScreen()),
-                  ),
-                ] else ...[
-                  const _ShortcutHintBar(),
-                  const SizedBox(height: 16),
-                  const TodaySnapshotSection(),
-                  if (auth.hasAddon('intelligence') && auth.hasPermission('view-margin-intelligence')) ...[
-                    const SizedBox(height: 12),
-                    const IntelligenceDashboardCard(),
-                  ],
-                  const SizedBox(height: 20),
-                  const _SectionTitle(title: 'Quick actions', subtitle: 'Most-used tasks are one tap away'),
-                  const SizedBox(height: 10),
-                  _TileGrid(tiles: quickActions, columns: cols),
-                  const SizedBox(height: 20),
-                  const _SectionTitle(title: 'Manage business', subtitle: 'Sales, stock, parties, accounts and claims'),
-                  const SizedBox(height: 10),
-                  _TileGrid(tiles: management, columns: cols),
-                ],
-                const SizedBox(height: 24),
-                const Center(
-                  child: Text(
-                    'Powered by A Developers',
-                    style: TextStyle(fontSize: 11, color: AppTheme.textMuted, fontWeight: FontWeight.w600),
-                  ),
-                ),
-              ],
+      _NavGroup(
+        label: 'Sales',
+        entries: [
+          if (auth.hasPermission('create-sales'))
+            _NavEntry(
+              icon: Icons.add_shopping_cart_rounded,
+              title: 'New Sale',
+              shortcut: 'F2',
+              onTap: () => _openSale(context, shift),
             ),
+          if (auth.hasPermission('view-sales'))
+            _NavEntry(
+              icon: Icons.receipt_long_rounded,
+              title: 'Sales History',
+              onTap: () => PosNavigation.openSingleton(
+                routeId: PosRouteIds.sales,
+                builder: (_) => const SalesScreen(),
+              ),
+            ),
+          if (auth.hasAnyPermission(const [
+            'view-register-shifts',
+            'open-register-shift',
+            'close-own-register-shift',
+            'manage-register-shifts',
+          ]))
+            _NavEntry(
+              icon: Icons.point_of_sale_rounded,
+              title: shift.hasActiveShift ? 'Register Shift' : 'Open Register',
+              onTap: () => PosNavigation.openSingleton(
+                routeId: PosRouteIds.registerShift,
+                builder: (_) => const RegisterShiftScreen(),
+              ),
+            ),
+        ],
+      ),
+      _NavGroup(
+        label: 'Inventory',
+        entries: [
+          if (auth.hasPermission('view-products'))
+            _NavEntry(
+              icon: Icons.inventory_2_outlined,
+              title: 'Products',
+              onTap: () => PosNavigation.openSingleton(
+                routeId: PosRouteIds.products,
+                builder: (_) => const ProductsScreen(),
+              ),
+            ),
+          if (auth.hasPermission('view-stock'))
+            _NavEntry(
+              icon: Icons.warehouse_outlined,
+              title: 'Stock',
+              onTap: () => PosNavigation.openSingleton(
+                routeId: PosRouteIds.stock,
+                builder: (_) => const StockScreen(),
+              ),
+            ),
+          if (auth.hasPermission('view-purchases'))
+            _NavEntry(
+              icon: Icons.shopping_cart_outlined,
+              title: 'Purchases',
+              onTap: () => PosNavigation.openSingleton(
+                routeId: PosRouteIds.purchases,
+                builder: (_) => const PurchasesScreen(),
+              ),
+            ),
+          if (auth.hasPermission('manage-purchases'))
+            _NavEntry(
+              icon: Icons.assignment_return_outlined,
+              title: 'Purchase Claims',
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const PurchaseClaimsScreen()),
+              ),
+            ),
+        ],
+      ),
+      _NavGroup(
+        label: 'Parties',
+        entries: [
+          if (auth.hasPermission('view-customers'))
+            _NavEntry(
+              icon: Icons.people_alt_outlined,
+              title: 'Customers',
+              onTap: () => PosNavigation.openSingleton(
+                routeId: PosRouteIds.customers,
+                builder: (_) => const CustomersScreen(),
+              ),
+            ),
+          if (auth.hasPermission('view-vendors'))
+            _NavEntry(
+              icon: Icons.groups_2_outlined,
+              title: 'Vendors',
+              onTap: () => PosNavigation.openSingleton(
+                routeId: PosRouteIds.vendors,
+                builder: (_) => const VendorsScreen(),
+              ),
+            ),
+          if (auth.hasAnyPermission(const ['manage-receipts', 'manage-payments']))
+            _NavEntry(
+              icon: Icons.account_balance_wallet_outlined,
+              title: 'Party Payments',
+              onTap: () => PosNavigation.openSingleton(
+                routeId: PosRouteIds.partyPayments,
+                builder: (_) => const PartyPaymentsScreen(),
+              ),
+            ),
+          if (auth.hasPermission('view-party-credit-limit-audits'))
+            _NavEntry(
+              icon: Icons.policy_outlined,
+              title: 'Credit Control',
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const CreditControlScreen()),
+              ),
+            ),
+        ],
+      ),
+      _NavGroup(
+        label: 'Finance & Analysis',
+        entries: [
+          if (auth.hasPermission('view-cashbook'))
+            _NavEntry(
+              icon: Icons.account_balance_wallet_rounded,
+              title: 'Cash Ledger',
+              onTap: () => PosNavigation.openSingleton(
+                routeId: PosRouteIds.cashLedger,
+                builder: (_) => const CashLedgerScreen(),
+              ),
+            ),
+          if (auth.hasPermission('view-reports'))
+            _NavEntry(
+              icon: Icons.analytics_outlined,
+              title: 'Reports',
+              shortcut: 'Ctrl+R',
+              onTap: () => PosNavigation.openSingleton(
+                routeId: PosRouteIds.reports,
+                builder: (_) => const ReportsHubScreen(),
+              ),
+            ),
+          if (auth.hasAddon('intelligence') && auth.hasPermission('view-intelligence'))
+            _NavEntry(
+              icon: Icons.auto_awesome_rounded,
+              title: 'Intelligence',
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const IntelligenceHubScreen()),
+              ),
+            ),
+        ],
+      ),
+      _NavGroup(
+        label: 'Administration',
+        entries: [
+          if (auth.hasPermission('view-users'))
+            _NavEntry(
+              icon: Icons.manage_accounts_outlined,
+              title: 'Users',
+              onTap: () => PosNavigation.openSingleton(
+                routeId: PosRouteIds.users,
+                builder: (_) => const UsersScreen(),
+              ),
+            ),
+          if (auth.hasPermission('view-units'))
+            _NavEntry(
+              icon: Icons.straighten_rounded,
+              title: 'Units',
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => UnitsScreen(token: auth.token!)),
+              ),
+            ),
+          if (auth.hasPermission('manage-printer-settings'))
+            _NavEntry(
+              icon: Icons.print_outlined,
+              title: 'Printer Settings',
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const PrinterSettingsScreen()),
+              ),
+            ),
+          if (BackendConfig.isLocal && auth.hasAnyPermission(const ['create-backups', 'restore-backups']))
+            _NavEntry(
+              icon: Icons.backup_outlined,
+              title: 'Backup & Restore',
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const BackupRestoreScreen()),
+              ),
+            ),
+          if (auth.isMasterAdmin)
+            _NavEntry(
+              icon: Icons.account_tree_outlined,
+              title: 'Branch Control',
+              onTap: _openBranchControl,
+            ),
+          if (auth.isMasterAdmin)
+            _NavEntry(
+              icon: Icons.workspace_premium_outlined,
+              title: 'Subscriptions',
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const SubscriptionManagementScreen()),
+              ),
+            ),
+          if (auth.isMasterAdmin)
+            _NavEntry(
+              icon: Icons.account_balance_outlined,
+              title: 'Accounts',
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const AccountsScreen()),
+              ),
+            ),
+        ],
+      ),
+    ].where((group) => group.entries.isNotEmpty).toList(growable: false);
+  }
+
+  List<_NavEntry> _quickActions(
+    BuildContext context,
+    AuthProvider auth,
+    RegisterShiftProvider shift,
+  ) {
+    return [
+      if (auth.hasPermission('create-sales'))
+        _NavEntry(
+          icon: Icons.add_rounded,
+          title: 'New Sale',
+          active: true,
+          onTap: () => _openSale(context, shift),
+        ),
+      if (auth.hasPermission('manage-purchases'))
+        _NavEntry(
+          icon: Icons.add_shopping_cart_rounded,
+          title: 'Purchase',
+          onTap: () => PosNavigation.openSingleton(
+            routeId: PosRouteIds.createPurchase,
+            builder: (_) => const CreatePurchaseScreen(),
+          ),
+        ),
+      if (auth.hasPermission('manage-cashbook'))
+        _NavEntry(
+          icon: Icons.receipt_long_rounded,
+          title: 'Expense',
+          onTap: () => PosNavigation.openSingleton(
+            routeId: PosRouteIds.cashLedgerCreate,
+            builder: (_) => const CashLedgerCreateScreen(initialCategory: 'OTHER_EXPENSE'),
+          ),
+        ),
+      if (auth.hasAnyPermission(const ['manage-receipts', 'manage-payments']))
+        _NavEntry(
+          icon: Icons.account_balance_wallet_outlined,
+          title: 'Party Payment',
+          onTap: () => PosNavigation.openSingleton(
+            routeId: PosRouteIds.partyPayments,
+            builder: (_) => const PartyPaymentsScreen(),
+          ),
+        ),
+      if (auth.hasPermission('view-stock'))
+        _NavEntry(
+          icon: Icons.warehouse_outlined,
+          title: 'Stock',
+          onTap: () => PosNavigation.openSingleton(
+            routeId: PosRouteIds.stock,
+            builder: (_) => const StockScreen(),
+          ),
+        ),
+      if (auth.hasPermission('view-reports'))
+        _NavEntry(
+          icon: Icons.analytics_outlined,
+          title: 'Reports',
+          onTap: () => PosNavigation.openSingleton(
+            routeId: PosRouteIds.reports,
+            builder: (_) => const ReportsHubScreen(),
+          ),
+        ),
+    ];
+  }
+
+  void _openSale(BuildContext context, RegisterShiftProvider shift) {
+    if (!shift.hasActiveShift) {
+      PosNavigation.openSingleton(
+        routeId: PosRouteIds.registerShift,
+        builder: (_) => const RegisterShiftScreen(),
+      );
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Open a register shift before starting a sale.')),
+      );
+      return;
+    }
+    PosNavigation.openSingleton(
+      routeId: PosRouteIds.createSale,
+      builder: (_) => const CreateSaleScreen(),
+    );
+  }
+
+  void _openBranchControl() {
+    PosNavigation.openSingleton(
+      routeId: PosRouteIds.branchControl,
+      builder: (_) => const BranchControlScreen(),
+    );
+  }
+
+  Future<void> _logout(BuildContext context, AuthProvider auth) async {
+    await auth.logout();
+    if (!context.mounted) return;
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(builder: (_) => const LoginScreen()),
+    );
+  }
+}
+
+class _DesktopSidebar extends StatelessWidget {
+  final List<_NavGroup> groups;
+  final bool compact;
+  final String userName;
+  final String role;
+
+  const _DesktopSidebar({
+    required this.groups,
+    required this.compact,
+    required this.userName,
+    required this.role,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        border: Border(right: BorderSide(color: AppTheme.border)),
+      ),
+      child: Column(
+        children: [
+          SizedBox(
+            height: 62,
+            child: Padding(
+              padding: EdgeInsets.symmetric(horizontal: compact ? 13 : 14),
+              child: Row(
+                mainAxisAlignment: compact ? MainAxisAlignment.center : MainAxisAlignment.start,
+                children: [
+                  Container(
+                    width: 32,
+                    height: 32,
+                    decoration: BoxDecoration(
+                      gradient: AppTheme.enterpriseGradient,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    alignment: Alignment.center,
+                    child: const Text('C', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 17)),
+                  ),
+                  if (!compact) ...[
+                    const SizedBox(width: 9),
+                    const Expanded(
+                      child: Text(
+                        'CounterIQ',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(color: AppTheme.navy, fontSize: 17, fontWeight: FontWeight.w900, letterSpacing: -.35),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ),
+          const Divider(height: 1),
+          Expanded(
+            child: SingleChildScrollView(
+              padding: EdgeInsets.fromLTRB(compact ? 8 : 10, 10, compact ? 8 : 10, 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  for (final group in groups) ...[
+                    if (!compact && group.label.isNotEmpty) ...[
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(9, 10, 8, 5),
+                        child: Text(
+                          group.label.toUpperCase(),
+                          style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 9.5, fontWeight: FontWeight.w900, letterSpacing: .75),
+                        ),
+                      ),
+                    ] else if (compact && group.label.isNotEmpty)
+                      const SizedBox(height: 7),
+                    for (final entry in group.entries)
+                      _SidebarEntry(entry: entry, compact: compact),
+                  ],
+                ],
+              ),
+            ),
+          ),
+          const Divider(height: 1),
+          Padding(
+            padding: EdgeInsets.all(compact ? 9 : 11),
+            child: compact
+                ? CircleAvatar(
+                    radius: 18,
+                    backgroundColor: AppTheme.primarySoft,
+                    foregroundColor: AppTheme.primary,
+                    child: Text(userName.isEmpty ? '?' : userName[0].toUpperCase(), style: const TextStyle(fontWeight: FontWeight.w900)),
+                  )
+                : Row(
+                    children: [
+                      CircleAvatar(
+                        radius: 18,
+                        backgroundColor: AppTheme.primarySoft,
+                        foregroundColor: AppTheme.primary,
+                        child: Text(userName.isEmpty ? '?' : userName[0].toUpperCase(), style: const TextStyle(fontWeight: FontWeight.w900)),
+                      ),
+                      const SizedBox(width: 9),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(userName, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: AppTheme.navy, fontSize: 11.5, fontWeight: FontWeight.w900)),
+                            const SizedBox(height: 1),
+                            Text(role, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: AppTheme.textMuted, fontSize: 9.5, fontWeight: FontWeight.w600)),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
           ),
         ],
       ),
@@ -337,43 +621,309 @@ class HomeScreen extends StatelessWidget {
   }
 }
 
-/// AppBar entry point into the offline-sales sync queue (handover doc
-/// §2.4). Shows nothing extra when the queue is empty; a numbered pill once
-/// there are sales waiting to sync.
-class _OfflineSyncBadge extends StatelessWidget {
-  final int pendingCount;
-  final VoidCallback onTap;
+class _SidebarEntry extends StatelessWidget {
+  final _NavEntry entry;
+  final bool compact;
 
-  const _OfflineSyncBadge({required this.pendingCount, required this.onTap});
+  const _SidebarEntry({required this.entry, required this.compact});
 
   @override
   Widget build(BuildContext context) {
-    final hasPending = pendingCount > 0;
-    return InkWell(
-      borderRadius: BorderRadius.circular(12),
-      onTap: onTap,
-      child: Padding(
-        padding: const EdgeInsets.all(6),
-        child: Stack(
-          clipBehavior: Clip.none,
-          children: [
-            Icon(
-              hasPending ? Icons.cloud_off_rounded : Icons.cloud_done_rounded,
-              color: hasPending ? AppTheme.warning : AppTheme.textMuted,
+    final foreground = entry.active ? AppTheme.primary : const Color(0xFF475569);
+    final child = Material(
+      color: entry.active ? AppTheme.primary.withOpacity(.08) : Colors.transparent,
+      borderRadius: BorderRadius.circular(9),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(9),
+        onTap: entry.onTap,
+        child: SizedBox(
+          height: 39,
+          child: Padding(
+            padding: EdgeInsets.symmetric(horizontal: compact ? 0 : 10),
+            child: Row(
+              mainAxisAlignment: compact ? MainAxisAlignment.center : MainAxisAlignment.start,
+              children: [
+                Icon(entry.icon, color: foreground, size: 19),
+                if (!compact) ...[
+                  const SizedBox(width: 9),
+                  Expanded(
+                    child: Text(
+                      entry.title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(color: foreground, fontSize: 12, fontWeight: entry.active ? FontWeight.w900 : FontWeight.w700),
+                    ),
+                  ),
+                  if (entry.shortcut != null)
+                    Text(entry.shortcut!, style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 9, fontWeight: FontWeight.w700)),
+                ],
+              ],
             ),
-            if (hasPending)
-              Positioned(
-                right: -6,
-                top: -6,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-                  decoration: BoxDecoration(color: AppTheme.danger, borderRadius: BorderRadius.circular(10)),
-                  child: Text(
-                    pendingCount > 99 ? '99+' : '$pendingCount',
-                    style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w800),
+          ),
+        ),
+      ),
+    );
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 1),
+      child: compact ? Tooltip(message: entry.title, child: child) : child,
+    );
+  }
+}
+
+class _DesktopTopBar extends StatelessWidget {
+  final bool compactSidebar;
+  final bool canToggleSidebar;
+  final VoidCallback onToggleSidebar;
+  final BranchProvider branch;
+  final AuthProvider auth;
+  final RegisterShiftProvider shift;
+  final int offlinePending;
+  final List<_NavEntry> allEntries;
+  final VoidCallback onLogout;
+
+  const _DesktopTopBar({
+    required this.compactSidebar,
+    required this.canToggleSidebar,
+    required this.onToggleSidebar,
+    required this.branch,
+    required this.auth,
+    required this.shift,
+    required this.offlinePending,
+    required this.allEntries,
+    required this.onLogout,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 62,
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        border: Border(bottom: BorderSide(color: AppTheme.border)),
+      ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final hideSecondary = constraints.maxWidth < 850;
+          return Row(
+            children: [
+              if (canToggleSidebar)
+                IconButton(
+                  tooltip: compactSidebar ? 'Expand sidebar' : 'Collapse sidebar',
+                  onPressed: onToggleSidebar,
+                  icon: Icon(compactSidebar ? Icons.menu_open_rounded : Icons.menu_rounded, size: 20),
+                ),
+              if (canToggleSidebar) const SizedBox(width: 2),
+              Expanded(
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 410),
+                    child: _CommandSearchButton(entries: allEntries),
                   ),
                 ),
               ),
+              const SizedBox(width: 10),
+              if (!hideSecondary && auth.isMasterAdmin)
+                _TopChip(
+                  icon: branch.hasActiveBranch ? Icons.apartment_rounded : Icons.warning_amber_rounded,
+                  label: branch.label,
+                  onTap: () => PosNavigation.openSingleton(
+                    routeId: PosRouteIds.branchControl,
+                    builder: (_) => const BranchControlScreen(),
+                  ),
+                ),
+              if (!hideSecondary && auth.hasAnyPermission(const [
+                'view-register-shifts',
+                'open-register-shift',
+                'close-own-register-shift',
+                'manage-register-shifts',
+              ])) ...[
+                const SizedBox(width: 7),
+                _TopChip(
+                  icon: shift.hasActiveShift ? Icons.check_circle_rounded : Icons.point_of_sale_rounded,
+                  label: shift.hasActiveShift ? 'Register Open' : 'No Register',
+                  accent: shift.hasActiveShift ? AppTheme.success : AppTheme.warning,
+                  onTap: () => PosNavigation.openSingleton(
+                    routeId: PosRouteIds.registerShift,
+                    builder: (_) => const RegisterShiftScreen(),
+                  ),
+                ),
+              ],
+              const SizedBox(width: 7),
+              _SyncButton(pendingCount: offlinePending),
+              const SizedBox(width: 5),
+              PopupMenuButton<String>(
+                tooltip: 'Account menu',
+                position: PopupMenuPosition.under,
+                onSelected: (value) {
+                  if (value == 'shortcuts') showAppShortcutGuide(context);
+                  if (value == 'logout') onLogout();
+                },
+                itemBuilder: (_) => const [
+                  PopupMenuItem(value: 'shortcuts', child: ListTile(leading: Icon(Icons.keyboard_rounded), title: Text('Keyboard shortcuts'))),
+                  PopupMenuDivider(),
+                  PopupMenuItem(value: 'logout', child: ListTile(leading: Icon(Icons.logout_rounded), title: Text('Logout'))),
+                ],
+                child: Container(
+                  height: 38,
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  decoration: BoxDecoration(
+                    border: Border.all(color: AppTheme.border),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Row(
+                    children: [
+                      CircleAvatar(
+                        radius: 11,
+                        backgroundColor: AppTheme.primarySoft,
+                        foregroundColor: AppTheme.primary,
+                        child: Text(
+                          ((auth.user?['name'] ?? 'U').toString().isEmpty ? 'U' : (auth.user?['name'] ?? 'U').toString()[0]).toUpperCase(),
+                          style: const TextStyle(fontSize: 9.5, fontWeight: FontWeight.w900),
+                        ),
+                      ),
+                      if (!hideSecondary) ...[
+                        const SizedBox(width: 7),
+                        ConstrainedBox(
+                          constraints: const BoxConstraints(maxWidth: 110),
+                          child: Text(
+                            (auth.user?['name'] ?? 'User').toString(),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(color: AppTheme.navy, fontSize: 11, fontWeight: FontWeight.w800),
+                          ),
+                        ),
+                      ],
+                      const SizedBox(width: 4),
+                      const Icon(Icons.keyboard_arrow_down_rounded, size: 17, color: AppTheme.textMuted),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _CommandSearchButton extends StatelessWidget {
+  final List<_NavEntry> entries;
+
+  const _CommandSearchButton({required this.entries});
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(10),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(10),
+        onTap: () => _showCommandPalette(context, entries),
+        child: Container(
+          height: 38,
+          padding: const EdgeInsets.symmetric(horizontal: 11),
+          decoration: BoxDecoration(
+            border: Border.all(color: AppTheme.border),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: const Row(
+            children: [
+              Icon(Icons.search_rounded, size: 18, color: Color(0xFF94A3B8)),
+              SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Search modules & actions…',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(color: Color(0xFF94A3B8), fontSize: 11.5, fontWeight: FontWeight.w600),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _showCommandPalette(BuildContext context, List<_NavEntry> entries) async {
+    await showDialog<void>(
+      context: context,
+      builder: (_) => _CommandPalette(entries: entries),
+    );
+  }
+}
+
+class _CommandPalette extends StatefulWidget {
+  final List<_NavEntry> entries;
+  const _CommandPalette({required this.entries});
+
+  @override
+  State<_CommandPalette> createState() => _CommandPaletteState();
+}
+
+class _CommandPaletteState extends State<_CommandPalette> {
+  final _controller = TextEditingController();
+  String _query = '';
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final visible = widget.entries.where((entry) {
+      final q = _query.trim().toLowerCase();
+      return q.isEmpty || entry.title.toLowerCase().contains(q);
+    }).toList(growable: false);
+
+    return Dialog(
+      insetPadding: const EdgeInsets.all(24),
+      child: SizedBox(
+        width: 560,
+        height: 470,
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(14),
+              child: TextField(
+                controller: _controller,
+                autofocus: true,
+                onChanged: (value) => setState(() => _query = value),
+                decoration: const InputDecoration(
+                  hintText: 'Search sales, products, stock, reports…',
+                  prefixIcon: Icon(Icons.search_rounded),
+                ),
+              ),
+            ),
+            const Divider(height: 1),
+            Expanded(
+              child: visible.isEmpty
+                  ? const Center(child: Text('No matching module or action.', style: TextStyle(color: AppTheme.textMuted, fontWeight: FontWeight.w700)))
+                  : ListView.separated(
+                      padding: const EdgeInsets.all(8),
+                      itemCount: visible.length,
+                      separatorBuilder: (_, __) => const SizedBox(height: 2),
+                      itemBuilder: (_, index) {
+                        final entry = visible[index];
+                        return ListTile(
+                          dense: true,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                          leading: Icon(entry.icon, color: AppTheme.textMuted),
+                          title: Text(entry.title),
+                          trailing: const Icon(Icons.keyboard_return_rounded, size: 17, color: Color(0xFF94A3B8)),
+                          onTap: () {
+                            Navigator.pop(context);
+                            entry.onTap();
+                          },
+                        );
+                      },
+                    ),
+            ),
           ],
         ),
       ),
@@ -381,310 +931,202 @@ class _OfflineSyncBadge extends StatelessWidget {
   }
 }
 
-class _WelcomeHeader extends StatelessWidget {
-  final String userName;
-  final String role;
+class _TopChip extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+  final Color accent;
 
-  const _WelcomeHeader({required this.userName, required this.role});
+  const _TopChip({
+    required this.icon,
+    required this.label,
+    required this.onTap,
+    this.accent = AppTheme.navy,
+  });
 
   @override
   Widget build(BuildContext context) {
-    final auth = context.watch<AuthProvider>();
-    final branch = context.watch<BranchProvider>();
-    final canCreateSale = !auth.isMasterAdmin || branch.hasActiveBranch;
-
-    void openSaleOrWarn() {
-      if (!canCreateSale) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Please select a working branch from Branch Control first.')),
-        );
-        return;
-      }
-      PosNavigation.openSingleton(
-          routeId: PosRouteIds.createSale,
-          builder: (_) => const CreateSaleScreen());
-    }
-
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: AppTheme.border),
-        boxShadow: AppTheme.softShadow,
-      ),
-      child: Row(
-        children: [
-          CircleAvatar(
-            radius: 26,
-            backgroundColor: AppTheme.primarySoft,
-            foregroundColor: AppTheme.primary,
-            child: Text(userName.isNotEmpty ? userName[0].toUpperCase() : '?', style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900)),
-          ),
-          const SizedBox(width: 14),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('Welcome, $userName', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900)),
-                const SizedBox(height: 3),
-                Text(role, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: AppTheme.textMuted, fontWeight: FontWeight.w700)),
-              ],
-            ),
-          ),
-          FilledButton.icon(
-            onPressed: openSaleOrWarn,
-            icon: const Icon(Icons.add_rounded),
-            label: const Text('New Sale'),
-          ),
-        ],
+    return InkWell(
+      borderRadius: BorderRadius.circular(10),
+      onTap: onTap,
+      child: Container(
+        height: 38,
+        constraints: const BoxConstraints(maxWidth: 180),
+        padding: const EdgeInsets.symmetric(horizontal: 10),
+        decoration: BoxDecoration(border: Border.all(color: AppTheme.border), borderRadius: BorderRadius.circular(10)),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 17, color: accent),
+            const SizedBox(width: 6),
+            Flexible(child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: AppTheme.navy, fontSize: 10.5, fontWeight: FontWeight.w800))),
+          ],
+        ),
       ),
     );
   }
 }
 
-
-class _MasterBranchRequiredCard extends StatelessWidget {
-  final VoidCallback onOpenBranchControl;
-
-  const _MasterBranchRequiredCard({required this.onOpenBranchControl});
+class _SyncButton extends StatelessWidget {
+  final int pendingCount;
+  const _SyncButton({required this.pendingCount});
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: AppTheme.warning.withOpacity(.35)),
-        boxShadow: AppTheme.softShadow,
-      ),
-      child: Row(
-        children: [
-          Container(
-            height: 52,
-            width: 52,
-            decoration: BoxDecoration(
-              color: AppTheme.warning.withOpacity(.12),
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: const Icon(Icons.warning_amber_rounded, color: AppTheme.warning),
-          ),
-          const SizedBox(width: 14),
-          const Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('Select a working branch first', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w900, color: AppTheme.navy)),
-                SizedBox(height: 4),
-                Text(
-                  'Master admin data is loaded branch-wise. Choose a branch from Branch Control before opening sales, purchases, stock, payments or reports.',
-                  style: TextStyle(color: AppTheme.textMuted, fontWeight: FontWeight.w600),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 12),
-          FilledButton.icon(
-            onPressed: onOpenBranchControl,
-            icon: const Icon(Icons.account_tree_rounded),
-            label: const Text('Open Branch Control'),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-
-class _ShortcutHintBar extends StatelessWidget {
-  const _ShortcutHintBar();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: AppTheme.navy,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: AppTheme.softShadow,
-      ),
-      child: Row(
-        children: [
-          Container(
-            height: 40,
-            width: 40,
-            decoration: BoxDecoration(
-              color: Colors.white.withOpacity(.10),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: const Icon(Icons.keyboard_rounded, color: Colors.white),
-          ),
-          const SizedBox(width: 12),
-          const Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('Keyboard-first POS', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 15)),
-                SizedBox(height: 2),
-                Text('Press Ctrl + / anytime to view shortcuts. Use Ctrl + N or F2 for a new sale.', style: TextStyle(color: Color(0xFFCBD5E1), fontWeight: FontWeight.w700, fontSize: 12.5)),
-              ],
-            ),
-          ),
-          const SizedBox(width: 10),
-          OutlinedButton.icon(
-            style: OutlinedButton.styleFrom(
-              foregroundColor: Colors.white,
-              side: BorderSide(color: Colors.white.withOpacity(.35)),
-            ),
-            onPressed: () => showAppShortcutGuide(context),
-            icon: const Icon(Icons.open_in_new_rounded, size: 18),
-            label: const Text('View'),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _ShortcutBadge extends StatelessWidget {
-  final String text;
-
-  const _ShortcutBadge({required this.text});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-      decoration: BoxDecoration(
-        color: AppTheme.surfaceSoft,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: AppTheme.border),
-      ),
-      child: Text(
-        text,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: const TextStyle(color: AppTheme.textMuted, fontSize: 10.5, fontWeight: FontWeight.w900),
-      ),
-    );
-  }
-}
-
-class _SectionTitle extends StatelessWidget {
-  final String title;
-  final String subtitle;
-  const _SectionTitle({required this.title, required this.subtitle});
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.end,
-      children: [
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+    return Tooltip(
+      message: pendingCount > 0 ? '$pendingCount offline sales waiting to sync' : 'Offline sales sync',
+      child: InkWell(
+        borderRadius: BorderRadius.circular(10),
+        onTap: () async {
+          await Navigator.push(context, MaterialPageRoute(builder: (_) => const OfflineSyncScreen()));
+          if (context.mounted) context.read<OfflineQueueProvider>().refresh();
+        },
+        child: Container(
+          width: 38,
+          height: 38,
+          decoration: BoxDecoration(border: Border.all(color: AppTheme.border), borderRadius: BorderRadius.circular(10)),
+          child: Stack(
+            clipBehavior: Clip.none,
             children: [
-              Text(title, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900)),
-              const SizedBox(height: 2),
-              Text(subtitle, style: const TextStyle(color: AppTheme.textMuted, fontWeight: FontWeight.w600, fontSize: 12.5)),
+              const Center(child: Icon(Icons.sync_rounded, size: 18, color: AppTheme.textMuted)),
+              if (pendingCount > 0)
+                Positioned(
+                  right: 2,
+                  top: 2,
+                  child: Container(
+                    constraints: const BoxConstraints(minWidth: 14, minHeight: 14),
+                    padding: const EdgeInsets.symmetric(horizontal: 3),
+                    decoration: const BoxDecoration(color: AppTheme.warning, shape: BoxShape.circle),
+                    alignment: Alignment.center,
+                    child: Text(
+                      pendingCount > 9 ? '9+' : '$pendingCount',
+                      style: const TextStyle(color: Colors.white, fontSize: 7.5, fontWeight: FontWeight.w900),
+                    ),
+                  ),
+                ),
             ],
           ),
         ),
-      ],
-    );
-  }
-}
-
-class _TileGrid extends StatelessWidget {
-  final List<_Tile> tiles;
-  final int columns;
-  const _TileGrid({required this.tiles, required this.columns});
-
-  @override
-  Widget build(BuildContext context) {
-    final width = MediaQuery.of(context).size.width;
-    return GridView.builder(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: columns,
-        crossAxisSpacing: 12,
-        mainAxisSpacing: 12,
-        childAspectRatio: width >= 620 ? 2.6 : 3.2,
       ),
-      itemCount: tiles.length,
-      itemBuilder: (_, i) => _DashboardCard(tile: tiles[i]),
     );
   }
 }
 
-class _Tile {
-  final IconData icon;
-  final String title;
-  final String subtitle;
-  final String? shortcut;
-  final Color color;
-  final VoidCallback onTap;
-  final bool emphasized;
-
-  _Tile({required this.icon, required this.title, required this.subtitle, this.shortcut, required this.color, required this.onTap, this.emphasized = false});
-}
-
-class _DashboardCard extends StatelessWidget {
-  final _Tile tile;
-  const _DashboardCard({required this.tile});
+class _QuickActionStrip extends StatelessWidget {
+  final List<_NavEntry> entries;
+  const _QuickActionStrip({required this.entries});
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(18),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(18),
-        onTap: tile.onTap,
-        child: Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(18),
-            border: Border.all(color: tile.emphasized ? tile.color.withOpacity(.32) : AppTheme.border),
-            boxShadow: tile.emphasized ? AppTheme.softShadow : null,
+    if (entries.isEmpty) return const SizedBox.shrink();
+    return Container(
+      padding: const EdgeInsets.all(13),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(13),
+        border: Border.all(color: AppTheme.border),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Padding(
+            padding: EdgeInsets.only(top: 9),
+            child: Text('Quick actions', style: TextStyle(color: AppTheme.navy, fontWeight: FontWeight.w900, fontSize: 13)),
           ),
-          child: Row(
+          const SizedBox(width: 16),
+          Expanded(
+            child: Wrap(
+              spacing: 7,
+              runSpacing: 7,
+              children: [
+                for (var i = 0; i < entries.length; i++)
+                  if (i == 0)
+                    FilledButton.icon(
+                      onPressed: entries[i].onTap,
+                      icon: Icon(entries[i].icon, size: 17),
+                      label: Text(entries[i].title),
+                    )
+                  else
+                    OutlinedButton.icon(
+                      onPressed: entries[i].onTap,
+                      icon: Icon(entries[i].icon, size: 17),
+                      label: Text(entries[i].title),
+                    ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _BranchRequiredView extends StatelessWidget {
+  final VoidCallback onOpenBranchControl;
+  const _BranchRequiredView({required this.onOpenBranchControl});
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 680),
+        child: Container(
+          margin: const EdgeInsets.all(24),
+          padding: const EdgeInsets.all(24),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: AppTheme.warning.withOpacity(.25)),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
               Container(
-                height: 46,
-                width: 46,
-                decoration: BoxDecoration(color: tile.color.withOpacity(.10), borderRadius: BorderRadius.circular(15)),
-                child: Icon(tile.icon, color: tile.color, size: 24),
+                width: 52,
+                height: 52,
+                decoration: BoxDecoration(color: AppTheme.warning.withOpacity(.09), borderRadius: BorderRadius.circular(14)),
+                child: const Icon(Icons.account_tree_rounded, color: AppTheme.warning, size: 26),
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(tile.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: AppTheme.navy, fontWeight: FontWeight.w900, fontSize: 15)),
-                        ),
-                        if (tile.shortcut != null) ...[
-                          const SizedBox(width: 8),
-                          _ShortcutBadge(text: tile.shortcut!),
-                        ],
-                      ],
-                    ),
-                    const SizedBox(height: 4),
-                    Text(tile.subtitle, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: AppTheme.textMuted, fontWeight: FontWeight.w600, fontSize: 12)),
-                  ],
-                ),
+              const SizedBox(height: 14),
+              const Text('Select a working branch', style: TextStyle(color: AppTheme.navy, fontSize: 20, fontWeight: FontWeight.w900)),
+              const SizedBox(height: 7),
+              const Text(
+                'Master Admin works inside one branch at a time. Select a branch before opening sales, purchases, stock, payments, reports or Intelligence.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: AppTheme.textMuted, fontWeight: FontWeight.w600, height: 1.35),
               ),
-              const Icon(Icons.chevron_right_rounded, color: AppTheme.textMuted),
+              const SizedBox(height: 16),
+              FilledButton.icon(
+                onPressed: onOpenBranchControl,
+                icon: const Icon(Icons.apartment_rounded),
+                label: const Text('Open Branch Control'),
+              ),
             ],
           ),
         ),
       ),
     );
   }
+}
+
+class _NavGroup {
+  final String label;
+  final List<_NavEntry> entries;
+  const _NavGroup({required this.label, required this.entries});
+}
+
+class _NavEntry {
+  final IconData icon;
+  final String title;
+  final String? shortcut;
+  final VoidCallback onTap;
+  final bool active;
+
+  const _NavEntry({
+    required this.icon,
+    required this.title,
+    required this.onTap,
+    this.shortcut,
+    this.active = false,
+  });
 }
