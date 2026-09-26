@@ -129,10 +129,12 @@ class ReportsService {
     throw Exception(res['message'] ?? 'Failed to load daily summary');
   }
 
-  /// GET /reports/top-bottom?from=&to=&branch_id=&salesman_id=&customer_id=&category_id=&vendor_id=&sort_by=&direction=&page=&per_page=
+  /// GET /reports/top-bottom?start_date=&end_date=&... (from/to remain legacy aliases)
   Future<Map<String, dynamic>> getTopBottomProducts({
     String? from,
     String? to,
+    String? startDate,
+    String? endDate,
     int? branchId,
     int? salesmanId,
     int? customerId,
@@ -148,8 +150,10 @@ class ReportsService {
       'per_page': '$perPage',
       'sort_by': sortBy,
       'direction': direction,
-      if (from != null && from.isNotEmpty) 'from': from,
-      if (to != null && to.isNotEmpty) 'to': to,
+      if (startDate != null && startDate.isNotEmpty) 'start_date': startDate,
+      if ((startDate == null || startDate.isEmpty) && from != null && from.isNotEmpty) 'from': from,
+      if (endDate != null && endDate.isNotEmpty) 'end_date': endDate,
+      if ((endDate == null || endDate.isEmpty) && to != null && to.isNotEmpty) 'to': to,
       // if (branchId != null) 'branch_id': '$branchId',
       if (salesmanId != null) 'salesman_id': '$salesmanId',
       if (customerId != null) 'customer_id': '$customerId',

@@ -30,12 +30,43 @@ class CommandCenterDashboard extends StatefulWidget {
   State<CommandCenterDashboard> createState() => _CommandCenterDashboardState();
 }
 
+enum _DashboardPreset { today, thisWeek, lastWeek, thisMonth, custom }
+
+class _DashboardRange {
+  final DateTime start;
+  final DateTime end;
+  final DateTime compareStart;
+  final DateTime compareEnd;
+  final String label;
+  final String compareLabel;
+  final bool singleDay;
+
+  const _DashboardRange({
+    required this.start,
+    required this.end,
+    required this.compareStart,
+    required this.compareEnd,
+    required this.label,
+    required this.compareLabel,
+    required this.singleDay,
+  });
+}
+
 class _CommandCenterDashboardState extends State<CommandCenterDashboard> {
   final _money = const AppMoneyFormatter(decimalDigits: 3);
   final _dateTime = DateFormat('yyyy-MM-dd HH:mm:ss');
+  final _dateOnly = DateFormat('yyyy-MM-dd');
   final _headerDate = DateFormat('EEEE, d MMM yyyy');
+  final _shortDate = DateFormat('d MMM');
+  final _shortDateYear = DateFormat('d MMM yyyy');
 
-  bool _loading = true;
+  _DashboardPreset _preset = _DashboardPreset.today;
+  DateTimeRange? _customRange;
+  late _DashboardRange _range;
+  int _periodRequestGeneration = 0;
+
+  bool _periodLoading = true;
+  bool _liveLoading = true;
   bool _obscured = false;
   String? _error;
 
@@ -44,115 +75,276 @@ class _CommandCenterDashboardState extends State<CommandCenterDashboard> {
   double _discount = 0;
   int _invoices = 0;
   double _collections = 0;
+
+  double _previousNetSales = 0;
+  double _previousGrossProfit = 0;
+  int _previousInvoices = 0;
+
   int _lowStockCount = 0;
   List<Map<String, dynamic>> _lowStockPreview = const [];
   List<Map<String, dynamic>> _topProducts = const [];
-  List<_HourlyPoint> _hourlySales = const [];
+  List<_TrendPoint> _trend = const [];
   List<_PaymentSlice> _paymentMix = const [];
 
   bool _hasIntelligence = false;
   double _recoverableMargin = 0;
   int _marginLeakLines = 0;
 
+  bool get _loading => _periodLoading || _liveLoading;
+
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _load());
+    _range = _rangeFor(_preset, custom: _customRange);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _loadAll());
   }
 
-  ({String from, String to}) _todayRange() {
+  DateTime _startOfDay(DateTime value) => DateTime(value.year, value.month, value.day);
+  DateTime _endOfDay(DateTime value) => DateTime(value.year, value.month, value.day, 23, 59, 59);
+
+  DateTime _startOfIsoWeek(DateTime value) {
+    final day = _startOfDay(value);
+    return day.subtract(Duration(days: day.weekday - DateTime.monday));
+  }
+
+  DateTime _sameClockPreviousMonth(DateTime now) {
+    final previousMonth = now.month == 1 ? 12 : now.month - 1;
+    final previousYear = now.month == 1 ? now.year - 1 : now.year;
+    final lastDay = DateTime(previousYear, previousMonth + 1, 0).day;
+    final day = math.min(now.day, lastDay).toInt();
+    return DateTime(previousYear, previousMonth, day, now.hour, now.minute, now.second);
+  }
+
+  _DashboardRange _rangeFor(_DashboardPreset preset, {DateTimeRange? custom}) {
     final now = DateTime.now();
-    final start = DateTime(now.year, now.month, now.day);
-    final end = DateTime(now.year, now.month, now.day, 23, 59, 59);
-    return (from: _dateTime.format(start), to: _dateTime.format(end));
+    switch (preset) {
+      case _DashboardPreset.today:
+        final start = _startOfDay(now);
+        final compareStart = start.subtract(const Duration(days: 1));
+        return _DashboardRange(
+          start: start,
+          end: now,
+          compareStart: compareStart,
+          compareEnd: compareStart.add(now.difference(start)),
+          label: 'Today',
+          compareLabel: 'Yesterday',
+          singleDay: true,
+        );
+      case _DashboardPreset.thisWeek:
+        final start = _startOfIsoWeek(now);
+        final compareStart = start.subtract(const Duration(days: 7));
+        return _DashboardRange(
+          start: start,
+          end: now,
+          compareStart: compareStart,
+          compareEnd: compareStart.add(now.difference(start)),
+          label: 'This Week',
+          compareLabel: 'Previous Week • same elapsed period',
+          singleDay: false,
+        );
+      case _DashboardPreset.lastWeek:
+        final thisWeekStart = _startOfIsoWeek(now);
+        final start = thisWeekStart.subtract(const Duration(days: 7));
+        final end = thisWeekStart.subtract(const Duration(seconds: 1));
+        return _DashboardRange(
+          start: start,
+          end: end,
+          compareStart: start.subtract(const Duration(days: 7)),
+          compareEnd: end.subtract(const Duration(days: 7)),
+          label: 'Last Week',
+          compareLabel: 'Week Before',
+          singleDay: false,
+        );
+      case _DashboardPreset.thisMonth:
+        final start = DateTime(now.year, now.month, 1);
+        final compareStart = now.month == 1 ? DateTime(now.year - 1, 12, 1) : DateTime(now.year, now.month - 1, 1);
+        return _DashboardRange(
+          start: start,
+          end: now,
+          compareStart: compareStart,
+          compareEnd: _sameClockPreviousMonth(now),
+          label: 'This Month',
+          compareLabel: 'Previous Month • same elapsed period',
+          singleDay: false,
+        );
+      case _DashboardPreset.custom:
+        final selected = custom ?? DateTimeRange(start: _startOfDay(now), end: _startOfDay(now));
+        final start = _startOfDay(selected.start);
+        final end = _endOfDay(selected.end);
+        final days = _startOfDay(selected.end).difference(start).inDays + 1;
+        final compareEndDay = start.subtract(const Duration(days: 1));
+        final compareStart = compareEndDay.subtract(Duration(days: days - 1));
+        return _DashboardRange(
+          start: start,
+          end: end,
+          compareStart: _startOfDay(compareStart),
+          compareEnd: _endOfDay(compareEndDay),
+          label: '${_shortDate.format(start)} – ${_shortDateYear.format(end)}',
+          compareLabel: '${_shortDate.format(compareStart)} – ${_shortDateYear.format(compareEndDay)}',
+          singleDay: days == 1,
+        );
+    }
   }
 
-  Future<void> _load() async {
+  String _rangeStart(_DashboardRange range) => _dateTime.format(range.start);
+  String _rangeEnd(_DashboardRange range) => _dateTime.format(range.end);
+  String _rangeStartDate(_DashboardRange range) => _dateOnly.format(range.start);
+  String _rangeEndDate(_DashboardRange range) => _dateOnly.format(range.end);
+
+  Future<void> _loadAll() async {
+    await Future.wait<void>([
+      _loadPeriodData(),
+      _loadLiveData(),
+    ]);
+  }
+
+  Future<void> _loadLiveData() async {
     if (!mounted) return;
     final auth = context.read<AuthProvider>();
     final token = auth.token;
-    if (token == null) return;
+    if (token == null || !auth.hasPermission('view-reports')) {
+      if (mounted) setState(() => _liveLoading = false);
+      return;
+    }
+    setState(() => _liveLoading = true);
+    try {
+      final report = await ReportsService(token: token).runEnterpriseReport(
+        reportKey: 'low-stock',
+        filters: const {'per_page': 5},
+      );
+      final rows = _mapRows(report['rows']);
+      final pagination = _asMap(report['pagination']);
+      if (!mounted) return;
+      setState(() {
+        _lowStockPreview = rows;
+        final total = _toInt(pagination['total']);
+        _lowStockCount = total > 0 ? total : rows.length;
+        _liveLoading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _liveLoading = false);
+    }
+  }
+
+  Future<void> _loadPeriodData() async {
+    if (!mounted) return;
+    final generation = ++_periodRequestGeneration;
+    final auth = context.read<AuthProvider>();
+    final token = auth.token;
+    if (token == null) {
+      if (mounted) setState(() => _periodLoading = false);
+      return;
+    }
+    final range = _range;
 
     setState(() {
-      _loading = true;
+      _periodLoading = true;
       _error = null;
     });
 
+    final intelligenceAllowed = auth.hasAddon('intelligence') &&
+        auth.hasPermission('view-margin-intelligence');
+
     try {
-      final intelligenceAllowed = auth.hasAddon('intelligence') &&
-          auth.hasPermission('view-margin-intelligence');
       double recoverable = 0;
       int leakLines = 0;
       if (intelligenceAllowed) {
         try {
-          final env = await IntelligenceService(token: token)
-              .marginLeaks(groupBy: 'product', page: 1, perPage: 1);
+          final env = await IntelligenceService(token: token).marginLeaks(
+            startDate: _rangeStartDate(range),
+            endDate: _rangeEndDate(range),
+            groupBy: 'product',
+            page: 1,
+            perPage: 1,
+          );
           final result = _asMap(env.result);
           final totals = _asMap(result['totals']);
           recoverable = _toDouble(totals['recoverable']);
           leakLines = _toInt(totals['lines_flagged']);
         } catch (_) {
-          // Intelligence is optional on Home; navigation remains available.
+          // Intelligence remains optional on Home.
         }
       }
 
       if (!auth.hasPermission('view-reports')) {
-        if (!mounted) return;
+        if (!mounted || generation != _periodRequestGeneration) return;
         setState(() {
           _hasIntelligence = intelligenceAllowed;
           _recoverableMargin = recoverable;
           _marginLeakLines = leakLines;
-          _loading = false;
+          _periodLoading = false;
         });
         return;
       }
 
       final reports = ReportsService(token: token);
-      final range = _todayRange();
+      final currentFilters = <String, dynamic>{
+        'start_date': _rangeStart(range),
+        'end_date': _rangeEnd(range),
+      };
+      final previousFilters = <String, dynamic>{
+        'start_date': _dateTime.format(range.compareStart),
+        'end_date': _dateTime.format(range.compareEnd),
+      };
 
-      final reportFutures = await Future.wait<Map<String, dynamic>>([
+      final results = await Future.wait<Map<String, dynamic>>([
         reports.runEnterpriseReport(
           reportKey: 'sales-summary',
-          filters: {'from': range.from, 'to': range.to, 'per_page': 5},
+          filters: {...currentFilters, 'per_page': 500},
         ).catchError((_) => <String, dynamic>{}),
         reports.runEnterpriseReport(
-          reportKey: 'sales-by-hour',
-          filters: {'from': range.from, 'to': range.to, 'per_page': 24},
+          reportKey: 'sales-summary',
+          filters: {...previousFilters, 'per_page': 500},
+        ).catchError((_) => <String, dynamic>{}),
+        reports.runEnterpriseReport(
+          reportKey: 'dashboard-sales-trend',
+          filters: {...currentFilters, 'per_page': 500},
         ).catchError((_) => <String, dynamic>{}),
         reports.runEnterpriseReport(
           reportKey: 'sales-by-payment-method',
-          filters: {'from': range.from, 'to': range.to, 'per_page': 20},
+          filters: {...currentFilters, 'per_page': 100},
         ).catchError((_) => <String, dynamic>{}),
         reports.getTopBottomProducts(
-          from: range.from,
-          to: range.to,
+          startDate: _rangeStart(range),
+          endDate: _rangeEnd(range),
           sortBy: 'revenue',
           direction: 'desc',
           page: 1,
           perPage: 5,
         ).catchError((_) => <String, dynamic>{}),
-        reports.runEnterpriseReport(
-          reportKey: 'low-stock',
-          filters: {'per_page': 5},
-        ).catchError((_) => <String, dynamic>{}),
       ]);
 
-      final summary = reportFutures[0];
-      final summaryTotals = _asMap(summary['totals']);
-
-      final hourlyRows = _mapRows(reportFutures[1]['rows']);
-      final hourly = hourlyRows.map((row) {
-        final hour = int.tryParse(row['hour']?.toString() ?? '') ?? 0;
-        return _HourlyPoint(
-          hour: math.max(0, math.min(23, hour)).toInt(),
-          sales: _toDouble(row['sales_total']),
+      final currentTotals = _asMap(results[0]['totals']);
+      final previousTotals = _asMap(results[1]['totals']);
+      final trendRows = _mapRows(results[2]['rows']);
+      final trend = <_TrendPoint>[];
+      for (var i = 0; i < trendRows.length; i++) {
+        final row = trendRows[i];
+        final dateText = row['bucket_date']?.toString() ?? '';
+        final hourText = row['bucket_hour']?.toString();
+        final hour = int.tryParse(hourText ?? '');
+        final parsedDate = DateTime.tryParse(dateText);
+        final label = hour != null
+            ? _hourLabel(hour)
+            : parsedDate == null
+                ? dateText
+                : DateFormat('d MMM').format(parsedDate);
+        final x = hour != null
+            ? (hour / 23.0).clamp(0.0, 1.0).toDouble()
+            : trendRows.length <= 1
+                ? .5
+                : i / (trendRows.length - 1);
+        trend.add(_TrendPoint(
+          label: label,
+          x: x,
+          sales: _toDouble(row['net_sales']),
           profit: _toDouble(row['gross_profit']),
           invoices: _toInt(row['invoices']),
-        );
-      }).toList(growable: false)
-        ..sort((a, b) => a.hour.compareTo(b.hour));
+        ));
+      }
 
-      final paymentRows = _mapRows(reportFutures[2]['rows']);
+      final paymentRows = _mapRows(results[3]['rows']);
       final payments = paymentRows
           .map((row) => _PaymentSlice(
                 method: _cleanMethod(row['method']?.toString()),
@@ -163,36 +355,88 @@ class _CommandCenterDashboardState extends State<CommandCenterDashboard> {
           .toList(growable: false)
         ..sort((a, b) => b.amount.compareTo(a.amount));
 
-      final topProducts = _mapRows(reportFutures[3]['rows']);
-      final lowStockRows = _mapRows(reportFutures[4]['rows']);
-      final lowPagination = _asMap(reportFutures[4]['pagination']);
-
-      if (!mounted) return;
+      if (!mounted || generation != _periodRequestGeneration) return;
       setState(() {
-        _netSales = _toDouble(summaryTotals['net_sales']);
-        _grossProfit = _toDouble(summaryTotals['gross_profit']);
-        _discount = _toDouble(summaryTotals['discount']);
-        _invoices = _toInt(summaryTotals['invoices']);
+        _netSales = _toDouble(currentTotals['net_sales']);
+        _grossProfit = _toDouble(currentTotals['gross_profit']);
+        _discount = _toDouble(currentTotals['discount']);
+        _invoices = _toInt(currentTotals['invoices']);
         _collections = payments.fold<double>(0, (sum, row) => sum + row.amount);
-        _hourlySales = hourly;
+        _previousNetSales = _toDouble(previousTotals['net_sales']);
+        _previousGrossProfit = _toDouble(previousTotals['gross_profit']);
+        _previousInvoices = _toInt(previousTotals['invoices']);
+        _trend = trend;
         _paymentMix = payments;
-        _topProducts = topProducts;
-        _lowStockPreview = lowStockRows;
-        final paginatedCount = _toInt(lowPagination['total']);
-        _lowStockCount = paginatedCount > 0 ? paginatedCount : lowStockRows.length;
+        _topProducts = _mapRows(results[4]['rows']);
         _hasIntelligence = intelligenceAllowed;
         _recoverableMargin = recoverable;
         _marginLeakLines = leakLines;
-        _loading = false;
+        _periodLoading = false;
       });
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted || generation != _periodRequestGeneration) return;
       setState(() {
         _error = e.toString();
-        _loading = false;
+        _periodLoading = false;
       });
     }
   }
+
+  Future<void> _selectPreset(_DashboardPreset preset) async {
+    if (_preset == preset && preset != _DashboardPreset.custom) return;
+    if (preset == _DashboardPreset.custom) {
+      await _pickCustomRange();
+      return;
+    }
+    setState(() {
+      _preset = preset;
+      _customRange = null;
+      _range = _rangeFor(preset);
+    });
+    await _loadPeriodData();
+  }
+
+  Future<void> _pickCustomRange() async {
+    final now = DateTime.now();
+    final initial = _customRange ?? DateTimeRange(start: now.subtract(const Duration(days: 6)), end: now);
+    final selected = await showDateRangePicker(
+      context: context,
+      firstDate: DateTime(now.year - 5, 1, 1),
+      lastDate: now,
+      initialDateRange: initial,
+      helpText: 'Select dashboard date range',
+      saveText: 'Apply',
+    );
+    if (selected == null || !mounted) return;
+    setState(() {
+      _preset = _DashboardPreset.custom;
+      _customRange = selected;
+      _range = _rangeFor(_DashboardPreset.custom, custom: selected);
+    });
+    await _loadPeriodData();
+  }
+
+  String _presetLabel(_DashboardPreset preset) {
+    switch (preset) {
+      case _DashboardPreset.today:
+        return 'Today';
+      case _DashboardPreset.thisWeek:
+        return 'This Week';
+      case _DashboardPreset.lastWeek:
+        return 'Last Week';
+      case _DashboardPreset.thisMonth:
+        return 'This Month';
+      case _DashboardPreset.custom:
+        return _customRange == null ? 'Date Range' : _range.label;
+    }
+  }
+
+  String get _periodCaption {
+    if (_preset == _DashboardPreset.today) return 'Today so far';
+    return _range.label;
+  }
+
+  String get _periodLower => _periodCaption.toLowerCase();
 
   @override
   Widget build(BuildContext context) {
@@ -223,10 +467,12 @@ class _CommandCenterDashboardState extends State<CommandCenterDashboard> {
         _buildHeader(context),
         const SizedBox(height: 16),
         if (_error != null) ...[
-          _ErrorStrip(message: _error!, onRetry: _load),
+          _ErrorStrip(message: _error!, onRetry: _loadAll),
           const SizedBox(height: 12),
         ],
         _buildKpiGrid(canSeeProfit),
+        const SizedBox(height: 12),
+        _buildComparison(canSeeProfit),
         const SizedBox(height: 12),
         LayoutBuilder(
           builder: (context, constraints) {
@@ -286,61 +532,115 @@ class _CommandCenterDashboardState extends State<CommandCenterDashboard> {
 
   Widget _buildHeader(BuildContext context) {
     final firstName = widget.userName.trim().split(RegExp(r'\s+')).first;
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
+    final filters = <_DashboardPreset>[
+      _DashboardPreset.today,
+      _DashboardPreset.thisWeek,
+      _DashboardPreset.lastWeek,
+      _DashboardPreset.thisMonth,
+      _DashboardPreset.custom,
+    ];
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                _headerDate.format(DateTime.now()).toUpperCase(),
-                style: const TextStyle(
-                  color: AppTheme.textMuted,
-                  fontSize: 10.5,
-                  fontWeight: FontWeight.w900,
-                  letterSpacing: .65,
-                ),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _headerDate.format(DateTime.now()).toUpperCase(),
+                    style: const TextStyle(
+                      color: AppTheme.textMuted,
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: .65,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Good ${_dayPart()}, $firstName',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: AppTheme.navy,
+                      fontSize: 25,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: -.55,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Business performance for $_periodLower.',
+                    style: TextStyle(
+                      color: AppTheme.textMuted.withOpacity(.95),
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
               ),
-              const SizedBox(height: 4),
-              Text(
-                'Good ${_dayPart()}, $firstName',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  color: AppTheme.navy,
-                  fontSize: 25,
-                  fontWeight: FontWeight.w900,
-                  letterSpacing: -.55,
-                ),
+            ),
+            const SizedBox(width: 12),
+            Tooltip(
+              message: _obscured ? 'Show financial figures' : 'Hide financial figures',
+              child: OutlinedButton.icon(
+                onPressed: () => setState(() => _obscured = !_obscured),
+                icon: Icon(_obscured ? Icons.visibility_off_rounded : Icons.visibility_rounded, size: 18),
+                label: Text(_obscured ? 'Show figures' : 'Hide figures'),
               ),
-              const SizedBox(height: 4),
-              Text(
-                'Here’s what’s happening in your business today.',
-                style: TextStyle(
-                  color: AppTheme.textMuted.withOpacity(.95),
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ],
-          ),
+            ),
+            const SizedBox(width: 8),
+            IconButton.filledTonal(
+              tooltip: 'Refresh dashboard',
+              onPressed: _loading ? null : _loadAll,
+              icon: _loading
+                  ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.refresh_rounded),
+            ),
+          ],
         ),
-        const SizedBox(width: 12),
-        Tooltip(
-          message: _obscured ? 'Show financial figures' : 'Hide financial figures',
-          child: OutlinedButton.icon(
-            onPressed: () => setState(() => _obscured = !_obscured),
-            icon: Icon(_obscured ? Icons.visibility_off_rounded : Icons.visibility_rounded, size: 18),
-            label: Text(_obscured ? 'Show figures' : 'Hide figures'),
-          ),
-        ),
-        const SizedBox(width: 8),
-        IconButton.filledTonal(
-          tooltip: 'Refresh dashboard',
-          onPressed: _loading ? null : _load,
-          icon: _loading
-              ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
-              : const Icon(Icons.refresh_rounded),
+        const SizedBox(height: 14),
+        LayoutBuilder(
+          builder: (context, constraints) {
+            return Wrap(
+              spacing: 7,
+              runSpacing: 7,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                for (final preset in filters)
+                  Tooltip(
+                    message: preset == _DashboardPreset.thisWeek
+                        ? 'This Week uses Monday–Sunday. Current week compares the same elapsed period of the previous week.'
+                        : preset == _DashboardPreset.custom
+                            ? 'Choose any inclusive calendar date range.'
+                            : _presetLabel(preset),
+                    child: ChoiceChip(
+                      selected: _preset == preset,
+                      onSelected: (_) => _selectPreset(preset),
+                      avatar: preset == _DashboardPreset.custom
+                          ? const Icon(Icons.calendar_month_rounded, size: 16)
+                          : null,
+                      label: Text(_presetLabel(preset)),
+                      visualDensity: VisualDensity.compact,
+                      side: BorderSide(color: _preset == preset ? AppTheme.primary.withOpacity(.28) : AppTheme.border),
+                      selectedColor: AppTheme.primarySoft,
+                      labelStyle: TextStyle(
+                        color: _preset == preset ? AppTheme.primaryDark : AppTheme.navy,
+                        fontWeight: FontWeight.w800,
+                        fontSize: 11.5,
+                      ),
+                    ),
+                  ),
+                if (_periodLoading)
+                  const Padding(
+                    padding: EdgeInsets.only(left: 4),
+                    child: SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+                  ),
+              ],
+            );
+          },
         ),
       ],
     );
@@ -396,7 +696,7 @@ class _CommandCenterDashboardState extends State<CommandCenterDashboard> {
       _KpiData(
         label: 'NET SALES',
         value: _money.format(_netSales),
-        foot: _invoices == 0 ? 'No invoices yet today' : '$_invoices invoices today',
+        foot: _invoices == 0 ? 'No invoices in $_periodLower' : '$_invoices invoices • $_periodCaption',
         icon: Icons.trending_up_rounded,
       ),
       if (canSeeProfit)
@@ -410,7 +710,7 @@ class _CommandCenterDashboardState extends State<CommandCenterDashboard> {
         _KpiData(
           label: 'DISCOUNTS',
           value: _money.format(_discount),
-          foot: 'Discounts recorded today',
+          foot: 'Discounts • $_periodCaption',
           icon: Icons.percent_rounded,
         ),
       _KpiData(
@@ -422,7 +722,7 @@ class _CommandCenterDashboardState extends State<CommandCenterDashboard> {
       _KpiData(
         label: 'COLLECTIONS',
         value: _money.format(_collections),
-        foot: _paymentMix.isEmpty ? 'No receipts yet today' : '${_paymentMix.length} payment methods',
+        foot: _paymentMix.isEmpty ? 'No receipts in $_periodLower' : '${_paymentMix.length} payment methods',
         icon: Icons.account_balance_wallet_outlined,
       ),
     ];
@@ -450,40 +750,107 @@ class _CommandCenterDashboardState extends State<CommandCenterDashboard> {
     );
   }
 
+  Widget _buildComparison(bool canSeeProfit) {
+    final currentAvg = _invoices <= 0 ? 0.0 : _netSales / _invoices;
+    final previousAvg = _previousInvoices <= 0 ? 0.0 : _previousNetSales / _previousInvoices;
+    final rows = <_ComparisonMetric>[
+      _ComparisonMetric(
+        label: 'Net sales',
+        current: _netSales,
+        previous: _previousNetSales,
+        formatter: _money.format,
+        percentageAllowed: true,
+      ),
+      if (canSeeProfit)
+        _ComparisonMetric(
+          label: 'Gross profit',
+          current: _grossProfit,
+          previous: _previousGrossProfit,
+          formatter: _money.format,
+          percentageAllowed: _previousGrossProfit > 0,
+        ),
+      _ComparisonMetric(
+        label: 'Transactions',
+        current: _invoices.toDouble(),
+        previous: _previousInvoices.toDouble(),
+        formatter: (v) => v.round().toString(),
+        percentageAllowed: true,
+      ),
+      _ComparisonMetric(
+        label: 'Avg invoice',
+        current: currentAvg,
+        previous: previousAvg,
+        formatter: _money.format,
+        percentageAllowed: true,
+      ),
+    ];
+
+    return _Panel(
+      title: 'Period comparison',
+      subtitle: '${_range.label} compared with ${_range.compareLabel}',
+      trailing: _periodLoading
+          ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+          : null,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final compact = constraints.maxWidth < 760;
+          if (compact) {
+            return Column(
+              children: [
+                for (var i = 0; i < rows.length; i++) ...[
+                  _ComparisonRow(metric: rows[i], obscured: _obscured),
+                  if (i != rows.length - 1) const Divider(height: 1),
+                ],
+              ],
+            );
+          }
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              for (var i = 0; i < rows.length; i++) ...[
+                Expanded(child: _ComparisonTile(metric: rows[i], obscured: _obscured)),
+                if (i != rows.length - 1)
+                  const SizedBox(height: 62, child: VerticalDivider(width: 18)),
+              ],
+            ],
+          );
+        },
+      ),
+    );
+  }
+
   Widget _buildSalesPerformance(bool canSeeProfit) {
-    final maxSales = _hourlySales.fold<double>(0, (max, point) => math.max(max, point.sales).toDouble());
-    final total = _hourlySales.fold<double>(0, (sum, point) => sum + point.sales);
-    final peak = _hourlySales.isEmpty
-        ? null
-        : _hourlySales.reduce((a, b) => a.sales >= b.sales ? a : b);
+    final maxSales = _trend.fold<double>(0, (max, point) => math.max(max, point.sales).toDouble());
+    final peak = _trend.isEmpty ? null : _trend.reduce((a, b) => a.sales >= b.sales ? a : b);
+    final axisLabels = _trendAxisLabels(_trend);
 
     return _Panel(
       title: 'Sales performance',
-      subtitle: 'Today • hourly sales',
+      subtitle: '${_range.label} • ${_range.singleDay ? 'hourly' : 'daily'} net sales',
       trailing: peak == null
           ? null
           : Text(
-              'Peak ${_hourLabel(peak.hour)}',
+              'Peak ${peak.label}',
               style: const TextStyle(color: AppTheme.textMuted, fontSize: 11.5, fontWeight: FontWeight.w800),
             ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          if (_loading && _hourlySales.isEmpty)
+          if (_periodLoading && _trend.isEmpty)
             const SizedBox(height: 190, child: Center(child: CircularProgressIndicator()))
-          else if (_hourlySales.isEmpty)
-            const SizedBox(
+          else if (_trend.isEmpty)
+            SizedBox(
               height: 190,
               child: Center(
-                child: Text('No sales have been recorded today.', style: TextStyle(color: AppTheme.textMuted, fontWeight: FontWeight.w700)),
+                child: Text('No sales were recorded in $_periodLower.', style: const TextStyle(color: AppTheme.textMuted, fontWeight: FontWeight.w700)),
               ),
             )
           else ...[
             SizedBox(
               height: 180,
               child: CustomPaint(
-                painter: _HourlySalesPainter(
-                  points: _hourlySales,
+                painter: _TrendPainter(
+                  points: _trend,
                   maxValue: maxSales,
                 ),
               ),
@@ -491,15 +858,10 @@ class _CommandCenterDashboardState extends State<CommandCenterDashboard> {
             const SizedBox(height: 8),
             Row(
               children: [
-                Text('9 AM', style: _axisStyle),
-                const Spacer(),
-                Text('12 PM', style: _axisStyle),
-                const Spacer(),
-                Text('3 PM', style: _axisStyle),
-                const Spacer(),
-                Text('6 PM', style: _axisStyle),
-                const Spacer(),
-                Text('9 PM', style: _axisStyle),
+                for (var i = 0; i < axisLabels.length; i++) ...[
+                  if (i > 0) const Spacer(),
+                  Text(axisLabels[i], style: _axisStyle),
+                ],
               ],
             ),
             const SizedBox(height: 12),
@@ -507,8 +869,8 @@ class _CommandCenterDashboardState extends State<CommandCenterDashboard> {
               spacing: 16,
               runSpacing: 6,
               children: [
-                _InlineMetric(label: 'Today', value: _money.format(total), obscured: _obscured),
-                _InlineMetric(label: 'Peak hour', value: peak == null ? '—' : '${_hourLabel(peak.hour)} • ${_money.format(peak.sales)}', obscured: _obscured),
+                _InlineMetric(label: _range.label, value: _money.format(_netSales), obscured: _obscured),
+                _InlineMetric(label: _range.singleDay ? 'Peak hour' : 'Peak day', value: peak == null ? '—' : '${peak.label} • ${_money.format(peak.sales)}', obscured: _obscured),
                 if (canSeeProfit)
                   _InlineMetric(label: 'Gross profit', value: _money.format(_grossProfit), obscured: _obscured),
               ],
@@ -517,6 +879,19 @@ class _CommandCenterDashboardState extends State<CommandCenterDashboard> {
         ],
       ),
     );
+  }
+
+  List<String> _trendAxisLabels(List<_TrendPoint> points) {
+    if (points.isEmpty) return const [];
+    if (points.length == 1) return [points.first.label];
+    final indexes = <int>{
+      0,
+      ((points.length - 1) * .25).round(),
+      ((points.length - 1) * .5).round(),
+      ((points.length - 1) * .75).round(),
+      points.length - 1,
+    }.toList()..sort();
+    return indexes.map((i) => points[i].label).toList(growable: false);
   }
 
   Widget _buildAttention(
@@ -535,7 +910,7 @@ class _CommandCenterDashboardState extends State<CommandCenterDashboard> {
         _AttentionItem(
           color: _marginLeakLines > 0 ? AppTheme.warning : AppTheme.success,
           title: _marginLeakLines > 0 ? '$_marginLeakLines margin-leak lines identified' : 'No margin leaks need review',
-          subtitle: _marginLeakLines > 0 ? '${_money.format(_recoverableMargin)} potential recovery' : 'Money Finder is clear',
+          subtitle: _marginLeakLines > 0 ? '${_money.format(_recoverableMargin)} potential recovery • ${_range.label}' : 'Money Finder is clear for ${_range.label}',
           onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const IntelligenceHubScreen())),
         ),
       _AttentionItem(
@@ -568,7 +943,7 @@ class _CommandCenterDashboardState extends State<CommandCenterDashboard> {
 
     return _Panel(
       title: 'Needs attention',
-      subtitle: '${items.where((item) => item.color != AppTheme.success).length} items worth checking',
+      subtitle: '${items.where((item) => item.color != AppTheme.success).length} items worth checking • live operations + ${_range.label}',
       child: Column(
         children: [
           for (var i = 0; i < items.length; i++) ...[
@@ -584,9 +959,9 @@ class _CommandCenterDashboardState extends State<CommandCenterDashboard> {
     final total = _paymentMix.fold<double>(0, (sum, row) => sum + row.amount);
     return _Panel(
       title: 'Payment mix',
-      subtitle: 'Collections recorded today',
+      subtitle: 'Customer receipts • $_periodCaption',
       child: _paymentMix.isEmpty
-          ? const _SmallEmpty(message: 'No customer receipts yet today.')
+          ? _SmallEmpty(message: 'No customer receipts in $_periodLower.')
           : Column(
               children: [
                 for (final row in _paymentMix.take(5)) ...[
@@ -606,9 +981,9 @@ class _CommandCenterDashboardState extends State<CommandCenterDashboard> {
   Widget _buildTopProducts() {
     return _Panel(
       title: 'Top selling products',
-      subtitle: 'Ranked by revenue today',
+      subtitle: 'Ranked by revenue • $_periodCaption',
       child: _topProducts.isEmpty
-          ? const _SmallEmpty(message: 'No product sales yet today.')
+          ? _SmallEmpty(message: 'No product sales in $_periodLower.')
           : Column(
               children: [
                 const _ProductTableHeader(),
@@ -623,7 +998,7 @@ class _CommandCenterDashboardState extends State<CommandCenterDashboard> {
     final allowed = _hasIntelligence;
     return _Panel(
       title: 'CounterIQ Intelligence',
-      subtitle: allowed ? 'Branch-level decision support' : 'Premium business intelligence',
+      subtitle: allowed ? 'Margin insight for $_periodCaption • live operational recommendations' : 'Premium business intelligence',
       trailing: allowed
           ? _StatusPill(label: 'ACTIVE', color: AppTheme.primary)
           : _StatusPill(label: 'ADD-ON', color: AppTheme.textMuted),
@@ -1195,20 +1570,159 @@ class _PrivateText extends StatelessWidget {
   }
 }
 
-class _HourlyPoint {
-  final int hour;
+class _ComparisonMetric {
+  final String label;
+  final double current;
+  final double previous;
+  final String Function(double) formatter;
+  final bool percentageAllowed;
+
+  const _ComparisonMetric({
+    required this.label,
+    required this.current,
+    required this.previous,
+    required this.formatter,
+    required this.percentageAllowed,
+  });
+
+  double get delta => current - previous;
+
+  String get changeLabel {
+    if (previous == 0) {
+      if (current == 0) return 'No change';
+      return current > 0 ? 'New activity' : 'Lower';
+    }
+    if (!percentageAllowed || previous < 0) {
+      if (delta == 0) return 'No change';
+      return '${delta > 0 ? '+' : ''}${formatter(delta)}';
+    }
+    final pct = delta / previous.abs() * 100;
+    if (pct.abs() < .05) return 'No change';
+    return '${pct > 0 ? '+' : ''}${pct.toStringAsFixed(1)}%';
+  }
+
+  Color get changeColor {
+    if (delta > 0) return AppTheme.success;
+    if (delta < 0) return AppTheme.danger;
+    return AppTheme.textMuted;
+  }
+}
+
+class _ComparisonTile extends StatelessWidget {
+  final _ComparisonMetric metric;
+  final bool obscured;
+
+  const _ComparisonTile({required this.metric, required this.obscured});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(metric.label.toUpperCase(), style: const TextStyle(color: AppTheme.textMuted, fontSize: 9.5, fontWeight: FontWeight.w900, letterSpacing: .35)),
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              Expanded(
+                child: _PrivateText(
+                  value: metric.formatter(metric.current),
+                  obscured: obscured,
+                  style: const TextStyle(color: AppTheme.navy, fontSize: 15, fontWeight: FontWeight.w900),
+                ),
+              ),
+              const SizedBox(width: 6),
+              Text(metric.changeLabel, style: TextStyle(color: metric.changeColor, fontSize: 10.5, fontWeight: FontWeight.w900)),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Row(
+            children: [
+              const Text('Previous ', style: TextStyle(color: AppTheme.textMuted, fontSize: 9.5, fontWeight: FontWeight.w600)),
+              Expanded(
+                child: _PrivateText(
+                  value: metric.formatter(metric.previous),
+                  obscured: obscured,
+                  style: const TextStyle(color: AppTheme.textMuted, fontSize: 9.5, fontWeight: FontWeight.w800),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ComparisonRow extends StatelessWidget {
+  final _ComparisonMetric metric;
+  final bool obscured;
+
+  const _ComparisonRow({required this.metric, required this.obscured});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 9),
+      child: Row(
+        children: [
+          Expanded(child: Text(metric.label, style: const TextStyle(color: AppTheme.navy, fontSize: 11.5, fontWeight: FontWeight.w800))),
+          SizedBox(
+            width: 105,
+            child: Align(
+              alignment: Alignment.centerRight,
+              child: _PrivateText(
+                value: metric.formatter(metric.current),
+                obscured: obscured,
+                style: const TextStyle(color: AppTheme.navy, fontSize: 11.5, fontWeight: FontWeight.w900),
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          SizedBox(
+            width: 105,
+            child: Align(
+              alignment: Alignment.centerRight,
+              child: _PrivateText(
+                value: metric.formatter(metric.previous),
+                obscured: obscured,
+                style: const TextStyle(color: AppTheme.textMuted, fontSize: 10.5, fontWeight: FontWeight.w700),
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          SizedBox(
+            width: 82,
+            child: Text(metric.changeLabel, textAlign: TextAlign.right, style: TextStyle(color: metric.changeColor, fontSize: 10.5, fontWeight: FontWeight.w900)),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TrendPoint {
+  final String label;
+  final double x;
   final double sales;
   final double profit;
   final int invoices;
 
-  const _HourlyPoint({required this.hour, required this.sales, required this.profit, required this.invoices});
+  const _TrendPoint({
+    required this.label,
+    required this.x,
+    required this.sales,
+    required this.profit,
+    required this.invoices,
+  });
 }
 
-class _HourlySalesPainter extends CustomPainter {
-  final List<_HourlyPoint> points;
+class _TrendPainter extends CustomPainter {
+  final List<_TrendPoint> points;
   final double maxValue;
 
-  const _HourlySalesPainter({required this.points, required this.maxValue});
+  const _TrendPainter({required this.points, required this.maxValue});
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -1227,7 +1741,7 @@ class _HourlySalesPainter extends CustomPainter {
     final pointOffsets = <Offset>[];
     for (var i = 0; i < points.length; i++) {
       final point = points[i];
-      final x = size.width * (point.hour / 23.0);
+      final x = size.width * point.x.clamp(0.0, 1.0).toDouble();
       final ratio = (point.sales / maxValue).clamp(0.0, 1.0).toDouble();
       final y = size.height - (ratio * (size.height - 10)) - 5;
       final offset = Offset(x, y);
@@ -1270,7 +1784,7 @@ class _HourlySalesPainter extends CustomPainter {
   }
 
   @override
-  bool shouldRepaint(covariant _HourlySalesPainter oldDelegate) {
+  bool shouldRepaint(covariant _TrendPainter oldDelegate) {
     return oldDelegate.points != points || oldDelegate.maxValue != maxValue;
   }
 }

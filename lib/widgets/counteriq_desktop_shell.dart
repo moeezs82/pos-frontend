@@ -6,16 +6,11 @@ import 'package:enterprise_pos/providers/register_shift_provider.dart';
 import 'package:enterprise_pos/providers/subscription_provider.dart';
 import 'package:enterprise_pos/screens/account_screen.dart';
 import 'package:enterprise_pos/screens/branches/branch_control_screen.dart';
-import 'package:enterprise_pos/screens/cash_ledger/cash_ledger_create_screen.dart';
 import 'package:enterprise_pos/screens/cash_ledger/cash_ledger_screen.dart';
 import 'package:enterprise_pos/screens/customers/customers_screen.dart';
-import 'package:enterprise_pos/screens/dashboard/command_center_dashboard.dart';
 import 'package:enterprise_pos/screens/intelligence/intelligence_hub_screen.dart';
-import 'package:enterprise_pos/screens/login_screen.dart';
 import 'package:enterprise_pos/screens/payments/party_payments_screen.dart';
-import 'package:enterprise_pos/screens/product_screen.dart';
 import 'package:enterprise_pos/screens/purchases/purchase_claim_screen.dart';
-import 'package:enterprise_pos/screens/purchases/purchase_create.dart';
 import 'package:enterprise_pos/screens/purchases/purchases_screen.dart';
 import 'package:enterprise_pos/screens/register_shifts/register_shift_screen.dart';
 import 'package:enterprise_pos/screens/reports/credit_control_screen.dart';
@@ -35,79 +30,124 @@ import 'package:enterprise_pos/services/app_navigator.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/app_keyboard_shortcuts.dart';
 import 'package:enterprise_pos/widgets/backup_reminder_gate.dart';
-import 'package:enterprise_pos/widgets/counteriq_desktop_shell.dart';
 import 'package:enterprise_pos/widgets/subscription_warning_banner.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
-class HomeScreen extends StatefulWidget {
-  const HomeScreen({super.key});
+/// Shared desktop chrome for the redesigned CounterIQ workspace.
+///
+/// Phase 1 intentionally migrates Home and Products only. Other modules keep
+/// their existing screens until their redesign phase, but navigation from this
+/// shell still opens those exact existing routes so no transactional behaviour
+/// is changed.
+class CounterIQDesktopShell extends StatefulWidget {
+  final String activeRouteId;
+  final Widget child;
+  final VoidCallback onOpenProducts;
+
+  const CounterIQDesktopShell({
+    super.key,
+    required this.activeRouteId,
+    required this.child,
+    required this.onOpenProducts,
+  });
 
   @override
-  State<HomeScreen> createState() => _HomeScreenState();
+  State<CounterIQDesktopShell> createState() => _CounterIQDesktopShellState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _CounterIQDesktopShellState extends State<CounterIQDesktopShell> {
   bool _sidebarCollapsed = false;
+
+  bool _isActive(String routeId) => widget.activeRouteId == routeId;
 
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthProvider>();
     final branch = context.watch<BranchProvider>();
+    final sub = context.watch<SubscriptionProvider>();
+    final offline = context.watch<OfflineQueueProvider>();
     final shift = context.watch<RegisterShiftProvider>();
 
-    // Logout from the shared desktop shell returns to this first route. Keep
-    // authentication ownership here so module shells never need to import or
-    // replace LoginScreen themselves.
-    if (!auth.isAuthenticated) return const LoginScreen();
+    if (sub.isLocked && branch.hasActiveBranch) {
+      return const BranchLockScreen();
+    }
 
+    final masterNeedsBranch = auth.isMasterAdmin && !branch.hasActiveBranch;
     final userName = (auth.user?['name'] ?? 'User').toString();
     final role = auth.roleLabel;
+    final navGroups = masterNeedsBranch
+        ? _branchRequiredNavigation(auth)
+        : _buildNavigation(auth, shift);
+    final allEntries = navGroups
+        .expand((group) => group.entries)
+        .toList(growable: false);
 
-    return CounterIQDesktopShell(
-      activeRouteId: PosRouteIds.home,
-      onOpenProducts: () => PosNavigation.openSingleton(
-        routeId: PosRouteIds.products,
-        builder: (_) => const ProductsScreen(),
-      ),
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(18, 18, 18, 28),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            CommandCenterDashboard(
-              key: ValueKey(branch.selectedBranchId),
-              userName: userName,
-              role: role,
-            ),
-            const SizedBox(height: 12),
-            _QuickActionStrip(entries: _quickActions(context, auth, shift)),
-            const SizedBox(height: 16),
-            const Center(
-              child: Text(
-                'Powered by A Developers',
-                style: TextStyle(
-                  color: AppTheme.textMuted,
-                  fontSize: 10.5,
-                  fontWeight: FontWeight.w600,
+    return Scaffold(
+      backgroundColor: AppTheme.bg,
+      body: LayoutBuilder(
+        builder: (context, constraints) {
+          final forcedCompact = constraints.maxWidth < 1080;
+          final compactSidebar = forcedCompact || _sidebarCollapsed;
+          final sidebarWidth = compactSidebar ? 72.0 : 220.0;
+
+          return Row(
+            children: [
+              SizedBox(
+                width: sidebarWidth,
+                child: _DesktopSidebar(
+                  groups: navGroups,
+                  compact: compactSidebar,
+                  userName: userName,
+                  role: role,
                 ),
               ),
-            ),
-          ],
-        ),
+              Expanded(
+                child: Column(
+                  children: [
+                    _DesktopTopBar(
+                      compactSidebar: compactSidebar,
+                      canToggleSidebar: !forcedCompact,
+                      onToggleSidebar: () => setState(
+                        () => _sidebarCollapsed = !_sidebarCollapsed,
+                      ),
+                      branch: branch,
+                      auth: auth,
+                      shift: shift,
+                      offlinePending: offline.pendingCount,
+                      allEntries: allEntries,
+                      onLogout: _logout,
+                    ),
+                    const SubscriptionWarningBanner(),
+                    const BackupReminderGate(),
+                    Expanded(
+                      child: masterNeedsBranch
+                          ? _BranchRequiredView(
+                              onOpenBranchControl: _openBranchControl,
+                            )
+                          : widget.child,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
 
-  List<_NavGroup> _branchRequiredNavigation(
-    BuildContext context,
-    AuthProvider auth,
-  ) {
+  List<_NavGroup> _branchRequiredNavigation(AuthProvider auth) {
     return [
       _NavGroup(
         label: '',
         entries: [
-          _NavEntry(icon: Icons.home_rounded, title: 'Home', active: true, onTap: () {}),
+          _NavEntry(
+            icon: Icons.home_rounded,
+            title: 'Home',
+            active: _isActive(PosRouteIds.home),
+            onTap: _openHome,
+          ),
         ],
       ),
       _NavGroup(
@@ -116,6 +156,7 @@ class _HomeScreenState extends State<HomeScreen> {
           _NavEntry(
             icon: Icons.account_tree_outlined,
             title: 'Branch Control',
+            active: _isActive(PosRouteIds.branchControl),
             onTap: _openBranchControl,
           ),
           if (auth.isMasterAdmin)
@@ -124,7 +165,9 @@ class _HomeScreenState extends State<HomeScreen> {
               title: 'Subscriptions',
               onTap: () => Navigator.push(
                 context,
-                MaterialPageRoute(builder: (_) => const SubscriptionManagementScreen()),
+                MaterialPageRoute(
+                  builder: (_) => const SubscriptionManagementScreen(),
+                ),
               ),
             ),
         ],
@@ -133,9 +176,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   List<_NavGroup> _buildNavigation(
-    BuildContext context,
     AuthProvider auth,
-    BranchProvider branch,
     RegisterShiftProvider shift,
   ) {
     return [
@@ -145,8 +186,8 @@ class _HomeScreenState extends State<HomeScreen> {
           _NavEntry(
             icon: Icons.home_rounded,
             title: 'Home',
-            active: true,
-            onTap: () {},
+            active: _isActive(PosRouteIds.home),
+            onTap: _openHome,
           ),
         ],
       ),
@@ -158,12 +199,14 @@ class _HomeScreenState extends State<HomeScreen> {
               icon: Icons.add_shopping_cart_rounded,
               title: 'New Sale',
               shortcut: 'F2',
-              onTap: () => _openSale(context, shift),
+              active: _isActive(PosRouteIds.createSale),
+              onTap: () => _openSale(shift),
             ),
           if (auth.hasPermission('view-sales'))
             _NavEntry(
               icon: Icons.receipt_long_rounded,
               title: 'Sales History',
+              active: _isActive(PosRouteIds.sales),
               onTap: () => PosNavigation.openSingleton(
                 routeId: PosRouteIds.sales,
                 builder: (_) => const SalesScreen(),
@@ -178,6 +221,7 @@ class _HomeScreenState extends State<HomeScreen> {
             _NavEntry(
               icon: Icons.point_of_sale_rounded,
               title: shift.hasActiveShift ? 'Register Shift' : 'Open Register',
+              active: _isActive(PosRouteIds.registerShift),
               onTap: () => PosNavigation.openSingleton(
                 routeId: PosRouteIds.registerShift,
                 builder: (_) => const RegisterShiftScreen(),
@@ -192,15 +236,16 @@ class _HomeScreenState extends State<HomeScreen> {
             _NavEntry(
               icon: Icons.inventory_2_outlined,
               title: 'Products',
-              onTap: () => PosNavigation.openSingleton(
-                routeId: PosRouteIds.products,
-                builder: (_) => const ProductsScreen(),
-              ),
+              active: _isActive(PosRouteIds.products),
+              onTap: _isActive(PosRouteIds.products)
+                  ? () {}
+                  : widget.onOpenProducts,
             ),
           if (auth.hasPermission('view-stock'))
             _NavEntry(
               icon: Icons.warehouse_outlined,
               title: 'Stock',
+              active: _isActive(PosRouteIds.stock),
               onTap: () => PosNavigation.openSingleton(
                 routeId: PosRouteIds.stock,
                 builder: (_) => const StockScreen(),
@@ -210,6 +255,7 @@ class _HomeScreenState extends State<HomeScreen> {
             _NavEntry(
               icon: Icons.shopping_cart_outlined,
               title: 'Purchases',
+              active: _isActive(PosRouteIds.purchases),
               onTap: () => PosNavigation.openSingleton(
                 routeId: PosRouteIds.purchases,
                 builder: (_) => const PurchasesScreen(),
@@ -221,7 +267,9 @@ class _HomeScreenState extends State<HomeScreen> {
               title: 'Purchase Claims',
               onTap: () => Navigator.push(
                 context,
-                MaterialPageRoute(builder: (_) => const PurchaseClaimsScreen()),
+                MaterialPageRoute(
+                  builder: (_) => const PurchaseClaimsScreen(),
+                ),
               ),
             ),
         ],
@@ -233,6 +281,7 @@ class _HomeScreenState extends State<HomeScreen> {
             _NavEntry(
               icon: Icons.people_alt_outlined,
               title: 'Customers',
+              active: _isActive(PosRouteIds.customers),
               onTap: () => PosNavigation.openSingleton(
                 routeId: PosRouteIds.customers,
                 builder: (_) => const CustomersScreen(),
@@ -242,15 +291,20 @@ class _HomeScreenState extends State<HomeScreen> {
             _NavEntry(
               icon: Icons.groups_2_outlined,
               title: 'Vendors',
+              active: _isActive(PosRouteIds.vendors),
               onTap: () => PosNavigation.openSingleton(
                 routeId: PosRouteIds.vendors,
                 builder: (_) => const VendorsScreen(),
               ),
             ),
-          if (auth.hasAnyPermission(const ['manage-receipts', 'manage-payments']))
+          if (auth.hasAnyPermission(const [
+            'manage-receipts',
+            'manage-payments',
+          ]))
             _NavEntry(
               icon: Icons.account_balance_wallet_outlined,
               title: 'Party Payments',
+              active: _isActive(PosRouteIds.partyPayments),
               onTap: () => PosNavigation.openSingleton(
                 routeId: PosRouteIds.partyPayments,
                 builder: (_) => const PartyPaymentsScreen(),
@@ -274,6 +328,7 @@ class _HomeScreenState extends State<HomeScreen> {
             _NavEntry(
               icon: Icons.account_balance_wallet_rounded,
               title: 'Cash Ledger',
+              active: _isActive(PosRouteIds.cashLedger),
               onTap: () => PosNavigation.openSingleton(
                 routeId: PosRouteIds.cashLedger,
                 builder: (_) => const CashLedgerScreen(),
@@ -284,18 +339,22 @@ class _HomeScreenState extends State<HomeScreen> {
               icon: Icons.analytics_outlined,
               title: 'Reports',
               shortcut: 'Ctrl+R',
+              active: _isActive(PosRouteIds.reports),
               onTap: () => PosNavigation.openSingleton(
                 routeId: PosRouteIds.reports,
                 builder: (_) => const ReportsHubScreen(),
               ),
             ),
-          if (auth.hasAddon('intelligence') && auth.hasPermission('view-intelligence'))
+          if (auth.hasAddon('intelligence') &&
+              auth.hasPermission('view-intelligence'))
             _NavEntry(
               icon: Icons.auto_awesome_rounded,
               title: 'Intelligence',
               onTap: () => Navigator.push(
                 context,
-                MaterialPageRoute(builder: (_) => const IntelligenceHubScreen()),
+                MaterialPageRoute(
+                  builder: (_) => const IntelligenceHubScreen(),
+                ),
               ),
             ),
         ],
@@ -307,6 +366,7 @@ class _HomeScreenState extends State<HomeScreen> {
             _NavEntry(
               icon: Icons.manage_accounts_outlined,
               title: 'Users',
+              active: _isActive(PosRouteIds.users),
               onTap: () => PosNavigation.openSingleton(
                 routeId: PosRouteIds.users,
                 builder: (_) => const UsersScreen(),
@@ -327,22 +387,31 @@ class _HomeScreenState extends State<HomeScreen> {
               title: 'Printer Settings',
               onTap: () => Navigator.push(
                 context,
-                MaterialPageRoute(builder: (_) => const PrinterSettingsScreen()),
+                MaterialPageRoute(
+                  builder: (_) => const PrinterSettingsScreen(),
+                ),
               ),
             ),
-          if (BackendConfig.isLocal && auth.hasAnyPermission(const ['create-backups', 'restore-backups']))
+          if (BackendConfig.isLocal &&
+              auth.hasAnyPermission(const [
+                'create-backups',
+                'restore-backups',
+              ]))
             _NavEntry(
               icon: Icons.backup_outlined,
               title: 'Backup & Restore',
               onTap: () => Navigator.push(
                 context,
-                MaterialPageRoute(builder: (_) => const BackupRestoreScreen()),
+                MaterialPageRoute(
+                  builder: (_) => const BackupRestoreScreen(),
+                ),
               ),
             ),
           if (auth.isMasterAdmin)
             _NavEntry(
               icon: Icons.account_tree_outlined,
               title: 'Branch Control',
+              active: _isActive(PosRouteIds.branchControl),
               onTap: _openBranchControl,
             ),
           if (auth.isMasterAdmin)
@@ -351,7 +420,9 @@ class _HomeScreenState extends State<HomeScreen> {
               title: 'Subscriptions',
               onTap: () => Navigator.push(
                 context,
-                MaterialPageRoute(builder: (_) => const SubscriptionManagementScreen()),
+                MaterialPageRoute(
+                  builder: (_) => const SubscriptionManagementScreen(),
+                ),
               ),
             ),
           if (auth.isMasterAdmin)
@@ -368,75 +439,21 @@ class _HomeScreenState extends State<HomeScreen> {
     ].where((group) => group.entries.isNotEmpty).toList(growable: false);
   }
 
-  List<_NavEntry> _quickActions(
-    BuildContext context,
-    AuthProvider auth,
-    RegisterShiftProvider shift,
-  ) {
-    return [
-      if (auth.hasPermission('create-sales'))
-        _NavEntry(
-          icon: Icons.add_rounded,
-          title: 'New Sale',
-          active: true,
-          onTap: () => _openSale(context, shift),
-        ),
-      if (auth.hasPermission('manage-purchases'))
-        _NavEntry(
-          icon: Icons.add_shopping_cart_rounded,
-          title: 'Purchase',
-          onTap: () => PosNavigation.openSingleton(
-            routeId: PosRouteIds.createPurchase,
-            builder: (_) => const CreatePurchaseScreen(),
-          ),
-        ),
-      if (auth.hasPermission('manage-cashbook'))
-        _NavEntry(
-          icon: Icons.receipt_long_rounded,
-          title: 'Expense',
-          onTap: () => PosNavigation.openSingleton(
-            routeId: PosRouteIds.cashLedgerCreate,
-            builder: (_) => const CashLedgerCreateScreen(initialCategory: 'OTHER_EXPENSE'),
-          ),
-        ),
-      if (auth.hasAnyPermission(const ['manage-receipts', 'manage-payments']))
-        _NavEntry(
-          icon: Icons.account_balance_wallet_outlined,
-          title: 'Party Payment',
-          onTap: () => PosNavigation.openSingleton(
-            routeId: PosRouteIds.partyPayments,
-            builder: (_) => const PartyPaymentsScreen(),
-          ),
-        ),
-      if (auth.hasPermission('view-stock'))
-        _NavEntry(
-          icon: Icons.warehouse_outlined,
-          title: 'Stock',
-          onTap: () => PosNavigation.openSingleton(
-            routeId: PosRouteIds.stock,
-            builder: (_) => const StockScreen(),
-          ),
-        ),
-      if (auth.hasPermission('view-reports'))
-        _NavEntry(
-          icon: Icons.analytics_outlined,
-          title: 'Reports',
-          onTap: () => PosNavigation.openSingleton(
-            routeId: PosRouteIds.reports,
-            builder: (_) => const ReportsHubScreen(),
-          ),
-        ),
-    ];
+  void _openHome() {
+    if (_isActive(PosRouteIds.home)) return;
+    Navigator.of(context).popUntil((route) => route.isFirst);
   }
 
-  void _openSale(BuildContext context, RegisterShiftProvider shift) {
+  void _openSale(RegisterShiftProvider shift) {
     if (!shift.hasActiveShift) {
       PosNavigation.openSingleton(
         routeId: PosRouteIds.registerShift,
         builder: (_) => const RegisterShiftScreen(),
       );
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Open a register shift before starting a sale.')),
+        const SnackBar(
+          content: Text('Open a register shift before starting a sale.'),
+        ),
       );
       return;
     }
@@ -453,13 +470,14 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Future<void> _logout(BuildContext context, AuthProvider auth) async {
-    await auth.logout();
-    if (!context.mounted) return;
-    Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(builder: (_) => const LoginScreen()),
-    );
+  Future<void> _logout() async {
+    await context.read<AuthProvider>().logout();
+    if (!mounted) return;
+    // Home is the first authenticated route. Home itself observes AuthProvider
+    // and swaps back to LoginScreen, so clearing module routes here avoids
+    // importing LoginScreen into the shared shell and keeps route ownership in
+    // the existing authentication flow.
+    Navigator.of(context).popUntil((route) => route.isFirst);
   }
 }
 
@@ -490,7 +508,9 @@ class _DesktopSidebar extends StatelessWidget {
             child: Padding(
               padding: EdgeInsets.symmetric(horizontal: compact ? 13 : 14),
               child: Row(
-                mainAxisAlignment: compact ? MainAxisAlignment.center : MainAxisAlignment.start,
+                mainAxisAlignment: compact
+                    ? MainAxisAlignment.center
+                    : MainAxisAlignment.start,
                 children: [
                   Container(
                     width: 32,
@@ -500,7 +520,14 @@ class _DesktopSidebar extends StatelessWidget {
                       borderRadius: BorderRadius.circular(10),
                     ),
                     alignment: Alignment.center,
-                    child: const Text('C', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 17)),
+                    child: const Text(
+                      'C',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w900,
+                        fontSize: 17,
+                      ),
+                    ),
                   ),
                   if (!compact) ...[
                     const SizedBox(width: 9),
@@ -509,7 +536,12 @@ class _DesktopSidebar extends StatelessWidget {
                         'CounterIQ',
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: TextStyle(color: AppTheme.navy, fontSize: 17, fontWeight: FontWeight.w900, letterSpacing: -.35),
+                        style: TextStyle(
+                          color: AppTheme.navy,
+                          fontSize: 17,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: -.35,
+                        ),
                       ),
                     ),
                   ],
@@ -520,7 +552,12 @@ class _DesktopSidebar extends StatelessWidget {
           const Divider(height: 1),
           Expanded(
             child: SingleChildScrollView(
-              padding: EdgeInsets.fromLTRB(compact ? 8 : 10, 10, compact ? 8 : 10, 12),
+              padding: EdgeInsets.fromLTRB(
+                compact ? 8 : 10,
+                10,
+                compact ? 8 : 10,
+                12,
+              ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
@@ -530,7 +567,12 @@ class _DesktopSidebar extends StatelessWidget {
                         padding: const EdgeInsets.fromLTRB(9, 10, 8, 5),
                         child: Text(
                           group.label.toUpperCase(),
-                          style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 9.5, fontWeight: FontWeight.w900, letterSpacing: .75),
+                          style: const TextStyle(
+                            color: Color(0xFF94A3B8),
+                            fontSize: 9.5,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: .75,
+                          ),
                         ),
                       ),
                     ] else if (compact && group.label.isNotEmpty)
@@ -550,7 +592,10 @@ class _DesktopSidebar extends StatelessWidget {
                     radius: 18,
                     backgroundColor: AppTheme.primarySoft,
                     foregroundColor: AppTheme.primary,
-                    child: Text(userName.isEmpty ? '?' : userName[0].toUpperCase(), style: const TextStyle(fontWeight: FontWeight.w900)),
+                    child: Text(
+                      userName.isEmpty ? '?' : userName[0].toUpperCase(),
+                      style: const TextStyle(fontWeight: FontWeight.w900),
+                    ),
                   )
                 : Row(
                     children: [
@@ -558,16 +603,37 @@ class _DesktopSidebar extends StatelessWidget {
                         radius: 18,
                         backgroundColor: AppTheme.primarySoft,
                         foregroundColor: AppTheme.primary,
-                        child: Text(userName.isEmpty ? '?' : userName[0].toUpperCase(), style: const TextStyle(fontWeight: FontWeight.w900)),
+                        child: Text(
+                          userName.isEmpty ? '?' : userName[0].toUpperCase(),
+                          style: const TextStyle(fontWeight: FontWeight.w900),
+                        ),
                       ),
                       const SizedBox(width: 9),
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(userName, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: AppTheme.navy, fontSize: 11.5, fontWeight: FontWeight.w900)),
+                            Text(
+                              userName,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: AppTheme.navy,
+                                fontSize: 11.5,
+                                fontWeight: FontWeight.w900,
+                              ),
+                            ),
                             const SizedBox(height: 1),
-                            Text(role, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: AppTheme.textMuted, fontSize: 9.5, fontWeight: FontWeight.w600)),
+                            Text(
+                              role,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                color: AppTheme.textMuted,
+                                fontSize: 9.5,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
                           ],
                         ),
                       ),
@@ -588,9 +654,12 @@ class _SidebarEntry extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final foreground = entry.active ? AppTheme.primary : const Color(0xFF475569);
+    final foreground =
+        entry.active ? AppTheme.primary : const Color(0xFF475569);
     final child = Material(
-      color: entry.active ? AppTheme.primary.withOpacity(.08) : Colors.transparent,
+      color: entry.active
+          ? AppTheme.primary.withOpacity(.08)
+          : Colors.transparent,
       borderRadius: BorderRadius.circular(9),
       child: InkWell(
         borderRadius: BorderRadius.circular(9),
@@ -600,7 +669,9 @@ class _SidebarEntry extends StatelessWidget {
           child: Padding(
             padding: EdgeInsets.symmetric(horizontal: compact ? 0 : 10),
             child: Row(
-              mainAxisAlignment: compact ? MainAxisAlignment.center : MainAxisAlignment.start,
+              mainAxisAlignment: compact
+                  ? MainAxisAlignment.center
+                  : MainAxisAlignment.start,
               children: [
                 Icon(entry.icon, color: foreground, size: 19),
                 if (!compact) ...[
@@ -610,11 +681,24 @@ class _SidebarEntry extends StatelessWidget {
                       entry.title,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: TextStyle(color: foreground, fontSize: 12, fontWeight: entry.active ? FontWeight.w900 : FontWeight.w700),
+                      style: TextStyle(
+                        color: foreground,
+                        fontSize: 12,
+                        fontWeight: entry.active
+                            ? FontWeight.w900
+                            : FontWeight.w700,
+                      ),
                     ),
                   ),
                   if (entry.shortcut != null)
-                    Text(entry.shortcut!, style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 9, fontWeight: FontWeight.w700)),
+                    Text(
+                      entry.shortcut!,
+                      style: const TextStyle(
+                        color: Color(0xFF94A3B8),
+                        fontSize: 9,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
                 ],
               ],
             ),
@@ -668,9 +752,16 @@ class _DesktopTopBar extends StatelessWidget {
             children: [
               if (canToggleSidebar)
                 IconButton(
-                  tooltip: compactSidebar ? 'Expand sidebar' : 'Collapse sidebar',
+                  tooltip: compactSidebar
+                      ? 'Expand sidebar'
+                      : 'Collapse sidebar',
                   onPressed: onToggleSidebar,
-                  icon: Icon(compactSidebar ? Icons.menu_open_rounded : Icons.menu_rounded, size: 20),
+                  icon: Icon(
+                    compactSidebar
+                        ? Icons.menu_open_rounded
+                        : Icons.menu_rounded,
+                    size: 20,
+                  ),
                 ),
               if (canToggleSidebar) const SizedBox(width: 2),
               Expanded(
@@ -685,24 +776,33 @@ class _DesktopTopBar extends StatelessWidget {
               const SizedBox(width: 10),
               if (!hideSecondary && auth.isMasterAdmin)
                 _TopChip(
-                  icon: branch.hasActiveBranch ? Icons.apartment_rounded : Icons.warning_amber_rounded,
+                  icon: branch.hasActiveBranch
+                      ? Icons.apartment_rounded
+                      : Icons.warning_amber_rounded,
                   label: branch.label,
                   onTap: () => PosNavigation.openSingleton(
                     routeId: PosRouteIds.branchControl,
                     builder: (_) => const BranchControlScreen(),
                   ),
                 ),
-              if (!hideSecondary && auth.hasAnyPermission(const [
-                'view-register-shifts',
-                'open-register-shift',
-                'close-own-register-shift',
-                'manage-register-shifts',
-              ])) ...[
+              if (!hideSecondary &&
+                  auth.hasAnyPermission(const [
+                    'view-register-shifts',
+                    'open-register-shift',
+                    'close-own-register-shift',
+                    'manage-register-shifts',
+                  ])) ...[
                 const SizedBox(width: 7),
                 _TopChip(
-                  icon: shift.hasActiveShift ? Icons.check_circle_rounded : Icons.point_of_sale_rounded,
-                  label: shift.hasActiveShift ? 'Register Open' : 'No Register',
-                  accent: shift.hasActiveShift ? AppTheme.success : AppTheme.warning,
+                  icon: shift.hasActiveShift
+                      ? Icons.check_circle_rounded
+                      : Icons.point_of_sale_rounded,
+                  label: shift.hasActiveShift
+                      ? 'Register Open'
+                      : 'No Register',
+                  accent: shift.hasActiveShift
+                      ? AppTheme.success
+                      : AppTheme.warning,
                   onTap: () => PosNavigation.openSingleton(
                     routeId: PosRouteIds.registerShift,
                     builder: (_) => const RegisterShiftScreen(),
@@ -720,9 +820,21 @@ class _DesktopTopBar extends StatelessWidget {
                   if (value == 'logout') onLogout();
                 },
                 itemBuilder: (_) => const [
-                  PopupMenuItem(value: 'shortcuts', child: ListTile(leading: Icon(Icons.keyboard_rounded), title: Text('Keyboard shortcuts'))),
+                  PopupMenuItem(
+                    value: 'shortcuts',
+                    child: ListTile(
+                      leading: Icon(Icons.keyboard_rounded),
+                      title: Text('Keyboard shortcuts'),
+                    ),
+                  ),
                   PopupMenuDivider(),
-                  PopupMenuItem(value: 'logout', child: ListTile(leading: Icon(Icons.logout_rounded), title: Text('Logout'))),
+                  PopupMenuItem(
+                    value: 'logout',
+                    child: ListTile(
+                      leading: Icon(Icons.logout_rounded),
+                      title: Text('Logout'),
+                    ),
+                  ),
                 ],
                 child: Container(
                   height: 38,
@@ -738,8 +850,14 @@ class _DesktopTopBar extends StatelessWidget {
                         backgroundColor: AppTheme.primarySoft,
                         foregroundColor: AppTheme.primary,
                         child: Text(
-                          ((auth.user?['name'] ?? 'U').toString().isEmpty ? 'U' : (auth.user?['name'] ?? 'U').toString()[0]).toUpperCase(),
-                          style: const TextStyle(fontSize: 9.5, fontWeight: FontWeight.w900),
+                          ((auth.user?['name'] ?? 'U').toString().isEmpty
+                                  ? 'U'
+                                  : (auth.user?['name'] ?? 'U').toString()[0])
+                              .toUpperCase(),
+                          style: const TextStyle(
+                            fontSize: 9.5,
+                            fontWeight: FontWeight.w900,
+                          ),
                         ),
                       ),
                       if (!hideSecondary) ...[
@@ -750,12 +868,20 @@ class _DesktopTopBar extends StatelessWidget {
                             (auth.user?['name'] ?? 'User').toString(),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(color: AppTheme.navy, fontSize: 11, fontWeight: FontWeight.w800),
+                            style: const TextStyle(
+                              color: AppTheme.navy,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w800,
+                            ),
                           ),
                         ),
                       ],
                       const SizedBox(width: 4),
-                      const Icon(Icons.keyboard_arrow_down_rounded, size: 17, color: AppTheme.textMuted),
+                      const Icon(
+                        Icons.keyboard_arrow_down_rounded,
+                        size: 17,
+                        color: AppTheme.textMuted,
+                      ),
                     ],
                   ),
                 ),
@@ -770,7 +896,6 @@ class _DesktopTopBar extends StatelessWidget {
 
 class _CommandSearchButton extends StatelessWidget {
   final List<_NavEntry> entries;
-
   const _CommandSearchButton({required this.entries});
 
   @override
@@ -780,7 +905,10 @@ class _CommandSearchButton extends StatelessWidget {
       borderRadius: BorderRadius.circular(10),
       child: InkWell(
         borderRadius: BorderRadius.circular(10),
-        onTap: () => _showCommandPalette(context, entries),
+        onTap: () => showDialog<void>(
+          context: context,
+          builder: (_) => _CommandPalette(entries: entries),
+        ),
         child: Container(
           height: 38,
           padding: const EdgeInsets.symmetric(horizontal: 11),
@@ -790,27 +918,28 @@ class _CommandSearchButton extends StatelessWidget {
           ),
           child: const Row(
             children: [
-              Icon(Icons.search_rounded, size: 18, color: Color(0xFF94A3B8)),
+              Icon(
+                Icons.search_rounded,
+                size: 18,
+                color: Color(0xFF94A3B8),
+              ),
               SizedBox(width: 8),
               Expanded(
                 child: Text(
                   'Search modules & actions…',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(color: Color(0xFF94A3B8), fontSize: 11.5, fontWeight: FontWeight.w600),
+                  style: TextStyle(
+                    color: Color(0xFF94A3B8),
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
               ),
             ],
           ),
         ),
       ),
-    );
-  }
-
-  Future<void> _showCommandPalette(BuildContext context, List<_NavEntry> entries) async {
-    await showDialog<void>(
-      context: context,
-      builder: (_) => _CommandPalette(entries: entries),
     );
   }
 }
@@ -862,7 +991,15 @@ class _CommandPaletteState extends State<_CommandPalette> {
             const Divider(height: 1),
             Expanded(
               child: visible.isEmpty
-                  ? const Center(child: Text('No matching module or action.', style: TextStyle(color: AppTheme.textMuted, fontWeight: FontWeight.w700)))
+                  ? const Center(
+                      child: Text(
+                        'No matching module or action.',
+                        style: TextStyle(
+                          color: AppTheme.textMuted,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    )
                   : ListView.separated(
                       padding: const EdgeInsets.all(8),
                       itemCount: visible.length,
@@ -871,10 +1008,19 @@ class _CommandPaletteState extends State<_CommandPalette> {
                         final entry = visible[index];
                         return ListTile(
                           dense: true,
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                          leading: Icon(entry.icon, color: AppTheme.textMuted),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          leading: Icon(
+                            entry.icon,
+                            color: AppTheme.textMuted,
+                          ),
                           title: Text(entry.title),
-                          trailing: const Icon(Icons.keyboard_return_rounded, size: 17, color: Color(0xFF94A3B8)),
+                          trailing: const Icon(
+                            Icons.keyboard_return_rounded,
+                            size: 17,
+                            color: Color(0xFF94A3B8),
+                          ),
                           onTap: () {
                             Navigator.pop(context);
                             entry.onTap();
@@ -912,13 +1058,27 @@ class _TopChip extends StatelessWidget {
         height: 38,
         constraints: const BoxConstraints(maxWidth: 180),
         padding: const EdgeInsets.symmetric(horizontal: 10),
-        decoration: BoxDecoration(border: Border.all(color: AppTheme.border), borderRadius: BorderRadius.circular(10)),
+        decoration: BoxDecoration(
+          border: Border.all(color: AppTheme.border),
+          borderRadius: BorderRadius.circular(10),
+        ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(icon, size: 17, color: accent),
             const SizedBox(width: 6),
-            Flexible(child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: AppTheme.navy, fontSize: 10.5, fontWeight: FontWeight.w800))),
+            Flexible(
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  color: AppTheme.navy,
+                  fontSize: 10.5,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
           ],
         ),
       ),
@@ -933,88 +1093,65 @@ class _SyncButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Tooltip(
-      message: pendingCount > 0 ? '$pendingCount offline sales waiting to sync' : 'Offline sales sync',
+      message: pendingCount > 0
+          ? '$pendingCount offline sales waiting to sync'
+          : 'Offline sales sync',
       child: InkWell(
         borderRadius: BorderRadius.circular(10),
         onTap: () async {
-          await Navigator.push(context, MaterialPageRoute(builder: (_) => const OfflineSyncScreen()));
-          if (context.mounted) context.read<OfflineQueueProvider>().refresh();
+          await Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const OfflineSyncScreen()),
+          );
+          if (context.mounted) {
+            context.read<OfflineQueueProvider>().refresh();
+          }
         },
         child: Container(
           width: 38,
           height: 38,
-          decoration: BoxDecoration(border: Border.all(color: AppTheme.border), borderRadius: BorderRadius.circular(10)),
+          decoration: BoxDecoration(
+            border: Border.all(color: AppTheme.border),
+            borderRadius: BorderRadius.circular(10),
+          ),
           child: Stack(
             clipBehavior: Clip.none,
             children: [
-              const Center(child: Icon(Icons.sync_rounded, size: 18, color: AppTheme.textMuted)),
+              const Center(
+                child: Icon(
+                  Icons.sync_rounded,
+                  size: 18,
+                  color: AppTheme.textMuted,
+                ),
+              ),
               if (pendingCount > 0)
                 Positioned(
                   right: 2,
                   top: 2,
                   child: Container(
-                    constraints: const BoxConstraints(minWidth: 14, minHeight: 14),
+                    constraints: const BoxConstraints(
+                      minWidth: 14,
+                      minHeight: 14,
+                    ),
                     padding: const EdgeInsets.symmetric(horizontal: 3),
-                    decoration: const BoxDecoration(color: AppTheme.warning, shape: BoxShape.circle),
+                    decoration: const BoxDecoration(
+                      color: AppTheme.warning,
+                      shape: BoxShape.circle,
+                    ),
                     alignment: Alignment.center,
                     child: Text(
                       pendingCount > 9 ? '9+' : '$pendingCount',
-                      style: const TextStyle(color: Colors.white, fontSize: 7.5, fontWeight: FontWeight.w900),
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 7.5,
+                        fontWeight: FontWeight.w900,
+                      ),
                     ),
                   ),
                 ),
             ],
           ),
         ),
-      ),
-    );
-  }
-}
-
-class _QuickActionStrip extends StatelessWidget {
-  final List<_NavEntry> entries;
-  const _QuickActionStrip({required this.entries});
-
-  @override
-  Widget build(BuildContext context) {
-    if (entries.isEmpty) return const SizedBox.shrink();
-    return Container(
-      padding: const EdgeInsets.all(13),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(13),
-        border: Border.all(color: AppTheme.border),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Padding(
-            padding: EdgeInsets.only(top: 9),
-            child: Text('Quick actions', style: TextStyle(color: AppTheme.navy, fontWeight: FontWeight.w900, fontSize: 13)),
-          ),
-          const SizedBox(width: 16),
-          Expanded(
-            child: Wrap(
-              spacing: 7,
-              runSpacing: 7,
-              children: [
-                for (var i = 0; i < entries.length; i++)
-                  if (i == 0)
-                    FilledButton.icon(
-                      onPressed: entries[i].onTap,
-                      icon: Icon(entries[i].icon, size: 17),
-                      label: Text(entries[i].title),
-                    )
-                  else
-                    OutlinedButton.icon(
-                      onPressed: entries[i].onTap,
-                      icon: Icon(entries[i].icon, size: 17),
-                      label: Text(entries[i].title),
-                    ),
-              ],
-            ),
-          ),
-        ],
       ),
     );
   }
@@ -1035,7 +1172,9 @@ class _BranchRequiredView extends StatelessWidget {
           decoration: BoxDecoration(
             color: Colors.white,
             borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: AppTheme.warning.withOpacity(.25)),
+            border: Border.all(
+              color: AppTheme.warning.withOpacity(.25),
+            ),
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -1043,16 +1182,34 @@ class _BranchRequiredView extends StatelessWidget {
               Container(
                 width: 52,
                 height: 52,
-                decoration: BoxDecoration(color: AppTheme.warning.withOpacity(.09), borderRadius: BorderRadius.circular(14)),
-                child: const Icon(Icons.account_tree_rounded, color: AppTheme.warning, size: 26),
+                decoration: BoxDecoration(
+                  color: AppTheme.warning.withOpacity(.09),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: const Icon(
+                  Icons.account_tree_rounded,
+                  color: AppTheme.warning,
+                  size: 26,
+                ),
               ),
               const SizedBox(height: 14),
-              const Text('Select a working branch', style: TextStyle(color: AppTheme.navy, fontSize: 20, fontWeight: FontWeight.w900)),
+              const Text(
+                'Select a working branch',
+                style: TextStyle(
+                  color: AppTheme.navy,
+                  fontSize: 20,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
               const SizedBox(height: 7),
               const Text(
                 'Master Admin works inside one branch at a time. Select a branch before opening sales, purchases, stock, payments, reports or Intelligence.',
                 textAlign: TextAlign.center,
-                style: TextStyle(color: AppTheme.textMuted, fontWeight: FontWeight.w600, height: 1.35),
+                style: TextStyle(
+                  color: AppTheme.textMuted,
+                  fontWeight: FontWeight.w600,
+                  height: 1.35,
+                ),
               ),
               const SizedBox(height: 16),
               FilledButton.icon(

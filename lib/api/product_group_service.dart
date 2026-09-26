@@ -241,12 +241,24 @@ class ProductGroupService {
     int perPage = 20,
     String? search,
     String? type, // "simple", "variable", or null for all
+    int? categoryId,
+    int? brandId,
+    int? vendorId,
+    String? status, // "active", "inactive", or null for all
+    String? stockStatus, // "in_stock", "out_of_stock", or null for all
+    bool includeFilters = false,
   }) async {
     final res = await _client.get('/products/management', query: {
       'page': page.toString(),
       'per_page': perPage.toString(),
       if (search != null && search.isNotEmpty) 'search': search,
       if (type != null && type.isNotEmpty) 'type': type,
+      if (categoryId != null) 'category_id': categoryId.toString(),
+      if (brandId != null) 'brand_id': brandId.toString(),
+      if (vendorId != null) 'vendor_id': vendorId.toString(),
+      if (status != null && status.isNotEmpty) 'status': status,
+      if (stockStatus != null && stockStatus.isNotEmpty) 'stock_status': stockStatus,
+      if (includeFilters) 'include_filters': '1',
     });
     final data = res['data'];
     if (data is Map) return Map<String, dynamic>.from(data);
@@ -292,8 +304,12 @@ class ManagementItem {
   final double? costPrice;
   final double? discount;
   final String? discountType;
+  final int? categoryId;
+  final int? brandId;
+  final int? vendorId;
   final String? brandName;
   final String? categoryName;
+  final String? vendorName;
   final bool isActive;
   final int variantCount;
   final double totalStock;
@@ -312,8 +328,12 @@ class ManagementItem {
     this.costPrice,
     this.discount,
     this.discountType,
+    this.categoryId,
+    this.brandId,
+    this.vendorId,
     this.brandName,
     this.categoryName,
+    this.vendorName,
     required this.isActive,
     required this.variantCount,
     required this.totalStock,
@@ -334,8 +354,12 @@ class ManagementItem {
       costPrice: _dNull(j['cost_price']),
       discount: _dNull(j['discount']),
       discountType: j['discount_type']?.toString(),
+      categoryId: _iNull(j['category_id']),
+      brandId: _iNull(j['brand_id']),
+      vendorId: _iNull(j['vendor_id']),
       brandName: j['brand_name']?.toString(),
       categoryName: j['category_name']?.toString(),
+      vendorName: j['vendor_name']?.toString(),
       isActive: j['is_active'] == 1 || j['is_active'] == true,
       variantCount: _i(j['variant_count']),
       totalStock: _d(j['total_stock']) ?? 0.0,
