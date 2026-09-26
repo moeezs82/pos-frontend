@@ -18,6 +18,7 @@ abstract final class PosRouteIds {
   static const sales = '/sales';
   static const createPurchase = '/purchases/create';
   static const purchases = '/purchases';
+  static const purchaseClaims = '/purchases/claims';
   static const registerShift = '/register-shift';
   static const products = '/products';
   static const stock = '/stock';
@@ -34,6 +35,32 @@ abstract final class PosRouteIds {
   static const users = '/users';
   static const saleReturns = '/sale-returns';
   static const branchControl = '/branch-control';
+}
+
+
+/// Lightweight bridge between app-wide navigation calls and the persistent
+/// desktop workspace hosted by HomeScreen. Only routes explicitly handled by
+/// the active workspace are intercepted; detail/create routes continue through
+/// Navigator exactly as before.
+abstract final class PosWorkspaceNavigation {
+  static Object? _owner;
+  static bool Function(String routeId)? _handler;
+
+  static void register({
+    required Object owner,
+    required bool Function(String routeId) handler,
+  }) {
+    _owner = owner;
+    _handler = handler;
+  }
+
+  static void unregister(Object owner) {
+    if (!identical(_owner, owner)) return;
+    _owner = null;
+    _handler = null;
+  }
+
+  static bool tryOpen(String routeId) => _handler?.call(routeId) ?? false;
 }
 
 /// Tracks the ACTUAL routes currently in the Navigator so navigation can ask
@@ -113,6 +140,12 @@ class PosNavigation {
     required String routeId,
     required WidgetBuilder builder,
   }) {
+    // Redesigned top-level modules live inside the single persistent desktop
+    // shell. Let that workspace consume the navigation request before falling
+    // back to the legacy Navigator route stack used by forms/details and the
+    // modules that have not been migrated yet.
+    if (PosWorkspaceNavigation.tryOpen(routeId)) return;
+
     final nav = appNavigatorKey.currentState;
     if (nav == null) return;
 

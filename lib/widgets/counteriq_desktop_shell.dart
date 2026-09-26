@@ -36,10 +36,20 @@ import 'package:provider/provider.dart';
 
 /// Shared desktop chrome for the redesigned CounterIQ workspace.
 ///
-/// Phase 1 intentionally migrates Home and Products only. Other modules keep
-/// their existing screens until their redesign phase, but navigation from this
-/// shell still opens those exact existing routes so no transactional behaviour
-/// is changed.
+/// The first shell mounted under HomeScreen owns the persistent desktop
+/// chrome. If a redesigned module also wraps itself in this widget, the nested
+/// shell automatically collapses to its content only. This keeps one sidebar
+/// and one top bar alive while preserving each module's existing public API.
+class _CounterIQDesktopShellScope extends InheritedWidget {
+  const _CounterIQDesktopShellScope({required super.child});
+
+  static bool hasShell(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<_CounterIQDesktopShellScope>() != null;
+
+  @override
+  bool updateShouldNotify(_CounterIQDesktopShellScope oldWidget) => false;
+}
+
 class CounterIQDesktopShell extends StatefulWidget {
   final String activeRouteId;
   final Widget child;
@@ -63,6 +73,14 @@ class _CounterIQDesktopShellState extends State<CounterIQDesktopShell> {
 
   @override
   Widget build(BuildContext context) {
+    // A redesigned module may still wrap its content in CounterIQDesktopShell
+    // for standalone compatibility. When it is mounted inside the persistent
+    // Home workspace, do not build another sidebar/top bar or re-watch shell
+    // providers; render only the module content.
+    if (_CounterIQDesktopShellScope.hasShell(context)) {
+      return widget.child;
+    }
+
     final auth = context.watch<AuthProvider>();
     final branch = context.watch<BranchProvider>();
     final sub = context.watch<SubscriptionProvider>();
@@ -125,7 +143,7 @@ class _CounterIQDesktopShellState extends State<CounterIQDesktopShell> {
                           ? _BranchRequiredView(
                               onOpenBranchControl: _openBranchControl,
                             )
-                          : widget.child,
+                          : _CounterIQDesktopShellScope(child: widget.child),
                     ),
                   ],
                 ),
@@ -265,11 +283,10 @@ class _CounterIQDesktopShellState extends State<CounterIQDesktopShell> {
             _NavEntry(
               icon: Icons.assignment_return_outlined,
               title: 'Purchase Claims',
-              onTap: () => Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => const PurchaseClaimsScreen(),
-                ),
+              active: _isActive(PosRouteIds.purchaseClaims),
+              onTap: () => PosNavigation.openSingleton(
+                routeId: PosRouteIds.purchaseClaims,
+                builder: (_) => const PurchaseClaimsScreen(),
               ),
             ),
         ],
@@ -441,6 +458,7 @@ class _CounterIQDesktopShellState extends State<CounterIQDesktopShell> {
 
   void _openHome() {
     if (_isActive(PosRouteIds.home)) return;
+    if (PosWorkspaceNavigation.tryOpen(PosRouteIds.home)) return;
     Navigator.of(context).popUntil((route) => route.isFirst);
   }
 

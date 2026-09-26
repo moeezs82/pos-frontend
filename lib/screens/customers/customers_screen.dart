@@ -1,17 +1,20 @@
+import 'dart:math' as math;
+
 import 'package:enterprise_pos/api/customer_service.dart';
 import 'package:enterprise_pos/forms/customer_form_screen.dart';
+import 'package:enterprise_pos/providers/auth_provider.dart';
+import 'package:enterprise_pos/screens/product_screen.dart';
 import 'package:enterprise_pos/providers/branch_provider.dart';
 import 'package:enterprise_pos/screens/customers/customers_edit_screen.dart';
-import 'package:enterprise_pos/theme/app_theme.dart';
+import 'package:enterprise_pos/services/app_currency.dart';
 import 'package:enterprise_pos/services/app_navigator.dart';
+import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/utils/customer_display_utils.dart';
 import 'package:enterprise_pos/widgets/app_feedback.dart';
-import 'package:enterprise_pos/widgets/branch_indicator.dart';
+import 'package:enterprise_pos/widgets/counteriq_desktop_shell.dart';
 import 'package:enterprise_pos/widgets/enterprise/enterprise_ui.dart';
 import 'package:flutter/material.dart';
-import 'package:enterprise_pos/services/app_currency.dart';
 import 'package:provider/provider.dart';
-import '../../providers/auth_provider.dart';
 
 class CustomersScreen extends StatefulWidget {
   const CustomersScreen({super.key});
@@ -21,6 +24,8 @@ class CustomersScreen extends StatefulWidget {
 }
 
 class _CustomersScreenState extends State<CustomersScreen> {
+  static const int _perPage = 40;
+
   int _page = 1;
   int _lastPage = 1;
   int _total = 0;
@@ -34,46 +39,51 @@ class _CustomersScreenState extends State<CustomersScreen> {
   @override
   void initState() {
     super.initState();
-    final token = Provider.of<AuthProvider>(context, listen: false).token!;
+    final token = context.read<AuthProvider>().token!;
     _customerService = CustomerService(token: token);
-    final branchProv = Provider.of<BranchProvider>(context, listen: false);
+    final branchProvider = context.read<BranchProvider>();
     _branchListener = () => _fetchCustomers(reset: true);
-    branchProv.addListener(_branchListener!);
+    branchProvider.addListener(_branchListener!);
     _fetchCustomers(reset: true);
   }
 
   @override
   void dispose() {
     _searchController.dispose();
-    final branchProv = Provider.of<BranchProvider>(context, listen: false);
-    if (_branchListener != null) branchProv.removeListener(_branchListener!);
+    final branchProvider = context.read<BranchProvider>();
+    if (_branchListener != null) branchProvider.removeListener(_branchListener!);
     super.dispose();
   }
 
   Future<void> _fetchCustomers({bool reset = false}) async {
     if (_loading) return;
-    setState(() => _loading = true);
+    if (mounted) setState(() => _loading = true);
     if (reset) {
-      _customers.clear();
       _page = 1;
       _lastPage = 1;
       _total = 0;
+      _customers.clear();
     }
     try {
       final branchId = context.read<BranchProvider>().selectedBranchId;
       final data = await _customerService.getCustomers(
         page: _page,
+        perPage: _perPage,
         search: _search,
         includeBalance: true,
         branchId: branchId,
       );
       final wrapper = (data['data'] as Map<String, dynamic>?) ?? const {};
-      final items = (wrapper['customers'] as List?)?.cast<Map<String, dynamic>>() ?? const [];
+      final rows = (wrapper['customers'] as List?)
+              ?.whereType<Map>()
+              .map((e) => Map<String, dynamic>.from(e))
+              .toList() ??
+          const <Map<String, dynamic>>[];
       if (!mounted) return;
       setState(() {
         _customers
           ..clear()
-          ..addAll(items);
+          ..addAll(rows);
         _page = (wrapper['current_page'] as num?)?.toInt() ?? _page;
         _lastPage = (wrapper['last_page'] as num?)?.toInt() ?? _lastPage;
         _total = (wrapper['total'] as num?)?.toInt() ?? _total;
@@ -106,21 +116,37 @@ class _CustomersScreenState extends State<CustomersScreen> {
         builder: (_) => CustomerFormScreen(customer: customer),
       ),
     );
-    if (result != null) _fetchCustomers(reset: true);
+    if (result != null && mounted) await _fetchCustomers(reset: true);
+  }
+
+  Future<void> _openCustomer(Map<String, dynamic> customer) async {
+    final rawId = customer['id'];
+    final id = rawId is num ? rawId.toInt() : int.tryParse(rawId?.toString() ?? '');
+    if (id == null) return;
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => CustomerEditScreen(customerId: id)),
+    );
+    if (mounted) await _fetchCustomers(reset: true);
   }
 
   Future<void> _deleteCustomer(Map<String, dynamic> customer) async {
-    final fullName = _fullName(customer);
+    final name = _fullName(customer);
     final confirm = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
+      builder: (dialogContext) => AlertDialog(
         title: const Text('Delete Customer'),
-        content: Text('Delete ${fullName.isEmpty ? 'this customer' : fullName}? This action cannot be undone.'),
+        content: Text(
+          'Delete ${name.isEmpty ? 'this customer' : name}? This action cannot be undone.',
+        ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
           FilledButton.icon(
             style: FilledButton.styleFrom(backgroundColor: AppTheme.danger),
-            onPressed: () => Navigator.pop(ctx, true),
+            onPressed: () => Navigator.pop(dialogContext, true),
             icon: const Icon(Icons.delete_rounded),
             label: const Text('Delete'),
           ),
@@ -132,24 +158,16 @@ class _CustomersScreenState extends State<CustomersScreen> {
       await _customerService.deleteCustomer(customer['id'] as int);
       if (!mounted) return;
       AppFeedback.success(context, 'Customer deleted');
-      _fetchCustomers(reset: true);
+      await _fetchCustomers(reset: true);
     } catch (e) {
       if (mounted) AppFeedback.error(context, 'Delete failed: $e');
     }
   }
 
-  String _fullName(Map<String, dynamic> c) {
-    final first = (c['first_name'] ?? '').toString().trim();
-    final last = (c['last_name'] ?? '').toString().trim();
-    return [first, last].where((s) => s.isNotEmpty).join(' ');
-  }
-
-  String _initials(Map<String, dynamic> c) {
-    final name = _fullName(c);
-    if (name.isEmpty) return '?';
-    final parts = name.split(' ').where((e) => e.isNotEmpty).toList();
-    if (parts.length == 1) return parts.first[0].toUpperCase();
-    return '${parts.first[0]}${parts.last[0]}'.toUpperCase();
+  String _fullName(Map<String, dynamic> customer) {
+    final first = (customer['first_name'] ?? '').toString().trim();
+    final last = (customer['last_name'] ?? '').toString().trim();
+    return [first, last].where((part) => part.isNotEmpty).join(' ');
   }
 
   String _customerTypeLabel(dynamic raw) {
@@ -163,200 +181,359 @@ class _CustomersScreenState extends State<CustomersScreen> {
     }
   }
 
-  Color _customerTypeColor(dynamic raw) {
-    switch ((raw ?? 'retail').toString().toLowerCase()) {
-      case 'wholesale':
-        return AppTheme.info;
-      case 'reseller':
-        return AppTheme.warning;
-      default:
-        return AppTheme.primary;
-    }
+  double _toDouble(dynamic value) {
+    if (value == null) return 0;
+    if (value is num) return value.toDouble();
+    return double.tryParse(value.toString().replaceAll(',', '').trim()) ?? 0;
   }
 
-  double _toDouble(dynamic v) {
-    if (v == null) return 0;
-    if (v is num) return v.toDouble();
-    return double.tryParse(v.toString().replaceAll(',', '').trim()) ?? 0;
-  }
-
-  String _money(dynamic v) => AppCurrency.format(v);
+  String _money(dynamic value) => AppCurrency.format(value);
 
   @override
   Widget build(BuildContext context) {
-    final canManageCustomers = context.watch<AuthProvider>().hasPermission('manage-customers');
-    return EnterprisePage(
-      title: 'Customers',
-      subtitle: 'Search customers, check balances and open full ledger/actions quickly.',
-      icon: Icons.people_alt_rounded,
-      appBarActions: const [
-        Padding(
-          padding: EdgeInsets.only(right: 8),
-          child: BranchIndicator(tappable: false),
+    final canManage = context.watch<AuthProvider>().hasPermission('manage-customers');
+    return CounterIQDesktopShell(
+      activeRouteId: PosRouteIds.customers,
+      onOpenProducts: () => PosNavigation.openSingleton(
+        routeId: PosRouteIds.products,
+        builder: (_) => const ProductsScreen(),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(18, 16, 18, 14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _buildHeader(canManage),
+            const SizedBox(height: 12),
+            _buildToolbar(),
+            const SizedBox(height: 10),
+            Expanded(
+              child: _loading
+                  ? const Center(child: CircularProgressIndicator())
+                  : _customers.isEmpty
+                      ? ListView(
+                          children: [
+                            const SizedBox(height: 70),
+                            EnterpriseEmptyState(
+                              icon: Icons.people_outline_rounded,
+                              title: 'No customers found',
+                              subtitle: _search.isEmpty
+                                  ? 'Add customers to manage balances, receipts and ledgers.'
+                                  : 'No customer matched your search.',
+                              action: canManage
+                                  ? FilledButton.icon(
+                                      onPressed: () => _openForm(),
+                                      icon: const Icon(Icons.person_add_alt_1_rounded),
+                                      label: const Text('Add Customer'),
+                                    )
+                                  : null,
+                            ),
+                          ],
+                        )
+                      : _buildTable(canManage),
+            ),
+            if (_customers.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              _buildPaginationBar(),
+            ],
+          ],
         ),
-      ],
-      actions: [
-        if (canManageCustomers)
-          FilledButton.icon(
-            onPressed: () => _openForm(),
-            icon: const Icon(Icons.person_add_alt_1_rounded),
-            label: const Text('Add Customer'),
-          ),
-      ],
-      bottomNavigationBar: _customers.isNotEmpty
-          ? EnterprisePaginationBar(
-              page: _page,
-              lastPage: _lastPage,
-              total: _total,
-              loading: _loading,
-              onPrevious: _page > 1
-                  ? () {
-                      setState(() => _page--);
-                      _fetchCustomers();
-                    }
-                  : null,
-              onNext: _page < _lastPage
-                  ? () {
-                      setState(() => _page++);
-                      _fetchCustomers();
-                    }
-                  : null,
-            )
-          : null,
-      child: Column(
-        children: [
-          EnterpriseToolbar(
+      ),
+    );
+  }
+
+  Widget _buildHeader(bool canManage) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              SizedBox(
-                width: MediaQuery.of(context).size.width >= 720 ? 440 : double.infinity,
-                child: EnterpriseSearchField(
-                  controller: _searchController,
-                  hintText: 'Search customer ID, name, area, phone, email...',
-                  onSubmitted: (_) => _searchNow(),
-                  onSearch: _searchNow,
-                  onClear: _clearSearch,
+              Text(
+                'Customers',
+                style: TextStyle(
+                  color: AppTheme.navy,
+                  fontSize: 24,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: -.45,
                 ),
               ),
-              OutlinedButton.icon(
-                onPressed: _loading ? null : () => _fetchCustomers(reset: true),
-                icon: const Icon(Icons.refresh_rounded),
-                label: const Text('Refresh'),
+              SizedBox(height: 4),
+              Text(
+                'Customer master data, area, type, balances and activity at a glance.',
+                style: TextStyle(
+                  color: AppTheme.textMuted,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
             ],
           ),
-          const SizedBox(height: 12),
-          Expanded(
-            child: _loading
-                ? const Center(child: CircularProgressIndicator())
-                : _customers.isEmpty
-                    ? EnterpriseEmptyState(
-                        icon: Icons.people_outline_rounded,
-                        title: 'No customers found',
-                        subtitle: _search.isEmpty
-                            ? 'Add customers to manage balances, receipts and ledgers.'
-                            : 'No customer matched your search.',
-                        action: canManageCustomers
-                            ? FilledButton.icon(
-                                onPressed: () => _openForm(),
-                                icon: const Icon(Icons.person_add_alt_1_rounded),
-                                label: const Text('Add Customer'),
-                              )
-                            : null,
-                      )
-                    : RefreshIndicator(
-                        onRefresh: () => _fetchCustomers(reset: true),
-                        child: ListView.separated(
-                          itemCount: _customers.length,
-                          separatorBuilder: (_, __) => const SizedBox(height: 10),
-                          itemBuilder: (context, i) {
-                            final c = _customers[i];
-                            final fullName = _fullName(c);
-                            final email = (c['email'] ?? '—').toString();
-                            final phone = (c['phone'] ?? '—').toString();
-                            final status = (c['status'] ?? 'active').toString();
-                            final customerCode = (c['customer_code'] ?? '').toString().trim();
-                            final customerType = _customerTypeLabel(c['customer_type']);
-                            final customerTypeColor = _customerTypeColor(c['customer_type']);
-                            final areaName = CustomerDisplayUtils.areaName(c);
-                            final balance = _toDouble(c['balance']);
-                            final totalSales = _money(c['total_sales']);
-                            final totalReceipts = _money(c['total_receipts']);
-                            final balColor = balance > 0
-                                ? AppTheme.warning
-                                : balance < 0
-                                    ? AppTheme.success
-                                    : AppTheme.textMuted;
+        ),
+        Wrap(
+          spacing: 8,
+          children: [
+            IconButton(
+              tooltip: 'Refresh customers',
+              onPressed: _loading ? null : () => _fetchCustomers(reset: true),
+              icon: const Icon(Icons.refresh_rounded),
+            ),
+            if (canManage)
+              FilledButton.icon(
+                onPressed: () => _openForm(),
+                icon: const Icon(Icons.person_add_alt_1_rounded, size: 18),
+                label: const Text('Add Customer'),
+              ),
+          ],
+        ),
+      ],
+    );
+  }
 
-                            return Card(
-                              child: ListTile(
-                                onTap: () async {
-                                  await Navigator.push(
-                                    context,
-                                    MaterialPageRoute(builder: (_) => CustomerEditScreen(customerId: c['id'])),
-                                  );
-                                  _fetchCustomers(reset: true);
-                                },
-                                leading: CircleAvatar(
-                                  backgroundColor: AppTheme.primarySoft,
-                                  foregroundColor: AppTheme.primary,
-                                  child: Text(_initials(c)),
-                                ),
-                                title: Row(
-                                  children: [
-                                    Expanded(
-                                      child: Text(
-                                        fullName.isEmpty ? 'Unnamed customer' : fullName,
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
-                                    ),
-                                    EnterpriseStatusBadge(
-                                      label: customerType.toUpperCase(),
-                                      color: customerTypeColor,
-                                    ),
-                                    const SizedBox(width: 6),
-                                    EnterpriseStatusBadge(
-                                      label: status.toUpperCase(),
-                                      color: AppTheme.statusColor(status),
-                                    ),
-                                  ],
-                                ),
-                                subtitle: Padding(
-                                  padding: const EdgeInsets.only(top: 8),
-                                  child: Wrap(
-                                    spacing: 8,
-                                    runSpacing: 8,
-                                    children: [
-                                      if (customerCode.isNotEmpty)
-                                        EnterpriseMetricChip(label: 'Customer ID', value: customerCode, color: AppTheme.primary, icon: Icons.numbers_rounded),
-                                      if (areaName.isNotEmpty)
-                                        EnterpriseMetricChip(label: 'Area', value: areaName, color: AppTheme.info, icon: Icons.location_on_outlined),
-                                      EnterpriseMetricChip(label: 'Phone', value: phone, color: AppTheme.info, icon: Icons.call_rounded),
-                                      EnterpriseMetricChip(label: 'Balance', value: _money(balance), color: balColor, icon: Icons.account_balance_wallet_rounded),
-                                      EnterpriseMetricChip(label: 'Sales', value: totalSales, color: AppTheme.primary),
-                                      EnterpriseMetricChip(label: 'Received', value: totalReceipts, color: AppTheme.success),
-                                      if (email != '—') EnterpriseMetricChip(label: 'Email', value: email, color: AppTheme.textMuted),
-                                    ],
-                                  ),
-                                ),
-                                trailing: canManageCustomers
-                                    ? PopupMenuButton<String>(
-                                        tooltip: 'Actions',
-                                        onSelected: (value) {
-                                          if (value == 'edit') _openForm(c);
-                                          if (value == 'delete') _deleteCustomer(c);
-                                        },
-                                        itemBuilder: (_) => const [
-                                          PopupMenuItem(value: 'edit', child: Text('Edit')),
-                                          PopupMenuItem(value: 'delete', child: Text('Delete')),
-                                        ],
-                                      )
-                                    : null,
-                              ),
-                            );
-                          },
-                        ),
+  Widget _buildToolbar() {
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border.all(color: AppTheme.border),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final width = math.min(520.0, math.max(280.0, constraints.maxWidth * .42)).toDouble();
+          return Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              SizedBox(
+                width: width,
+                height: 42,
+                child: TextField(
+                  controller: _searchController,
+                  onSubmitted: (_) => _searchNow(),
+                  decoration: InputDecoration(
+                    hintText: 'Customer ID, name, area, phone or email',
+                    prefixIcon: const Icon(Icons.search_rounded, size: 19),
+                    suffixIcon: _searchController.text.isNotEmpty
+                        ? IconButton(
+                            onPressed: _clearSearch,
+                            icon: const Icon(Icons.close_rounded, size: 18),
+                          )
+                        : IconButton(
+                            onPressed: _searchNow,
+                            icon: const Icon(Icons.arrow_forward_rounded, size: 18),
+                          ),
+                    isDense: true,
+                    border: const OutlineInputBorder(),
+                  ),
+                ),
+              ),
+              if (_search.isNotEmpty)
+                InputChip(
+                  label: Text('Search: $_search'),
+                  onDeleted: _clearSearch,
+                ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildTable(bool canManage) {
+    const widths = <double>[250, 125, 120, 180, 165, 160, 140, 130, 115, 70];
+    final minWidth = widths.fold<double>(0, (sum, width) => sum + width) + 24;
+    return Container(
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border.all(color: AppTheme.border),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final width = math.max(minWidth, constraints.maxWidth).toDouble();
+          return SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: SizedBox(
+              width: width,
+              height: constraints.maxHeight,
+              child: Column(
+                children: [
+                  _tableRow(
+                    const [
+                      'Customer',
+                      'Customer ID',
+                      'Type',
+                      'Area',
+                      'Phone',
+                      'Email',
+                      'Balance',
+                      'Sales',
+                      'Status',
+                      '',
+                    ],
+                    header: true,
+                  ),
+                  Expanded(
+                    child: RefreshIndicator(
+                      onRefresh: () => _fetchCustomers(reset: true),
+                      child: ListView.builder(
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        itemExtent: 58,
+                        itemCount: _customers.length,
+                        itemBuilder: (_, index) => _customerRow(_customers[index], canManage),
                       ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _tableRow(List<String> cells, {bool header = false}) {
+    const widths = <double>[250, 125, 120, 180, 165, 160, 140, 130, 115, 70];
+    return Container(
+      height: header ? 42 : 58,
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      decoration: BoxDecoration(
+        color: header ? AppTheme.surfaceSoft : Colors.white,
+        border: const Border(bottom: BorderSide(color: AppTheme.border)),
+      ),
+      child: Row(
+        children: List.generate(cells.length, (index) {
+          final numeric = index == 6 || index == 7;
+          return SizedBox(
+            width: widths[index],
+            child: Text(
+              cells[index],
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: numeric ? TextAlign.right : TextAlign.left,
+              style: TextStyle(
+                color: header ? AppTheme.textMuted : AppTheme.navy,
+                fontSize: header ? 11 : 12,
+                fontWeight: header ? FontWeight.w800 : FontWeight.w600,
+              ),
+            ),
+          );
+        }),
+      ),
+    );
+  }
+
+  Widget _customerRow(Map<String, dynamic> customer, bool canManage) {
+    final name = _fullName(customer);
+    final customerCode = (customer['customer_code'] ?? '—').toString();
+    final type = _customerTypeLabel(customer['customer_type']);
+    final area = CustomerDisplayUtils.areaName(customer);
+    final phone = (customer['phone'] ?? '—').toString();
+    final email = (customer['email'] ?? '—').toString();
+    final balance = _toDouble(customer['balance']);
+    final status = (customer['status'] ?? 'active').toString();
+    final cells = <String>[
+      name.isEmpty ? 'Unnamed customer' : name,
+      customerCode,
+      type,
+      area.isEmpty ? '—' : area,
+      phone,
+      email,
+      _money(balance),
+      _money(customer['total_sales']),
+      status.toUpperCase(),
+      '',
+    ];
+
+    return InkWell(
+      onTap: () => _openCustomer(customer),
+      child: Stack(
+        children: [
+          _tableRow(cells),
+          Positioned(
+            right: 12,
+            top: 9,
+            child: canManage
+                ? PopupMenuButton<String>(
+                    tooltip: 'Customer actions',
+                    onSelected: (value) {
+                      if (value == 'edit') _openForm(customer);
+                      if (value == 'delete') _deleteCustomer(customer);
+                    },
+                    itemBuilder: (_) => const [
+                      PopupMenuItem(value: 'edit', child: Text('Edit')),
+                      PopupMenuItem(value: 'delete', child: Text('Delete')),
+                    ],
+                  )
+                : const Icon(Icons.chevron_right_rounded, color: AppTheme.textMuted),
+          ),
+          Positioned(
+            right: 83,
+            top: 21,
+            child: Container(
+              width: 7,
+              height: 7,
+              decoration: BoxDecoration(
+                color: AppTheme.statusColor(status),
+                shape: BoxShape.circle,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPaginationBar() {
+    final start = _total == 0 ? 0 : ((_page - 1) * _perPage) + 1;
+    final end = math.min(_page * _perPage, _total);
+    return Container(
+      height: 44,
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border.all(color: AppTheme.border),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              'Showing $start–$end of $_total customers',
+              style: const TextStyle(
+                color: AppTheme.textMuted,
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          IconButton(
+            tooltip: 'Previous page',
+            onPressed: !_loading && _page > 1
+                ? () {
+                    setState(() => _page--);
+                    _fetchCustomers();
+                  }
+                : null,
+            icon: const Icon(Icons.chevron_left_rounded),
+          ),
+          Text(
+            'Page $_page of $_lastPage',
+            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800),
+          ),
+          IconButton(
+            tooltip: 'Next page',
+            onPressed: !_loading && _page < _lastPage
+                ? () {
+                    setState(() => _page++);
+                    _fetchCustomers();
+                  }
+                : null,
+            icon: const Icon(Icons.chevron_right_rounded),
           ),
         ],
       ),

@@ -49,6 +49,101 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   bool _sidebarCollapsed = false;
+  String _activeWorkspaceRoute = PosRouteIds.home;
+
+  static const Set<String> _workspaceRoutes = {
+    PosRouteIds.home,
+    PosRouteIds.sales,
+    PosRouteIds.products,
+    PosRouteIds.stock,
+    PosRouteIds.purchases,
+    PosRouteIds.purchaseClaims,
+    PosRouteIds.customers,
+    PosRouteIds.vendors,
+  };
+
+  @override
+  void initState() {
+    super.initState();
+    PosWorkspaceNavigation.register(owner: this, handler: _openWorkspaceRoute);
+  }
+
+  @override
+  void dispose() {
+    PosWorkspaceNavigation.unregister(this);
+    super.dispose();
+  }
+
+  bool _openWorkspaceRoute(String routeId) {
+    if (!_workspaceRoutes.contains(routeId) || !mounted) return false;
+
+    if (_activeWorkspaceRoute != routeId) {
+      setState(() => _activeWorkspaceRoute = routeId);
+    }
+
+    // If the request came from a detail/form route or a global shortcut while
+    // another route is above Home, reveal the root shell after switching its
+    // workspace. Top-level module navigation therefore never grows the stack.
+    final nav = Navigator.of(context);
+    if (nav.canPop()) {
+      nav.popUntil((route) => route.isFirst);
+    }
+    return true;
+  }
+
+  Widget _buildWorkspace({
+    required AuthProvider auth,
+    required BranchProvider branch,
+    required RegisterShiftProvider shift,
+    required String userName,
+    required String role,
+  }) {
+    switch (_activeWorkspaceRoute) {
+      case PosRouteIds.sales:
+        return const SalesScreen(key: ValueKey(PosRouteIds.sales));
+      case PosRouteIds.products:
+        return const ProductsScreen(key: ValueKey(PosRouteIds.products));
+      case PosRouteIds.stock:
+        return const StockScreen(key: ValueKey(PosRouteIds.stock));
+      case PosRouteIds.purchases:
+        return const PurchasesScreen(key: ValueKey(PosRouteIds.purchases));
+      case PosRouteIds.purchaseClaims:
+        return const PurchaseClaimsScreen(key: ValueKey(PosRouteIds.purchaseClaims));
+      case PosRouteIds.customers:
+        return const CustomersScreen(key: ValueKey(PosRouteIds.customers));
+      case PosRouteIds.vendors:
+        return const VendorsScreen(key: ValueKey(PosRouteIds.vendors));
+      case PosRouteIds.home:
+      default:
+        return SingleChildScrollView(
+          key: const ValueKey(PosRouteIds.home),
+          padding: const EdgeInsets.fromLTRB(18, 18, 18, 28),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              CommandCenterDashboard(
+                key: ValueKey(branch.selectedBranchId),
+                userName: userName,
+                role: role,
+              ),
+              const SizedBox(height: 12),
+              _QuickActionStrip(entries: _quickActions(context, auth, shift)),
+              const SizedBox(height: 16),
+              const Center(
+                child: Text(
+                  'Powered by A Developers',
+                  style: TextStyle(
+                    color: AppTheme.textMuted,
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -65,36 +160,17 @@ class _HomeScreenState extends State<HomeScreen> {
     final role = auth.roleLabel;
 
     return CounterIQDesktopShell(
-      activeRouteId: PosRouteIds.home,
+      activeRouteId: _activeWorkspaceRoute,
       onOpenProducts: () => PosNavigation.openSingleton(
         routeId: PosRouteIds.products,
         builder: (_) => const ProductsScreen(),
       ),
-      child: SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(18, 18, 18, 28),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            CommandCenterDashboard(
-              key: ValueKey(branch.selectedBranchId),
-              userName: userName,
-              role: role,
-            ),
-            const SizedBox(height: 12),
-            _QuickActionStrip(entries: _quickActions(context, auth, shift)),
-            const SizedBox(height: 16),
-            const Center(
-              child: Text(
-                'Powered by A Developers',
-                style: TextStyle(
-                  color: AppTheme.textMuted,
-                  fontSize: 10.5,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
-          ],
-        ),
+      child: _buildWorkspace(
+        auth: auth,
+        branch: branch,
+        shift: shift,
+        userName: userName,
+        role: role,
       ),
     );
   }

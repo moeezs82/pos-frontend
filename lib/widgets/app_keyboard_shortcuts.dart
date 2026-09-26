@@ -269,6 +269,7 @@ class AppKeyboardShortcuts extends StatelessWidget {
 
   void _goHome(AuthProvider auth) {
     if (!auth.isAuthenticated) return;
+    if (PosWorkspaceNavigation.tryOpen(PosRouteIds.home)) return;
     appNavigatorKey.currentState?.pushAndRemoveUntil(
       MaterialPageRoute(builder: (_) => const HomeScreen()),
       (route) => false,

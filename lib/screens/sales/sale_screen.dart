@@ -1,13 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
-import 'package:enterprise_pos/api/common_service.dart';
+import 'dart:math' as math;
 import 'package:enterprise_pos/api/core/api_client.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
-import 'package:enterprise_pos/providers/branch_provider.dart';
 import 'package:enterprise_pos/screens/sales/sale_create.dart';
 import 'package:enterprise_pos/screens/sales/picking_list_screen.dart';
 import 'package:enterprise_pos/screens/sales/sale_detail.dart';
-import 'package:enterprise_pos/widgets/branch_indicator.dart';
 import 'package:enterprise_pos/widgets/customer_picker_sheet.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -16,6 +14,10 @@ import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import 'package:enterprise_pos/services/app_currency.dart';
 import 'package:enterprise_pos/utils/customer_display_utils.dart';
+import 'package:enterprise_pos/theme/app_theme.dart';
+import 'package:enterprise_pos/widgets/counteriq_desktop_shell.dart';
+import 'package:enterprise_pos/widgets/enterprise/enterprise_ui.dart';
+import 'package:enterprise_pos/services/app_navigator.dart';
 
 class SalesScreen extends StatefulWidget {
   const SalesScreen({super.key});
@@ -26,18 +28,20 @@ class SalesScreen extends StatefulWidget {
 
 class _SalesScreenState extends State<SalesScreen> {
   // Data
-  final _sales = <dynamic>[];
-  List<Map<String, dynamic>> _branches = [];
-
-  // Paging
-  int _currentPage = 1;
+  // Bounded virtual paging: keep only a small working set in memory.
+  static const int _pageSize = 15;
+  static const int _maxCachedPages = 6;
+  static const double _rowExtent = 58;
+  final Map<int, List<dynamic>> _pageCache = {};
+  final Map<int, int> _pageAccessOrder = {};
+  final Set<int> _loadingPages = {};
+  int _cacheAccessTick = 0;
   int _lastPage = 1;
+  int _total = 0;
   bool _initialLoading = true;
-  bool _loadingMore = false;
-  bool get _hasMore => _currentPage < _lastPage;
+  bool _refreshing = false;
 
   // Filters
-  String? _selectedBranchId; // only used when global is "All"
   int? _selectedCustomerId;
   String? _selectedCustomerLabel;
   String _sortBy = "date"; // 'date' | 'total'
@@ -64,14 +68,9 @@ class _SalesScreenState extends State<SalesScreen> {
   final _currency = const AppMoneyFormatter();
   Timer? _searchDebounce;
 
-  late CommonService _commonService;
-
   @override
   void initState() {
     super.initState();
-    final token = Provider.of<AuthProvider>(context, listen: false).token!;
-    _commonService = CommonService(token: token);
-    _attachScrollListener();
     _fetchInitial();
   }
 
@@ -83,97 +82,125 @@ class _SalesScreenState extends State<SalesScreen> {
     super.dispose();
   }
 
-  void _attachScrollListener() {
-    _scrollController.addListener(() {
-      if (_loadingMore || !_hasMore) return;
-      final position = _scrollController.position;
-      if (position.pixels >= position.maxScrollExtent * 0.8) {
-        _loadMore();
-      }
-    });
-  }
-
   String _fmtDate(DateTime d) => DateFormat('yyyy-MM-dd').format(d);
 
   Future<void> _fetchInitial() async {
+    if (!mounted) return;
     setState(() {
       _initialLoading = true;
-      _sales.clear();
-      _currentPage = 1;
+      _pageCache.clear();
+      _pageAccessOrder.clear();
+      _loadingPages.clear();
+      _lastPage = 1;
+      _total = 0;
     });
-    await Future.wait([
-      _fetchBranches(),
-      _fetchFilterOptions(),
-      _fetchSales(page: 1, replace: true),
-    ]);
+    await Future.wait([_fetchFilterOptions(), _loadSalesPage(page: 1)]);
     if (mounted) setState(() => _initialLoading = false);
   }
 
-  Future<void> _fetchBranches() async {
-    // final result = await _commonService.getBranches();
-    if (!mounted) return;
-    setState(() => _branches = []);
-  }
-
-  Future<void> _fetchSales({required int page, bool replace = false}) async {
-    final globalBranchId = context.read<BranchProvider>().selectedBranchId;
-    final bool isAll = context.read<BranchProvider>().isAll;
-
-    final params = <String, String>{
-      "page": page.toString(),
-      "sort_by": _sortBy == 'total' ? 'total' : 'date',
-      // if (!isAll && globalBranchId != null)
-      //   "branch_id": globalBranchId.toString(),
-      // if (isAll && _selectedBranchId != null) "branch_id": _selectedBranchId!,
-      if (_selectedCustomerId != null)
-        "customer_id": _selectedCustomerId!.toString(),
-      if (_searchQuery.isNotEmpty) "search": _searchQuery,
-      if (_fromDate != null) "date_from": _fmtDate(_fromDate!),
-      if (_toDate != null) "date_to": _fmtDate(_toDate!),
-      if (_paymentStatusFilter != null) "payment_status": _paymentStatusFilter!,
-      if (_saleTypeFilter != null) "sale_type": _saleTypeFilter!,
-      if (_saleSourceId != null) "sale_source_id": _saleSourceId.toString(),
-      if (_areaId != null) "area_id": _areaId.toString(),
-      if (_salesmanId != null) "salesman_id": _salesmanId.toString(),
-      if (_deliveryBoyId != null) "delivery_boy_id": _deliveryBoyId.toString(),
-      if (_createdById != null) "created_by": _createdById.toString(),
-    };
-
-    final uri = Uri.parse(
-      "${ApiClient.baseUrl}/sales",
-    ).replace(queryParameters: params);
-    final token = Provider.of<AuthProvider>(context, listen: false).token!;
-
-    final res = await http.get(
-      uri,
-      headers: {"Authorization": "Bearer $token", "Accept": "application/json"},
-    );
-
-    if (res.statusCode != 200) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text("Failed to load sales")));
-      }
+  Future<void> _loadSalesPage({required int page}) async {
+    if (page < 1 || _loadingPages.contains(page)) return;
+    if (_pageCache.containsKey(page)) {
+      _touchPage(page);
       return;
     }
-
-    final data = jsonDecode(res.body);
-    final List list = data['data']['data'];
-    final int current = data['data']['current_page'];
-    final int last = data['data']['last_page'];
-
-    setState(() {
-      _currentPage = current;
-      _lastPage = last;
-      if (replace) {
-        _sales
-          ..clear()
-          ..addAll(list);
-      } else {
-        _sales.addAll(list);
+    if (mounted) setState(() => _loadingPages.add(page));
+    try {
+      final params = <String, String>{
+        'page': page.toString(),
+        'sort_by': _sortBy == 'total' ? 'total' : 'date',
+        if (_selectedCustomerId != null)
+          'customer_id': _selectedCustomerId!.toString(),
+        if (_searchQuery.isNotEmpty) 'search': _searchQuery,
+        if (_fromDate != null) 'date_from': _fmtDate(_fromDate!),
+        if (_toDate != null) 'date_to': _fmtDate(_toDate!),
+        if (_paymentStatusFilter != null)
+          'payment_status': _paymentStatusFilter!,
+        if (_saleTypeFilter != null) 'sale_type': _saleTypeFilter!,
+        if (_saleSourceId != null) 'sale_source_id': _saleSourceId.toString(),
+        if (_areaId != null) 'area_id': _areaId.toString(),
+        if (_salesmanId != null) 'salesman_id': _salesmanId.toString(),
+        if (_deliveryBoyId != null)
+          'delivery_boy_id': _deliveryBoyId.toString(),
+        if (_createdById != null) 'created_by': _createdById.toString(),
+      };
+      final uri = Uri.parse(
+        '${ApiClient.baseUrl}/sales',
+      ).replace(queryParameters: params);
+      final token = Provider.of<AuthProvider>(context, listen: false).token!;
+      final res = await http.get(
+        uri,
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Accept': 'application/json',
+        },
+      );
+      if (res.statusCode != 200) {
+        if (mounted)
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text('Failed to load sales')));
+        return;
       }
-    });
+      final decoded = jsonDecode(res.body);
+      final data = decoded['data'];
+      final list = List<dynamic>.from(data['data'] ?? const []);
+      if (!mounted) return;
+      setState(() {
+        _pageCache[page] = list;
+        _lastPage = _toInt(data['last_page']) ?? 1;
+        _total =
+            _toInt(data['total']) ??
+            ((_lastPage - 1) * _pageSize + list.length);
+        _touchPage(page);
+        _evictOldPages(keepPage: page);
+      });
+    } finally {
+      if (mounted) setState(() => _loadingPages.remove(page));
+    }
+  }
+
+  void _touchPage(int page) => _pageAccessOrder[page] = ++_cacheAccessTick;
+
+  int _estimatedVisiblePage() {
+    if (!_scrollController.hasClients) return 1;
+    final firstIndex = (_scrollController.offset / _rowExtent).floor();
+    return (firstIndex ~/ _pageSize) + 1;
+  }
+
+  void _evictOldPages({required int keepPage}) {
+    if (_pageCache.length <= _maxCachedPages) return;
+    final visible = _estimatedVisiblePage();
+    final protected = <int>{keepPage, visible, visible - 1, visible + 1}
+      ..removeWhere((p) => p < 1 || p > _lastPage);
+    while (_pageCache.length > _maxCachedPages) {
+      int? victim;
+      int? oldest;
+      for (final page in _pageCache.keys) {
+        if (protected.contains(page)) continue;
+        final tick = _pageAccessOrder[page] ?? 0;
+        if (oldest == null || tick < oldest) {
+          oldest = tick;
+          victim = page;
+        }
+      }
+      if (victim == null) break;
+      _pageCache.remove(victim);
+      _pageAccessOrder.remove(victim);
+    }
+  }
+
+  dynamic _saleAt(int index) {
+    final page = (index ~/ _pageSize) + 1;
+    final offset = index % _pageSize;
+    final cached = _pageCache[page];
+    if (cached == null) {
+      if (!_loadingPages.contains(page))
+        Future.microtask(() => _loadSalesPage(page: page));
+      return null;
+    }
+    _touchPage(page);
+    return offset < cached.length ? cached[offset] : null;
   }
 
   Future<void> _fetchFilterOptions() async {
@@ -181,7 +208,10 @@ class _SalesScreenState extends State<SalesScreen> {
       final token = Provider.of<AuthProvider>(context, listen: false).token!;
       final res = await http.get(
         Uri.parse("${ApiClient.baseUrl}/sales/filter-options"),
-        headers: {"Authorization": "Bearer $token", "Accept": "application/json"},
+        headers: {
+          "Authorization": "Bearer $token",
+          "Accept": "application/json",
+        },
       );
       if (res.statusCode != 200 || !mounted) return;
       final decoded = jsonDecode(res.body);
@@ -190,8 +220,12 @@ class _SalesScreenState extends State<SalesScreen> {
       List<Map<String, dynamic>> refs(String key) {
         final list = raw[key];
         if (list is! List) return const [];
-        return list.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
+        return list
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList();
       }
+
       final types = raw['sale_types'];
       setState(() {
         _saleSources = refs('sale_sources');
@@ -199,7 +233,9 @@ class _SalesScreenState extends State<SalesScreen> {
         _salesmen = refs('salesmen');
         _deliveryBoys = refs('delivery_boys');
         _creators = refs('creators');
-        _saleTypes = types is List ? types.map((e) => e.toString()).where((e) => e.isNotEmpty).toList() : const [];
+        _saleTypes = types is List
+            ? types.map((e) => e.toString()).where((e) => e.isNotEmpty).toList()
+            : const [];
       });
     } catch (_) {
       // Filters are convenience only; sales remain usable if references fail.
@@ -207,14 +243,14 @@ class _SalesScreenState extends State<SalesScreen> {
   }
 
   int get _advancedFilterCount => [
-        _paymentStatusFilter,
-        _saleTypeFilter,
-        _saleSourceId,
-        _areaId,
-        _salesmanId,
-        _deliveryBoyId,
-        _createdById,
-      ].where((e) => e != null).length;
+    _paymentStatusFilter,
+    _saleTypeFilter,
+    _saleSourceId,
+    _areaId,
+    _salesmanId,
+    _deliveryBoyId,
+    _createdById,
+  ].where((e) => e != null).length;
 
   String _refName(List<Map<String, dynamic>> rows, int? id) {
     if (id == null) return '';
@@ -237,14 +273,23 @@ class _SalesScreenState extends State<SalesScreen> {
       context: context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, setLocalState) {
-          DropdownMenuItem<int?> allItem(String label) => DropdownMenuItem<int?>(value: null, child: Text(label));
-          List<DropdownMenuItem<int?>> refItems(List<Map<String, dynamic>> rows, String allLabel) => [
-                allItem(allLabel),
-                ...rows.map((r) => DropdownMenuItem<int?>(
-                      value: _toInt(r['id']),
-                      child: Text((r['name'] ?? '').toString(), overflow: TextOverflow.ellipsis),
-                    )),
-              ];
+          DropdownMenuItem<int?> allItem(String label) =>
+              DropdownMenuItem<int?>(value: null, child: Text(label));
+          List<DropdownMenuItem<int?>> refItems(
+            List<Map<String, dynamic>> rows,
+            String allLabel,
+          ) => [
+            allItem(allLabel),
+            ...rows.map(
+              (r) => DropdownMenuItem<int?>(
+                value: _toInt(r['id']),
+                child: Text(
+                  (r['name'] ?? '').toString(),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ),
+          ];
           return AlertDialog(
             title: const Text('Sale Filters'),
             content: SizedBox(
@@ -258,12 +303,24 @@ class _SalesScreenState extends State<SalesScreen> {
                       width: 285,
                       child: DropdownButtonFormField<String?>(
                         value: payment,
-                        decoration: const InputDecoration(labelText: 'Payment Status', border: OutlineInputBorder()),
+                        decoration: const InputDecoration(
+                          labelText: 'Payment Status',
+                          border: OutlineInputBorder(),
+                        ),
                         items: const [
-                          DropdownMenuItem<String?>(value: null, child: Text('All Statuses')),
+                          DropdownMenuItem<String?>(
+                            value: null,
+                            child: Text('All Statuses'),
+                          ),
                           DropdownMenuItem(value: 'paid', child: Text('Paid')),
-                          DropdownMenuItem(value: 'partial', child: Text('Partial')),
-                          DropdownMenuItem(value: 'unpaid', child: Text('Unpaid')),
+                          DropdownMenuItem(
+                            value: 'partial',
+                            child: Text('Partial'),
+                          ),
+                          DropdownMenuItem(
+                            value: 'unpaid',
+                            child: Text('Unpaid'),
+                          ),
                         ],
                         onChanged: (v) => setLocalState(() => payment = v),
                       ),
@@ -272,10 +329,21 @@ class _SalesScreenState extends State<SalesScreen> {
                       width: 285,
                       child: DropdownButtonFormField<String?>(
                         value: saleType,
-                        decoration: const InputDecoration(labelText: 'Sale Type', border: OutlineInputBorder()),
+                        decoration: const InputDecoration(
+                          labelText: 'Sale Type',
+                          border: OutlineInputBorder(),
+                        ),
                         items: [
-                          const DropdownMenuItem<String?>(value: null, child: Text('All Types')),
-                          ..._saleTypes.map((v) => DropdownMenuItem<String?>(value: v, child: Text(_prettyLabel(v)))),
+                          const DropdownMenuItem<String?>(
+                            value: null,
+                            child: Text('All Types'),
+                          ),
+                          ..._saleTypes.map(
+                            (v) => DropdownMenuItem<String?>(
+                              value: v,
+                              child: Text(_prettyLabel(v)),
+                            ),
+                          ),
                         ],
                         onChanged: (v) => setLocalState(() => saleType = v),
                       ),
@@ -284,7 +352,10 @@ class _SalesScreenState extends State<SalesScreen> {
                       width: 285,
                       child: DropdownButtonFormField<int?>(
                         value: sourceId,
-                        decoration: const InputDecoration(labelText: 'Sale From', border: OutlineInputBorder()),
+                        decoration: const InputDecoration(
+                          labelText: 'Sale From',
+                          border: OutlineInputBorder(),
+                        ),
                         items: refItems(_saleSources, 'All Sources'),
                         onChanged: (v) => setLocalState(() => sourceId = v),
                       ),
@@ -293,7 +364,10 @@ class _SalesScreenState extends State<SalesScreen> {
                       width: 285,
                       child: DropdownButtonFormField<int?>(
                         value: areaId,
-                        decoration: const InputDecoration(labelText: 'Town / Area', border: OutlineInputBorder()),
+                        decoration: const InputDecoration(
+                          labelText: 'Town / Area',
+                          border: OutlineInputBorder(),
+                        ),
                         items: refItems(_areas, 'All Areas'),
                         onChanged: (v) => setLocalState(() => areaId = v),
                       ),
@@ -302,7 +376,10 @@ class _SalesScreenState extends State<SalesScreen> {
                       width: 285,
                       child: DropdownButtonFormField<int?>(
                         value: salesmanId,
-                        decoration: const InputDecoration(labelText: 'Salesman', border: OutlineInputBorder()),
+                        decoration: const InputDecoration(
+                          labelText: 'Salesman',
+                          border: OutlineInputBorder(),
+                        ),
                         items: refItems(_salesmen, 'All Salesmen'),
                         onChanged: (v) => setLocalState(() => salesmanId = v),
                       ),
@@ -311,16 +388,23 @@ class _SalesScreenState extends State<SalesScreen> {
                       width: 285,
                       child: DropdownButtonFormField<int?>(
                         value: deliveryBoyId,
-                        decoration: const InputDecoration(labelText: 'Delivery Boy', border: OutlineInputBorder()),
+                        decoration: const InputDecoration(
+                          labelText: 'Delivery Boy',
+                          border: OutlineInputBorder(),
+                        ),
                         items: refItems(_deliveryBoys, 'All Delivery Boys'),
-                        onChanged: (v) => setLocalState(() => deliveryBoyId = v),
+                        onChanged: (v) =>
+                            setLocalState(() => deliveryBoyId = v),
                       ),
                     ),
                     SizedBox(
                       width: 285,
                       child: DropdownButtonFormField<int?>(
                         value: createdById,
-                        decoration: const InputDecoration(labelText: 'Created By / Cashier', border: OutlineInputBorder()),
+                        decoration: const InputDecoration(
+                          labelText: 'Created By / Cashier',
+                          border: OutlineInputBorder(),
+                        ),
                         items: refItems(_creators, 'All Users'),
                         onChanged: (v) => setLocalState(() => createdById = v),
                       ),
@@ -344,8 +428,14 @@ class _SalesScreenState extends State<SalesScreen> {
                 },
                 child: const Text('Clear'),
               ),
-              TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancel')),
-              FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Apply')),
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(dialogContext, true),
+                child: const Text('Apply'),
+              ),
             ],
           );
         },
@@ -377,30 +467,39 @@ class _SalesScreenState extends State<SalesScreen> {
   Future<void> _clearAdvancedFilter(String key) async {
     setState(() {
       switch (key) {
-        case 'payment': _paymentStatusFilter = null; break;
-        case 'type': _saleTypeFilter = null; break;
-        case 'source': _saleSourceId = null; break;
-        case 'area': _areaId = null; break;
-        case 'salesman': _salesmanId = null; break;
-        case 'delivery': _deliveryBoyId = null; break;
-        case 'creator': _createdById = null; break;
+        case 'payment':
+          _paymentStatusFilter = null;
+          break;
+        case 'type':
+          _saleTypeFilter = null;
+          break;
+        case 'source':
+          _saleSourceId = null;
+          break;
+        case 'area':
+          _areaId = null;
+          break;
+        case 'salesman':
+          _salesmanId = null;
+          break;
+        case 'delivery':
+          _deliveryBoyId = null;
+          break;
+        case 'creator':
+          _createdById = null;
+          break;
       }
     });
     await _fetchInitial();
   }
 
-  Future<void> _loadMore() async {
-    if (!_hasMore) return;
-    setState(() => _loadingMore = true);
-    try {
-      await _fetchSales(page: _currentPage + 1, replace: false);
-    } finally {
-      if (mounted) setState(() => _loadingMore = false);
-    }
-  }
-
   Future<void> _onRefresh() async {
-    await _fetchInitial();
+    if (mounted) setState(() => _refreshing = true);
+    try {
+      await _fetchInitial();
+    } finally {
+      if (mounted) setState(() => _refreshing = false);
+    }
   }
 
   void _onSearchChanged(String val) {
@@ -427,10 +526,12 @@ class _SalesScreenState extends State<SalesScreen> {
     final raw = (sale['payment_status'] ?? '').toString().toLowerCase();
     if (raw == 'paid') return (label: "PAID", color: Colors.green);
     if (raw == 'partial') return (label: "PARTIAL", color: Colors.orange);
-    if (raw == 'unpaid' || raw == 'pending') return (label: "UNPAID", color: Colors.red);
+    if (raw == 'unpaid' || raw == 'pending')
+      return (label: "UNPAID", color: Colors.red);
     final total = _toDouble(sale['total']);
     final paid = _toDouble(sale['paid_amount']);
-    if (total <= 0.004 || paid >= total - 0.004) return (label: "PAID", color: Colors.green);
+    if (total <= 0.004 || paid >= total - 0.004)
+      return (label: "PAID", color: Colors.green);
     if (paid <= 0.004) return (label: "UNPAID", color: Colors.red);
     return (label: "PARTIAL", color: Colors.orange);
   }
@@ -498,7 +599,6 @@ class _SalesScreenState extends State<SalesScreen> {
     await _fetchInitial();
   }
 
-
   Future<void> _openPickingList() async {
     await Navigator.push(
       context,
@@ -516,546 +616,540 @@ class _SalesScreenState extends State<SalesScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final isAll = context.watch<BranchProvider>().isAll;
+    final auth = context.watch<AuthProvider>();
+    final canCreate = auth.hasPermission('create-sales');
+    return CounterIQDesktopShell(
+      activeRouteId: PosRouteIds.sales,
+      onOpenProducts: () {},
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(18, 16, 18, 14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _buildWorkspaceHeader(canCreate),
+            const SizedBox(height: 12),
+            _buildFilterBar(),
+            if (_activeFilterCount > 0) ...[
+              const SizedBox(height: 8),
+              _buildActiveFilters(),
+            ],
+            const SizedBox(height: 10),
+            if (_refreshing) const LinearProgressIndicator(minHeight: 2),
+            if (_refreshing) const SizedBox(height: 8),
+            Expanded(
+              child: _initialLoading
+                  ? const Center(child: CircularProgressIndicator())
+                  : _total == 0
+                  ? ListView(
+                      children: const [
+                        SizedBox(height: 70),
+                        EnterpriseEmptyState(
+                          icon: Icons.receipt_long_outlined,
+                          title: 'No sales found',
+                          subtitle: 'Try changing the search or filters.',
+                        ),
+                      ],
+                    )
+                  : _buildSalesTable(),
+            ),
+            if (_total > 0) ...[const SizedBox(height: 8), _buildStatusBar()],
+          ],
+        ),
+      ),
+    );
+  }
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text("Sales"),
-        actions: [
-          const BranchIndicator(tappable: false),
-          IconButton(
-            tooltip: 'Picking List',
+  int get _activeFilterCount =>
+      _advancedFilterCount +
+      (_selectedCustomerId != null ? 1 : 0) +
+      (_fromDate != null ? 1 : 0) +
+      (_toDate != null ? 1 : 0);
+
+  Widget _buildWorkspaceHeader(bool canCreate) => Row(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      const Expanded(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Sales History',
+              style: TextStyle(
+                color: AppTheme.navy,
+                fontSize: 24,
+                fontWeight: FontWeight.w900,
+                letterSpacing: -.45,
+              ),
+            ),
+            SizedBox(height: 4),
+            Text(
+              'Review invoices, customers, payment status and sale activity.',
+              style: TextStyle(
+                color: AppTheme.textMuted,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      ),
+      Wrap(
+        spacing: 8,
+        children: [
+          OutlinedButton.icon(
             onPressed: _openPickingList,
-            icon: const Icon(Icons.inventory_2_outlined),
+            icon: const Icon(Icons.inventory_2_outlined, size: 18),
+            label: const Text('Picking List'),
           ),
           IconButton(
             tooltip: 'Refresh sales',
-            onPressed: () => _fetchInitial(),
-            icon: const Icon(Icons.refresh),
+            onPressed: _onRefresh,
+            icon: const Icon(Icons.refresh_rounded),
           ),
+          if (canCreate)
+            FilledButton.icon(
+              onPressed: () async {
+                final created = await Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const CreateSaleScreen()),
+                );
+                if (created == true && mounted) _fetchInitial();
+              },
+              icon: const Icon(Icons.add_rounded, size: 18),
+              label: const Text('New Sale'),
+            ),
         ],
       ),
+    ],
+  );
 
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () async {
-          final created = await Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => const CreateSaleScreen()),
-          );
-          if (created == true && mounted) _fetchInitial();
-        },
-        icon: const Icon(Icons.add),
-        label: const Text("Add"),
-      ),
-
-      body: Column(
+  Widget _buildFilterBar() => Container(
+    padding: const EdgeInsets.all(10),
+    decoration: BoxDecoration(
+      color: Colors.white,
+      border: Border.all(color: AppTheme.border),
+      borderRadius: BorderRadius.circular(12),
+    ),
+    child: LayoutBuilder(
+      builder: (context, constraints) => Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        crossAxisAlignment: WrapCrossAlignment.center,
         children: [
-          // ── Slim filter/search bar ───────────────────────────────────────────
-          Padding(
-            padding: const EdgeInsets.fromLTRB(8, 6, 8, 4),
-            child: Row(
-              children: [
-                // if (isAll) ...[
-                //   Expanded(
-                //     flex: 14,
-                //     child: DropdownButtonFormField<String>(
-                //       value: _selectedBranchId,
-                //       decoration: const InputDecoration(
-                //         labelText: "Branch",
-                //         border: OutlineInputBorder(),
-                //         isDense: true,
-                //       ),
-                //       items: [
-                //         const DropdownMenuItem<String>(
-                //           value: null,
-                //           child: Text("All"),
-                //         ),
-                //         ..._branches.map(
-                //           (b) => DropdownMenuItem<String>(
-                //             value: b['id'].toString(),
-                //             child: Text(b['name'].toString()),
-                //           ),
-                //         ),
-                //       ],
-                //       onChanged: (v) async {
-                //         setState(() => _selectedBranchId = v);
-                //         await _fetchInitial();
-                //       },
-                //     ),
-                //   ),
-                //   const SizedBox(width: 6),
-                // ],
-
-                // Customer selector
-                Expanded(
-                  flex: 16,
-                  child: InkWell(
-                    onTap: _openCustomerPicker,
-                    child: InputDecorator(
-                      decoration: const InputDecoration(
-                        labelText: "Customer",
-                        border: OutlineInputBorder(),
-                        isDense: true,
-                      ),
-                      isEmpty: _selectedCustomerId == null,
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              _selectedCustomerLabel ?? "All",
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                          if (_selectedCustomerId != null)
-                            GestureDetector(
-                              onTap: () async {
-                                setState(() {
-                                  _selectedCustomerId = null;
-                                  _selectedCustomerLabel = null;
-                                });
-                                await _fetchInitial();
-                              },
-                              child: const Padding(
-                                padding: EdgeInsets.only(left: 6),
-                                child: Icon(Icons.clear, size: 18),
-                              ),
-                            )
-                          else
-                            const Icon(Icons.search, size: 18),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 6),
-
-                // Sort
-                SizedBox(
-                  width: 120,
-                  child: DropdownButtonFormField<String>(
-                    value: _sortBy,
-                    decoration: const InputDecoration(
-                      labelText: "Sort",
-                      border: OutlineInputBorder(),
-                      isDense: true,
-                    ),
-                    items: const [
-                      DropdownMenuItem(value: "date", child: Text("Date")),
-                      DropdownMenuItem(value: "total", child: Text("Amount")),
-                    ],
-                    onChanged: (v) async {
-                      setState(() => _sortBy = v ?? 'date');
-                      await _fetchInitial();
-                    },
-                  ),
-                ),
-              ],
+          SizedBox(
+            width: math
+                .min(360.0, math.max(260.0, constraints.maxWidth * .28))
+                .toDouble(),
+            height: 42,
+            child: TextField(
+              controller: _searchController,
+              onChanged: _onSearchChanged,
+              decoration: InputDecoration(
+                hintText: 'Invoice, customer, product, SKU or barcode',
+                prefixIcon: const Icon(Icons.search_rounded, size: 19),
+                suffixIcon: _searchController.text.isNotEmpty
+                    ? IconButton(
+                        onPressed: () {
+                          _searchController.clear();
+                          _onSearchChanged('');
+                        },
+                        icon: const Icon(Icons.close_rounded, size: 18),
+                      )
+                    : null,
+                isDense: true,
+                border: const OutlineInputBorder(),
+              ),
             ),
           ),
-
-          // Search + quick date filters (tiny)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(8, 0, 8, 6),
-            child: Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _searchController,
-                    onChanged: _onSearchChanged,
-                    decoration: InputDecoration(
-                      hintText: "Invoice, customer, product, SKU or barcode",
-                      prefixIcon: const Icon(Icons.search),
-                      isDense: true,
-                      border: const OutlineInputBorder(),
-                      suffixIcon: _searchQuery.isNotEmpty
-                          ? IconButton(
-                              icon: const Icon(Icons.clear),
-                              onPressed: () {
-                                _searchController.clear();
-                                _onSearchChanged("");
-                              },
-                            )
-                          : null,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 6),
-                PopupMenuButton<String>(
-                  tooltip: "Dates",
-                  icon: const Icon(Icons.calendar_month),
-                  onSelected: (v) {
-                    if (v == 'from') _pickFromDate();
-                    if (v == 'to') _pickToDate();
-                    if (v == 'clear') _clearDates();
-                  },
-                  itemBuilder: (_) => const [
-                    PopupMenuItem(value: 'from', child: Text('Set From')),
-                    PopupMenuItem(value: 'to', child: Text('Set To')),
-                    PopupMenuDivider(),
-                    PopupMenuItem(value: 'clear', child: Text('Clear')),
-                  ],
-                ),
-                const SizedBox(width: 4),
-                OutlinedButton.icon(
-                  onPressed: _openAdvancedFilters,
-                  icon: const Icon(Icons.filter_alt_outlined, size: 18),
-                  label: Text(_advancedFilterCount == 0 ? 'Filters' : 'Filters ($_advancedFilterCount)'),
-                ),
-              ],
+          _filterButton(
+            Icons.person_outline_rounded,
+            _selectedCustomerLabel ?? 'All customers',
+            _openCustomerPicker,
+          ),
+          _filterButton(
+            Icons.date_range_outlined,
+            _fromDate == null
+                ? 'From date'
+                : DateFormat('dd MMM yyyy').format(_fromDate!),
+            _pickFromDate,
+          ),
+          _filterButton(
+            Icons.event_available_outlined,
+            _toDate == null
+                ? 'To date'
+                : DateFormat('dd MMM yyyy').format(_toDate!),
+            _pickToDate,
+          ),
+          PopupMenuButton<String>(
+            tooltip: 'Sort sales',
+            onSelected: (v) async {
+              setState(() => _sortBy = v);
+              await _fetchInitial();
+            },
+            itemBuilder: (_) => const [
+              PopupMenuItem(value: 'date', child: Text('Newest date')),
+              PopupMenuItem(value: 'total', child: Text('Amount')),
+            ],
+            child: _filterSurface(
+              Icons.swap_vert_rounded,
+              _sortBy == 'total' ? 'Amount' : 'Date',
             ),
           ),
-          if (_fromDate != null || _toDate != null || _advancedFilterCount > 0)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(8, 0, 8, 6),
-              child: Wrap(
-                spacing: 6,
+          OutlinedButton.icon(
+            onPressed: _openAdvancedFilters,
+            icon: const Icon(Icons.tune_rounded, size: 18),
+            label: Text(
+              _advancedFilterCount == 0
+                  ? 'More filters'
+                  : 'More filters ($_advancedFilterCount)',
+            ),
+          ),
+          if (_activeFilterCount > 0)
+            TextButton.icon(
+              onPressed: _clearAllFilters,
+              icon: const Icon(Icons.filter_alt_off_rounded, size: 17),
+              label: const Text('Clear'),
+            ),
+        ],
+      ),
+    ),
+  );
+
+  Widget _filterButton(IconData icon, String label, VoidCallback onTap) =>
+      InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(10),
+        child: _filterSurface(icon, label),
+      );
+  Widget _filterSurface(IconData icon, String label) => Container(
+    height: 42,
+    constraints: const BoxConstraints(maxWidth: 190),
+    padding: const EdgeInsets.symmetric(horizontal: 11),
+    decoration: BoxDecoration(
+      color: Colors.white,
+      border: Border.all(color: AppTheme.borderStrong),
+      borderRadius: BorderRadius.circular(10),
+    ),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 17, color: AppTheme.textMuted),
+        const SizedBox(width: 7),
+        Flexible(
+          child: Text(
+            label,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: AppTheme.navy,
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
+
+  Future<void> _clearAllFilters() async {
+    setState(() {
+      _selectedCustomerId = null;
+      _selectedCustomerLabel = null;
+      _fromDate = null;
+      _toDate = null;
+      _paymentStatusFilter = null;
+      _saleTypeFilter = null;
+      _saleSourceId = null;
+      _areaId = null;
+      _salesmanId = null;
+      _deliveryBoyId = null;
+      _createdById = null;
+    });
+    await _fetchInitial();
+  }
+
+  Widget _buildActiveFilters() => Wrap(
+    spacing: 6,
+    runSpacing: 6,
+    children: [
+      if (_selectedCustomerId != null)
+        InputChip(
+          label: Text(_selectedCustomerLabel ?? 'Customer'),
+          onDeleted: () async {
+            setState(() {
+              _selectedCustomerId = null;
+              _selectedCustomerLabel = null;
+            });
+            await _fetchInitial();
+          },
+        ),
+      if (_fromDate != null)
+        InputChip(
+          label: Text('From ${DateFormat('dd MMM yyyy').format(_fromDate!)}'),
+          onDeleted: () async {
+            setState(() => _fromDate = null);
+            await _fetchInitial();
+          },
+        ),
+      if (_toDate != null)
+        InputChip(
+          label: Text('To ${DateFormat('dd MMM yyyy').format(_toDate!)}'),
+          onDeleted: () async {
+            setState(() => _toDate = null);
+            await _fetchInitial();
+          },
+        ),
+      if (_paymentStatusFilter != null)
+        InputChip(
+          label: Text('Payment: ${_prettyLabel(_paymentStatusFilter!)}'),
+          onDeleted: () => _clearAdvancedFilter('payment'),
+        ),
+      if (_saleTypeFilter != null)
+        InputChip(
+          label: Text('Type: ${_prettyLabel(_saleTypeFilter!)}'),
+          onDeleted: () => _clearAdvancedFilter('type'),
+        ),
+      if (_salesmanId != null)
+        InputChip(
+          label: Text('Salesman: ${_refName(_salesmen, _salesmanId)}'),
+          onDeleted: () => _clearAdvancedFilter('salesman'),
+        ),
+      if (_areaId != null)
+        InputChip(
+          label: Text('Area: ${_refName(_areas, _areaId)}'),
+          onDeleted: () => _clearAdvancedFilter('area'),
+        ),
+      if (_saleSourceId != null)
+        InputChip(
+          label: Text('Source: ${_refName(_saleSources, _saleSourceId)}'),
+          onDeleted: () => _clearAdvancedFilter('source'),
+        ),
+      if (_deliveryBoyId != null)
+        InputChip(
+          label: Text('Rider: ${_refName(_deliveryBoys, _deliveryBoyId)}'),
+          onDeleted: () => _clearAdvancedFilter('delivery'),
+        ),
+      if (_createdById != null)
+        InputChip(
+          label: Text('Created by: ${_refName(_creators, _createdById)}'),
+          onDeleted: () => _clearAdvancedFilter('creator'),
+        ),
+    ],
+  );
+
+  Widget _buildSalesTable() {
+    const widths = <double>[170, 132, 230, 150, 130, 125, 125, 105, 70];
+    final minWidth = widths.fold<double>(0, (a, b) => a + b) + 24;
+    return Container(
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border.all(color: AppTheme.border),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final width = math.max(minWidth, constraints.maxWidth).toDouble();
+          return SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: SizedBox(
+              width: width,
+              height: constraints.maxHeight,
+              child: Column(
                 children: [
-                  if (_fromDate != null)
-                    InputChip(
-                      label: Text(
-                        "From: ${DateFormat.yMMMd().format(_fromDate!)}",
+                  _tableRow(const [
+                    'Invoice',
+                    'Date',
+                    'Customer',
+                    'Source',
+                    'Total',
+                    'Paid',
+                    'Balance',
+                    'Status',
+                    '',
+                  ], header: true),
+                  Expanded(
+                    child: RefreshIndicator(
+                      onRefresh: _onRefresh,
+                      child: Scrollbar(
+                        controller: _scrollController,
+                        thumbVisibility: true,
+                        child: ListView.builder(
+                          controller: _scrollController,
+                          physics: const AlwaysScrollableScrollPhysics(),
+                          itemExtent: _rowExtent,
+                          itemCount: _total,
+                          cacheExtent: _rowExtent * 12,
+                          itemBuilder: (_, index) {
+                            final s = _saleAt(index);
+                            return s == null ? _loadingRow(index) : _saleRow(s);
+                          },
+                        ),
                       ),
-                      onDeleted: () async {
-                        setState(() => _fromDate = null);
-                        await _fetchInitial();
-                      },
                     ),
-                  if (_toDate != null)
-                    InputChip(
-                      label: Text("To: ${DateFormat.yMMMd().format(_toDate!)}"),
-                      onDeleted: () async {
-                        setState(() => _toDate = null);
-                        await _fetchInitial();
-                      },
-                    ),
-                  if (_paymentStatusFilter != null)
-                    InputChip(label: Text('Payment: ${_prettyLabel(_paymentStatusFilter!)}'), onDeleted: () => _clearAdvancedFilter('payment')),
-                  if (_saleTypeFilter != null)
-                    InputChip(label: Text('Type: ${_prettyLabel(_saleTypeFilter!)}'), onDeleted: () => _clearAdvancedFilter('type')),
-                  if (_saleSourceId != null)
-                    InputChip(label: Text('From: ${_refName(_saleSources, _saleSourceId)}'), onDeleted: () => _clearAdvancedFilter('source')),
-                  if (_areaId != null)
-                    InputChip(label: Text('Area: ${_refName(_areas, _areaId)}'), onDeleted: () => _clearAdvancedFilter('area')),
-                  if (_salesmanId != null)
-                    InputChip(label: Text('Salesman: ${_refName(_salesmen, _salesmanId)}'), onDeleted: () => _clearAdvancedFilter('salesman')),
-                  if (_deliveryBoyId != null)
-                    InputChip(label: Text('Rider: ${_refName(_deliveryBoys, _deliveryBoyId)}'), onDeleted: () => _clearAdvancedFilter('delivery')),
-                  if (_createdById != null)
-                    InputChip(label: Text('Created By: ${_refName(_creators, _createdById)}'), onDeleted: () => _clearAdvancedFilter('creator')),
+                  ),
                 ],
               ),
             ),
+          );
+        },
+      ),
+    );
+  }
 
-          // ── List + infinite scroll ──────────────────────────────────────────
-          Expanded(
-            child: _initialLoading
-                ? const Center(child: CircularProgressIndicator())
-                : RefreshIndicator(
-                    onRefresh: _onRefresh,
-                    child: _sales.isEmpty
-                        ? const Center(child: Text("No sales found"))
-                        : ListView.separated(
-                            controller: _scrollController,
-                            physics: const AlwaysScrollableScrollPhysics(),
-                            itemCount: _sales.length + (_loadingMore ? 1 : 0),
-                            separatorBuilder: (_, __) =>
-                                const Divider(height: 0),
-                            itemBuilder: (_, i) {
-                              if (_loadingMore && i == _sales.length) {
-                                return const Padding(
-                                  padding: EdgeInsets.symmetric(vertical: 12),
-                                  child: Center(
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                    ),
-                                  ),
-                                );
-                              }
+  Widget _tableRow(List<String> cells, {bool header = false}) {
+    const widths = <double>[170, 132, 230, 150, 130, 125, 125, 105, 70];
+    return Container(
+      height: header ? 42 : _rowExtent,
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      decoration: BoxDecoration(
+        color: header ? AppTheme.surfaceSoft : Colors.white,
+        border: const Border(bottom: BorderSide(color: AppTheme.border)),
+      ),
+      child: Row(
+        children: List.generate(
+          cells.length,
+          (i) => SizedBox(
+            width: widths[i],
+            child: Text(
+              cells[i],
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: i >= 4 && i <= 6 ? TextAlign.right : TextAlign.left,
+              style: TextStyle(
+                color: header ? AppTheme.textMuted : AppTheme.navy,
+                fontSize: header ? 11 : 12,
+                fontWeight: header ? FontWeight.w800 : FontWeight.w600,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 
-                              final s = _sales[i];
-                              final invoice = (s['invoice_no'] ?? '')
-                                  .toString();
-                              final offlineRef =
-                                  (s['offline_invoice_no'] ?? '').toString();
-                              final saleSource =
-                                  (s['sale_source_name'] ?? 'Counter').toString();
-                              final customer =
-                                  (s['customer']?['first_name'] ?? 'Walk-in')
-                                      .toString();
-                              final total = _toDouble(s['total']);
-                              final paid = _toDouble(s['paid_amount']);
-                              final balance = s['balance_amount'] != null
-                                  ? _toDouble(s['balance_amount'])
-                                  : (total - paid).clamp(0, double.infinity).toDouble();
-                              final st = _paymentStatus(s);
-
-                              final createdAtStr =
-                                  (s['created_at'] ?? s['date'] ?? '')
-                                      .toString();
-                              final dt = _tryParseDate(createdAtStr);
-                              final dateLabel = dt != null
-                                  ? DateFormat('yMMMd').format(dt)
-                                  : '';
-                              final timeLabel = dt != null
-                                  ? DateFormat('HH:mm').format(dt)
-                                  : '';
-
-                              final invoiceDateStr = (s['invoice_date'] ?? '').toString();
-
-                              return ListTile(
-                                dense: true,
-                                visualDensity: const VisualDensity(
-                                  horizontal: -2,
-                                  vertical: -2,
-                                ),
-                                contentPadding: const EdgeInsets.symmetric(
-                                  horizontal: 8,
-                                  vertical: 4,
-                                ),
-
-                                // ✅ Scales down to avoid overflow
-                                leading: dt == null
-                                    ? const SizedBox(width: 42)
-                                    : SizedBox(
-                                        width: 42,
-                                        child: FittedBox(
-                                          fit: BoxFit.scaleDown,
-                                          child: Container(
-                                            padding: const EdgeInsets.symmetric(
-                                              vertical: 4,
-                                              horizontal: 6,
-                                            ),
-                                            decoration: BoxDecoration(
-                                              color: Colors.blueGrey.shade50,
-                                              borderRadius:
-                                                  BorderRadius.circular(8),
-                                              border: Border.all(
-                                                color: Colors.blueGrey.shade100,
-                                              ),
-                                            ),
-                                            child: Column(
-                                              mainAxisSize: MainAxisSize.min,
-                                              children: [
-                                                Text(
-                                                  DateFormat(
-                                                    'MMM',
-                                                  ).format(dt).toUpperCase(),
-                                                  style: const TextStyle(
-                                                    fontSize: 9,
-                                                    fontWeight: FontWeight.w700,
-                                                    color: Colors.blueGrey,
-                                                  ),
-                                                ),
-                                                Text(
-                                                  DateFormat('d').format(dt),
-                                                  style: const TextStyle(
-                                                    fontSize: 12,
-                                                    fontWeight: FontWeight.w800,
-                                                    color: Colors.black87,
-                                                  ),
-                                                ),
-                                                Text(
-                                                  DateFormat(
-                                                    'E',
-                                                  ).format(dt).toUpperCase(),
-                                                  style: const TextStyle(
-                                                    fontSize: 8,
-                                                    fontWeight: FontWeight.w600,
-                                                    color: Colors.blueGrey,
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-
-                                title: Row(
-                                  children: [
-                                    Expanded(
-                                      child: Text(
-                                        invoice,
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: const TextStyle(
-                                          fontWeight: FontWeight.w700,
-                                        ),
-                                      ),
-                                    ),
-                                    const SizedBox(width: 6),
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-                                      decoration: BoxDecoration(
-                                        color: Colors.blueGrey.shade50,
-                                        borderRadius: BorderRadius.circular(999),
-                                        border: Border.all(color: Colors.blueGrey.shade100),
-                                      ),
-                                      child: Row(
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          const Icon(Icons.hub_outlined, size: 11, color: Colors.blueGrey),
-                                          const SizedBox(width: 4),
-                                          ConstrainedBox(
-                                            constraints: const BoxConstraints(maxWidth: 110),
-                                            child: Tooltip(
-                                              message: saleSource,
-                                              child: Text(
-                                                saleSource,
-                                                maxLines: 1,
-                                                overflow: TextOverflow.ellipsis,
-                                                style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: Colors.blueGrey),
-                                              ),
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                    const SizedBox(width: 4),
-                                    _amountChip(
-                                      context,
-                                      "Date",
-                                      invoiceDateStr,
-                                      Colors.blue,
-                                      icon: Icons.calendar_month,
-                                    ),
-                                    _amountChip(
-                                      context,
-                                      "Amount",
-                                      _currency.format(total),
-                                      Colors.red,
-                                      icon: Icons.summarize,
-                                    ),
-                                    const SizedBox(width: 4),
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                      decoration: BoxDecoration(
-                                        color: st.color,
-                                        borderRadius: BorderRadius.circular(6),
-                                      ),
-                                      child: Text(
-                                        st.label,
-                                        style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w800),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-
-                                subtitle: DefaultTextStyle(
-                                  style: const TextStyle(
-                                    fontSize: 12,
-                                    color: Colors.black87,
-                                  ),
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Row(
-                                        children: [
-                                          Expanded(
-                                            child: Text(
-                                              "Cust: $customer",
-                                              overflow: TextOverflow.ellipsis,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                      // Show offline origin indicator when
-                                      // the sale was created offline.
-                                      if (offlineRef.isNotEmpty)
-                                        Padding(
-                                          padding: const EdgeInsets.only(top: 1),
-                                          child: Text(
-                                            'Offline ref: $offlineRef',
-                                            style: const TextStyle(
-                                              fontSize: 10,
-                                              color: Colors.blueGrey,
-                                            ),
-                                            overflow: TextOverflow.ellipsis,
-                                          ),
-                                        ),
-                                      const SizedBox(height: 2),
-                                      Wrap(
-                                        spacing: 0,
-                                        runSpacing: 0,
-                                        children: [
-                                          // _amountChip(
-                                          //   context,
-                                          //   "Total",
-                                          //   _currency.format(total),
-                                          //   Colors.blue,
-                                          //   icon: Icons.summarize,
-                                          // ),
-                                          // _amountChip(
-                                          //   context,
-                                          //   "Paid",
-                                          //   _currency.format(paid),
-                                          //   Colors.green,
-                                          //   icon: Icons.payments,
-                                          // ),
-                                          // _amountChip(
-                                          //   context,
-                                          //   "Bal",
-                                          //   _currency.format(balance),
-                                          //   balance <= 0
-                                          //       ? Colors.teal
-                                          //       : Colors
-                                          //             .deepOrange, // green if cleared, orange if due
-                                          //   icon: balance <= 0
-                                          //       ? Icons.check_circle
-                                          //       : Icons
-                                          //             .account_balance_wallet_outlined,
-                                          // ),
-                                          if (balance > 0.004)
-                                            _amountChip(
-                                              context,
-                                              "Due",
-                                              _currency.format(balance),
-                                              Colors.deepOrange,
-                                              icon: Icons.account_balance_wallet_outlined,
-                                            ),
-                                        ],
-                                      ),
-                                    ],
-                                  ),
-                                ),
-
-                                trailing: IconButton(
-                                  tooltip: "Copy invoice",
-                                  icon: const Icon(Icons.copy, size: 18),
-                                  onPressed: () async {
-                                    await Clipboard.setData(
-                                      ClipboardData(text: invoice),
-                                    );
-                                    if (!mounted) return;
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      SnackBar(
-                                        content: Text("Copied: $invoice"),
-                                      ),
-                                    );
-                                  },
-                                ),
-
-                                onTap: () async {
-                                  final changed = await Navigator.push(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder: (_) => SaleDetailScreen(
-                                        saleId: _toInt(s['id']) ?? 0,
-                                      ),
-                                    ),
-                                  );
-                                  if (changed == true && mounted)
-                                    _fetchInitial();
-                                },
-                              );
-                            },
-                          ),
-                  ),
+  Widget _saleRow(dynamic s) {
+    final total = _toDouble(s['total']);
+    final paid = _toDouble(s['paid_amount']);
+    final balance = s['balance_amount'] != null
+        ? _toDouble(s['balance_amount'])
+        : math.max(0, total - paid).toDouble();
+    final st = _paymentStatus(s);
+    final dt = _tryParseDate(s['created_at'] ?? s['date']);
+    final customer = (s['customer']?['first_name'] ?? 'Walk-in').toString();
+    final cells = [
+      (s['invoice_no'] ?? '').toString(),
+      dt == null
+          ? (s['invoice_date'] ?? '').toString()
+          : DateFormat('dd MMM yyyy • HH:mm').format(dt),
+      customer,
+      (s['sale_source_name'] ?? 'Counter').toString(),
+      _currency.format(total),
+      _currency.format(paid),
+      _currency.format(balance),
+      st.label,
+      '',
+    ];
+    return InkWell(
+      onTap: () async {
+        final changed = await Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => SaleDetailScreen(saleId: _toInt(s['id']) ?? 0),
+          ),
+        );
+        if (changed == true && mounted) _fetchInitial();
+      },
+      child: Stack(
+        children: [
+          _tableRow(cells),
+          Positioned(
+            right: 15,
+            top: 10,
+            child: IconButton(
+              tooltip: 'Copy invoice',
+              icon: const Icon(Icons.copy_rounded, size: 17),
+              onPressed: () async {
+                await Clipboard.setData(ClipboardData(text: cells[0]));
+                if (mounted)
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('Copied: ${cells[0]}')),
+                  );
+              },
+            ),
           ),
         ],
       ),
     );
   }
+
+  Widget _loadingRow(int index) => Container(
+    height: _rowExtent,
+    padding: const EdgeInsets.symmetric(horizontal: 12),
+    decoration: const BoxDecoration(
+      border: Border(bottom: BorderSide(color: AppTheme.border)),
+    ),
+    child: Row(
+      children: [
+        Container(
+          width: 130,
+          height: 10,
+          decoration: BoxDecoration(
+            color: AppTheme.surfaceSoft,
+            borderRadius: BorderRadius.circular(5),
+          ),
+        ),
+        const Spacer(),
+        if (_loadingPages.contains((index ~/ _pageSize) + 1))
+          const SizedBox(
+            width: 14,
+            height: 14,
+            child: CircularProgressIndicator(strokeWidth: 1.8),
+          ),
+      ],
+    ),
+  );
+
+  Widget _buildStatusBar() => Container(
+    height: 42,
+    padding: const EdgeInsets.symmetric(horizontal: 14),
+    decoration: BoxDecoration(
+      color: Colors.white,
+      border: Border.all(color: AppTheme.border),
+      borderRadius: BorderRadius.circular(10),
+    ),
+    child: Row(
+      children: [
+        Text(
+          '$_total sale${_total == 1 ? '' : 's'}',
+          style: const TextStyle(
+            color: AppTheme.navy,
+            fontSize: 12,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+        const SizedBox(width: 8),
+        Container(width: 1, height: 16, color: AppTheme.border),
+        const SizedBox(width: 8),
+        const Expanded(
+          child: Text(
+            'Optimized server-backed loading • bounded memory while scrolling',
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: AppTheme.textMuted,
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+        if (_loadingPages.isNotEmpty && !_initialLoading)
+          const SizedBox(
+            width: 14,
+            height: 14,
+            child: CircularProgressIndicator(strokeWidth: 1.8),
+          ),
+      ],
+    ),
+  );
 }
 
 DateTime? _tryParseDate(dynamic v) {
