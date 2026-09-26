@@ -41,7 +41,6 @@ class _MoneyFinderScreenState extends State<MoneyFinderScreen> {
 
   List<int> _availableTabs(AuthProvider auth) => <int>[
         if (auth.hasPermission('view-margin-intelligence')) 0,
-        if (auth.hasPermission('view-staff-intelligence')) 1,
         if (auth.hasPermission('view-margin-intelligence')) 2,
         if (auth.hasPermission('view-margin-intelligence')) 3,
       ];

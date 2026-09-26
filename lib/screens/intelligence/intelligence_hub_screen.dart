@@ -14,7 +14,7 @@ class IntelligenceHubScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthProvider>();
-    final canMoney = auth.hasPermission('view-margin-intelligence') || auth.hasPermission('view-staff-intelligence');
+    final canMoney = auth.hasPermission('view-margin-intelligence');
     final canReplenish = auth.hasPermission('view-margin-intelligence');
     final canSeasons = auth.hasPermission('manage-business-seasons');
     final canSettings = auth.hasPermission('manage-intelligence-settings');
@@ -45,11 +45,10 @@ class IntelligenceHubScreen extends StatelessWidget {
                 _HubCard(
                   icon: Icons.savings_outlined,
                   title: 'Money Finder',
-                  subtitle: 'Margin leaks, discount observations, repricing alerts and dead stock in one clear review area.',
+                  subtitle: 'Margin leaks, repricing alerts and dead stock in one clear review area.',
                   color: AppTheme.warning,
                   bullets: const [
                     'Recoverable margin',
-                    'Professional discount review',
                     'Repricing watchlist',
                     'Dead stock exposure',
                   ],
