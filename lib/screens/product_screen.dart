@@ -447,11 +447,16 @@ class _ProductAutoSearchFieldState extends State<_ProductAutoSearchField> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 class _ProductsScreenState extends State<ProductsScreen> {
-  int _page = 1;
+  static const int _pageSize = 40;
+  static const int _maxCachedPages = 6;
+  static const double _tableRowExtent = 57;
+
   int _lastPage = 1;
   int _total = 0;
-  bool _loading = false;
+  bool _initialLoading = false;
+  bool _refreshing = false;
   int _requestGeneration = 0;
+  int _cacheAccessTick = 0;
   bool _importExportBusy = false;
   bool _showCost = false;
   String _search = '';
@@ -469,8 +474,12 @@ class _ProductsScreenState extends State<ProductsScreen> {
   final List<_ProductFilterOption> _categoryOptions = [];
   final List<_ProductFilterOption> _brandOptions = [];
   final List<_ProductFilterOption> _vendorOptions = [];
-  final List<ManagementItem> _items = [];
+  final Map<int, List<ManagementItem>> _pageCache = {};
+  final Map<int, int> _pageAccessOrder = {};
+  final Set<int> _loadingPages = {};
   final _searchController = TextEditingController();
+  final _catalogScrollController = ScrollController();
+  final _horizontalScrollController = ScrollController();
 
   late ProductService _productService;
   late ProductGroupService _groupService;
@@ -494,6 +503,8 @@ class _ProductsScreenState extends State<ProductsScreen> {
 
   @override
   void dispose() {
+    _catalogScrollController.dispose();
+    _horizontalScrollController.dispose();
     _searchController.dispose();
     final branchProvider = Provider.of<BranchProvider>(context, listen: false);
     if (_branchListener != null) {
@@ -503,19 +514,60 @@ class _ProductsScreenState extends State<ProductsScreen> {
   }
 
   Future<void> _fetchProducts({bool reset = false}) async {
+    if (!reset) {
+      await _ensureCatalogPageLoaded(1);
+      return;
+    }
+
     final requestId = ++_requestGeneration;
+    if (_catalogScrollController.hasClients) {
+      _catalogScrollController.jumpTo(0);
+    }
+
     setState(() {
-      _loading = true;
-      if (reset) {
-        _items.clear();
-        _page = 1;
-      }
+      _initialLoading = true;
+      _lastPage = 1;
+      _total = 0;
+      _pageCache.clear();
+      _pageAccessOrder.clear();
+      _loadingPages.clear();
     });
+
+    await _loadCatalogPage(
+      page: 1,
+      requestId: requestId,
+      includeFilters: true,
+      initialLoad: true,
+    );
+  }
+
+  Future<void> _ensureCatalogPageLoaded(int page) async {
+    if (page < 1 || page > _lastPage) return;
+    if (_pageCache.containsKey(page) || _loadingPages.contains(page)) return;
+    final requestId = _requestGeneration;
+    await _loadCatalogPage(
+      page: page,
+      requestId: requestId,
+      includeFilters: false,
+      initialLoad: false,
+    );
+  }
+
+  Future<void> _loadCatalogPage({
+    required int page,
+    required int requestId,
+    required bool includeFilters,
+    required bool initialLoad,
+  }) async {
+    if (!mounted || requestId != _requestGeneration) return;
+    if (_loadingPages.contains(page)) return;
+
+    setState(() => _loadingPages.add(page));
 
     try {
       final data = await _groupService.managementCatalog(
-        page: _page,
-        perPage: 20,
+        page: page,
+        perPage: _pageSize,
         search: _search.isNotEmpty ? _search : null,
         type: _typeFilter == 'all' ? null : _typeFilter,
         categoryId: _categoryId,
@@ -523,7 +575,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
         vendorId: _vendorId,
         status: _statusFilter == 'all' ? null : _statusFilter,
         stockStatus: _stockFilter == 'all' ? null : _stockFilter,
-        includeFilters: true,
+        includeFilters: includeFilters,
       );
       final raw = (data['data'] as List?) ?? const [];
       final items = raw
@@ -531,11 +583,10 @@ class _ProductsScreenState extends State<ProductsScreen> {
           .map((e) => ManagementItem.fromJson(Map<String, dynamic>.from(e)))
           .toList();
       if (!mounted || requestId != _requestGeneration) return;
+
       setState(() {
-        _items
-          ..clear()
-          ..addAll(items);
-        _page = (data['current_page'] as num?)?.toInt() ?? _page;
+        _pageCache[page] = items;
+        _touchCatalogPage(page);
         _lastPage = (data['last_page'] as num?)?.toInt() ?? _lastPage;
         _total = (data['total'] as num?)?.toInt() ?? _total;
         final filters = data['filters'];
@@ -544,6 +595,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
           _replaceFilterOptions(_brandOptions, filters['brands']);
           _replaceFilterOptions(_vendorOptions, filters['vendors']);
         }
+        _evictOldCatalogPages(keepPage: page);
       });
     } catch (e) {
       if (mounted && requestId == _requestGeneration) {
@@ -551,10 +603,70 @@ class _ProductsScreenState extends State<ProductsScreen> {
       }
     } finally {
       if (mounted && requestId == _requestGeneration) {
-        setState(() => _loading = false);
+        setState(() {
+          _loadingPages.remove(page);
+          if (initialLoad) _initialLoading = false;
+          _refreshing = false;
+        });
       }
     }
   }
+
+  void _touchCatalogPage(int page) {
+    _pageAccessOrder[page] = ++_cacheAccessTick;
+  }
+
+  int _estimatedVisiblePage() {
+    if (!_catalogScrollController.hasClients) return 1;
+    final firstVisibleIndex =
+        (_catalogScrollController.offset / _tableRowExtent).floor();
+    return (firstVisibleIndex ~/ _pageSize) + 1;
+  }
+
+  void _evictOldCatalogPages({required int keepPage}) {
+    if (_pageCache.length <= _maxCachedPages) return;
+
+    final visiblePage = _estimatedVisiblePage();
+    final protectedPages = <int>{
+      keepPage,
+      visiblePage,
+      visiblePage - 1,
+      visiblePage + 1,
+    }..removeWhere((page) => page < 1 || page > _lastPage);
+
+    while (_pageCache.length > _maxCachedPages) {
+      int? candidate;
+      int? candidateTick;
+      for (final page in _pageCache.keys) {
+        if (protectedPages.contains(page)) continue;
+        final tick = _pageAccessOrder[page] ?? 0;
+        if (candidate == null || tick < candidateTick!) {
+          candidate = page;
+          candidateTick = tick;
+        }
+      }
+      if (candidate == null) break;
+      _pageCache.remove(candidate);
+      _pageAccessOrder.remove(candidate);
+    }
+  }
+
+  ManagementItem? _catalogItemAt(int index) {
+    if (index < 0 || index >= _total) return null;
+    final page = (index ~/ _pageSize) + 1;
+    final offset = index % _pageSize;
+    final cached = _pageCache[page];
+    if (cached == null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _ensureCatalogPageLoaded(page);
+      });
+      return null;
+    }
+    _touchCatalogPage(page);
+    return offset < cached.length ? cached[offset] : null;
+  }
+
+  bool get _catalogBusy => _initialLoading || _refreshing;
 
   void _replaceFilterOptions(
     List<_ProductFilterOption> target,
@@ -659,7 +771,10 @@ class _ProductsScreenState extends State<ProductsScreen> {
     _fetchProducts(reset: true);
   }
 
-  Future<void> _onRefresh() async => _fetchProducts(reset: true);
+  Future<void> _onRefresh() async {
+    if (mounted) setState(() => _refreshing = true);
+    await _fetchProducts(reset: true);
+  }
 
   Future<void> _deleteProduct(int id) async {
     try {
@@ -1040,39 +1155,22 @@ class _ProductsScreenState extends State<ProductsScreen> {
             const SizedBox(height: 12),
             _buildFilterBar(),
             const SizedBox(height: 10),
-            if (_loading && _items.isNotEmpty)
+            if (_refreshing)
               const LinearProgressIndicator(minHeight: 2),
-            if (_loading && _items.isNotEmpty) const SizedBox(height: 8),
+            if (_refreshing) const SizedBox(height: 8),
             Expanded(
-              child: _loading && _items.isEmpty
+              child: _initialLoading
                   ? const Center(child: CircularProgressIndicator())
-                  : _items.isEmpty
+                  : _total == 0
                       ? _buildEmptyWorkspace(canManageProducts)
                       : _buildProductTable(
                           canManageProducts: canManageProducts,
                           canPrintBarcodes: canPrintBarcodes,
                         ),
             ),
-            if (_items.isNotEmpty) ...[
-              const SizedBox(height: 10),
-              EnterprisePaginationBar(
-                page: _page,
-                lastPage: _lastPage,
-                total: _total,
-                loading: _loading,
-                onPrevious: _page > 1
-                    ? () {
-                        setState(() => _page--);
-                        _fetchProducts();
-                      }
-                    : null,
-                onNext: _page < _lastPage
-                    ? () {
-                        setState(() => _page++);
-                        _fetchProducts();
-                      }
-                    : null,
-              ),
+            if (_total > 0) ...[
+              const SizedBox(height: 8),
+              _buildInfiniteScrollStatus(),
             ],
           ],
         ),
@@ -1242,13 +1340,13 @@ class _ProductsScreenState extends State<ProductsScreen> {
               _buildColumnMenu(),
               if (_hasCatalogFilters || _search.isNotEmpty)
                 TextButton.icon(
-                  onPressed: _loading ? null : _clearFilters,
+                  onPressed: _catalogBusy ? null : _clearFilters,
                   icon: const Icon(Icons.filter_alt_off_rounded, size: 17),
                   label: const Text('Clear'),
                 ),
               IconButton(
                 tooltip: 'Refresh products',
-                onPressed: _loading ? null : _onRefresh,
+                onPressed: _catalogBusy ? null : _onRefresh,
                 icon: const Icon(Icons.refresh_rounded),
               ),
             ],
@@ -1375,7 +1473,11 @@ class _ProductsScreenState extends State<ProductsScreen> {
       104,
       86,
     ];
-    final minimumWidth = widths.fold<double>(0, (sum, value) => sum + value);
+    // Header and body rows both add 12px padding on the left and right.
+    // Including it in the table width prevents the trailing Status/Actions
+    // cells from overflowing inside the horizontal viewport.
+    final minimumWidth =
+        widths.fold<double>(0, (sum, value) => sum + value) + 24;
 
     return Container(
       clipBehavior: Clip.antiAlias,
@@ -1386,10 +1488,15 @@ class _ProductsScreenState extends State<ProductsScreen> {
       ),
       child: LayoutBuilder(
         builder: (context, constraints) {
-          final tableWidth = math.max(minimumWidth, constraints.maxWidth).toDouble();
+          final tableWidth =
+              math.max(minimumWidth, constraints.maxWidth).toDouble();
           return Scrollbar(
+            controller: _horizontalScrollController,
             thumbVisibility: true,
+            notificationPredicate: (notification) =>
+                notification.metrics.axis == Axis.horizontal,
             child: SingleChildScrollView(
+              controller: _horizontalScrollController,
               scrollDirection: Axis.horizontal,
               child: SizedBox(
                 width: tableWidth,
@@ -1400,14 +1507,28 @@ class _ProductsScreenState extends State<ProductsScreen> {
                     Expanded(
                       child: RefreshIndicator(
                         onRefresh: _onRefresh,
-                        child: ListView.separated(
-                          physics: const AlwaysScrollableScrollPhysics(),
-                          itemCount: _items.length,
-                          separatorBuilder: (_, __) => const Divider(height: 1),
-                          itemBuilder: (context, index) => _buildTableRow(
-                            _items[index],
-                            canManageProducts: canManageProducts,
-                            canPrintBarcodes: canPrintBarcodes,
+                        child: Scrollbar(
+                          controller: _catalogScrollController,
+                          thumbVisibility: true,
+                          notificationPredicate: (notification) =>
+                              notification.metrics.axis == Axis.vertical,
+                          child: ListView.builder(
+                            controller: _catalogScrollController,
+                            physics: const AlwaysScrollableScrollPhysics(),
+                            itemExtent: _tableRowExtent,
+                            itemCount: _total,
+                            cacheExtent: _tableRowExtent * 12,
+                            itemBuilder: (context, index) {
+                              final item = _catalogItemAt(index);
+                              if (item == null) {
+                                return _buildCatalogLoadingRow(index);
+                              }
+                              return _buildTableRow(
+                                item,
+                                canManageProducts: canManageProducts,
+                                canPrintBarcodes: canPrintBarcodes,
+                              );
+                            },
                           ),
                         ),
                       ),
@@ -1418,6 +1539,101 @@ class _ProductsScreenState extends State<ProductsScreen> {
             ),
           );
         },
+      ),
+    );
+  }
+
+  Widget _buildCatalogLoadingRow(int index) {
+    return Container(
+      height: _tableRowExtent,
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        border: Border(bottom: BorderSide(color: AppTheme.border)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 34,
+            height: 34,
+            decoration: BoxDecoration(
+              color: AppTheme.surfaceSoft,
+              borderRadius: BorderRadius.circular(9),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Container(
+            width: 150,
+            height: 10,
+            decoration: BoxDecoration(
+              color: AppTheme.surfaceSoft,
+              borderRadius: BorderRadius.circular(5),
+            ),
+          ),
+          const Spacer(),
+          if (_loadingPages.contains((index ~/ _pageSize) + 1))
+            const SizedBox(
+              width: 14,
+              height: 14,
+              child: CircularProgressIndicator(strokeWidth: 1.8),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildInfiniteScrollStatus() {
+    return Container(
+      height: 42,
+      padding: const EdgeInsets.symmetric(horizontal: 14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        border: Border.all(color: AppTheme.border),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(
+        children: [
+          Text(
+            '$_total product${_total == 1 ? '' : 's'}',
+            style: const TextStyle(
+              color: AppTheme.navy,
+              fontSize: 12,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Container(width: 1, height: 16, color: AppTheme.border),
+          const SizedBox(width: 8),
+          const Expanded(
+            child: Text(
+              'Optimized batch loading • keep scrolling to browse',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: AppTheme.textMuted,
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          if (_loadingPages.isNotEmpty && !_initialLoading) ...[
+            const SizedBox(width: 12),
+            const SizedBox(
+              width: 14,
+              height: 14,
+              child: CircularProgressIndicator(strokeWidth: 1.8),
+            ),
+            const SizedBox(width: 7),
+            const Text(
+              'Loading…',
+              style: TextStyle(
+                color: AppTheme.textMuted,
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ],
       ),
     );
   }
@@ -1480,8 +1696,11 @@ class _ProductsScreenState extends State<ProductsScreen> {
       child: InkWell(
         onTap: () => _openManagementItem(item),
         child: Container(
-          constraints: const BoxConstraints(minHeight: 56),
+          height: _tableRowExtent,
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+          decoration: const BoxDecoration(
+            border: Border(bottom: BorderSide(color: AppTheme.border)),
+          ),
           child: Row(
             children: [
               SizedBox(
