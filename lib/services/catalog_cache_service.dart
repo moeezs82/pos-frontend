@@ -47,9 +47,15 @@ class CatalogCacheService {
 
   Database? _db;
 
-  /// Guards against overlapping refreshes for the same branch (e.g. login
-  /// warm + connectivity-regain firing together). Keyed by branch.
-  final Set<String> _refreshing = {};
+  /// One in-flight catalog refresh per branch. Additional callers await the
+  /// same Future instead of returning early and observing a half-written cache.
+  final Map<String, Future<CatalogRefreshResult>> _refreshing = {};
+
+  /// Successful refresh timestamps kept in memory so frequently reopened Sale
+  /// Create screens do not hit `/catalog/changes` repeatedly within seconds.
+  final Map<String, DateTime> _lastSuccessfulRefresh = {};
+
+  static const Duration defaultRefreshTtl = Duration(minutes: 2);
 
   Future<Database> get _database async {
     _db ??= await _open();
@@ -428,18 +434,61 @@ class CatalogCacheService {
 
   /// Pulls the catalog for [branchId] into the local cache: a full snapshot
   /// when nothing is cached yet for that branch, otherwise a delta since the
-  /// stored cursor (upserts + tombstone purges). Safe to call often and from
-  /// multiple triggers; overlapping calls for the same branch are ignored.
+  /// stored cursor (upserts + tombstone purges).
+  ///
+  /// Repeated callers share one in-flight Future. Successful refreshes also
+  /// honor [minInterval] so opening Sale Create repeatedly does not hammer the
+  /// backend/local SQLite when the replica was refreshed moments ago.
   Future<CatalogRefreshResult> refresh({
     required String token,
     int? branchId,
+    bool force = false,
+    Duration minInterval = defaultRefreshTtl,
+  }) {
+    final key = _branchKey(branchId);
+    final active = _refreshing[key];
+    if (active != null) return active;
+
+    final future = _refreshInternal(
+      token: token,
+      branchId: branchId,
+      force: force,
+      minInterval: minInterval,
+    );
+    _refreshing[key] = future;
+    future.whenComplete(() {
+      if (identical(_refreshing[key], future)) {
+        _refreshing.remove(key);
+      }
+    });
+    return future;
+  }
+
+  Future<CatalogRefreshResult> _refreshInternal({
+    required String token,
+    int? branchId,
+    required bool force,
+    required Duration minInterval,
   }) async {
     final key = _branchKey(branchId);
-    if (_refreshing.contains(key)) {
-      return const CatalogRefreshResult(ok: true); // already in progress
-    }
-    _refreshing.add(key);
     try {
+      if (!force && minInterval > Duration.zero) {
+        DateTime? last = _lastSuccessfulRefresh[key];
+        if (last == null) {
+          final raw = await _getMeta(_syncedAtKey(branchId));
+          if (raw != null && raw.isNotEmpty) {
+            last = DateTime.tryParse(raw);
+            if (last != null) _lastSuccessfulRefresh[key] = last;
+          }
+        }
+        if (last != null) {
+          final age = DateTime.now().difference(last);
+          if (!age.isNegative && age < minInterval) {
+            return const CatalogRefreshResult(ok: true);
+          }
+        }
+      }
+
       final service = CatalogService(token: token);
       final db = await _database;
       final since = await _getMeta(_versionKey(branchId));
@@ -460,80 +509,91 @@ class CatalogCacheService {
       final deletedCustomers = (data['deleted_customers'] as List?) ?? const [];
       final saleSources = (data['sale_sources'] as List?) ?? const [];
       final customerAreasRaw = data['customer_areas'];
-      final List customerAreas = customerAreasRaw is List ? customerAreasRaw : const [];
+      final List customerAreas =
+          customerAreasRaw is List ? customerAreasRaw : const [];
       final newVersion = (data['catalog_version'] ?? '').toString();
 
       await db.transaction((txn) async {
-        // On a full snapshot, clear this branch's rows first so
-        // deactivated/deleted products from a previous sync can't linger.
         if (full) {
+          final purge = txn.batch();
           if (branchId != null) {
-            await txn.delete('product_packagings', where: 'branch_id = ?', whereArgs: [branchId]);
+            purge.delete('product_packagings', where: 'branch_id = ?', whereArgs: [branchId]);
           } else {
-            await txn.delete('product_packagings');
+            purge.delete('product_packagings');
           }
-          await txn.delete('products', where: 'branch_id IS ?', whereArgs: [branchId]);
+          purge.delete('products', where: 'branch_id IS ?', whereArgs: [branchId]);
           if (branchId != null) {
-            await txn.delete(
-              'customers',
-              where: 'branch_id = ?',
-              whereArgs: [branchId],
-            );
+            purge.delete('customers', where: 'branch_id = ?', whereArgs: [branchId]);
           } else {
-            await txn.delete('customers');
+            purge.delete('customers');
           }
+          await purge.commit(noResult: true);
         }
 
-        for (final raw in products) {
-          final product = raw as Map;
-          final productId = _asInt(product['id']);
-          final productBranchId = product['branch_id'] != null
-              ? _asInt(product['branch_id'])
-              : branchId;
-          await txn.insert('products', _productRow(product, branchId),
-              conflictAlgorithm: ConflictAlgorithm.replace);
-
-          // A changed product carries the COMPLETE package list. Replace only
-          // this product's child rows so deactivated/removed packages cannot
-          // linger in the offline till after a delta sync.
-          await txn.delete('product_packagings',
-              where: 'product_id = ?', whereArgs: [productId]);
-          final rawPackagings = product['packagings'];
-          if (productBranchId != null && rawPackagings is List) {
-            for (final rawPackaging in rawPackagings) {
-              if (rawPackaging is! Map) continue;
-              await txn.insert(
-                'product_packagings',
-                _packagingRow(rawPackaging, productId, productBranchId),
-                conflictAlgorithm: ConflictAlgorithm.replace,
-              );
+        const productChunkSize = 200;
+        for (var start = 0; start < products.length; start += productChunkSize) {
+          final finish = (start + productChunkSize < products.length)
+              ? start + productChunkSize
+              : products.length;
+          final batch = txn.batch();
+          for (var i = start; i < finish; i++) {
+            final product = products[i] as Map;
+            final productId = _asInt(product['id']);
+            final productBranchId = product['branch_id'] != null
+                ? _asInt(product['branch_id'])
+                : branchId;
+            batch.insert('products', _productRow(product, branchId),
+                conflictAlgorithm: ConflictAlgorithm.replace);
+            batch.delete('product_packagings', where: 'product_id = ?', whereArgs: [productId]);
+            final rawPackagings = product['packagings'];
+            if (productBranchId != null && rawPackagings is List) {
+              for (final rawPackaging in rawPackagings) {
+                if (rawPackaging is! Map) continue;
+                batch.insert(
+                  'product_packagings',
+                  _packagingRow(rawPackaging, productId, productBranchId),
+                  conflictAlgorithm: ConflictAlgorithm.replace,
+                );
+              }
             }
           }
-        }
-        for (final raw in customers) {
-          await txn.insert('customers', _customerRow(raw as Map),
-              conflictAlgorithm: ConflictAlgorithm.replace);
+          await batch.commit(noResult: true);
         }
 
-        for (final id in deletedProducts) {
-          final productId = _asInt(id);
-          await txn.delete('product_packagings',
-              where: 'product_id = ?', whereArgs: [productId]);
-          await txn.delete('products', where: 'id = ?', whereArgs: [productId]);
+        const customerChunkSize = 300;
+        for (var start = 0; start < customers.length; start += customerChunkSize) {
+          final finish = (start + customerChunkSize < customers.length)
+              ? start + customerChunkSize
+              : customers.length;
+          final batch = txn.batch();
+          for (var i = start; i < finish; i++) {
+            batch.insert('customers', _customerRow(customers[i] as Map),
+                conflictAlgorithm: ConflictAlgorithm.replace);
+          }
+          await batch.commit(noResult: true);
         }
-        for (final id in deletedCustomers) {
-          await txn.delete('customers', where: 'id = ?', whereArgs: [_asInt(id)]);
+
+        if (deletedProducts.isNotEmpty || deletedCustomers.isNotEmpty) {
+          final batch = txn.batch();
+          for (final id in deletedProducts) {
+            final productId = _asInt(id);
+            batch.delete('product_packagings', where: 'product_id = ?', whereArgs: [productId]);
+            batch.delete('products', where: 'id = ?', whereArgs: [productId]);
+          }
+          for (final id in deletedCustomers) {
+            batch.delete('customers', where: 'id = ?', whereArgs: [_asInt(id)]);
+          }
+          await batch.commit(noResult: true);
         }
 
         if (data.containsKey('customer_areas') && branchId != null) {
-          await txn.delete('customer_areas', where: 'branch_id = ?', whereArgs: [branchId]);
+          final batch = txn.batch();
+          batch.delete('customer_areas', where: 'branch_id = ?', whereArgs: [branchId]);
           for (final raw in customerAreas) {
             final area = raw as Map;
-            final areaBranchId = area['branch_id'] != null
-                ? _asInt(area['branch_id'])
-                : branchId;
+            final areaBranchId = area['branch_id'] != null ? _asInt(area['branch_id']) : branchId;
             if (areaBranchId != branchId) continue;
-            await txn.insert(
+            batch.insert(
               'customer_areas',
               {
                 'id': _asInt(area['id']),
@@ -544,19 +604,19 @@ class CatalogCacheService {
               conflictAlgorithm: ConflictAlgorithm.replace,
             );
           }
+          await batch.commit(noResult: true);
         }
 
         if (data.containsKey('sale_sources')) {
+          final batch = txn.batch();
           if (branchId != null) {
-            await txn.delete('sale_sources', where: 'branch_id = ?', whereArgs: [branchId]);
+            batch.delete('sale_sources', where: 'branch_id = ?', whereArgs: [branchId]);
           }
           for (final raw in saleSources) {
             final src = raw as Map;
-            final sourceBranchId = src['branch_id'] != null
-                ? _asInt(src['branch_id'])
-                : branchId;
+            final sourceBranchId = src['branch_id'] != null ? _asInt(src['branch_id']) : branchId;
             if (sourceBranchId == null || sourceBranchId != branchId) continue;
-            await txn.insert(
+            batch.insert(
               'sale_sources',
               {
                 'id': _asInt(src['id']),
@@ -570,23 +630,22 @@ class CatalogCacheService {
               conflictAlgorithm: ConflictAlgorithm.replace,
             );
           }
+          await batch.commit(noResult: true);
         }
       });
 
       if (newVersion.isNotEmpty) {
         await _setMeta(_versionKey(branchId), newVersion);
       }
-      await _setMeta(_syncedAtKey(branchId), DateTime.now().toIso8601String());
+      final syncedAt = DateTime.now();
+      await _setMeta(_syncedAtKey(branchId), syncedAt.toIso8601String());
+      _lastSuccessfulRefresh[key] = syncedAt;
 
-      // Persist active payment methods so an offline cashier can still pick a
-      // tender. Only present on a full snapshot; deltas leave the cache as-is.
       final paymentMethods = data['payment_methods'] as List?;
       if (paymentMethods != null && paymentMethods.isNotEmpty) {
         await savePaymentMethods(
           branchId,
-          paymentMethods
-              .map((e) => Map<String, dynamic>.from(e as Map))
-              .toList(),
+          paymentMethods.map((e) => Map<String, dynamic>.from(e as Map)).toList(),
         );
       }
 
@@ -597,11 +656,7 @@ class CatalogCacheService {
         customersUpserted: customers.length,
       );
     } catch (e) {
-      // Best-effort: the pickers just fall back to whatever is already cached
-      // (or, if online, a live search). Never surfaces to the sale flow.
       return CatalogRefreshResult(ok: false, error: e.toString());
-    } finally {
-      _refreshing.remove(key);
     }
   }
 

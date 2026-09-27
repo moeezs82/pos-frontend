@@ -93,31 +93,47 @@ class OfflineSyncService {
     void Function(SyncResult result)? onEach,
     bool respectBackoff = true,
   }) async {
-    // Use pending() — not pendingOrFailed() — so dead-lettered (failed) items
-    // are never automatically retried. They require explicit manager review and
-    // correction via updatePayloadAndReset() before they re-enter the queue.
-    final items = await _queue.pending(branchId: branchId);
+    // Read only lightweight refs up front; full JSON payloads are loaded in
+    // bounded batches so a long outage cannot materialize hundreds of sales in
+    // memory at once.
+    final refs = await _queue.pendingRefs(
+      branchId: branchId,
+      dueOnly: respectBackoff,
+    );
     final results = <SyncResult>[];
-    if (items.isEmpty) return results;
+    if (refs.isEmpty) return results;
 
-    // Cheap first pass: ask the server in ONE call which of these it already
-    // has (handover doc §1.4, batched per G8). Anything already saved — e.g.
-    // a prior POST whose ack was lost — is marked synced now, so we never
-    // re-POST it.
-    final reconciled = await _reconcileBatch(items);
+    const batchSize = 25;
+    for (var start = 0; start < refs.length; start += batchSize) {
+      final finish = (start + batchSize < refs.length)
+          ? start + batchSize
+          : refs.length;
+      final items = <OfflineSaleQueueItem>[];
+      for (var i = start; i < finish; i++) {
+        final item = await _queue.loadByClientRef(refs[i]);
+        if (item != null && item.status == OfflineSaleStatus.pending) {
+          items.add(item);
+        }
+      }
+      if (items.isEmpty) continue;
 
-    for (final item in items) {
-      if (reconciled.contains(item.clientRef)) continue;
-      if (respectBackoff && !item.isDueForAutoRetry) continue;
+      // Reconcile only this small batch before replay. This preserves the
+      // idempotency safety while bounding request and payload memory.
+      final reconciled = await _reconcileBatch(items);
 
-      final result = await syncOne(item, reconcileFirst: false);
-      results.add(result);
-      onEach?.call(result);
+      for (final item in items) {
+        if (reconciled.contains(item.clientRef)) continue;
+        if (respectBackoff && !item.isDueForAutoRetry) continue;
 
-      if (result.outcome == SyncOutcome.stillOffline ||
-          result.outcome == SyncOutcome.authRequired ||
-          result.outcome == SyncOutcome.contextChanged) {
-        break;
+        final result = await syncOne(item, reconcileFirst: false);
+        results.add(result);
+        onEach?.call(result);
+
+        if (result.outcome == SyncOutcome.stillOffline ||
+            result.outcome == SyncOutcome.authRequired ||
+            result.outcome == SyncOutcome.contextChanged) {
+          return results;
+        }
       }
     }
     return results;

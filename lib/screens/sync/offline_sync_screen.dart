@@ -71,10 +71,10 @@ class _OfflineSyncScreenState extends State<OfflineSyncScreen> {
       _loadError = null;
     });
     try {
-      final all = await OfflineSalesQueueService.instance.all(branchId: branchId);
+      final all = await OfflineSalesQueueService.instance.summaries(branchId: branchId);
       if (!mounted) return;
       setState(() {
-        _items = all.reversed.toList();
+        _items = all;
         _loading = false;
       });
     } catch (e) {
@@ -164,10 +164,14 @@ class _OfflineSyncScreenState extends State<OfflineSyncScreen> {
   ///
   /// Returns `true` when the queue changed so we reload the list.
   Future<void> _viewDetails(OfflineSaleQueueItem item) async {
+    final full = item.hasPayload
+        ? item
+        : await OfflineSalesQueueService.instance.loadByClientRef(item.clientRef);
+    if (!mounted || full == null) return;
     final changed = await Navigator.push<bool>(
       context,
       MaterialPageRoute(
-        builder: (_) => OfflineSaleDetailScreen(item: item),
+        builder: (_) => OfflineSaleDetailScreen(item: full),
       ),
     );
     if (changed == true && mounted) {
@@ -180,7 +184,11 @@ class _OfflineSyncScreenState extends State<OfflineSyncScreen> {
     if (!_hasCurrentBranchContext()) return;
     setState(() => _syncingRefs.add(item.clientRef));
     try {
-      final result = await _syncService!.syncOne(item);
+      final full = item.hasPayload
+          ? item
+          : await OfflineSalesQueueService.instance.loadByClientRef(item.clientRef);
+      if (full == null) return;
+      final result = await _syncService!.syncOne(full);
       await _load();
       await _refreshBadge();
       if (!mounted) return;

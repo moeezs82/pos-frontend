@@ -238,18 +238,19 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     _saleSourceService = SaleSourceService(token: token);
     _customerAreaService = CustomerAreaService(token: token);
     _editLoading = _isEditing;
-    _loadSaleSources();
-    _loadCustomerAreas();
 
-    // Warm customer/salesman/delivery-boy/product caches immediately, in
-    // the background, before the user taps any "Select…" button. By the
-    // time they actually open a picker a second or two later, it shows
-    // cached data instantly instead of a blank spinner.
+    // Seed lightweight reference data from the local catalog first. The
+    // catalog refresh below is coordinated/TTL-protected, so reopening Sale
+    // Create no longer triggers duplicate live reference + catalog requests.
+    unawaited(_loadSaleSources(preferCache: true));
+    unawaited(_loadCustomerAreas(preferCache: true));
+
+    // Warm only role/vendor pickers that are not already backed by the local
+    // catalog replica. Customer/product pickers are hydrated from SQLite below
+    // and fall back to live search on demand.
     final branchId = context.read<BranchProvider>().selectedBranchId?.toString();
     final features = context.read<BranchFeatureProvider>();
-    PartyPrefetch.warmCustomers(token);
     PartyPrefetch.warmSalesmen(token, branchId: branchId);
-    PartyPrefetch.warmProducts(token);
     // Only prefetch delivery-boy cache when module is enabled for this branch.
     if (features.deliveryEnabled) {
       PartyPrefetch.warmDeliveryBoys(token, branchId: branchId);
@@ -406,7 +407,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       final branchId = int.tryParse(_effectiveBranchIdStr() ?? '');
       final token = context.read<AuthProvider>().token!;
       CatalogCacheService.instance
-          .refresh(token: token, branchId: branchId)
+          .refresh(token: token, branchId: branchId, force: true)
           .then((_) => _loadSaleSources(preferCache: true));
     }
   }
@@ -522,7 +523,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       final branchId = int.tryParse(_effectiveBranchIdStr());
       final token = auth.token!;
       CatalogCacheService.instance
-          .refresh(token: token, branchId: branchId)
+          .refresh(token: token, branchId: branchId, force: true)
           .then((_) => _loadCustomerAreas(preferCache: true));
     }
   }
