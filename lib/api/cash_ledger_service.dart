@@ -78,6 +78,39 @@ class CashLedgerService {
     throw Exception(res['message'] ?? 'Failed to load cash ledger');
   }
 
+  /// GET /cash-ledger/expenses
+  /// Operational expense-management feed with server filters and pagination.
+  Future<Map<String, dynamic>> getExpenseHistory({
+    int page = 1,
+    int perPage = 40,
+    String? from,
+    String? to,
+    String? accountId,
+    String? method,
+    String? createdBy,
+    String? status,
+    String? search,
+    bool includeFilters = false,
+  }) async {
+    final q = <String, String>{
+      'page': page.toString(),
+      'per_page': perPage.toString(),
+      if (from != null && from.isNotEmpty) 'from': from,
+      if (to != null && to.isNotEmpty) 'to': to,
+      if (accountId != null && accountId.isNotEmpty) 'account_id': accountId,
+      if (method != null && method.isNotEmpty) 'method': method,
+      if (createdBy != null && createdBy.isNotEmpty) 'created_by': createdBy,
+      if (status != null && status.isNotEmpty) 'status': status,
+      if (search != null && search.isNotEmpty) 'search': search,
+      if (includeFilters) 'include_filters': '1',
+    };
+    final res = await _client.get('/cash-ledger/expenses', query: q);
+    if (res['success'] == true) {
+      return Map<String, dynamic>.from(res['data'] ?? {});
+    }
+    throw Exception(res['message'] ?? 'Failed to load expenses');
+  }
+
   /// GET /cash-ledger/{id}
   Future<Map<String, dynamic>> getEntry(String id) async {
     final res = await _client.get('/cash-ledger/$id');

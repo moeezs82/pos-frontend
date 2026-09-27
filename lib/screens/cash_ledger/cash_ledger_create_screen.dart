@@ -96,7 +96,17 @@ class CashLedgerCategoryMeta {
 class CashLedgerCreateScreen extends StatefulWidget {
   /// Optionally pre-select a category when launched from a shortcut.
   final String? initialCategory;
-  const CashLedgerCreateScreen({super.key, this.initialCategory});
+
+  /// When true, the pre-selected category cannot be changed. Used by focused
+  /// module flows such as Expenses -> Add Expense. Existing callers default
+  /// to false and retain the full multi-category cash-ledger form.
+  final bool lockCategory;
+
+  const CashLedgerCreateScreen({
+    super.key,
+    this.initialCategory,
+    this.lockCategory = false,
+  });
 
   @override
   State<CashLedgerCreateScreen> createState() => _CashLedgerCreateScreenState();
@@ -318,6 +328,7 @@ class _CashLedgerCreateScreenState extends State<CashLedgerCreateScreen> {
   /// visible chip list. Index is relative to available categories only, so
   /// gated categories do not shift the numbering of accessible ones.
   void _selectCategoryByIndex(int index) {
+    if (widget.lockCategory) return;
     final auth = context.read<AuthProvider>();
     final available = _availableCategories(auth);
     if (index < 0 || index >= available.length) return;
@@ -596,7 +607,9 @@ class _CashLedgerCreateScreenState extends State<CashLedgerCreateScreen> {
           const SizedBox(height: 16),
           Builder(builder: (context) {
             final auth = context.watch<AuthProvider>();
-            final available = _availableCategories(auth);
+            final available = widget.lockCategory
+                ? <CashLedgerCategoryMeta>[CashLedgerCategoryMeta.byValue(_category)]
+                : _availableCategories(auth);
             return Wrap(
               spacing: 8,
               runSpacing: 8,
@@ -606,7 +619,7 @@ class _CashLedgerCreateScreenState extends State<CashLedgerCreateScreen> {
                   selected: selected,
                   avatar: Icon(c.icon, size: 18, color: selected ? c.color : AppTheme.textMuted),
                   label: Text(c.label),
-                  onSelected: (_) => _applyCategory(c.value),
+                  onSelected: widget.lockCategory ? null : (_) => _applyCategory(c.value),
                 );
               }).toList(),
             );
