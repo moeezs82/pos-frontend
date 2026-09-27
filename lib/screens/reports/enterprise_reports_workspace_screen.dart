@@ -62,7 +62,7 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
   bool _branchRefreshScheduled = false;
   static const int _perPage = 50;
   static const int _maxCachedPages = 6;
-  static const double _reportRowExtent = 46;
+  static const double _reportRowExtent = 40;
   final ScrollController _reportScrollController = ScrollController();
   final ScrollController _reportHorizontalController = ScrollController();
   final Map<int, _EnterpriseReportResponse> _reportPages = {};
@@ -1267,10 +1267,10 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
         : entries.take(8).toList();
     return SliverToBoxAdapter(
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+        padding: const EdgeInsets.fromLTRB(16, 2, 16, 6),
         child: Wrap(
-          spacing: 10,
-          runSpacing: 10,
+          spacing: 8,
+          runSpacing: 8,
           children: visible.map((e) => _TotalCard(label: _labelize(e.key), value: _formatValue(e.value, e.key))).toList(),
         ),
       ),
@@ -1331,6 +1331,20 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
     );
   }
 
+  double _reportBaseColumnWidth(_ReportColumn column, int columnCount) {
+    final key = column.key.toLowerCase();
+    final label = column.label.toLowerCase();
+    if (key.contains('date') || key.contains('time')) return 138;
+    if (key.contains('description') || key.contains('notes') || key.contains('product_name') || key.contains('party_name')) return 220;
+    if (key.contains('name') || key.contains('vendor') || key.contains('customer') || key.contains('account')) return 180;
+    if (key.contains('invoice') || key.contains('reference') || key.contains('code')) return 150;
+    if (key.contains('status') || key.contains('type') || key.contains('source') || key.contains('method')) return 132;
+    if (key.contains('qty') || key.contains('count') || key.contains('units') || key.contains('invoices')) return 105;
+    if (key.contains('amount') || key.contains('sales') || key.contains('profit') || key.contains('cogs') || key.contains('balance') || key.contains('total') || key.contains('tax') || key.contains('discount') || key.contains('cost') || key.contains('price')) return 132;
+    if (label.length > 18) return 165;
+    return columnCount <= 5 ? 170 : 138;
+  }
+
   SliverToBoxAdapter _buildTable() {
     final result = _result;
     if (result == null) return const SliverToBoxAdapter(child: SizedBox.shrink());
@@ -1338,60 +1352,100 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
     if (_totalRows == 0) {
       return SliverToBoxAdapter(child: Padding(padding: const EdgeInsets.all(32), child: Center(child: Text('No data found for selected filters', style: Theme.of(context).textTheme.titleMedium))));
     }
-    final columnWidth = visibleColumns.length <= 5 ? 210.0 : 175.0;
-    final tableWidth = (visibleColumns.length * columnWidth).clamp(MediaQuery.of(context).size.width - 64, 5000.0).toDouble();
     return SliverToBoxAdapter(
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
-        child: Card(
-          elevation: 0, clipBehavior: Clip.antiAlias,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18), side: BorderSide(color: Theme.of(context).dividerColor.withOpacity(.7))),
-          child: SizedBox(
-            height: 520,
-            child: Scrollbar(
-              controller: _reportHorizontalController,
-              thumbVisibility: true,
-              scrollbarOrientation: ScrollbarOrientation.bottom,
-              child: SingleChildScrollView(
-                controller: _reportHorizontalController,
-                scrollDirection: Axis.horizontal,
-                child: SizedBox(
-                  width: tableWidth,
-                  child: Column(children: [
-                    Container(
-                      height: 44, padding: const EdgeInsets.symmetric(horizontal: 12), color: AppTheme.surfaceSoft,
-                      child: Row(children: visibleColumns.map((c) => SizedBox(width: columnWidth, child: Padding(padding: const EdgeInsets.symmetric(horizontal: 8), child: Text(c.label, maxLines:1, overflow:TextOverflow.ellipsis, style: const TextStyle(fontWeight:FontWeight.w800, color:AppTheme.textMuted, fontSize:11))))).toList()),
-                    ),
-                    Expanded(
-                      child: Scrollbar(
-                        controller: _reportScrollController,
-                        thumbVisibility: true,
-                        child: ListView.builder(
-                          controller: _reportScrollController,
-                          itemExtent: _reportRowExtent,
-                          cacheExtent: _reportRowExtent * 14,
-                          itemCount: _totalRows,
-                          itemBuilder: (_, index) {
-                            final row = _reportRowAt(index);
-                            if (row == null) return const Align(alignment: Alignment.centerLeft, child: Padding(padding: EdgeInsets.symmetric(horizontal:20), child: SizedBox(width:18,height:18,child:CircularProgressIndicator(strokeWidth:2))));
-                            return Container(
-                              padding: const EdgeInsets.symmetric(horizontal:12),
-                              decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: AppTheme.border))),
-                              child: Row(children: visibleColumns.map((c) => SizedBox(width: columnWidth, child: Padding(padding: const EdgeInsets.symmetric(horizontal:8), child: Text(_formatValue(row[c.key], c.key), maxLines:1, overflow:TextOverflow.ellipsis)))).toList()),
-                            );
-                          },
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final baseWidths = visibleColumns.map((c) => _reportBaseColumnWidth(c, visibleColumns.length)).toList(growable: false);
+            final baseTotal = baseWidths.fold<double>(0, (sum, width) => sum + width);
+            final usableWidth = constraints.maxWidth > 24 ? constraints.maxWidth - 24 : 0.0;
+            final extraPerColumn = visibleColumns.isEmpty || baseTotal >= usableWidth ? 0.0 : (usableWidth - baseTotal) / visibleColumns.length;
+            final widths = baseWidths.map((width) => width + extraPerColumn).toList(growable: false);
+            final contentWidth = 24 + widths.fold<double>(0, (sum, width) => sum + width);
+            final tableWidth = contentWidth < constraints.maxWidth ? constraints.maxWidth : contentWidth;
+            return Card(
+              elevation: 0,
+              clipBehavior: Clip.antiAlias,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16), side: BorderSide(color: Theme.of(context).dividerColor.withOpacity(.7))),
+              child: SizedBox(
+                height: 500,
+                child: Scrollbar(
+                  controller: _reportHorizontalController,
+                  thumbVisibility: true,
+                  scrollbarOrientation: ScrollbarOrientation.bottom,
+                  child: SingleChildScrollView(
+                    controller: _reportHorizontalController,
+                    scrollDirection: Axis.horizontal,
+                    child: SizedBox(
+                      width: tableWidth,
+                      child: Column(children: [
+                        Container(
+                          height: 38,
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                          color: AppTheme.surfaceSoft,
+                          child: Row(
+                            children: [
+                              for (var i = 0; i < visibleColumns.length; i++)
+                                SizedBox(
+                                  width: widths[i],
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(horizontal: 7),
+                                    child: Text(visibleColumns[i].label, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w800, color: AppTheme.textMuted, fontSize: 10.5)),
+                                  ),
+                                ),
+                            ],
+                          ),
                         ),
-                      ),
+                        Expanded(
+                          child: Scrollbar(
+                            controller: _reportScrollController,
+                            thumbVisibility: true,
+                            child: ListView.builder(
+                              controller: _reportScrollController,
+                              itemExtent: _reportRowExtent,
+                              cacheExtent: _reportRowExtent * 14,
+                              itemCount: _totalRows,
+                              itemBuilder: (_, index) {
+                                final row = _reportRowAt(index);
+                                if (row == null) return const Align(alignment: Alignment.centerLeft, child: Padding(padding: EdgeInsets.symmetric(horizontal: 20), child: SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))));
+                                return Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                                  decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: AppTheme.border))),
+                                  child: Row(
+                                    children: [
+                                      for (var i = 0; i < visibleColumns.length; i++)
+                                        SizedBox(
+                                          width: widths[i],
+                                          child: Padding(
+                                            padding: const EdgeInsets.symmetric(horizontal: 7),
+                                            child: Text(_formatValue(row[visibleColumns[i].key], visibleColumns[i].key), maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12)),
+                                          ),
+                                        ),
+                                    ],
+                                  ),
+                                );
+                              },
+                            ),
+                          ),
+                        ),
+                        Container(
+                          height: 30,
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                          color: AppTheme.surfaceSoft,
+                          child: Row(children: [
+                            Text('$_totalRows records', style: const TextStyle(color: AppTheme.textMuted, fontSize: 10.5, fontWeight: FontWeight.w700)),
+                            const Spacer(),
+                            Text('Bounded cache: ${_reportPages.length}/$_maxCachedPages pages', style: const TextStyle(color: AppTheme.textMuted, fontSize: 10.5, fontWeight: FontWeight.w700)),
+                          ]),
+                        ),
+                      ]),
                     ),
-                    Container(
-                      height: 34, padding: const EdgeInsets.symmetric(horizontal:14), color: AppTheme.surfaceSoft,
-                      child: Row(children:[Text('$_totalRows records', style: const TextStyle(color:AppTheme.textMuted,fontSize:11,fontWeight:FontWeight.w700)), const Spacer(), Text('Bounded cache: ${_reportPages.length}/$_maxCachedPages pages', style: const TextStyle(color:AppTheme.textMuted,fontSize:11,fontWeight:FontWeight.w700))]),
-                    ),
-                  ]),
+                  ),
                 ),
               ),
-            ),
-          ),
+            );
+          },
         ),
       ),
     );
@@ -1621,8 +1675,8 @@ class _TotalCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: 170,
-      padding: const EdgeInsets.all(14),
+      width: 148,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.surface,
         borderRadius: BorderRadius.circular(16),
@@ -1632,7 +1686,7 @@ class _TotalCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(label, maxLines: 1, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.labelMedium),
-          const SizedBox(height: 8),
+          const SizedBox(height: 4),
           Text(value, maxLines: 1, overflow: TextOverflow.ellipsis, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800)),
         ],
       ),

@@ -31,6 +31,7 @@ class CashLedgerScreen extends StatefulWidget {
 class _CashLedgerScreenState extends State<CashLedgerScreen> with SingleTickerProviderStateMixin {
   TabController? _tabController;
   final GlobalKey<_LedgerViewState> _ledgerKey = GlobalKey<_LedgerViewState>();
+  String? _selectedDayDate;
 
   // Track which optional tabs are visible so we can rebuild the controller
   // when addon state changes (e.g., after a version-bump refresh mid-session).
@@ -106,8 +107,34 @@ class _CashLedgerScreenState extends State<CashLedgerScreen> with SingleTickerPr
       if (showLoans) const SubledgerView(kind: SubledgerKind.loans),
       if (showQameti) const SubledgerView(kind: SubledgerKind.qameti),
       const SubledgerView(kind: SubledgerKind.expenses),
-      const _DayBookView(),
+      _DayBookView(onOpenDay: (date) => setState(() => _selectedDayDate = date)),
     ];
+
+    if (_selectedDayDate != null) {
+      return EnterprisePage(
+        title: 'Cash Ledger',
+        subtitle: 'Review one day without leaving the persistent Cash Ledger workspace.',
+        icon: Icons.account_balance_wallet_outlined,
+        actions: [
+          OutlinedButton.icon(
+            onPressed: () => setState(() => _selectedDayDate = null),
+            icon: const Icon(Icons.arrow_back_rounded, size: 18),
+            label: const Text('Back to Day Book'),
+          ),
+          FilledButton.icon(
+            onPressed: _openCreate,
+            icon: const Icon(Icons.add_rounded, size: 18),
+            label: const Text('Record Entry'),
+          ),
+        ],
+        padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+        child: DayBookDetailScreen(
+          date: _selectedDayDate!,
+          embedded: true,
+          onBack: () => setState(() => _selectedDayDate = null),
+        ),
+      );
+    }
 
     return EnterprisePage(
       title: 'Cash Ledger',
@@ -169,10 +196,12 @@ class _LedgerViewState extends State<_LedgerView> {
   bool _loading = true;
   bool _loadingFlow = true;
 
-  static const int _perPage = 40;
+  static const int _requestedPerPage = 40;
   static const int _maxCachedPages = 6;
-  static const double _rowExtent = 82;
+  static const double _rowExtent = 52;
+  final ScrollController _pageScrollController = ScrollController();
   final ScrollController _scrollController = ScrollController();
+  int _serverPerPage = _requestedPerPage;
   final Map<int, List<Map<String, dynamic>>> _pages = {};
   final Set<int> _loadingPages = {};
   int _lastPage = 1;
@@ -189,6 +218,7 @@ class _LedgerViewState extends State<_LedgerView> {
 
   String _direction = 'all'; // in|out|all
   String _kind = 'all';      // all|module|received|sent|expense
+  bool _fundsExpanded = false;
 
   @override
   void initState() {
@@ -201,6 +231,7 @@ class _LedgerViewState extends State<_LedgerView> {
 
   @override
   void dispose() {
+    _pageScrollController.dispose();
     _scrollController.dispose();
     super.dispose();
   }
@@ -234,18 +265,27 @@ class _LedgerViewState extends State<_LedgerView> {
   }
 
   Future<void> _fetchList({int page = 1, bool reset = false}) async {
-    if (reset) { _pages.clear(); _loadingPages.clear(); _lastPage = 1; _total = 0; if (_scrollController.hasClients) _scrollController.jumpTo(0); }
+    if (reset) { _pages.clear(); _loadingPages.clear(); _lastPage = 1; _total = 0; _serverPerPage = _requestedPerPage; if (_scrollController.hasClients) _scrollController.jumpTo(0); }
     if (_loadingPages.contains(page) || page < 1 || (_total > 0 && page > _lastPage)) return;
     _loadingPages.add(page);
     if (mounted && _pages.isEmpty) setState(() => _loading = true);
     try {
-      final data = await _service.getTransactions(page: page, perPage: _perPage, from: _fmtDate(_dateFrom), to: _fmtDate(_dateTo), direction: _direction, kind: _kind);
+      final data = await _service.getTransactions(page: page, perPage: _requestedPerPage, from: _fmtDate(_dateFrom), to: _fmtDate(_dateTo), direction: _direction, kind: _kind);
       if (!mounted) return;
       final items = (data['items'] as List? ?? []).whereType<Map>().map((e) => e.cast<String, dynamic>()).toList();
       setState(() {
+        final reportedPerPage = (data['per_page'] as num?)?.toInt();
+        if (reportedPerPage != null && reportedPerPage > 0) {
+          _serverPerPage = reportedPerPage;
+        } else if (items.isNotEmpty && page < ((data['last_page'] as num?)?.toInt() ?? 1)) {
+          // Be defensive with older servers that omit per_page but return a
+          // fixed page size different from the requested size.
+          _serverPerPage = items.length;
+        }
         _pages[page] = items;
         _lastPage = (data['last_page'] as num?)?.toInt() ?? 1;
-        _total = (data['total'] as num?)?.toInt() ?? (_lastPage <= 1 ? items.length : _lastPage * _perPage);
+        _total = (data['total'] as num?)?.toInt() ??
+            (_lastPage <= 1 ? items.length : _lastPage * _serverPerPage);
         _evictPages(keepPage: page);
       });
     } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString().replaceFirst('Exception: ', '')))); }
@@ -256,13 +296,13 @@ class _LedgerViewState extends State<_LedgerView> {
     if (!_scrollController.hasClients || _total <= 0) return;
     final first = (_scrollController.offset / _rowExtent).floor().clamp(0,_total-1);
     final last = (first + (_scrollController.position.viewportDimension/_rowExtent).ceil()+5).clamp(0,_total-1);
-    final fp=first~/_perPage+1, lp=last~/_perPage+1;
+    final fp=first~/_serverPerPage+1, lp=last~/_serverPerPage+1;
     for(var page=fp; page<=lp; page++){ if(!_pages.containsKey(page)) _fetchList(page:page); }
     if(lp<_lastPage && !_pages.containsKey(lp+1)) _fetchList(page:lp+1);
   }
 
   Map<String,dynamic>? _itemAt(int index){
-    final page=index~/_perPage+1, off=index%_perPage; final rows=_pages[page];
+    final page=index~/_serverPerPage+1, off=index%_serverPerPage; final rows=_pages[page];
     if(rows==null){ _fetchList(page:page); return null; }
     return off<rows.length?rows[off]:null;
   }
@@ -475,25 +515,76 @@ class _LedgerViewState extends State<_LedgerView> {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16,12,16,16),
-      child: Column(children:[
-        _buildSummary(), const SizedBox(height:12), _buildFilterBar(), const SizedBox(height:12),
-        Expanded(
-          child: _loading && _pages.isEmpty
-              ? const Center(child:CircularProgressIndicator())
-              : _total==0
-                  ? _buildList()
-                  : RefreshIndicator(
-                      onRefresh: refresh,
-                      child: ListView.builder(
-                        controller:_scrollController, itemExtent:_rowExtent, itemCount:_total, cacheExtent:_rowExtent*12,
-                        itemBuilder:(_,index){ final item=_itemAt(index); return item==null ? const Center(child:SizedBox(width:18,height:18,child:CircularProgressIndicator(strokeWidth:2))) : _buildRow(item); },
-                      ),
+    final viewportHeight = MediaQuery.sizeOf(context).height;
+    final tableHeight = (viewportHeight * 0.46).clamp(320.0, 520.0);
+
+    return Scrollbar(
+      controller: _pageScrollController,
+      thumbVisibility: true,
+      child: SingleChildScrollView(
+        controller: _pageScrollController,
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _buildFilterBar(),
+            const SizedBox(height: 10),
+            _buildSummary(),
+            const SizedBox(height: 10),
+            if (_total > 0) _buildLedgerHeader(),
+            if (_total > 0) const SizedBox(height: 1),
+            SizedBox(
+              height: tableHeight,
+              child: _loading && _pages.isEmpty
+                  ? const Center(child: CircularProgressIndicator())
+                  : _total == 0
+                      ? _buildList()
+                      : Scrollbar(
+                          controller: _scrollController,
+                          thumbVisibility: true,
+                          child: RefreshIndicator(
+                            onRefresh: refresh,
+                            child: ListView.builder(
+                              controller: _scrollController,
+                              primary: false,
+                              itemExtent: _rowExtent,
+                              itemCount: _total,
+                              cacheExtent: _rowExtent * 12,
+                              itemBuilder: (_, index) {
+                                final item = _itemAt(index);
+                                return item == null
+                                    ? const Center(
+                                        child: SizedBox(
+                                          width: 18,
+                                          height: 18,
+                                          child: CircularProgressIndicator(strokeWidth: 2),
+                                        ),
+                                      )
+                                    : _buildRow(item);
+                              },
+                            ),
+                          ),
+                        ),
+            ),
+            if (_total > 0)
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    '$_total entries • ${_lastPage} server pages • bounded cache ${_pages.length}/$_maxCachedPages pages',
+                    style: const TextStyle(
+                      color: AppTheme.textMuted,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
                     ),
+                  ),
+                ),
+              ),
+            const SizedBox(height: 8),
+          ],
         ),
-        if(_total>0) Padding(padding:const EdgeInsets.only(top:6), child:Align(alignment:Alignment.centerLeft, child:Text('$_total entries • bounded cache ${_pages.length}/$_maxCachedPages pages', style:const TextStyle(color:AppTheme.textMuted,fontSize:11,fontWeight:FontWeight.w700)))),
-      ]),
+      ),
     );
   }
 
@@ -503,134 +594,122 @@ class _LedgerViewState extends State<_LedgerView> {
     final inTotal = _toNum(incoming['total']);
     final outTotal = _toNum(outgoing['total']);
     final closing = _toNum(_summary['closing']);
+    final hasMethods = ((_summary['by_account'] as List?)?.isNotEmpty ?? false);
 
-    return EnterprisePanel(
-      elevated: true,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          EnterpriseSectionHeader(
-            title: 'Cash position',
-            subtitle: '${_fmtDate(_dateFrom)} → ${_fmtDate(_dateTo)}',
-            icon: Icons.insights_rounded,
-            color: AppTheme.primary,
-            trailing: IconButton(
-              tooltip: 'Change date range',
-              onPressed: _pickDateRange,
-              icon: const Icon(Icons.date_range_rounded),
+    return Column(
+      children: [
+        Row(
+          children: [
+            Expanded(child: _CompactStat(label: 'Opening Balance', value: _money.format(_opening), color: AppTheme.navy, icon: Icons.account_balance_wallet_outlined)),
+            const SizedBox(width: 10),
+            Expanded(child: _CompactStat(label: 'Total Received', value: _money.format(inTotal), color: AppTheme.success, icon: Icons.south_west_rounded)),
+            const SizedBox(width: 10),
+            Expanded(child: _CompactStat(label: 'Total Paid', value: _money.format(outTotal), color: AppTheme.danger, icon: Icons.north_east_rounded)),
+            const SizedBox(width: 10),
+            Expanded(child: _CompactStat(label: 'Closing Balance', value: _money.format(closing), color: AppTheme.navy, icon: Icons.account_balance_wallet_rounded)),
+          ],
+        ),
+        if (hasMethods) ...[
+          const SizedBox(height: 10),
+          Container(
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: AppTheme.border),
             ),
-          ),
-          const SizedBox(height: 14),
-          if (_loadingFlow)
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 18),
-              child: Center(child: CircularProgressIndicator()),
-            )
-          else
-            Column(
+            child: Column(
               children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: _StatBox(
-                        label: 'Opening',
-                        value: _money.format(_opening),
-                        color: AppTheme.navy,
-                        icon: Icons.account_balance_wallet_outlined,
-                      ),
+                InkWell(
+                  borderRadius: BorderRadius.circular(14),
+                  onTap: () => setState(() => _fundsExpanded = !_fundsExpanded),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 32,
+                          height: 32,
+                          decoration: BoxDecoration(color: AppTheme.primarySoft, borderRadius: BorderRadius.circular(9)),
+                          child: const Icon(Icons.bar_chart_rounded, color: AppTheme.primary, size: 18),
+                        ),
+                        const SizedBox(width: 10),
+                        const Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text('Funds by method', style: TextStyle(fontWeight: FontWeight.w900, fontSize: 13)),
+                              SizedBox(height: 2),
+                              Text('Opening, received, paid and closing balance by payment method.', style: TextStyle(color: AppTheme.textMuted, fontSize: 11.5)),
+                            ],
+                          ),
+                        ),
+                        Text(_fundsExpanded ? 'Hide' : 'Show', style: const TextStyle(color: AppTheme.primary, fontWeight: FontWeight.w800, fontSize: 12)),
+                        const SizedBox(width: 4),
+                        Icon(_fundsExpanded ? Icons.expand_less_rounded : Icons.expand_more_rounded, color: AppTheme.primary),
+                      ],
                     ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: _StatBox(
-                        label: 'Received',
-                        value: _money.format(inTotal),
-                        color: AppTheme.success,
-                        icon: Icons.south_west_rounded,
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
-                const SizedBox(height: 10),
-                Row(
-                  children: [
-                    Expanded(
-                      child: _StatBox(
-                        label: 'Paid',
-                        value: _money.format(outTotal),
-                        color: AppTheme.danger,
-                        icon: Icons.north_east_rounded,
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: _StatBox(
-                        label: 'Closing',
-                        value: _money.format(closing),
-                        color: AppTheme.navy,
-                        icon: Icons.account_balance_wallet_rounded,
-                      ),
-                    ),
-                  ],
+                AnimatedCrossFade(
+                  duration: const Duration(milliseconds: 180),
+                  crossFadeState: _fundsExpanded ? CrossFadeState.showSecond : CrossFadeState.showFirst,
+                  firstChild: const SizedBox(width: double.infinity),
+                  secondChild: Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                    child: _fundsByMethod(),
+                  ),
                 ),
-                if ((_summary['by_account'] as List?)?.isNotEmpty ?? false) ...[
-                  const SizedBox(height: 14),
-                  _fundsByMethod(),
-                ],
               ],
             ),
+          ),
         ],
-      ),
+      ],
     );
   }
 
   /// Per-fund breakdown (Cash / Bank / KNET Clearing / …) for the selected
-  /// period: opening + in - out = closing for each. Answers "how much cash vs
-  /// bank vs other methods do I have".
+  /// period: opening + in - out = closing for each.
   Widget _fundsByMethod() {
     final list = List<Map<String, dynamic>>.from(
       (_summary['by_account'] as List?)?.map((e) => Map<String, dynamic>.from(e)) ?? const [],
     );
     if (list.isEmpty) return const SizedBox.shrink();
 
+    Widget cell(String text, {int flex = 2, TextAlign align = TextAlign.right, TextStyle? style}) =>
+        Expanded(flex: flex, child: Padding(padding: const EdgeInsets.symmetric(horizontal: 8), child: Text(text, textAlign: align, maxLines: 1, overflow: TextOverflow.ellipsis, style: style)));
+
     return Container(
       decoration: BoxDecoration(
         color: AppTheme.surfaceSoft,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(10),
         border: Border.all(color: AppTheme.border),
       ),
-      padding: const EdgeInsets.all(12),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('Funds by method',
-              style: TextStyle(fontWeight: FontWeight.w800, fontSize: 13)),
-          const SizedBox(height: 8),
-          Row(
-            children: const [
-              Expanded(flex: 3, child: Text('Method', style: TextStyle(fontSize: 11, color: AppTheme.textMuted, fontWeight: FontWeight.w700))),
-              Expanded(flex: 2, child: Text('Opening', textAlign: TextAlign.right, style: TextStyle(fontSize: 11, color: AppTheme.textMuted, fontWeight: FontWeight.w700))),
-              Expanded(flex: 2, child: Text('In', textAlign: TextAlign.right, style: TextStyle(fontSize: 11, color: AppTheme.textMuted, fontWeight: FontWeight.w700))),
-              Expanded(flex: 2, child: Text('Out', textAlign: TextAlign.right, style: TextStyle(fontSize: 11, color: AppTheme.textMuted, fontWeight: FontWeight.w700))),
-              Expanded(flex: 2, child: Text('Closing', textAlign: TextAlign.right, style: TextStyle(fontSize: 11, color: AppTheme.textMuted, fontWeight: FontWeight.w700))),
-            ],
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            child: Row(children: [
+              cell('Method', flex: 3, align: TextAlign.left, style: const TextStyle(fontSize: 11, color: AppTheme.textMuted, fontWeight: FontWeight.w800)),
+              cell('Opening', style: const TextStyle(fontSize: 11, color: AppTheme.textMuted, fontWeight: FontWeight.w800)),
+              cell('In', style: const TextStyle(fontSize: 11, color: AppTheme.textMuted, fontWeight: FontWeight.w800)),
+              cell('Out', style: const TextStyle(fontSize: 11, color: AppTheme.textMuted, fontWeight: FontWeight.w800)),
+              cell('Closing', style: const TextStyle(fontSize: 11, color: AppTheme.textMuted, fontWeight: FontWeight.w800)),
+            ]),
           ),
-          const Divider(height: 12),
+          const Divider(height: 1),
           ...list.map((m) {
             final methods = (m['methods'] as List?)?.cast<dynamic>() ?? const [];
-            final label = methods.isNotEmpty
-                ? methods.join(' / ')
-                : (m['name'] ?? '').toString();
-            return Padding(
-              padding: const EdgeInsets.symmetric(vertical: 3),
-              child: Row(
-                children: [
-                  Expanded(flex: 3, child: Text(label, style: const TextStyle(fontWeight: FontWeight.w700), maxLines: 1, overflow: TextOverflow.ellipsis)),
-                  Expanded(flex: 2, child: Text(_money.format(_toNum(m['opening'])), textAlign: TextAlign.right)),
-                  Expanded(flex: 2, child: Text(_money.format(_toNum(m['in'])), textAlign: TextAlign.right, style: const TextStyle(color: AppTheme.success, fontWeight: FontWeight.w600))),
-                  Expanded(flex: 2, child: Text(_money.format(_toNum(m['out'])), textAlign: TextAlign.right, style: const TextStyle(color: AppTheme.danger, fontWeight: FontWeight.w600))),
-                  Expanded(flex: 2, child: Text(_money.format(_toNum(m['closing'])), textAlign: TextAlign.right, style: const TextStyle(fontWeight: FontWeight.w800))),
-                ],
-              ),
+            final label = methods.isNotEmpty ? methods.join(' / ') : (m['name'] ?? '').toString();
+            return Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+              decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: AppTheme.border))),
+              child: Row(children: [
+                cell(label, flex: 3, align: TextAlign.left, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 12)),
+                cell(_money.format(_toNum(m['opening'])), style: const TextStyle(fontSize: 12)),
+                cell(_money.format(_toNum(m['in'])), style: const TextStyle(fontSize: 12, color: AppTheme.success, fontWeight: FontWeight.w700)),
+                cell(_money.format(_toNum(m['out'])), style: const TextStyle(fontSize: 12, color: AppTheme.danger, fontWeight: FontWeight.w700)),
+                cell(_money.format(_toNum(m['closing'])), style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w900)),
+              ]),
             );
           }),
         ],
@@ -639,91 +718,96 @@ class _LedgerViewState extends State<_LedgerView> {
   }
 
   Widget _buildFilterBar() {
-    return EnterprisePanel(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppTheme.border),
+      ),
+      child: Row(
         children: [
-          const Text('Direction', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 12, color: AppTheme.textMuted)),
-          const SizedBox(height: 10),
-          Wrap(
-            spacing: 8,
-            children: [
-              FilterChip(
-                selected: _direction == 'all',
-                label: const Text('All'),
-                onSelected: (_) {
-                  setState(() => _direction = 'all');
-                  _fetchList(page: 1, reset: true);
-                },
-              ),
-              FilterChip(
-                selected: _direction == 'in',
-                label: const Text('Incoming'),
-                onSelected: (_) {
-                  setState(() => _direction = 'in');
-                  _fetchList(page: 1, reset: true);
-                },
-              ),
-              FilterChip(
-                selected: _direction == 'out',
-                label: const Text('Outgoing'),
-                onSelected: (_) {
-                  setState(() => _direction = 'out');
-                  _fetchList(page: 1, reset: true);
-                },
-              ),
-            ],
+          OutlinedButton.icon(
+            onPressed: _pickDateRange,
+            icon: const Icon(Icons.date_range_rounded, size: 17),
+            label: Text('${_fmtDate(_dateFrom)}  →  ${_fmtDate(_dateTo)}'),
           ),
-          const SizedBox(height: 14),
-          const Text('Source', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 12, color: AppTheme.textMuted)),
-          const SizedBox(height: 10),
-          Wrap(
-            spacing: 8,
-            children: [
-              FilterChip(
-                selected: _kind == 'all',
-                label: const Text('All sources'),
-                onSelected: (_) {
-                  setState(() => _kind = 'all');
-                  _fetchList(page: 1, reset: true);
-                },
-              ),
-              FilterChip(
-                selected: _kind == 'received',
-                label: const Text('Received'),
-                onSelected: (_) {
-                  setState(() => _kind = 'received');
-                  _fetchList(page: 1, reset: true);
-                },
-              ),
-              FilterChip(
-                selected: _kind == 'sent',
-                label: const Text('Paid'),
-                onSelected: (_) {
-                  setState(() => _kind = 'sent');
-                  _fetchList(page: 1, reset: true);
-                },
-              ),
-              FilterChip(
-                selected: _kind == 'expense',
-                label: const Text('Expenses'),
-                onSelected: (_) {
-                  setState(() => _kind = 'expense');
-                  _fetchList(page: 1, reset: true);
-                },
-              ),
-              FilterChip(
-                selected: _kind == 'module',
-                label: const Text('Module only'),
-                onSelected: (_) {
-                  setState(() => _kind = 'module');
-                  _fetchList(page: 1, reset: true);
-                },
-              ),
-            ],
+          const SizedBox(width: 10),
+          SizedBox(
+            width: 170,
+            child: DropdownButtonFormField<String>(
+              value: _direction,
+              isDense: true,
+              decoration: const InputDecoration(labelText: 'Direction', border: OutlineInputBorder()),
+              items: const [
+                DropdownMenuItem(value: 'all', child: Text('All directions')),
+                DropdownMenuItem(value: 'in', child: Text('Incoming')),
+                DropdownMenuItem(value: 'out', child: Text('Outgoing')),
+              ],
+              onChanged: (v) {
+                if (v == null || v == _direction) return;
+                setState(() => _direction = v);
+                _fetchList(page: 1, reset: true);
+              },
+            ),
+          ),
+          const SizedBox(width: 10),
+          SizedBox(
+            width: 180,
+            child: DropdownButtonFormField<String>(
+              value: _kind,
+              isDense: true,
+              decoration: const InputDecoration(labelText: 'Source', border: OutlineInputBorder()),
+              items: const [
+                DropdownMenuItem(value: 'all', child: Text('All sources')),
+                DropdownMenuItem(value: 'received', child: Text('Received')),
+                DropdownMenuItem(value: 'sent', child: Text('Paid')),
+                DropdownMenuItem(value: 'expense', child: Text('Expenses')),
+                DropdownMenuItem(value: 'module', child: Text('Module only')),
+              ],
+              onChanged: (v) {
+                if (v == null || v == _kind) return;
+                setState(() => _kind = v);
+                _fetchList(page: 1, reset: true);
+              },
+            ),
+          ),
+          const Spacer(),
+          OutlinedButton.icon(
+            onPressed: refresh,
+            icon: const Icon(Icons.refresh_rounded, size: 17),
+            label: const Text('Refresh'),
           ),
         ],
       ),
+    );
+  }
+
+  Widget _buildLedgerHeader() {
+    Widget h(String t, int flex, {TextAlign align = TextAlign.left}) => Expanded(
+      flex: flex,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        child: Text(t, textAlign: align, style: const TextStyle(fontSize: 10.5, fontWeight: FontWeight.w900, color: AppTheme.textMuted)),
+      ),
+    );
+    return Container(
+      height: 38,
+      padding: const EdgeInsets.symmetric(horizontal: 10),
+      decoration: BoxDecoration(
+        color: AppTheme.surfaceSoft,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
+        border: Border.all(color: AppTheme.border),
+      ),
+      child: Row(children: [
+        h('DATE', 2),
+        h('REFERENCE', 2),
+        h('TYPE / PARTY', 4),
+        h('METHOD', 2),
+        h('IN', 2, align: TextAlign.right),
+        h('OUT', 2, align: TextAlign.right),
+        h('ACTIONS', 1, align: TextAlign.center),
+      ]),
     );
   }
 
@@ -776,102 +860,57 @@ class _LedgerViewState extends State<_LedgerView> {
   Widget _buildRow(Map<String, dynamic> e) {
     final direction = (e['direction'] ?? '').toString();
     final label = (e['label'] ?? 'Entry').toString();
-    final source = (e['source'] ?? 'journal').toString();
+    final party = (e['party'] ?? 'Unlinked').toString();
     final amount = _toNum(e['amount']);
+    final method = (e['method'] ?? e['account']?['name'] ?? '—').toString();
+    final reference = (e['reference'] ?? e['reference_name'] ?? '—').toString();
+    final date = (e['date'] ?? '—').toString();
     final color = direction == 'in' ? AppTheme.success : AppTheme.danger;
-    final sourceIcon = source == 'module' ? Icons.add_circle_outline : Icons.book_rounded;
 
-    return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppTheme.border),
+    Widget c(Widget child, int flex, {Alignment align = Alignment.centerLeft}) => Expanded(
+      flex: flex,
+      child: Container(
+        alignment: align,
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        child: child,
       ),
-      child: ListTile(
-        onTap: () => _showDetails(e),
-        leading: Container(
-          height: 42,
-          width: 42,
-          decoration: BoxDecoration(color: color.withOpacity(.10), borderRadius: BorderRadius.circular(13)),
-          child: Icon(
-            direction == 'in' ? Icons.south_west_rounded : Icons.north_east_rounded,
-            color: color,
-          ),
+    );
+
+    return InkWell(
+      onTap: () => _showDetails(e),
+      child: Container(
+        height: _rowExtent,
+        padding: const EdgeInsets.symmetric(horizontal: 10),
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          border: Border(bottom: BorderSide(color: AppTheme.border)),
         ),
-        title: Row(
-          children: [
-            Expanded(
-              child: Text(
-                label,
-                style: const TextStyle(fontWeight: FontWeight.w900, color: AppTheme.navy),
-              ),
-            ),
-            // Fund / payment account this movement went through.
-            if ((e['method'] ?? e['account']?['name'] ?? '').toString().isNotEmpty) ...[
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                margin: const EdgeInsets.only(right: 6),
-                decoration: BoxDecoration(
-                  color: AppTheme.primarySoft,
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: Text(
-                  (e['method'] ?? e['account']?['name'] ?? '').toString(),
-                  style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: AppTheme.primaryDark),
-                ),
-              ),
-            ],
-            CashVoidedBadge(row: e),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-              decoration: BoxDecoration(
-                color: AppTheme.surfaceSoft,
-                borderRadius: BorderRadius.circular(6),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(sourceIcon, size: 13, color: AppTheme.textMuted),
-                  const SizedBox(width: 3),
-                  Text(
-                    source,
-                    style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: AppTheme.textMuted),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-        subtitle: Text(
-          [
-            (e['party'] ?? 'Unlinked').toString(),
-            if ((e['reference'] ?? '').toString().isNotEmpty) 'Ref: ${e['reference']}',
-            (e['date'] ?? '—').toString(),
-          ].join(' • '),
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              '${direction == 'in' ? '+' : '-'} ${_money.format(amount)}',
-              style: TextStyle(fontWeight: FontWeight.w900, color: color, fontSize: 15),
-            ),
-            CashVoidButton(
-              row: e,
-              busy: _voidingId != null &&
-                  (_voidingId == CashVoid.entryId(e) ||
-                      _voidingId == 'pay_${CashVoid.paymentId(e)}'),
-              onVoid: () => _voidEntry(e),
-              onReverse: () => _reversePayment(e),
-            ),
-          ],
-        ),
+        child: Row(children: [
+          c(Text(date, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 11.5)), 2),
+          c(Text(reference, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 11.5, color: AppTheme.primaryDark)), 2),
+          c(Column(mainAxisAlignment: MainAxisAlignment.center, crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Row(children: [
+              Flexible(child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 11.5))),
+              const SizedBox(width: 5),
+              CashVoidedBadge(row: e),
+            ]),
+            const SizedBox(height: 2),
+            Text(party, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: AppTheme.textMuted, fontSize: 10.5)),
+          ]), 4),
+          c(Text(method, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 11.5)), 2),
+          c(Text(direction == 'in' ? _money.format(amount) : '—', maxLines: 1, style: TextStyle(fontWeight: FontWeight.w800, fontSize: 11.5, color: direction == 'in' ? AppTheme.success : AppTheme.textMuted)), 2, align: Alignment.centerRight),
+          c(Text(direction == 'out' ? _money.format(amount) : '—', maxLines: 1, style: TextStyle(fontWeight: FontWeight.w800, fontSize: 11.5, color: direction == 'out' ? AppTheme.danger : AppTheme.textMuted)), 2, align: Alignment.centerRight),
+          c(CashVoidButton(
+            row: e,
+            busy: _voidingId != null && (_voidingId == CashVoid.entryId(e) || _voidingId == 'pay_${CashVoid.paymentId(e)}'),
+            onVoid: () => _voidEntry(e),
+            onReverse: () => _reversePayment(e),
+          ), 1, align: Alignment.center),
+        ]),
       ),
     );
   }
+
 
 
 }
@@ -880,7 +919,8 @@ class _LedgerViewState extends State<_LedgerView> {
 /// opening/closing balances. Tap a day to drill into every transaction
 /// that happened that day.
 class _DayBookView extends StatefulWidget {
-  const _DayBookView();
+  final ValueChanged<String> onOpenDay;
+  const _DayBookView({required this.onOpenDay});
 
   @override
   State<_DayBookView> createState() => _DayBookViewState();
@@ -891,10 +931,12 @@ class _DayBookViewState extends State<_DayBookView> {
   final _money = const AppMoneyFormatter();
   final _dayFmt = DateFormat('EEE, d MMM');
 
-  static const int _perPage = 40;
+  static const int _requestedPerPage = 40;
+  int _serverPerPage = _requestedPerPage;
   static const int _maxCachedPages = 6;
   static const double _rowExtent = 78;
   bool _loading = true;
+  final ScrollController _pageScrollController = ScrollController();
   final ScrollController _scrollController = ScrollController();
   final Map<int,List<Map<String,dynamic>>> _pages = {};
   final Set<int> _loadingPages = {};
@@ -916,7 +958,7 @@ class _DayBookViewState extends State<_DayBookView> {
   }
 
   @override
-  void dispose(){ _scrollController.dispose(); super.dispose(); }
+  void dispose(){ _pageScrollController.dispose(); _scrollController.dispose(); super.dispose(); }
 
   String _fmtDate(DateTime d) =>
       "${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}";
@@ -928,22 +970,33 @@ class _DayBookViewState extends State<_DayBookView> {
   }
 
   Future<void> _fetch({int page = 1, bool reset = false}) async {
-    if(reset){_pages.clear();_loadingPages.clear();_lastPage=1;_total=0;if(_scrollController.hasClients)_scrollController.jumpTo(0);}
+    if(reset){_pages.clear();_loadingPages.clear();_lastPage=1;_total=0;_serverPerPage=_requestedPerPage;if(_scrollController.hasClients)_scrollController.jumpTo(0);if(_pageScrollController.hasClients)_pageScrollController.jumpTo(0);}
     if(_loadingPages.contains(page)||page<1||(_total>0&&page>_lastPage))return;
     _loadingPages.add(page); if(mounted&&_pages.isEmpty)setState(()=>_loading=true);
     try{
-      final data=await _service.getDayBook(from:_fmtDate(_dateFrom),to:_fmtDate(_dateTo),page:page,perPage:_perPage,order:'desc');
+      final data=await _service.getDayBook(from:_fmtDate(_dateFrom),to:_fmtDate(_dateTo),page:page,perPage:_requestedPerPage,order:'desc');
       if(!mounted)return;
       final days=(data['days'] as List? ?? []).whereType<Map>().map((e)=>e.cast<String,dynamic>()).toList();
       final pg=Map<String,dynamic>.from(data['pagination']??{});
-      setState((){_pages[page]=days; if(page==1){_totals=Map<String,dynamic>.from(data['totals']??{});_opening=_toNum(data['opening']);}
-        _lastPage=(pg['last_page'] as num?)?.toInt()??1; _total=(pg['total'] as num?)?.toInt()??(_lastPage<=1?days.length:_lastPage*_perPage); _evictPages(keepPage:page);});
+      setState((){
+        final reportedPerPage=(pg['per_page'] as num?)?.toInt()??0;
+        if(reportedPerPage>0){
+          _serverPerPage=reportedPerPage;
+        }else if(page==1&&days.isNotEmpty){
+          _serverPerPage=days.length;
+        }
+        _pages[page]=days;
+        if(page==1){_totals=Map<String,dynamic>.from(data['totals']??{});_opening=_toNum(data['opening']);}
+        _lastPage=(pg['last_page'] as num?)?.toInt()??1;
+        _total=(pg['total'] as num?)?.toInt()??(_lastPage<=1?days.length:_lastPage*_serverPerPage);
+        _evictPages(keepPage:page);
+      });
     }catch(e){if(mounted)ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text(e.toString().replaceFirst('Exception: ',''))));}
     finally{_loadingPages.remove(page);if(mounted)setState(()=>_loading=false);}
   }
 
-  void _onScroll(){if(!_scrollController.hasClients||_total<=0)return;final first=(_scrollController.offset/_rowExtent).floor().clamp(0,_total-1);final last=(first+(_scrollController.position.viewportDimension/_rowExtent).ceil()+5).clamp(0,_total-1);final fp=first~/_perPage+1,lp=last~/_perPage+1;for(var p=fp;p<=lp;p++){if(!_pages.containsKey(p))_fetch(page:p);}if(lp<_lastPage&&!_pages.containsKey(lp+1))_fetch(page:lp+1);}
-  Map<String,dynamic>? _dayAt(int index){final p=index~/_perPage+1,o=index%_perPage;final rows=_pages[p];if(rows==null){_fetch(page:p);return null;}return o<rows.length?rows[o]:null;}
+  void _onScroll(){if(!_scrollController.hasClients||_total<=0)return;final first=(_scrollController.offset/_rowExtent).floor().clamp(0,_total-1);final last=(first+(_scrollController.position.viewportDimension/_rowExtent).ceil()+5).clamp(0,_total-1);final fp=first~/_serverPerPage+1,lp=last~/_serverPerPage+1;for(var p=fp;p<=lp;p++){if(!_pages.containsKey(p))_fetch(page:p);}if(lp<_lastPage&&!_pages.containsKey(lp+1))_fetch(page:lp+1);}
+  Map<String,dynamic>? _dayAt(int index){final p=index~/_serverPerPage+1,o=index%_serverPerPage;final rows=_pages[p];if(rows==null){_fetch(page:p);return null;}return o<rows.length?rows[o]:null;}
   void _evictPages({required int keepPage}){if(_pages.length<=_maxCachedPages)return;final keys=_pages.keys.toList()..sort((a,b)=>(b-keepPage).abs().compareTo((a-keepPage).abs()));while(_pages.length>_maxCachedPages&&keys.isNotEmpty){_pages.remove(keys.removeAt(0));}}
 
   Future<void> _pickDateRange() async {
@@ -963,25 +1016,75 @@ class _DayBookViewState extends State<_DayBookView> {
     }
   }
 
-  void _openDay(String date) {
-    Navigator.push(
-      context,
-      MaterialPageRoute(builder: (_) => DayBookDetailScreen(date: date)),
-    );
-  }
+  void _openDay(String date) => widget.onOpenDay(date);
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding:const EdgeInsets.fromLTRB(16,12,16,16),
-      child:Column(children:[
-        _buildSummary(), const SizedBox(height:12),
-        Expanded(child:_loading&&_pages.isEmpty?const Center(child:CircularProgressIndicator()):_total==0?_buildDaysList():RefreshIndicator(
-          onRefresh:()=>_fetch(page:1,reset:true),
-          child:ListView.builder(controller:_scrollController,itemExtent:_rowExtent,itemCount:_total,cacheExtent:_rowExtent*12,itemBuilder:(_,i){final d=_dayAt(i);return d==null?const Center(child:SizedBox(width:18,height:18,child:CircularProgressIndicator(strokeWidth:2))):_buildDayRow(d);}),
-        )),
-        if(_total>0) Padding(padding:const EdgeInsets.only(top:6),child:Align(alignment:Alignment.centerLeft,child:Text('$_total days • bounded cache ${_pages.length}/$_maxCachedPages pages',style:const TextStyle(color:AppTheme.textMuted,fontSize:11,fontWeight:FontWeight.w700)))),
-      ]),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final listHeight = (constraints.maxHeight * .62).clamp(320.0, 620.0);
+        return Scrollbar(
+          controller: _pageScrollController,
+          thumbVisibility: true,
+          child: SingleChildScrollView(
+            controller: _pageScrollController,
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+            child: Column(
+              children: [
+                _buildSummary(),
+                const SizedBox(height: 12),
+                SizedBox(
+                  height: listHeight,
+                  child: _loading && _pages.isEmpty
+                      ? const Center(child: CircularProgressIndicator())
+                      : _total == 0
+                          ? _buildDaysList()
+                          : RefreshIndicator(
+                              onRefresh: () => _fetch(page: 1, reset: true),
+                              child: Scrollbar(
+                                controller: _scrollController,
+                                thumbVisibility: true,
+                                child: ListView.builder(
+                                  controller: _scrollController,
+                                  itemExtent: _rowExtent,
+                                  itemCount: _total,
+                                  cacheExtent: _rowExtent * 12,
+                                  itemBuilder: (_, i) {
+                                    final d = _dayAt(i);
+                                    return d == null
+                                        ? const Center(
+                                            child: SizedBox(
+                                              width: 18,
+                                              height: 18,
+                                              child: CircularProgressIndicator(strokeWidth: 2),
+                                            ),
+                                          )
+                                        : _buildDayRow(d);
+                                  },
+                                ),
+                              ),
+                            ),
+                ),
+                if (_total > 0)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        '$_total days • $_lastPage server pages • bounded cache ${_pages.length}/$_maxCachedPages pages',
+                        style: const TextStyle(
+                          color: AppTheme.textMuted,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -1013,51 +1116,15 @@ class _DayBookViewState extends State<_DayBookView> {
               child: Center(child: CircularProgressIndicator()),
             )
           else
-            Column(
+            Row(
               children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: _StatBox(
-                        label: 'Opening',
-                        value: _money.format(_opening),
-                        color: AppTheme.navy,
-                        icon: Icons.account_balance_wallet_outlined,
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: _StatBox(
-                        label: 'Closing',
-                        value: _money.format(closing),
-                        color: AppTheme.navy,
-                        icon: Icons.account_balance_wallet_rounded,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 10),
-                Row(
-                  children: [
-                    Expanded(
-                      child: _StatBox(
-                        label: 'Total received',
-                        value: _money.format(totIn),
-                        color: AppTheme.success,
-                        icon: Icons.south_west_rounded,
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: _StatBox(
-                        label: 'Total paid',
-                        value: _money.format(totOut),
-                        color: AppTheme.danger,
-                        icon: Icons.north_east_rounded,
-                      ),
-                    ),
-                  ],
-                ),
+                Expanded(child: _CompactStat(label: 'Opening', value: _money.format(_opening), color: AppTheme.navy, icon: Icons.account_balance_wallet_outlined)),
+                const SizedBox(width: 10),
+                Expanded(child: _CompactStat(label: 'Received', value: _money.format(totIn), color: AppTheme.success, icon: Icons.south_west_rounded)),
+                const SizedBox(width: 10),
+                Expanded(child: _CompactStat(label: 'Paid', value: _money.format(totOut), color: AppTheme.danger, icon: Icons.north_east_rounded)),
+                const SizedBox(width: 10),
+                Expanded(child: _CompactStat(label: 'Closing', value: _money.format(closing), color: AppTheme.navy, icon: Icons.account_balance_wallet_rounded)),
               ],
             ),
         ],
@@ -1139,6 +1206,49 @@ class _DayBookViewState extends State<_DayBookView> {
   }
 
 
+}
+
+class _CompactStat extends StatelessWidget {
+  final String label;
+  final String value;
+  final Color color;
+  final IconData icon;
+  const _CompactStat({required this.label, required this.value, required this.color, required this.icon});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      constraints: const BoxConstraints(minHeight: 72),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppTheme.border),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(color: color.withOpacity(.10), borderRadius: BorderRadius.circular(10)),
+            child: Icon(icon, size: 18, color: color),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(label, style: const TextStyle(color: AppTheme.textMuted, fontWeight: FontWeight.w700, fontSize: 11)),
+                const SizedBox(height: 3),
+                Text(value, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: color, fontWeight: FontWeight.w900, fontSize: 16)),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _StatBox extends StatelessWidget {

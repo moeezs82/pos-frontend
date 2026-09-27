@@ -20,8 +20,15 @@ import 'package:provider/provider.dart';
 /// same backend source (UnifiedCashFlowService).
 class DayBookDetailScreen extends StatefulWidget {
   final String date; // YYYY-MM-DD
+  final bool embedded;
+  final VoidCallback? onBack;
 
-  const DayBookDetailScreen({super.key, required this.date});
+  const DayBookDetailScreen({
+    super.key,
+    required this.date,
+    this.embedded = false,
+    this.onBack,
+  });
 
   @override
   State<DayBookDetailScreen> createState() => _DayBookDetailScreenState();
@@ -31,10 +38,12 @@ class _DayBookDetailScreenState extends State<DayBookDetailScreen> {
   late final CashLedgerService _service;
   final _money = const AppMoneyFormatter();
 
-  static const int _perPage = 50;
+  static const int _requestedPerPage = 50;
+  int _serverPerPage = _requestedPerPage;
   static const int _maxCachedPages = 6;
-  static const double _rowExtent = 82;
+  static const double _rowExtent = 62;
   bool _loading = true;
+  final ScrollController _pageScrollController = ScrollController();
   final ScrollController _scrollController = ScrollController();
   final Map<int,List<Map<String,dynamic>>> _pages = {};
   final Set<int> _loadingPages = {};
@@ -61,7 +70,7 @@ class _DayBookDetailScreenState extends State<DayBookDetailScreen> {
   }
 
   @override
-  void dispose(){ _scrollController.dispose(); super.dispose(); }
+  void dispose(){ _pageScrollController.dispose(); _scrollController.dispose(); super.dispose(); }
 
   num _toNum(dynamic v) {
     if (v == null) return 0;
@@ -137,22 +146,33 @@ class _DayBookDetailScreenState extends State<DayBookDetailScreen> {
   }
 
   Future<void> _fetch({int page = 1, bool reset = false}) async {
-    if(reset){_pages.clear();_loadingPages.clear();_lastPage=1;_total=0;if(_scrollController.hasClients)_scrollController.jumpTo(0);}
+    if(reset){_pages.clear();_loadingPages.clear();_lastPage=1;_total=0;_serverPerPage=_requestedPerPage;if(_scrollController.hasClients)_scrollController.jumpTo(0);if(_pageScrollController.hasClients)_pageScrollController.jumpTo(0);}
     if(_loadingPages.contains(page)||page<1||(_total>0&&page>_lastPage))return;
     _loadingPages.add(page);if(mounted&&_pages.isEmpty)setState(()=>_loading=true);
     try{
-      final data=await _service.getDayBookDetails(date:widget.date,direction:_direction,kind:_kind,method:_method,page:page,perPage:_perPage);
+      final data=await _service.getDayBookDetails(date:widget.date,direction:_direction,kind:_kind,method:_method,page:page,perPage:_requestedPerPage);
       if(!mounted)return;
       final items=(data['items'] as List? ?? []).whereType<Map>().map((e)=>e.cast<String,dynamic>()).toList();
       final pg=Map<String,dynamic>.from(data['pagination']??{});
-      setState((){_pages[page]=items;if(page==1){_totals=Map<String,dynamic>.from(data['totals']??{});_opening=_toNum(data['opening']);_closing=_toNum(data['closing']);}
-        _lastPage=(pg['last_page'] as num?)?.toInt()??1;_total=(pg['total'] as num?)?.toInt()??(_lastPage<=1?items.length:_lastPage*_perPage);_evictPages(keepPage:page);});
+      setState((){
+        final reportedPerPage=(pg['per_page'] as num?)?.toInt()??0;
+        if(reportedPerPage>0){
+          _serverPerPage=reportedPerPage;
+        }else if(page==1&&items.isNotEmpty){
+          _serverPerPage=items.length;
+        }
+        _pages[page]=items;
+        if(page==1){_totals=Map<String,dynamic>.from(data['totals']??{});_opening=_toNum(data['opening']);_closing=_toNum(data['closing']);}
+        _lastPage=(pg['last_page'] as num?)?.toInt()??1;
+        _total=(pg['total'] as num?)?.toInt()??(_lastPage<=1?items.length:_lastPage*_serverPerPage);
+        _evictPages(keepPage:page);
+      });
     }catch(e){if(mounted)ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text(e.toString().replaceFirst('Exception: ',''))));}
     finally{_loadingPages.remove(page);if(mounted)setState(()=>_loading=false);}
   }
 
-  void _onScroll(){if(!_scrollController.hasClients||_total<=0)return;final first=(_scrollController.offset/_rowExtent).floor().clamp(0,_total-1);final last=(first+(_scrollController.position.viewportDimension/_rowExtent).ceil()+5).clamp(0,_total-1);final fp=first~/_perPage+1,lp=last~/_perPage+1;for(var p=fp;p<=lp;p++){if(!_pages.containsKey(p))_fetch(page:p);}if(lp<_lastPage&&!_pages.containsKey(lp+1))_fetch(page:lp+1);}
-  Map<String,dynamic>? _itemAt(int index){final p=index~/_perPage+1,o=index%_perPage;final rows=_pages[p];if(rows==null){_fetch(page:p);return null;}return o<rows.length?rows[o]:null;}
+  void _onScroll(){if(!_scrollController.hasClients||_total<=0)return;final first=(_scrollController.offset/_rowExtent).floor().clamp(0,_total-1);final last=(first+(_scrollController.position.viewportDimension/_rowExtent).ceil()+5).clamp(0,_total-1);final fp=first~/_serverPerPage+1,lp=last~/_serverPerPage+1;for(var p=fp;p<=lp;p++){if(!_pages.containsKey(p))_fetch(page:p);}if(lp<_lastPage&&!_pages.containsKey(lp+1))_fetch(page:lp+1);}
+  Map<String,dynamic>? _itemAt(int index){final p=index~/_serverPerPage+1,o=index%_serverPerPage;final rows=_pages[p];if(rows==null){_fetch(page:p);return null;}return o<rows.length?rows[o]:null;}
   void _evictPages({required int keepPage}){if(_pages.length<=_maxCachedPages)return;final keys=_pages.keys.toList()..sort((a,b)=>(b-keepPage).abs().compareTo((a-keepPage).abs()));while(_pages.length>_maxCachedPages&&keys.isNotEmpty){_pages.remove(keys.removeAt(0));}}
 
   String _fmtHeading() {
@@ -166,6 +186,206 @@ class _DayBookDetailScreenState extends State<DayBookDetailScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final content = LayoutBuilder(
+      builder: (context, constraints) {
+        final listHeight = (constraints.maxHeight * .70).clamp(430.0, 760.0);
+        return Scrollbar(
+          controller: _pageScrollController,
+          thumbVisibility: true,
+          child: RefreshIndicator(
+            onRefresh: () => _fetch(page: 1, reset: true),
+            child: SingleChildScrollView(
+              controller: _pageScrollController,
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: EdgeInsets.fromLTRB(
+                widget.embedded ? 0 : 16,
+                8,
+                widget.embedded ? 8 : 16,
+                20,
+              ),
+              child: Column(
+                children: [
+                  // The persistent Cash Ledger header already owns the Back to
+                  // Day Book action when this screen is embedded. Keeping a
+                  // second back button here wasted vertical space and made the
+                  // drill-down feel like another stacked page.
+                  EnterprisePanel(
+                    elevated: false,
+                    padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+                    child: Column(
+                      children: [
+                        EnterpriseSectionHeader(
+                          title: _fmtHeading(),
+                          subtitle: 'Opening, movement and closing balance',
+                          icon: Icons.today_rounded,
+                          color: AppTheme.primary,
+                        ),
+                        const SizedBox(height: 10),
+                        if (_loading && _pages.isEmpty)
+                          const Padding(
+                            padding: EdgeInsets.symmetric(vertical: 12),
+                            child: Center(child: CircularProgressIndicator()),
+                          )
+                        else
+                          Row(
+                            children: [
+                              Expanded(child: _Stat(label: 'Opening', value: _money.format(_opening), color: AppTheme.navy, icon: Icons.account_balance_wallet_outlined)),
+                              const SizedBox(width: 8),
+                              Expanded(child: _Stat(label: 'Received', value: _money.format(_toNum(_totals['in'])), color: AppTheme.success, icon: Icons.south_west_rounded)),
+                              const SizedBox(width: 8),
+                              Expanded(child: _Stat(label: 'Paid', value: _money.format(_toNum(_totals['out'])), color: AppTheme.danger, icon: Icons.north_east_rounded)),
+                              const SizedBox(width: 8),
+                              Expanded(child: _Stat(label: 'Closing', value: _money.format(_closing), color: AppTheme.navy, icon: Icons.account_balance_wallet_rounded)),
+                            ],
+                          ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  EnterprisePanel(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+                    child: Wrap(
+                      spacing: 10,
+                      runSpacing: 8,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        SizedBox(
+                          width: 175,
+                          child: DropdownButtonFormField<String>(
+                            value: _direction,
+                            isDense: true,
+                            decoration: const InputDecoration(
+                              labelText: 'Direction',
+                              border: OutlineInputBorder(),
+                              contentPadding: EdgeInsets.symmetric(horizontal: 11, vertical: 10),
+                            ),
+                            items: const [
+                              DropdownMenuItem(value: 'all', child: Text('All directions')),
+                              DropdownMenuItem(value: 'in', child: Text('Incoming')),
+                              DropdownMenuItem(value: 'out', child: Text('Outgoing')),
+                            ],
+                            onChanged: (value) {
+                              if (value == null || value == _direction) return;
+                              setState(() => _direction = value);
+                              _fetch(page: 1, reset: true);
+                            },
+                          ),
+                        ),
+                        SizedBox(
+                          width: 190,
+                          child: DropdownButtonFormField<String>(
+                            value: _kind,
+                            isDense: true,
+                            decoration: const InputDecoration(
+                              labelText: 'Source',
+                              border: OutlineInputBorder(),
+                              contentPadding: EdgeInsets.symmetric(horizontal: 11, vertical: 10),
+                            ),
+                            items: const [
+                              DropdownMenuItem(value: 'all', child: Text('All sources')),
+                              DropdownMenuItem(value: 'received', child: Text('Received')),
+                              DropdownMenuItem(value: 'sent', child: Text('Paid')),
+                              DropdownMenuItem(value: 'expense', child: Text('Expenses')),
+                              DropdownMenuItem(value: 'module', child: Text('Module only')),
+                            ],
+                            onChanged: (value) {
+                              if (value == null || value == _kind) return;
+                              setState(() => _kind = value);
+                              _fetch(page: 1, reset: true);
+                            },
+                          ),
+                        ),
+                        Builder(
+                          builder: (context) {
+                            final methods = context.watch<PaymentMethodProvider>().activeMethods;
+                            final selected = _method ?? '__all__';
+                            return SizedBox(
+                              width: 215,
+                              child: DropdownButtonFormField<String>(
+                                value: selected,
+                                isDense: true,
+                                decoration: const InputDecoration(
+                                  labelText: 'Payment method',
+                                  border: OutlineInputBorder(),
+                                  contentPadding: EdgeInsets.symmetric(horizontal: 11, vertical: 10),
+                                ),
+                                items: [
+                                  const DropdownMenuItem(value: '__all__', child: Text('All methods')),
+                                  ...methods.map((m) => DropdownMenuItem<String>(value: m.method, child: Text(m.displayName))),
+                                ],
+                                onChanged: (value) {
+                                  final next = value == '__all__' ? null : value;
+                                  if (next == _method) return;
+                                  setState(() => _method = next);
+                                  _fetch(page: 1, reset: true);
+                                },
+                              ),
+                            );
+                          },
+                        ),
+                        OutlinedButton.icon(
+                          onPressed: () => _fetch(page: 1, reset: true),
+                          icon: const Icon(Icons.refresh_rounded, size: 17),
+                          label: const Text('Refresh'),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    height: listHeight,
+                    child: _loading && _pages.isEmpty
+                        ? const Center(child: CircularProgressIndicator())
+                        : _total == 0
+                            ? EnterprisePanel(
+                                child: Column(
+                                  children: const [
+                                    SizedBox(height: 16),
+                                    Icon(Icons.receipt_long_outlined, size: 56, color: AppTheme.textMuted),
+                                    SizedBox(height: 10),
+                                    Text('No transactions for this day', style: TextStyle(color: AppTheme.textMuted, fontWeight: FontWeight.w800)),
+                                    SizedBox(height: 16),
+                                  ],
+                                ),
+                              )
+                            : Scrollbar(
+                                controller: _scrollController,
+                                thumbVisibility: true,
+                                child: ListView.builder(
+                                  controller: _scrollController,
+                                  itemExtent: _rowExtent,
+                                  itemCount: _total,
+                                  cacheExtent: _rowExtent * 12,
+                                  itemBuilder: (_, index) {
+                                    final item = _itemAt(index);
+                                    return item == null
+                                        ? const Center(child: SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)))
+                                        : _buildRow(item);
+                                  },
+                                ),
+                              ),
+                  ),
+                  if (_total > 0)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 6),
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          '$_total transactions • $_lastPage server pages • bounded cache ${_pages.length}/$_maxCachedPages pages',
+                          style: const TextStyle(color: AppTheme.textMuted, fontSize: 11, fontWeight: FontWeight.w700),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+
+    if (widget.embedded) return content;
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Day Details'),
@@ -173,224 +393,7 @@ class _DayBookDetailScreenState extends State<DayBookDetailScreen> {
           Padding(padding: EdgeInsets.only(right: 8), child: BranchIndicator(tappable: false)),
         ],
       ),
-      body: RefreshIndicator(
-        onRefresh: () => _fetch(page: 1, reset: true),
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
-          children: [
-            EnterprisePanel(
-              elevated: true,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  EnterpriseSectionHeader(
-                    title: _fmtHeading(),
-                    subtitle: 'Opening, every movement, and closing balance for the day',
-                    icon: Icons.today_rounded,
-                    color: AppTheme.primary,
-                  ),
-                  const SizedBox(height: 14),
-                  if (_loading)
-                    const Padding(
-                      padding: EdgeInsets.symmetric(vertical: 18),
-                      child: Center(child: CircularProgressIndicator()),
-                    )
-                  else
-                    Column(
-                      children: [
-                        Row(
-                          children: [
-                            Expanded(
-                              child: _Stat(
-                                label: 'Opening',
-                                value: _money.format(_opening),
-                                color: AppTheme.navy,
-                                icon: Icons.account_balance_wallet_outlined,
-                              ),
-                            ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: _Stat(
-                                label: 'Closing',
-                                value: _money.format(_closing),
-                                color: AppTheme.navy,
-                                icon: Icons.account_balance_wallet_rounded,
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 10),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: _Stat(
-                                label: 'Received',
-                                value: _money.format(_toNum(_totals['in'])),
-                                color: AppTheme.success,
-                                icon: Icons.south_west_rounded,
-                              ),
-                            ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: _Stat(
-                                label: 'Paid',
-                                value: _money.format(_toNum(_totals['out'])),
-                                color: AppTheme.danger,
-                                icon: Icons.north_east_rounded,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 14),
-            EnterprisePanel(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text('Direction', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 12, color: AppTheme.textMuted)),
-                  const SizedBox(height: 10),
-                  Wrap(
-                    spacing: 8,
-                    children: [
-                      FilterChip(
-                        selected: _direction == 'all',
-                        label: const Text('All'),
-                        onSelected: (_) {
-                          setState(() => _direction = 'all');
-                          _fetch(page: 1, reset: true);
-                        },
-                      ),
-                      FilterChip(
-                        selected: _direction == 'in',
-                        label: const Text('Incoming'),
-                        onSelected: (_) {
-                          setState(() => _direction = 'in');
-                          _fetch(page: 1, reset: true);
-                        },
-                      ),
-                      FilterChip(
-                        selected: _direction == 'out',
-                        label: const Text('Outgoing'),
-                        onSelected: (_) {
-                          setState(() => _direction = 'out');
-                          _fetch(page: 1, reset: true);
-                        },
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 14),
-                  const Text('Source', style: TextStyle(fontWeight: FontWeight.w800, fontSize: 12, color: AppTheme.textMuted)),
-                  const SizedBox(height: 10),
-                  Wrap(
-                    spacing: 8,
-                    children: [
-                      FilterChip(
-                        selected: _kind == 'all',
-                        label: const Text('All sources'),
-                        onSelected: (_) {
-                          setState(() => _kind = 'all');
-                          _fetch(page: 1, reset: true);
-                        },
-                      ),
-                      FilterChip(
-                        selected: _kind == 'received',
-                        label: const Text('Received'),
-                        onSelected: (_) {
-                          setState(() => _kind = 'received');
-                          _fetch(page: 1, reset: true);
-                        },
-                      ),
-                      FilterChip(
-                        selected: _kind == 'sent',
-                        label: const Text('Paid'),
-                        onSelected: (_) {
-                          setState(() => _kind = 'sent');
-                          _fetch(page: 1, reset: true);
-                        },
-                      ),
-                      FilterChip(
-                        selected: _kind == 'expense',
-                        label: const Text('Expenses'),
-                        onSelected: (_) {
-                          setState(() => _kind = 'expense');
-                          _fetch(page: 1, reset: true);
-                        },
-                      ),
-                      FilterChip(
-                        selected: _kind == 'module',
-                        label: const Text('Module only'),
-                        onSelected: (_) {
-                          setState(() => _kind = 'module');
-                          _fetch(page: 1, reset: true);
-                        },
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
-                  // Payment method filter (Cash / Bank / KNET / …).
-                  Builder(builder: (context) {
-                    final methods =
-                        context.watch<PaymentMethodProvider>().activeMethods;
-                    if (methods.isEmpty) return const SizedBox.shrink();
-                    return Wrap(
-                      spacing: 8,
-                      children: [
-                        FilterChip(
-                          selected: _method == null,
-                          label: const Text('All methods'),
-                          onSelected: (_) {
-                            setState(() => _method = null);
-                            _fetch(page: 1, reset: true);
-                          },
-                        ),
-                        ...methods.map((m) => FilterChip(
-                              selected: _method == m.method,
-                              label: Text(m.displayName),
-                              onSelected: (_) {
-                                setState(() => _method = m.method);
-                                _fetch(page: 1, reset: true);
-                              },
-                            )),
-                      ],
-                    );
-                  }),
-                ],
-              ),
-            ),
-            const SizedBox(height: 14),
-            if (_loading)
-              const SizedBox.shrink()
-            else if (_total == 0)
-              EnterprisePanel(
-                child: Column(
-                  children: const [
-                    SizedBox(height: 16),
-                    Icon(Icons.receipt_long_outlined, size: 56, color: AppTheme.textMuted),
-                    SizedBox(height: 10),
-                    Text('No transactions for this day', style: TextStyle(color: AppTheme.textMuted, fontWeight: FontWeight.w800)),
-                    SizedBox(height: 16),
-                  ],
-                ),
-              )
-            else
-              SizedBox(
-                height: 520,
-                child: ListView.builder(
-                  controller: _scrollController, itemExtent: _rowExtent, itemCount: _total, cacheExtent: _rowExtent * 12,
-                  itemBuilder: (_, index) { final item = _itemAt(index); return item == null ? const Center(child:SizedBox(width:18,height:18,child:CircularProgressIndicator(strokeWidth:2))) : _buildRow(item); },
-                ),
-              ),
-            if (_total > 0) ...[
-              const SizedBox(height: 8),
-              Text('$_total transactions • bounded cache ${_pages.length}/$_maxCachedPages pages', style: const TextStyle(color:AppTheme.textMuted,fontSize:11,fontWeight:FontWeight.w700)),
-            ],
-          ],
-        ),
-      ),
+      body: content,
     );
   }
 
@@ -403,17 +406,21 @@ class _DayBookDetailScreenState extends State<DayBookDetailScreen> {
     final sourceIcon = source == 'module' ? Icons.add_circle_outline : Icons.book_rounded;
 
     return Container(
-      margin: const EdgeInsets.only(bottom: 10),
+      margin: const EdgeInsets.only(bottom: 6),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(12),
         border: Border.all(color: AppTheme.border),
       ),
       child: ListTile(
+        dense: true,
+        visualDensity: const VisualDensity(horizontal: 0, vertical: -3),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
+        minLeadingWidth: 38,
         leading: Container(
-          height: 42,
-          width: 42,
-          decoration: BoxDecoration(color: color.withOpacity(.10), borderRadius: BorderRadius.circular(13)),
+          height: 34,
+          width: 34,
+          decoration: BoxDecoration(color: color.withOpacity(.10), borderRadius: BorderRadius.circular(10)),
           child: Icon(
             direction == 'in' ? Icons.south_west_rounded : Icons.north_east_rounded,
             color: color,
@@ -424,7 +431,7 @@ class _DayBookDetailScreenState extends State<DayBookDetailScreen> {
             Expanded(
               child: Text(
                 label,
-                style: const TextStyle(fontWeight: FontWeight.w900, color: AppTheme.navy),
+                style: const TextStyle(fontWeight: FontWeight.w800, color: AppTheme.navy, fontSize: 13),
               ),
             ),
             // Fund / payment account this movement went through.
@@ -477,7 +484,7 @@ class _DayBookDetailScreenState extends State<DayBookDetailScreen> {
           children: [
             Text(
               '${direction == 'in' ? '+' : '-'} ${_money.format(amount)}',
-              style: TextStyle(fontWeight: FontWeight.w900, color: color, fontSize: 15),
+              style: TextStyle(fontWeight: FontWeight.w900, color: color, fontSize: 13),
             ),
             CashVoidButton(
               row: e,
@@ -504,24 +511,35 @@ class _Stat extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 9),
       decoration: BoxDecoration(
         color: AppTheme.surfaceSoft,
-        borderRadius: BorderRadius.circular(14),
+        borderRadius: BorderRadius.circular(12),
         border: Border.all(color: AppTheme.border),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Row(
         children: [
-          Row(
-            children: [
-              Icon(icon, size: 16, color: color),
-              const SizedBox(width: 6),
-              Text(label, style: const TextStyle(color: AppTheme.textMuted, fontWeight: FontWeight.w700, fontSize: 11.5)),
-            ],
+          Container(
+            height: 32,
+            width: 32,
+            decoration: BoxDecoration(
+              color: color.withOpacity(.10),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(icon, size: 16, color: color),
           ),
-          const SizedBox(height: 6),
-          Text(value, style: TextStyle(color: color, fontWeight: FontWeight.w900, fontSize: 18)),
+          const SizedBox(width: 9),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(label, style: const TextStyle(color: AppTheme.textMuted, fontWeight: FontWeight.w700, fontSize: 10.5)),
+                const SizedBox(height: 2),
+                Text(value, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: color, fontWeight: FontWeight.w900, fontSize: 13.5)),
+              ],
+            ),
+          ),
         ],
       ),
     );

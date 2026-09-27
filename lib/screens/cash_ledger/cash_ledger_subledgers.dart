@@ -26,6 +26,8 @@ class _SubledgerViewState extends State<SubledgerView> {
   final _money = const AppMoneyFormatter();
   final _dateFmt = DateFormat('yyyy-MM-dd');
   final _searchCtrl = TextEditingController();
+  final ScrollController _pageScrollController = ScrollController();
+  final ScrollController _transactionScrollController = ScrollController();
 
   bool _loading = true;
   String? _error;
@@ -44,6 +46,8 @@ class _SubledgerViewState extends State<SubledgerView> {
   @override
   void dispose() {
     _searchCtrl.dispose();
+    _pageScrollController.dispose();
+    _transactionScrollController.dispose();
     super.dispose();
   }
 
@@ -107,36 +111,50 @@ class _SubledgerViewState extends State<SubledgerView> {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      children: [
-        _filterBar(),
-        const Divider(height: 1),
-        Expanded(
-          child: _loading
-              ? const Center(child: CircularProgressIndicator())
-              : _error != null
-                  ? _Retry(message: _error!, onRetry: _fetch)
-                  : RefreshIndicator(
-                      onRefresh: _fetch,
-                      child: ListView(
-                        padding: const EdgeInsets.all(12),
-                        children: switch (widget.kind) {
-                          SubledgerKind.loans => _loansBody(),
-                          SubledgerKind.qameti => _qametiBody(),
-                          SubledgerKind.expenses => _expensesBody(),
-                        },
-                      ),
-                    ),
-        ),
-      ],
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final transactionHeight = (constraints.maxHeight * .56).clamp(320.0, 560.0);
+        return Scrollbar(
+          controller: _pageScrollController,
+          thumbVisibility: true,
+          child: RefreshIndicator(
+            onRefresh: _fetch,
+            child: SingleChildScrollView(
+              controller: _pageScrollController,
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+              child: Column(
+                children: [
+                  _filterBar(),
+                  const SizedBox(height: 10),
+                  if (_loading)
+                    const SizedBox(height: 320, child: Center(child: CircularProgressIndicator()))
+                  else if (_error != null)
+                    SizedBox(height: 320, child: _Retry(message: _error!, onRetry: _fetch))
+                  else
+                    ...switch (widget.kind) {
+                      SubledgerKind.loans => _loansBody(transactionHeight),
+                      SubledgerKind.qameti => _qametiBody(transactionHeight),
+                      SubledgerKind.expenses => _expensesBody(transactionHeight),
+                    },
+                ],
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 
   Widget _filterBar() {
     final hasRange = _from != null && _to != null;
     return Container(
-      color: AppTheme.surfaceSoft,
-      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppTheme.border),
+      ),
+      padding: const EdgeInsets.all(10),
       child: Row(
         children: [
           Expanded(
@@ -207,7 +225,7 @@ class _SubledgerViewState extends State<SubledgerView> {
   }
 
   // ── Loans ────────────────────────────────────────────────────────────────
-  List<Widget> _loansBody() {
+  List<Widget> _loansBody(double transactionHeight) {
     final s = Map<String, dynamic>.from(_data['summary'] ?? {});
     final rec = Map<String, dynamic>.from(_data['reconciliation'] ?? {});
     final borrowers = _list('borrowers');
@@ -224,8 +242,13 @@ class _SubledgerViewState extends State<SubledgerView> {
         const SizedBox(height: 8),
         _sectionLabel('Borrowers'),
         ...borrowers.map((b) => Card(
-              margin: const EdgeInsets.only(bottom: 8),
+              elevation: 0,
+              shape: RoundedRectangleBorder(side: const BorderSide(color: AppTheme.border), borderRadius: BorderRadius.circular(12)),
+              margin: const EdgeInsets.only(bottom: 5),
               child: ListTile(
+                dense: true,
+                visualDensity: const VisualDensity(horizontal: 0, vertical: -3),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 12),
                 title: Text('${b['name']}', style: const TextStyle(fontWeight: FontWeight.w800)),
                 subtitle: Text('${b['party_type']} • Given ${_m(b['given'])} • Recovered ${_m(b['recovered'])}'),
                 trailing: Column(
@@ -241,14 +264,18 @@ class _SubledgerViewState extends State<SubledgerView> {
       ],
       const SizedBox(height: 8),
       _sectionLabel('Transactions'),
-      if (txns.isEmpty)
-        _empty('No loan transactions in this period.')
-      else
-        ...txns.map((t) {
+      _transactionPanel(
+        height: transactionHeight,
+        items: txns,
+        emptyText: 'No loan transactions in this period.',
+        itemBuilder: (t) {
           final given = _n(t['given']) > 0;
           return Card(
-            margin: const EdgeInsets.only(bottom: 8),
+            margin: const EdgeInsets.only(bottom: 5),
             child: ListTile(
+              dense: true,
+              visualDensity: const VisualDensity(horizontal: 0, vertical: -3),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 12),
               leading: Icon(given ? Icons.north_east_rounded : Icons.south_west_rounded,
                   color: given ? AppTheme.danger : AppTheme.success),
               title: Row(children: [
@@ -262,12 +289,13 @@ class _SubledgerViewState extends State<SubledgerView> {
               ),
             ),
           );
-        }),
+        },
+      ),
     ];
   }
 
   // ── Qameti ───────────────────────────────────────────────────────────────
-  List<Widget> _qametiBody() {
+  List<Widget> _qametiBody(double transactionHeight) {
     final s = Map<String, dynamic>.from(_data['summary'] ?? {});
     final rec = Map<String, dynamic>.from(_data['reconciliation'] ?? {});
     final txns = _list('transactions');
@@ -280,31 +308,39 @@ class _SubledgerViewState extends State<SubledgerView> {
       ]),
       _recLine(rec),
       const SizedBox(height: 8),
-      if (txns.isEmpty)
-        _empty('No Qameti activity in this period.')
-      else
-        ...txns.map((t) => Card(
-              margin: const EdgeInsets.only(bottom: 8),
-              child: ListTile(
-                title: Row(children: [
-                  Expanded(child: Text('${t['reference'] ?? '—'}', style: const TextStyle(fontWeight: FontWeight.w700))),
-                  _methodChip(t['method']),
-                ]),
-                subtitle: Text('${t['date']} • bal ${_m(t['balance'])}'),
-                trailing: Text(
-                  _n(t['payment']) > 0 ? '+${_m(t['payment'])}' : '-${_m(t['collection'])}',
-                  style: TextStyle(
-                    fontWeight: FontWeight.w900,
-                    color: _n(t['payment']) > 0 ? AppTheme.danger : AppTheme.success,
-                  ),
-                ),
+      _sectionLabel('Transactions'),
+      _transactionPanel(
+        height: transactionHeight,
+        items: txns,
+        emptyText: 'No Qameti activity in this period.',
+        itemBuilder: (t) => Card(
+          elevation: 0,
+          shape: RoundedRectangleBorder(side: const BorderSide(color: AppTheme.border), borderRadius: BorderRadius.circular(12)),
+          margin: const EdgeInsets.only(bottom: 5),
+          child: ListTile(
+            dense: true,
+            visualDensity: const VisualDensity(horizontal: 0, vertical: -3),
+            contentPadding: const EdgeInsets.symmetric(horizontal: 12),
+            title: Row(children: [
+              Expanded(child: Text('${t['reference'] ?? '—'}', style: const TextStyle(fontWeight: FontWeight.w700))),
+              _methodChip(t['method']),
+            ]),
+            subtitle: Text('${t['date']} • bal ${_m(t['balance'])}'),
+            trailing: Text(
+              _n(t['payment']) > 0 ? '+${_m(t['payment'])}' : '-${_m(t['collection'])}',
+              style: TextStyle(
+                fontWeight: FontWeight.w900,
+                color: _n(t['payment']) > 0 ? AppTheme.danger : AppTheme.success,
               ),
-            )),
+            ),
+          ),
+        ),
+      ),
     ];
   }
 
   // ── Expenses ─────────────────────────────────────────────────────────────
-  List<Widget> _expensesBody() {
+  List<Widget> _expensesBody(double transactionHeight) {
     final s = Map<String, dynamic>.from(_data['summary'] ?? {});
     final byAccount = _list('by_account');
     final txns = _list('transactions');
@@ -317,6 +353,8 @@ class _SubledgerViewState extends State<SubledgerView> {
       if (byAccount.isNotEmpty) ...[
         const SizedBox(height: 8),
         Card(
+          elevation: 0,
+          shape: RoundedRectangleBorder(side: const BorderSide(color: AppTheme.border), borderRadius: BorderRadius.circular(12)),
           child: Padding(
             padding: const EdgeInsets.all(12),
             child: Column(
@@ -338,23 +376,58 @@ class _SubledgerViewState extends State<SubledgerView> {
       ],
       const SizedBox(height: 8),
       _sectionLabel('Transactions'),
-      if (txns.isEmpty)
-        _empty('No expenses in this period.')
-      else
-        ...txns.map((t) => Card(
-              margin: const EdgeInsets.only(bottom: 8),
-              child: ListTile(
-                title: Row(children: [
-                  Expanded(child: Text('${t['payee'] ?? t['account_name'] ?? '—'}',
-                      style: const TextStyle(fontWeight: FontWeight.w700))),
-                  _methodChip(t['method']),
-                ]),
-                subtitle: Text('${t['date']} • ${t['account_code']} · ${t['account_name']}'),
-                trailing: Text(_m(t['amount']),
-                    style: const TextStyle(fontWeight: FontWeight.w900, color: AppTheme.danger)),
-              ),
-            )),
+      _transactionPanel(
+        height: transactionHeight,
+        items: txns,
+        emptyText: 'No expenses in this period.',
+        itemBuilder: (t) => Card(
+          elevation: 0,
+          shape: RoundedRectangleBorder(side: const BorderSide(color: AppTheme.border), borderRadius: BorderRadius.circular(12)),
+          margin: const EdgeInsets.only(bottom: 5),
+          child: ListTile(
+            dense: true,
+            visualDensity: const VisualDensity(horizontal: 0, vertical: -3),
+            contentPadding: const EdgeInsets.symmetric(horizontal: 12),
+            title: Row(children: [
+              Expanded(child: Text('${t['payee'] ?? t['account_name'] ?? '—'}',
+                  style: const TextStyle(fontWeight: FontWeight.w700))),
+              _methodChip(t['method']),
+            ]),
+            subtitle: Text('${t['date']} • ${t['account_code']} · ${t['account_name']}'),
+            trailing: Text(_m(t['amount']),
+                style: const TextStyle(fontWeight: FontWeight.w900, color: AppTheme.danger)),
+          ),
+        ),
+      ),
     ];
+  }
+
+  Widget _transactionPanel({
+    required double height,
+    required List<Map<String, dynamic>> items,
+    required String emptyText,
+    required Widget Function(Map<String, dynamic>) itemBuilder,
+  }) {
+    if (items.isEmpty) return _empty(emptyText);
+    return Container(
+      height: height,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppTheme.border),
+      ),
+      padding: const EdgeInsets.fromLTRB(8, 7, 5, 7),
+      child: Scrollbar(
+        controller: _transactionScrollController,
+        thumbVisibility: true,
+        child: ListView.builder(
+          controller: _transactionScrollController,
+          itemCount: items.length,
+          padding: const EdgeInsets.only(right: 8),
+          itemBuilder: (_, index) => itemBuilder(items[index]),
+        ),
+      ),
+    );
   }
 
   // ── shared bits ──────────────────────────────────────────────────────────
@@ -367,31 +440,47 @@ class _SubledgerViewState extends State<SubledgerView> {
         child: Text(t, style: const TextStyle(fontWeight: FontWeight.w800, color: AppTheme.textMuted, fontSize: 12)),
       );
 
-  Widget _summaryCard(String title, List<Widget> stats) => Card(
-        child: Padding(
-          padding: const EdgeInsets.all(14),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(title, style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 15)),
-              const SizedBox(height: 10),
-              Wrap(spacing: 20, runSpacing: 10, children: stats),
-            ],
-          ),
+  Widget _summaryCard(String title, List<Widget> stats) => Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: AppTheme.border),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(title, style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 13, color: AppTheme.navy)),
+            const SizedBox(height: 10),
+            Row(children: [
+              for (var i = 0; i < stats.length; i++) ...[
+                if (i > 0) const SizedBox(width: 8),
+                Expanded(child: stats[i]),
+              ],
+            ]),
+          ],
         ),
       );
 
-  Widget _stat(String label, dynamic value, {Color? color, bool strong = false}) => Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(label, style: const TextStyle(color: AppTheme.textMuted, fontSize: 12)),
-          Text(_m(value),
-              style: TextStyle(
-                fontWeight: strong ? FontWeight.w900 : FontWeight.w700,
-                fontSize: strong ? 18 : 15,
-                color: color,
-              )),
-        ],
+  Widget _stat(String label, dynamic value, {Color? color, bool strong = false}) => Container(
+        constraints: const BoxConstraints(minHeight: 58),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        decoration: BoxDecoration(
+          color: AppTheme.surfaceSoft,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: AppTheme.border),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(label, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: AppTheme.textMuted, fontSize: 10.5, fontWeight: FontWeight.w700)),
+            const SizedBox(height: 3),
+            Text(_m(value), maxLines: 1, overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontWeight: FontWeight.w900, fontSize: strong ? 15 : 14, color: color ?? AppTheme.navy)),
+          ],
+        ),
       );
 
   Widget _recLine(Map<String, dynamic> rec) {
