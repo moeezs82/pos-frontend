@@ -1,4 +1,5 @@
 import 'package:enterprise_pos/theme/app_theme.dart';
+import 'package:enterprise_pos/widgets/counteriq_desktop_shell.dart';
 import 'package:flutter/material.dart';
 
 class EnterprisePage extends StatelessWidget {
@@ -27,29 +28,36 @@ class EnterprisePage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final embedded = CounterIQDesktopShell.isPersistentShellMounted(context);
+    final content = SafeArea(
+      top: false,
+      child: Padding(
+        padding: padding,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            EnterprisePageHeader(
+              title: title,
+              subtitle: subtitle,
+              icon: icon,
+              actions: actions,
+            ),
+            const SizedBox(height: 14),
+            Expanded(child: child),
+          ],
+        ),
+      ),
+    );
+
+    if (embedded) {
+      return Material(color: AppTheme.bg, child: content);
+    }
+
     return Scaffold(
       appBar: AppBar(title: Text(title), actions: appBarActions),
       floatingActionButton: floatingActionButton,
       bottomNavigationBar: bottomNavigationBar,
-      body: SafeArea(
-        top: false,
-        child: Padding(
-          padding: padding,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              EnterprisePageHeader(
-                title: title,
-                subtitle: subtitle,
-                icon: icon,
-                actions: actions,
-              ),
-              const SizedBox(height: 14),
-              Expanded(child: child),
-            ],
-          ),
-        ),
-      ),
+      body: content,
     );
   }
 }

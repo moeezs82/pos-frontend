@@ -36,12 +36,16 @@ class _VendorEditScreenState extends State<VendorEditScreen>
   String? _errorHeader;
   Map<String, dynamic>? vendor;
 
-  final int _pageSize = 10;
+  static const int _pageSize = 40;
+  static const int _maxPurchaseCachedPages = 6;
+  static const double _purchaseRowExtent = 88;
   bool _loadingPurchases = false;
   bool _loadedPurchasesOnce = false;
   String? _errorPurchases;
-  int _purPage = 1, _purLastPage = 1, _purTotal = 0;
-  final List<Map<String, dynamic>> _purchases = [];
+  int _purLastPage = 1, _purTotal = 0;
+  final ScrollController _purchaseScrollController = ScrollController();
+  final Map<int,List<Map<String,dynamic>>> _purchasePages = {};
+  final Set<int> _loadingPurchasePages = {};
 
   bool _loadingLedger = false;
 
@@ -71,10 +75,11 @@ class _VendorEditScreenState extends State<VendorEditScreen>
     _service = VendorService(token: token);
     _tab = TabController(length: _canViewCreditAudits ? 4 : 3, vsync: this);
     _tab.addListener(_onTabChanged);
+    _purchaseScrollController.addListener(_onPurchaseScroll);
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadHeader();
-      _loadPurchases(page: 1);
+      _loadPurchases(page: 1, reset: true);
     });
   }
 
@@ -84,12 +89,13 @@ class _VendorEditScreenState extends State<VendorEditScreen>
     _tab.dispose();
     _amountController.dispose();
     _referenceController.dispose();
+    _purchaseScrollController.dispose();
     super.dispose();
   }
 
   void _onTabChanged() {
     if (!_tab.indexIsChanging) {
-      if (_tab.index == 0 && !_loadedPurchasesOnce) _loadPurchases(page: 1);
+      if (_tab.index == 0 && !_loadedPurchasesOnce) _loadPurchases(page: 1, reset: true);
       // Ledgers open on the latest (last) page so newest entries show first.
       if (_tab.index == 1 && !_loadedLedgerOnce) _loadLedger(page: 1, latest: true);
       if (_tab.index == 2 && !_loadedLoanOnce) _loadLoanLedger(page: 1, latest: true);
@@ -119,40 +125,17 @@ class _VendorEditScreenState extends State<VendorEditScreen>
     }
   }
 
-  Future<void> _loadPurchases({required int page}) async {
-    if (_loadingPurchases) return;
-    setState(() {
-      _loadingPurchases = true;
-      _errorPurchases = null;
-    });
-    try {
-      final branchId = context.read<BranchProvider>().selectedBranchId;
-      final res = await _service.getVendorPurchases(
-        id: widget.vendorId,
-        page: page,
-        perPage: _pageSize,
-        branchId: branchId,
-      );
-      final wrap = (res['data'] as Map).cast<String, dynamic>();
-      final items = ((wrap['items'] as List?) ?? const [])
-          .map((e) => (e as Map).cast<String, dynamic>())
-          .toList();
-      if (!mounted) return;
-      setState(() {
-        _purchases
-          ..clear()
-          ..addAll(items);
-        _purPage = (wrap['current_page'] as num?)?.toInt() ?? page;
-        _purLastPage = (wrap['last_page'] as num?)?.toInt() ?? _purLastPage;
-        _purTotal = (wrap['total'] as num?)?.toInt() ?? _purTotal;
-        _loadedPurchasesOnce = true;
-      });
-    } catch (e) {
-      if (mounted) setState(() => _errorPurchases = 'Failed to load purchases: $e');
-    } finally {
-      if (mounted) setState(() => _loadingPurchases = false);
-    }
+  Future<void> _loadPurchases({required int page, bool reset = false}) async {
+    if(reset){_purchasePages.clear();_loadingPurchasePages.clear();_purLastPage=1;_purTotal=0;if(_purchaseScrollController.hasClients)_purchaseScrollController.jumpTo(0);}
+    if(_loadingPurchasePages.contains(page)||page<1||(_purTotal>0&&page>_purLastPage))return;
+    _loadingPurchasePages.add(page);if(mounted&&_purchasePages.isEmpty)setState(()=>_loadingPurchases=true);
+    try{final branchId=context.read<BranchProvider>().selectedBranchId;final res=await _service.getVendorPurchases(id:widget.vendorId,page:page,perPage:_pageSize,branchId:branchId);final wrap=(res['data'] as Map).cast<String,dynamic>();final items=((wrap['items'] as List?)??const[]).map((e)=>(e as Map).cast<String,dynamic>()).toList();if(!mounted)return;setState((){_purchasePages[page]=items;_purLastPage=(wrap['last_page'] as num?)?.toInt()??1;_purTotal=(wrap['total'] as num?)?.toInt()??items.length;_loadedPurchasesOnce=true;_evictPurchasePages(keepPage:page);});}
+    catch(e){if(mounted)setState(()=>_errorPurchases='Failed to load purchases: $e');}
+    finally{_loadingPurchasePages.remove(page);if(mounted)setState(()=>_loadingPurchases=false);}
   }
+  void _onPurchaseScroll(){if(!_purchaseScrollController.hasClients||_purTotal<=0)return;final first=(_purchaseScrollController.offset/_purchaseRowExtent).floor().clamp(0,_purTotal-1);final last=(first+(_purchaseScrollController.position.viewportDimension/_purchaseRowExtent).ceil()+5).clamp(0,_purTotal-1);final fp=first~/_pageSize+1,lp=last~/_pageSize+1;for(var p=fp;p<=lp;p++){if(!_purchasePages.containsKey(p))_loadPurchases(page:p);}if(lp<_purLastPage&&!_purchasePages.containsKey(lp+1))_loadPurchases(page:lp+1);}
+  Map<String,dynamic>? _purchaseAt(int index){final p=index~/_pageSize+1,o=index%_pageSize;final rows=_purchasePages[p];if(rows==null){_loadPurchases(page:p);return null;}return o<rows.length?rows[o]:null;}
+  void _evictPurchasePages({required int keepPage}){if(_purchasePages.length<=_maxPurchaseCachedPages)return;final keys=_purchasePages.keys.toList()..sort((a,b)=>(b-keepPage).abs().compareTo((a-keepPage).abs()));while(_purchasePages.length>_maxPurchaseCachedPages&&keys.isNotEmpty){_purchasePages.remove(keys.removeAt(0));}}
 
   /// Reverse a customer receipt / vendor payment straight from the trade
   /// ledger. The backend already decides eligibility (`can_reverse` is false
@@ -303,7 +286,7 @@ class _VendorEditScreenState extends State<VendorEditScreen>
     if (_loadingHeader || _loadingPurchases || _loadingLedger || _loadingLoan) return;
     await _loadHeader();
     if (_tab.index == 0) {
-      await _loadPurchases(page: _purPage);
+      await _loadPurchases(page: 1, reset: true);
     } else if (_tab.index == 1) {
       await _loadLedger(page: _ldgPage);
     } else {
@@ -320,7 +303,7 @@ class _VendorEditScreenState extends State<VendorEditScreen>
     );
     if (result == true) {
       await _loadHeader();
-      if (_tab.index == 0 && _loadedPurchasesOnce) _loadPurchases(page: _purPage);
+      if (_tab.index == 0 && _loadedPurchasesOnce) _loadPurchases(page: 1, reset: true);
       if (_tab.index == 1 && _loadedLedgerOnce) _loadLedger(page: _ldgPage);
       if (_tab.index == 2 && _loadedLoanOnce) _loadLoanLedger(page: _loanPage);
       if (mounted) AppFeedback.success(context, 'Vendor updated');
@@ -472,7 +455,7 @@ class _VendorEditScreenState extends State<VendorEditScreen>
       await _loadHeader();
       // After posting, jump to the page containing the newest entry (last page).
       if (_tab.index == 0 && _loadedPurchasesOnce) {
-        await _loadPurchases(page: _purPage);
+        await _loadPurchases(page: 1, reset: true);
       } else if (_tab.index == 1 && _loadedLedgerOnce) {
         await _loadLedger(page: _ldgPage, latest: true);
       } else if (_tab.index == 2 && _loadedLoanOnce) {
@@ -580,16 +563,16 @@ class _VendorEditScreenState extends State<VendorEditScreen>
                           controller: _tab,
                           children: [
                             _PurchasesTab(
-                              items: _purchases,
                               isLoading: _loadingPurchases,
                               error: _errorPurchases,
-                              page: _purPage,
-                              lastPage: _purLastPage,
                               total: _purTotal,
-                              onRetry: () => _loadPurchases(page: _purPage),
-                              onPrev: () => _loadPurchases(page: _purPage - 1),
-                              onNext: () => _loadPurchases(page: _purPage + 1),
-                              onRefresh: () async => _loadPurchases(page: 1),
+                              rowExtent: _purchaseRowExtent,
+                              controller: _purchaseScrollController,
+                              itemAt: _purchaseAt,
+                              cachedPages: _purchasePages.length,
+                              maxCachedPages: _maxPurchaseCachedPages,
+                              onRetry: () => _loadPurchases(page: 1, reset: true),
+                              onRefresh: () async => _loadPurchases(page: 1, reset: true),
                               money: _money,
                               toInt: _toInt,
                             ),
@@ -712,89 +695,9 @@ class _VendorEditScreenState extends State<VendorEditScreen>
 }
 
 class _PurchasesTab extends StatelessWidget {
-  const _PurchasesTab({
-    required this.items,
-    required this.isLoading,
-    required this.error,
-    required this.page,
-    required this.lastPage,
-    required this.total,
-    required this.onRetry,
-    required this.onPrev,
-    required this.onNext,
-    required this.onRefresh,
-    required this.money,
-    required this.toInt,
-  });
-
-  final List<Map<String, dynamic>> items;
-  final bool isLoading;
-  final String? error;
-  final int page, lastPage, total;
-  final VoidCallback onRetry, onPrev, onNext;
-  final Future<void> Function() onRefresh;
-  final String Function(dynamic value) money;
-  final int Function(dynamic value) toInt;
-
-  @override
-  Widget build(BuildContext context) {
-    if (isLoading && items.isEmpty) {
-      return const Center(child: CircularProgressIndicator());
-    }
-    if (error != null && items.isEmpty) {
-      return _PartyErrorView(message: error!, onRetry: onRetry);
-    }
-
-    return RefreshIndicator(
-      onRefresh: onRefresh,
-      child: ListView(
-        physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.fromLTRB(16, 4, 16, 22),
-        children: [
-          if (isLoading) ...[
-            const LinearProgressIndicator(minHeight: 2),
-            const SizedBox(height: 10),
-          ],
-          if (items.isEmpty)
-            const _PartyEmptyState(
-              icon: Icons.shopping_bag_rounded,
-              title: 'No purchases yet',
-              subtitle: 'Purchase invoices for this vendor will appear here.',
-            )
-          else ...[
-            for (final p in items) ...[
-              _PartyDocumentRow(
-                icon: Icons.shopping_bag_rounded,
-                accentColor: AppTheme.purple,
-                title: (p['invoice_no'] ?? 'Purchase').toString(),
-                amount: money(p['total']),
-                primaryMeta: "Date ${p['invoice_date'] ?? '—'}",
-                secondaryMeta: '',
-                openAmount: money(p['open_amount']),
-                onTap: () {
-                  final id = toInt(p['id']);
-                  if (id <= 0) return;
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => PurchaseDetailScreen(purchaseId: id)),
-                  );
-                },
-              ),
-              if (p != items.last) const SizedBox(height: 10),
-            ],
-          ],
-          const SizedBox(height: 12),
-          _PartyPager(
-            page: page,
-            lastPage: lastPage,
-            total: total,
-            onPrev: onPrev,
-            onNext: onNext,
-          ),
-        ],
-      ),
-    );
-  }
+  const _PurchasesTab({required this.isLoading,required this.error,required this.total,required this.rowExtent,required this.controller,required this.itemAt,required this.cachedPages,required this.maxCachedPages,required this.onRetry,required this.onRefresh,required this.money,required this.toInt});
+  final bool isLoading; final String? error; final int total,cachedPages,maxCachedPages; final double rowExtent; final ScrollController controller; final Map<String,dynamic>? Function(int) itemAt; final VoidCallback onRetry; final Future<void> Function() onRefresh; final String Function(dynamic) money; final int Function(dynamic) toInt;
+  @override Widget build(BuildContext context){if(isLoading&&total==0)return const Center(child:CircularProgressIndicator());if(error!=null&&total==0)return _PartyErrorView(message:error!,onRetry:onRetry);if(total==0)return const _PartyEmptyState(icon:Icons.shopping_bag_rounded,title:'No purchases yet',subtitle:'Purchase invoices for this vendor will appear here.');return Column(children:[Expanded(child:RefreshIndicator(onRefresh:onRefresh,child:ListView.builder(controller:controller,itemExtent:rowExtent,itemCount:total,cacheExtent:rowExtent*10,padding:const EdgeInsets.fromLTRB(16,4,16,8),itemBuilder:(_,index){final purchase=itemAt(index);if(purchase==null)return const Center(child:SizedBox(width:18,height:18,child:CircularProgressIndicator(strokeWidth:2)));return Padding(padding:const EdgeInsets.only(bottom:8),child:_PartyDocumentRow(icon:Icons.shopping_bag_rounded,accentColor:AppTheme.purple,title:(purchase['invoice_no']??'Purchase').toString(),amount:money(purchase['total']),primaryMeta:"Date ${purchase['invoice_date']??'—'}",secondaryMeta:'',openAmount:money(purchase['open_amount']),onTap:(){final id=toInt(purchase['id']);if(id>0)Navigator.push(context,MaterialPageRoute(builder:(_)=>PurchaseDetailScreen(purchaseId:id)));}));}))),Padding(padding:const EdgeInsets.fromLTRB(16,4,16,8),child:Align(alignment:Alignment.centerLeft,child:Text('$total purchases • bounded cache $cachedPages/$maxCachedPages pages',style:const TextStyle(color:AppTheme.textMuted,fontSize:11,fontWeight:FontWeight.w700))))]);}
 }
 
 class _LedgerTab extends StatelessWidget {
@@ -2374,65 +2277,6 @@ class _AmountBadge extends StatelessWidget {
   }
 }
 
-class _PartyPager extends StatelessWidget {
-  const _PartyPager({
-    super.key,
-    required this.page,
-    required this.lastPage,
-    required this.total,
-    required this.onPrev,
-    required this.onNext,
-  });
-
-  final int page;
-  final int lastPage;
-  final int total;
-  final VoidCallback onPrev;
-  final VoidCallback onNext;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppTheme.border),
-      ),
-      child: Wrap(
-        spacing: 10,
-        runSpacing: 8,
-        crossAxisAlignment: WrapCrossAlignment.center,
-        alignment: WrapAlignment.spaceBetween,
-        children: [
-          Text(
-            'Total $total  •  Page $page of $lastPage',
-            style: const TextStyle(
-              color: AppTheme.textMuted,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              OutlinedButton.icon(
-                onPressed: page > 1 ? onPrev : null,
-                icon: const Icon(Icons.chevron_left_rounded),
-                label: const Text('Previous'),
-              ),
-              const SizedBox(width: 8),
-              FilledButton.icon(
-                onPressed: page < lastPage ? onNext : null,
-                icon: const Icon(Icons.chevron_right_rounded),
-                label: const Text('Next'),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-}
 
 class _PartyEmptyState extends StatelessWidget {
   const _PartyEmptyState({

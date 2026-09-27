@@ -20,6 +20,7 @@ import 'package:enterprise_pos/services/whatsapp_message_template_service.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/utils/print_text_utils.dart';
 import 'package:enterprise_pos/widgets/enterprise/enterprise_panel.dart';
+import 'package:enterprise_pos/widgets/enterprise/enterprise_ui.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -1290,9 +1291,11 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
     final auth = context.watch<AuthProvider>();
 
     if (!auth.hasPermission('manage-printer-settings')) {
-      return Scaffold(
-        appBar: AppBar(title: const Text('Printer Settings')),
-        body: const Center(
+      return const EnterprisePage(
+        title: 'Printer Settings',
+        subtitle: 'Configure printing, invoice templates and receipt behavior.',
+        icon: Icons.print_outlined,
+        child: Center(
           child: Padding(
             padding: EdgeInsets.all(24),
             child: Text(
@@ -1305,51 +1308,56 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
       );
     }
 
-    return Scaffold(
-      appBar: AppBar(title: const Text('Printer Settings')),
-      body: _loadingBranches
-          ? const Center(child: CircularProgressIndicator())
+    return EnterprisePage(
+      title: 'Printer Settings',
+      subtitle: 'Manage business-specific printers, invoice branding, templates, WhatsApp and barcode output.',
+      icon: Icons.print_outlined,
+      actions: [
+        OutlinedButton.icon(
+          onPressed: (_loadingConfig || _saving) ? null : () => _loadConfigFor(_selectedBranchId),
+          icon: const Icon(Icons.refresh_rounded, size: 18),
+          label: const Text('Refresh'),
+        ),
+        FilledButton.icon(
+          onPressed: (_loadingConfig || _saving) ? null : _save,
+          icon: _saving
+              ? const SizedBox(height: 16, width: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+              : const Icon(Icons.save_rounded, size: 18),
+          label: Text(_saving ? 'Saving…' : 'Save Settings'),
+        ),
+      ],
+      child: _loadingBranches
+          ? const Center(child: CircularProgressIndicator(strokeWidth: 2))
           : ListView(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
+              padding: const EdgeInsets.only(bottom: 28),
               children: [
                 auth.isMasterAdmin ? _buildBranchPicker() : _buildOwnBusinessPanel(),
-                const SizedBox(height: 14),
+                const SizedBox(height: 12),
                 if (_loadingConfig)
                   const Padding(
                     padding: EdgeInsets.symmetric(vertical: 30),
-                    child: Center(child: CircularProgressIndicator()),
+                    child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
                   )
                 else ...[
                   _buildShopInfoPanel(),
-                  const SizedBox(height: 14),
+                  const SizedBox(height: 12),
                   _buildConnectionPanel(),
-                  const SizedBox(height: 14),
+                  const SizedBox(height: 12),
                   _buildTemplatePanel(),
-                  const SizedBox(height: 14),
+                  const SizedBox(height: 12),
                   _buildInvoiceBrandingPanel(),
-                  const SizedBox(height: 14),
+                  const SizedBox(height: 12),
                   _buildWhatsAppInvoicePanel(),
-                  const SizedBox(height: 14),
+                  const SizedBox(height: 12),
                   _buildFooterLinesPanel(),
-                  const SizedBox(height: 14),
+                  const SizedBox(height: 12),
                   if (auth.isMasterAdmin) ...[
                     _buildDevCreditPanel(),
-                    const SizedBox(height: 14),
+                    const SizedBox(height: 12),
                   ],
                   _buildSecondaryPanel(),
-                  const SizedBox(height: 14),
+                  const SizedBox(height: 12),
                   _buildBarcodePanel(),
-                  const SizedBox(height: 20),
-                  SizedBox(
-                    width: double.infinity,
-                    child: FilledButton.icon(
-                      onPressed: _saving ? null : _save,
-                      icon: _saving
-                          ? const SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                          : const Icon(Icons.save_rounded),
-                      label: Text(_saving ? 'Saving...' : 'Save Settings'),
-                    ),
-                  ),
                 ],
               ],
             ),

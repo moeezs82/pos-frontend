@@ -4,6 +4,7 @@ import 'package:enterprise_pos/providers/branch_feature_provider.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/app_feedback.dart';
 import 'package:enterprise_pos/widgets/enterprise/enterprise_panel.dart';
+import 'package:enterprise_pos/widgets/enterprise/enterprise_ui.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -164,28 +165,45 @@ class _BranchFeatureSettingsScreenState
   Widget build(BuildContext context) {
     final auth = context.watch<AuthProvider>();
     if (!auth.isMasterAdmin) {
-      return const Scaffold(
-        body: Center(child: Text('Only Master Admin can access module settings.')),
+      return const EnterprisePage(
+        title: 'Module & Workflow Settings',
+        subtitle: 'Branch-specific feature switches.',
+        icon: Icons.toggle_on_outlined,
+        child: Center(child: Text('Only Master Admin can access module settings.')),
       );
     }
 
-    return Scaffold(
-      appBar: AppBar(title: const Text('Module & Workflow Settings')),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
+    return EnterprisePage(
+      title: 'Module & Workflow Settings',
+      subtitle: 'Control branch-specific operational features without changing historical transactions.',
+      icon: Icons.toggle_on_outlined,
+      actions: [
+        if (_selectedBranchId != null)
+          OutlinedButton.icon(
+            onPressed: _loading ? null : _loadSettings,
+            icon: const Icon(Icons.refresh_rounded, size: 18),
+            label: const Text('Refresh'),
+          ),
+        FilledButton.icon(
+          onPressed: (_saving || _selectedBranchId == null || _loading) ? null : _save,
+          icon: _saving
+              ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+              : const Icon(Icons.save_rounded, size: 18),
+          label: Text(_saving ? 'Saving…' : 'Save Settings'),
+        ),
+      ],
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.only(bottom: 24),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _BranchSelector(
-              branchName: _selectedBranchName,
-              onTap: _pickBranch,
-            ),
-            const SizedBox(height: 16),
+            _BranchSelector(branchName: _selectedBranchName, onTap: _pickBranch),
+            const SizedBox(height: 14),
             if (_selectedBranchId == null)
               EnterprisePanel(
                 padding: const EdgeInsets.all(20),
-                child: Row(
-                  children: const [
+                child: const Row(
+                  children: [
                     Icon(Icons.info_outline_rounded, color: AppTheme.textMuted),
                     SizedBox(width: 12),
                     Expanded(
@@ -198,23 +216,14 @@ class _BranchFeatureSettingsScreenState
                 ),
               )
             else if (_loading)
-              const Center(
-                child: Padding(
-                  padding: EdgeInsets.all(40),
-                  child: CircularProgressIndicator(),
-                ),
-              )
+              const Center(child: Padding(padding: EdgeInsets.all(40), child: CircularProgressIndicator(strokeWidth: 2)))
             else if (_error != null)
-              _ErrorPanel(
-                message: _error!,
-                onRetry: _loadSettings,
-              )
+              _ErrorPanel(message: _error!, onRetry: _loadSettings)
             else ...[
               _FeatureSwitch(
                 icon: Icons.delivery_dining_rounded,
                 title: 'Delivery Module',
-                subtitle:
-                    'Enable delivery assignments, delivery-boy cash collection and delivery reporting.',
+                subtitle: 'Enable delivery assignments, delivery-boy cash collection and delivery reporting.',
                 value: _deliveryEnabled,
                 onChanged: _onDeliveryToggle,
               ),
@@ -222,28 +231,9 @@ class _BranchFeatureSettingsScreenState
               _FeatureSwitch(
                 icon: Icons.storefront_outlined,
                 title: 'Vendor Field on Sale',
-                subtitle:
-                    'Allow vendor selection while creating a sale. Purchases and vendor accounting are unaffected.',
+                subtitle: 'Allow vendor selection while creating a sale. Purchases and vendor accounting are unaffected.',
                 value: _saleVendorEnabled,
                 onChanged: (v) => setState(() => _saleVendorEnabled = v),
-              ),
-              const SizedBox(height: 24),
-              SizedBox(
-                width: double.infinity,
-                child: FilledButton.icon(
-                  icon: _saving
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: Colors.white,
-                          ),
-                        )
-                      : const Icon(Icons.save_rounded),
-                  label: Text(_saving ? 'Saving…' : 'Save Settings'),
-                  onPressed: _saving ? null : _save,
-                ),
               ),
             ],
           ],

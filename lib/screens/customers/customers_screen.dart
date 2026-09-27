@@ -25,14 +25,17 @@ class CustomersScreen extends StatefulWidget {
 
 class _CustomersScreenState extends State<CustomersScreen> {
   static const int _perPage = 40;
+  static const int _maxCachedPages = 6;
+  static const double _rowExtent = 58;
 
-  int _page = 1;
   int _lastPage = 1;
   int _total = 0;
   bool _loading = false;
   String _search = '';
   final _searchController = TextEditingController();
-  final List<Map<String, dynamic>> _customers = [];
+  final _scrollController = ScrollController();
+  final Map<int, List<Map<String, dynamic>>> _pages = {};
+  final Set<int> _loadingPages = {};
   late CustomerService _customerService;
   VoidCallback? _branchListener;
 
@@ -44,65 +47,93 @@ class _CustomersScreenState extends State<CustomersScreen> {
     final branchProvider = context.read<BranchProvider>();
     _branchListener = () => _fetchCustomers(reset: true);
     branchProvider.addListener(_branchListener!);
+    _scrollController.addListener(_onScroll);
     _fetchCustomers(reset: true);
   }
 
   @override
   void dispose() {
     _searchController.dispose();
+    _scrollController.dispose();
     final branchProvider = context.read<BranchProvider>();
     if (_branchListener != null) branchProvider.removeListener(_branchListener!);
     super.dispose();
   }
 
-  Future<void> _fetchCustomers({bool reset = false}) async {
-    if (_loading) return;
-    if (mounted) setState(() => _loading = true);
+  Future<void> _fetchCustomers({bool reset = false, int page = 1}) async {
     if (reset) {
-      _page = 1;
+      _pages.clear();
+      _loadingPages.clear();
       _lastPage = 1;
       _total = 0;
-      _customers.clear();
+      if (_scrollController.hasClients) _scrollController.jumpTo(0);
     }
+    if (_loadingPages.contains(page) || page < 1 || (_total > 0 && page > _lastPage)) return;
+    _loadingPages.add(page);
+    if (mounted && _pages.isEmpty) setState(() => _loading = true);
     try {
       final branchId = context.read<BranchProvider>().selectedBranchId;
       final data = await _customerService.getCustomers(
-        page: _page,
-        perPage: _perPage,
-        search: _search,
-        includeBalance: true,
-        branchId: branchId,
+        page: page, perPage: _perPage, search: _search, includeBalance: true, branchId: branchId,
       );
       final wrapper = (data['data'] as Map<String, dynamic>?) ?? const {};
-      final rows = (wrapper['customers'] as List?)
-              ?.whereType<Map>()
-              .map((e) => Map<String, dynamic>.from(e))
-              .toList() ??
-          const <Map<String, dynamic>>[];
+      final rows = (wrapper['customers'] as List?)?.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList() ?? const <Map<String, dynamic>>[];
       if (!mounted) return;
       setState(() {
-        _customers
-          ..clear()
-          ..addAll(rows);
-        _page = (wrapper['current_page'] as num?)?.toInt() ?? _page;
+        _pages[page] = rows;
         _lastPage = (wrapper['last_page'] as num?)?.toInt() ?? _lastPage;
         _total = (wrapper['total'] as num?)?.toInt() ?? _total;
+        _evictPages(keepPage: page);
       });
     } catch (e) {
       if (mounted) AppFeedback.error(context, 'Failed to load customers: $e');
     } finally {
+      _loadingPages.remove(page);
       if (mounted) setState(() => _loading = false);
     }
   }
 
+  void _onScroll() {
+    if (!_scrollController.hasClients || _total <= 0) return;
+    final first = (_scrollController.offset / _rowExtent).floor().clamp(0, _total - 1);
+    final visible = (_scrollController.position.viewportDimension / _rowExtent).ceil() + 6;
+    final last = (first + visible).clamp(0, _total - 1);
+    final firstPage = first ~/ _perPage + 1;
+    final lastPage = last ~/ _perPage + 1;
+    for (var page = firstPage; page <= lastPage; page++) {
+      if (!_pages.containsKey(page)) _fetchCustomers(page: page);
+    }
+    final nextPage = lastPage + 1;
+    if (nextPage <= _lastPage && !_pages.containsKey(nextPage)) _fetchCustomers(page: nextPage);
+  }
+
+  Map<String, dynamic>? _customerAt(int index) {
+    final page = index ~/ _perPage + 1;
+    final offset = index % _perPage;
+    final rows = _pages[page];
+    if (rows == null) {
+      _fetchCustomers(page: page);
+      return null;
+    }
+    return offset < rows.length ? rows[offset] : null;
+  }
+
+  void _evictPages({required int keepPage}) {
+    if (_pages.length <= _maxCachedPages) return;
+    final keys = _pages.keys.toList()..sort((a, b) => (b - keepPage).abs().compareTo((a - keepPage).abs()));
+    while (_pages.length > _maxCachedPages && keys.isNotEmpty) { _pages.remove(keys.removeAt(0)); }
+  }
+
   void _searchNow() {
     setState(() => _search = _searchController.text.trim());
+    _scrollController.addListener(_onScroll);
     _fetchCustomers(reset: true);
   }
 
   void _clearSearch() {
     _searchController.clear();
     setState(() => _search = '');
+    _scrollController.addListener(_onScroll);
     _fetchCustomers(reset: true);
   }
 
@@ -208,9 +239,9 @@ class _CustomersScreenState extends State<CustomersScreen> {
             _buildToolbar(),
             const SizedBox(height: 10),
             Expanded(
-              child: _loading
+              child: _loading && _pages.isEmpty
                   ? const Center(child: CircularProgressIndicator())
-                  : _customers.isEmpty
+                  : _total == 0
                       ? ListView(
                           children: [
                             const SizedBox(height: 70),
@@ -232,9 +263,9 @@ class _CustomersScreenState extends State<CustomersScreen> {
                         )
                       : _buildTable(canManage),
             ),
-            if (_customers.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              _buildPaginationBar(),
+            if (_total > 0) ...[
+              const SizedBox(height: 6),
+              Text('$_total customers • bounded cache: ${_pages.values.fold<int>(0, (n, rows) => n + rows.length)} rows', style: const TextStyle(color: AppTheme.textMuted, fontSize: 11, fontWeight: FontWeight.w700)),
             ],
           ],
         ),
@@ -381,9 +412,14 @@ class _CustomersScreenState extends State<CustomersScreen> {
                       onRefresh: () => _fetchCustomers(reset: true),
                       child: ListView.builder(
                         physics: const AlwaysScrollableScrollPhysics(),
-                        itemExtent: 58,
-                        itemCount: _customers.length,
-                        itemBuilder: (_, index) => _customerRow(_customers[index], canManage),
+                        controller: _scrollController,
+                        itemExtent: _rowExtent,
+                        itemCount: _total,
+                        cacheExtent: _rowExtent * 12,
+                        itemBuilder: (_, index) {
+                          final customer = _customerAt(index);
+                          return customer == null ? _loadingTableRow() : _customerRow(customer, canManage);
+                        },
                       ),
                     ),
                   ),
@@ -410,7 +446,9 @@ class _CustomersScreenState extends State<CustomersScreen> {
           final numeric = index == 6 || index == 7;
           return SizedBox(
             width: widths[index],
-            child: Text(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              child: Text(
               cells[index],
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
@@ -419,6 +457,7 @@ class _CustomersScreenState extends State<CustomersScreen> {
                 color: header ? AppTheme.textMuted : AppTheme.navy,
                 fontSize: header ? 11 : 12,
                 fontWeight: header ? FontWeight.w800 : FontWeight.w600,
+                ),
               ),
             ),
           );
@@ -488,55 +527,11 @@ class _CustomersScreenState extends State<CustomersScreen> {
     );
   }
 
-  Widget _buildPaginationBar() {
-    final start = _total == 0 ? 0 : ((_page - 1) * _perPage) + 1;
-    final end = math.min(_page * _perPage, _total);
-    return Container(
-      height: 44,
-      padding: const EdgeInsets.symmetric(horizontal: 12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        border: Border.all(color: AppTheme.border),
-        borderRadius: BorderRadius.circular(10),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: Text(
-              'Showing $start–$end of $_total customers',
-              style: const TextStyle(
-                color: AppTheme.textMuted,
-                fontSize: 11,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ),
-          IconButton(
-            tooltip: 'Previous page',
-            onPressed: !_loading && _page > 1
-                ? () {
-                    setState(() => _page--);
-                    _fetchCustomers();
-                  }
-                : null,
-            icon: const Icon(Icons.chevron_left_rounded),
-          ),
-          Text(
-            'Page $_page of $_lastPage',
-            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800),
-          ),
-          IconButton(
-            tooltip: 'Next page',
-            onPressed: !_loading && _page < _lastPage
-                ? () {
-                    setState(() => _page++);
-                    _fetchCustomers();
-                  }
-                : null,
-            icon: const Icon(Icons.chevron_right_rounded),
-          ),
-        ],
-      ),
-    );
-  }
+  Widget _loadingTableRow() => Container(
+    height: _rowExtent,
+    padding: const EdgeInsets.symmetric(horizontal: 20),
+    alignment: Alignment.centerLeft,
+    decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: AppTheme.border))),
+    child: const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)),
+  );
 }

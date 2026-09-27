@@ -3,6 +3,7 @@ import 'package:enterprise_pos/models/product_unit.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/services/offline_sales_queue_service.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
+import 'package:enterprise_pos/widgets/enterprise/enterprise_ui.dart';
 import 'package:enterprise_pos/utils/line_errors.dart';
 import 'package:enterprise_pos/widgets/app_feedback.dart';
 import 'package:enterprise_pos/widgets/credit_limit_override_dialog.dart';
@@ -381,16 +382,11 @@ class _OfflineSaleDetailScreenState extends State<OfflineSaleDetailScreen> {
     final creditIssue = _creditLimitIssue;
     final isBusy = _replaying || _discarding || _approvingCredit;
 
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(
-          item.offlineInvoiceNo != null
-              ? 'Sale — ${item.offlineInvoiceNo}'
-              : 'Offline Sale Details',
-          style: const TextStyle(fontSize: 15),
-        ),
-      ),
-      body: Column(
+    return EnterprisePage(
+      title: item.offlineInvoiceNo != null ? 'Sale — ${item.offlineInvoiceNo}' : 'Offline Sale Details',
+      subtitle: 'Inspect locally queued sale data, sync status and retry/discard actions.',
+      icon: Icons.cloud_off_rounded,
+      child: Column(
         children: [
           // ── Scrollable content ───────────────────────────────────────────
           Expanded(

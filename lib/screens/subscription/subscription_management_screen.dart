@@ -3,6 +3,7 @@ import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/providers/subscription_provider.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/app_feedback.dart';
+import 'package:enterprise_pos/widgets/enterprise/enterprise_ui.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -31,6 +32,10 @@ class _SubscriptionManagementScreenState
   String _search = '';
   String? _statusFilter;
   late SubscriptionApiService _api;
+  final ScrollController _scrollController = ScrollController();
+  int _page = 1;
+  int _lastPage = 1;
+  bool _loadingMore = false;
 
   // not_configured is a computed status (no row in branch_subscriptions)
   final _filters = [
@@ -49,146 +54,207 @@ class _SubscriptionManagementScreenState
     super.initState();
     final token = context.read<AuthProvider>().token ?? '';
     _api = SubscriptionApiService(token: token);
+    _scrollController.addListener(_onScroll);
     _load();
   }
 
-  Future<void> _load() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
+  Future<void> _load({bool reset = true}) async {
+    if (reset) {
+      setState(() {
+        _loading = true;
+        _loadingMore = false;
+        _page = 1;
+        _lastPage = 1;
+        _error = null;
+      });
+    } else {
+      if (_loadingMore || _page >= _lastPage) return;
+      setState(() => _loadingMore = true);
+    }
+
+    final targetPage = reset ? 1 : _page + 1;
     try {
       final res = await _api.listBranches(
-          search: _search, status: _statusFilter);
+        search: _search,
+        status: _statusFilter,
+        page: targetPage,
+      );
+      final outer = res['data'] as Map? ?? {};
+      final paged = outer['branches'] as Map? ?? {};
+      final items = (paged['data'] as List? ?? [])
+          .map((e) => Map<String, dynamic>.from(e as Map))
+          .toList(growable: false);
+      final summary = Map<String, dynamic>.from((outer['summary'] as Map?) ?? {});
+      final current = (paged['current_page'] as num?)?.toInt() ?? targetPage;
+      final last = (paged['last_page'] as num?)?.toInt() ?? current;
 
-      // Response shape: { data: { branches: { data: [...], ... }, summary: {...} } }
-      final outer     = res['data'] as Map? ?? {};
-      final paged     = outer['branches'] as Map? ?? {};
-      final items     = paged['data'] as List? ?? [];
-      final summary   = Map<String, dynamic>.from(
-          (outer['summary'] as Map?) ?? {});
-
+      if (!mounted) return;
       setState(() {
-        _branches = items
-            .map((e) => Map<String, dynamic>.from(e as Map))
-            .toList();
+        if (reset) {
+          _branches = items;
+        } else {
+          final seen = _branches.map((e) => e['id']).toSet();
+          _branches.addAll(items.where((e) => !seen.contains(e['id'])));
+          if (_branches.length > 240) {
+            _branches.removeRange(0, _branches.length - 240);
+          }
+        }
         _summary = summary;
+        _page = current;
+        _lastPage = last;
         _loading = false;
+        _loadingMore = false;
+        _error = null;
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _error = e.toString();
         _loading = false;
+        _loadingMore = false;
       });
     }
+  }
+
+  void _reload() => _load(reset: true);
+
+  void _onScroll() {
+    if (!_scrollController.hasClients || _loading || _loadingMore) return;
+    if (_scrollController.position.extentAfter < 500 && _page < _lastPage) {
+      _load(reset: false);
+    }
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     final auth = context.read<AuthProvider>();
     if (!auth.isMasterAdmin) {
-      return const Scaffold(
-        body: Center(child: Text('Access denied — owner only.')),
+      return const EnterprisePage(
+        title: 'Subscriptions',
+        subtitle: 'Branch subscription and add-on administration.',
+        icon: Icons.workspace_premium_outlined,
+        child: Center(child: Text('Access denied — owner only.')),
       );
     }
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Branch Subscriptions'),
-        actions: [
-          IconButton(
-              icon: const Icon(Icons.refresh_rounded),
-              tooltip: 'Refresh',
-              onPressed: _load),
-        ],
-      ),
-      body: Column(
+    return EnterprisePage(
+      title: 'Subscriptions',
+      subtitle: 'Monitor branch subscription health, expiry status and commercial add-ons.',
+      icon: Icons.workspace_premium_outlined,
+      actions: [
+        OutlinedButton.icon(
+          onPressed: _loading ? null : _reload,
+          icon: const Icon(Icons.refresh_rounded, size: 18),
+          label: const Text('Refresh'),
+        ),
+      ],
+      child: Column(
         children: [
-          // ── Summary cards ─────────────────────────────────────────────────
           if (!_loading && _summary.isNotEmpty) ...[
-            const SizedBox(height: 12),
             _SummaryCards(summary: _summary),
-            const SizedBox(height: 4),
+            const SizedBox(height: 10),
           ],
-
-          // ── Search & filter bar ───────────────────────────────────────────
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
-            child: Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    decoration: const InputDecoration(
-                      hintText: 'Search branches…',
-                      prefixIcon: Icon(Icons.search),
-                      isDense: true,
-                    ),
-                    onChanged: (v) {
-                      _search = v;
-                      _load();
-                    },
+          EnterpriseToolbar(
+            children: [
+              SizedBox(
+                width: 360,
+                child: TextField(
+                  decoration: const InputDecoration(
+                    hintText: 'Search branches…',
+                    prefixIcon: Icon(Icons.search_rounded),
                   ),
+                  onSubmitted: (v) {
+                    _search = v.trim();
+                    _reload();
+                  },
                 ),
-                const SizedBox(width: 10),
-                DropdownButton<String?>(
+              ),
+              SizedBox(
+                width: 220,
+                child: DropdownButtonFormField<String?>(
                   value: _statusFilter,
-                  hint: const Text('All'),
+                  decoration: const InputDecoration(labelText: 'Status'),
                   items: _filters
-                      .map((s) => DropdownMenuItem(
-                          value: s.isEmpty ? null : s,
-                          child: Text(s.isEmpty ? 'All' : _filterLabel(s))))
+                      .map((value) => DropdownMenuItem<String?>(
+                            value: value.isEmpty ? null : value,
+                            child: Text(value.isEmpty ? 'All statuses' : _filterLabel(value)),
+                          ))
                       .toList(),
                   onChanged: (v) {
                     setState(() => _statusFilter = v);
-                    _load();
+                    _reload();
                   },
                 ),
-              ],
-            ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                decoration: BoxDecoration(
+                  color: AppTheme.surfaceSoft,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: AppTheme.border),
+                ),
+                child: Text(
+                  '${_branches.length} loaded',
+                  style: const TextStyle(color: AppTheme.textMuted, fontWeight: FontWeight.w800),
+                ),
+              ),
+            ],
           ),
-
-          // ── Branch list ───────────────────────────────────────────────────
+          const SizedBox(height: 12),
           Expanded(
-            child: _loading
-                ? const Center(child: CircularProgressIndicator())
-                : _error != null
-                    ? Center(
-                        child: Padding(
-                          padding: const EdgeInsets.all(24),
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              const Icon(Icons.error_outline_rounded,
-                                  color: AppTheme.danger, size: 40),
-                              const SizedBox(height: 12),
-                              Text(_error!,
-                                  textAlign: TextAlign.center,
-                                  style:
-                                      const TextStyle(color: AppTheme.danger)),
-                              const SizedBox(height: 16),
-                              FilledButton.icon(
-                                icon: const Icon(Icons.refresh_rounded),
-                                label: const Text('Retry'),
-                                onPressed: _load,
-                              ),
-                            ],
-                          ),
-                        ),
-                      )
-                    : _branches.isEmpty
-                        ? const Center(child: Text('No branches found.'))
-                        : ListView.separated(
-                            padding: const EdgeInsets.all(16),
-                            itemCount: _branches.length,
-                            separatorBuilder: (_, __) =>
-                                const SizedBox(height: 8),
-                            itemBuilder: (ctx, i) =>
-                                _BranchSubscriptionTile(
-                              branch: _branches[i],
-                              api: _api,
-                              onUpdated: _load,
+            child: Container(
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: AppTheme.border),
+              ),
+              clipBehavior: Clip.antiAlias,
+              child: _loading
+                  ? const Center(child: CircularProgressIndicator(strokeWidth: 2))
+                  : _error != null && _branches.isEmpty
+                      ? Center(
+                          child: Padding(
+                            padding: const EdgeInsets.all(24),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(Icons.error_outline_rounded, color: AppTheme.danger, size: 36),
+                                const SizedBox(height: 10),
+                                Text(_error!, textAlign: TextAlign.center, style: const TextStyle(color: AppTheme.textMuted)),
+                                const SizedBox(height: 12),
+                                OutlinedButton.icon(onPressed: _reload, icon: const Icon(Icons.refresh_rounded), label: const Text('Retry')),
+                              ],
                             ),
                           ),
+                        )
+                      : _branches.isEmpty
+                          ? const Center(child: Text('No branches found.'))
+                          : ListView.separated(
+                              controller: _scrollController,
+                              padding: const EdgeInsets.all(12),
+                              itemCount: _branches.length + (_loadingMore ? 1 : 0),
+                              separatorBuilder: (_, __) => const SizedBox(height: 8),
+                              itemBuilder: (ctx, i) {
+                                if (i >= _branches.length) {
+                                  return const Padding(
+                                    padding: EdgeInsets.all(16),
+                                    child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
+                                  );
+                                }
+                                return _BranchSubscriptionTile(
+                                  branch: _branches[i],
+                                  api: _api,
+                                  onUpdated: _reload,
+                                );
+                              },
+                            ),
+            ),
           ),
         ],
       ),

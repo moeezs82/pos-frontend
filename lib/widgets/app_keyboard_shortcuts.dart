@@ -10,7 +10,7 @@ import 'package:enterprise_pos/screens/payments/party_payments_screen.dart';
 import 'package:enterprise_pos/screens/product_screen.dart';
 import 'package:enterprise_pos/screens/purchases/purchase_create.dart';
 import 'package:enterprise_pos/screens/purchases/purchases_screen.dart';
-import 'package:enterprise_pos/screens/reports/report_hub_screen.dart';
+import 'package:enterprise_pos/screens/reports/enterprise_reports_workspace_screen.dart';
 import 'package:enterprise_pos/screens/register_shifts/register_shift_screen.dart';
 import 'package:enterprise_pos/screens/sales/sale_create.dart';
 // Sale Return screens remain in the project, but direct navigation is disabled
@@ -207,8 +207,8 @@ class AppKeyboardShortcuts extends StatelessWidget {
       _ctrl(LogicalKeyboardKey.keyE): () => open(PosRouteIds.cashLedgerCreate, (_) => const CashLedgerCreateScreen(initialCategory: 'OTHER_EXPENSE')),
       _cmd(LogicalKeyboardKey.keyE): () => open(PosRouteIds.cashLedgerCreate, (_) => const CashLedgerCreateScreen(initialCategory: 'OTHER_EXPENSE')),
 
-      _ctrl(LogicalKeyboardKey.keyR): () => open(PosRouteIds.reports, (_) => const ReportsHubScreen(), permission: 'view-reports'),
-      _cmd(LogicalKeyboardKey.keyR): () => open(PosRouteIds.reports, (_) => const ReportsHubScreen(), permission: 'view-reports'),
+      _ctrl(LogicalKeyboardKey.keyR): () => open(PosRouteIds.reports, (_) => const EnterpriseReportsWorkspaceScreen(initialReportKey: 'sales-summary'), permission: 'view-reports'),
+      _cmd(LogicalKeyboardKey.keyR): () => open(PosRouteIds.reports, (_) => const EnterpriseReportsWorkspaceScreen(initialReportKey: 'sales-summary'), permission: 'view-reports'),
 
       const SingleActivator(LogicalKeyboardKey.f6): () {
         if (!auth.hasAnyPermission(const [
@@ -253,8 +253,8 @@ class AppKeyboardShortcuts extends StatelessWidget {
       _ctrl(LogicalKeyboardKey.numpad7): () => open(PosRouteIds.createPurchase, (_) => const CreatePurchaseScreen()),
       _ctrl(LogicalKeyboardKey.digit8): () => open(PosRouteIds.partyPayments, (_) => const PartyPaymentsScreen()),
       _ctrl(LogicalKeyboardKey.numpad8): () => open(PosRouteIds.partyPayments, (_) => const PartyPaymentsScreen()),
-      _ctrl(LogicalKeyboardKey.digit9): () => open(PosRouteIds.reports, (_) => const ReportsHubScreen()),
-      _ctrl(LogicalKeyboardKey.numpad9): () => open(PosRouteIds.reports, (_) => const ReportsHubScreen()),
+      _ctrl(LogicalKeyboardKey.digit9): () => open(PosRouteIds.reports, (_) => const EnterpriseReportsWorkspaceScreen(initialReportKey: 'sales-summary')),
+      _ctrl(LogicalKeyboardKey.numpad9): () => open(PosRouteIds.reports, (_) => const EnterpriseReportsWorkspaceScreen(initialReportKey: 'sales-summary')),
       _ctrl(LogicalKeyboardKey.digit0): () => open(PosRouteIds.cashLedger, (_) => const CashLedgerScreen()),
       _ctrl(LogicalKeyboardKey.numpad0): () => open(PosRouteIds.cashLedger, (_) => const CashLedgerScreen()),
     };

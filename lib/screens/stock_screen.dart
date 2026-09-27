@@ -64,10 +64,7 @@ class _StockScreenState extends State<StockScreen> {
   String _qty(dynamic value) {
     final number = _toDouble(value);
     if (number == number.roundToDouble()) return number.toInt().toString();
-    return number
-        .toStringAsFixed(4)
-        .replaceFirst(RegExp(r'0+$'), '')
-        .replaceFirst(RegExp(r'\.$'), '');
+    return number.toStringAsFixed(4).replaceFirst(RegExp(r'0+$'), '').replaceFirst(RegExp(r'\.$'), '');
   }
 
   Future<void> _fetchInitial() async {
@@ -100,9 +97,8 @@ class _StockScreenState extends State<StockScreen> {
           'product_id': _selectedProduct!['id'].toString(),
       };
       final token = context.read<AuthProvider>().token!;
-      final uri = Uri.parse(
-        '${ApiClient.baseUrl}/stocks',
-      ).replace(queryParameters: query);
+      final uri = Uri.parse('${ApiClient.baseUrl}/stocks')
+          .replace(queryParameters: query);
       final res = await http.get(
         uri,
         headers: {
@@ -112,9 +108,9 @@ class _StockScreenState extends State<StockScreen> {
       );
       if (res.statusCode != 200) {
         if (mounted) {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(const SnackBar(content: Text('Failed to load stock')));
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Failed to load stock')),
+          );
         }
         return;
       }
@@ -125,8 +121,7 @@ class _StockScreenState extends State<StockScreen> {
       setState(() {
         _pageCache[page] = rows;
         _lastPage = _toInt(data['last_page']) ?? 1;
-        _total =
-            _toInt(data['total']) ??
+        _total = _toInt(data['total']) ??
             ((_lastPage - 1) * _pageSize + rows.length);
         _touchPage(page);
         _evictOldPages(keepPage: page);
@@ -243,8 +238,7 @@ class _StockScreenState extends State<StockScreen> {
                         border: OutlineInputBorder(),
                       ),
                       child: Text(
-                        selectedProduct?['name']?.toString() ??
-                            'Select product',
+                        selectedProduct?['name']?.toString() ?? 'Select product',
                       ),
                     ),
                   ),
@@ -258,8 +252,7 @@ class _StockScreenState extends State<StockScreen> {
                     ),
                     decoration: const InputDecoration(
                       labelText: 'Adjustment quantity',
-                      helperText:
-                          'Use a positive value to add stock or a negative value to reduce it.',
+                      helperText: 'Use a positive value to add stock or a negative value to reduce it.',
                       hintText: 'e.g. 10 or -5',
                       border: OutlineInputBorder(),
                     ),
@@ -312,9 +305,7 @@ class _StockScreenState extends State<StockScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final canAdjust = context.watch<AuthProvider>().hasPermission(
-      'adjust-stock',
-    );
+    final canAdjust = context.watch<AuthProvider>().hasPermission('adjust-stock');
     return CounterIQDesktopShell(
       activeRouteId: PosRouteIds.stock,
       onOpenProducts: () => PosNavigation.openSingleton(
@@ -348,20 +339,22 @@ class _StockScreenState extends State<StockScreen> {
               child: _initialLoading
                   ? const Center(child: CircularProgressIndicator())
                   : _total == 0
-                  ? ListView(
-                      children: const [
-                        SizedBox(height: 70),
-                        EnterpriseEmptyState(
-                          icon: Icons.warehouse_outlined,
-                          title: 'No stock found',
-                          subtitle:
-                              'No stock balances match the selected product.',
-                        ),
-                      ],
-                    )
-                  : _buildTable(canAdjust),
+                      ? ListView(
+                          children: const [
+                            SizedBox(height: 70),
+                            EnterpriseEmptyState(
+                              icon: Icons.warehouse_outlined,
+                              title: 'No stock found',
+                              subtitle: 'No stock balances match the selected product.',
+                            ),
+                          ],
+                        )
+                      : _buildTable(canAdjust),
             ),
-            if (_total > 0) ...[const SizedBox(height: 8), _buildStatusBar()],
+            if (_total > 0) ...[
+              const SizedBox(height: 8),
+              _buildStatusBar(),
+            ],
           ],
         ),
       ),
@@ -423,8 +416,7 @@ class _StockScreenState extends State<StockScreen> {
             label: Text(
               _selectedProduct == null
                   ? 'All products'
-                  : (_selectedProduct!['name'] ?? 'Selected product')
-                        .toString(),
+                  : (_selectedProduct!['name'] ?? 'Selected product').toString(),
               overflow: TextOverflow.ellipsis,
             ),
           ),
@@ -459,14 +451,10 @@ class _StockScreenState extends State<StockScreen> {
               height: constraints.maxHeight,
               child: Column(
                 children: [
-                  _tableRow(const [
-                    'Product',
-                    'SKU',
-                    'Barcode',
-                    'Branch',
-                    'Quantity',
-                    '',
-                  ], header: true),
+                  _tableRow(
+                    const ['Product', 'SKU', 'Barcode', 'Branch', 'Quantity', ''],
+                    header: true,
+                  ),
                   Expanded(
                     child: RefreshIndicator(
                       onRefresh: _onRefresh,
@@ -511,7 +499,9 @@ class _StockScreenState extends State<StockScreen> {
         children: List.generate(cells.length, (index) {
           return SizedBox(
             width: widths[index],
-            child: Text(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              child: Text(
               cells[index],
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
@@ -520,6 +510,7 @@ class _StockScreenState extends State<StockScreen> {
                 color: header ? AppTheme.textMuted : AppTheme.navy,
                 fontSize: header ? 11 : 12,
                 fontWeight: header ? FontWeight.w800 : FontWeight.w600,
+                ),
               ),
             ),
           );

@@ -268,7 +268,8 @@ class _UnitTableHeader extends StatelessWidget {
             Expanded(flex: 4, child: Text('UNIT', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: AppTheme.textMuted))),
             Expanded(flex: 2, child: Text('SHORT', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: AppTheme.textMuted))),
             Expanded(flex: 3, child: Text('QUANTITY RULE', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: AppTheme.textMuted))),
-            Expanded(flex: 2, child: Text('STATUS', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: AppTheme.textMuted))),
+            Expanded(flex: 2, child: Padding(padding: EdgeInsets.only(right: 12), child: Text('STATUS', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: AppTheme.textMuted)))),
+            SizedBox(width: 12),
             SizedBox(width: 92, child: Text('ACTIONS', textAlign: TextAlign.right, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: AppTheme.textMuted))),
           ],
         ),
@@ -299,11 +300,15 @@ class _UnitTableRow extends StatelessWidget {
               ),
               Expanded(
                 flex: 2,
-                child: EnterpriseStatusBadge(
-                  label: unit.isActive ? 'ACTIVE' : 'INACTIVE',
-                  color: unit.isActive ? AppTheme.success : AppTheme.textMuted,
+                child: Padding(
+                  padding: const EdgeInsets.only(right: 12),
+                  child: EnterpriseStatusBadge(
+                    label: unit.isActive ? 'ACTIVE' : 'INACTIVE',
+                    color: unit.isActive ? AppTheme.success : AppTheme.textMuted,
+                  ),
                 ),
               ),
+              const SizedBox(width: 12),
               SizedBox(
                 width: 92,
                 child: Row(

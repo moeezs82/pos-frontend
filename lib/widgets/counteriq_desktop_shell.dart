@@ -8,17 +8,22 @@ import 'package:enterprise_pos/screens/account_screen.dart';
 import 'package:enterprise_pos/screens/branches/branch_control_screen.dart';
 import 'package:enterprise_pos/screens/cash_ledger/cash_ledger_screen.dart';
 import 'package:enterprise_pos/screens/cashbook/cashbook_screen.dart';
+import 'package:enterprise_pos/screens/dashboard/low_stock_screen.dart';
 import 'package:enterprise_pos/screens/customers/customers_screen.dart';
 import 'package:enterprise_pos/screens/intelligence/intelligence_hub_screen.dart';
 import 'package:enterprise_pos/screens/payments/party_payments_screen.dart';
+import 'package:enterprise_pos/screens/product_groups_screen.dart';
 import 'package:enterprise_pos/screens/purchases/purchase_claim_screen.dart';
 import 'package:enterprise_pos/screens/purchases/purchases_screen.dart';
 import 'package:enterprise_pos/screens/register_shifts/register_shift_screen.dart';
 import 'package:enterprise_pos/screens/reports/credit_control_screen.dart';
-import 'package:enterprise_pos/screens/reports/report_hub_screen.dart';
+import 'package:enterprise_pos/screens/reports/enterprise_reports_workspace_screen.dart';
 import 'package:enterprise_pos/screens/sales/sale_create.dart';
 import 'package:enterprise_pos/screens/sales/sale_screen.dart';
+import 'package:enterprise_pos/screens/sales/picking_list_screen.dart';
+import 'package:enterprise_pos/screens/sales/sale_returns_screen.dart';
 import 'package:enterprise_pos/screens/settings/backup_restore_screen.dart';
+import 'package:enterprise_pos/screens/settings/payment_methods_admin_screen.dart';
 import 'package:enterprise_pos/screens/settings/printer_settings_screen.dart';
 import 'package:enterprise_pos/screens/stock_screen.dart';
 import 'package:enterprise_pos/screens/subscription/branch_lock_screen.dart';
@@ -52,6 +57,9 @@ class _CounterIQDesktopShellScope extends InheritedWidget {
 }
 
 class CounterIQDesktopShell extends StatefulWidget {
+  static bool isPersistentShellMounted(BuildContext context) =>
+      _CounterIQDesktopShellScope.hasShell(context);
+
   final String activeRouteId;
   final Widget child;
   final VoidCallback onOpenProducts;
@@ -99,7 +107,7 @@ class _CounterIQDesktopShellState extends State<CounterIQDesktopShell> {
         ? _branchRequiredNavigation(auth)
         : _buildNavigation(auth, shift);
     final allEntries = navGroups
-        .expand((group) => group.entries)
+        .expand((group) => _flattenEntries(group.entries))
         .toList(growable: false);
 
     return Scaffold(
@@ -156,6 +164,120 @@ class _CounterIQDesktopShellState extends State<CounterIQDesktopShell> {
     );
   }
 
+  Iterable<_NavEntry> _flattenEntries(List<_NavEntry> entries) sync* {
+    for (final entry in entries) {
+      if (entry.onTap != null) yield entry;
+      if (entry.children.isNotEmpty) {
+        yield* _flattenEntries(entry.children);
+      }
+    }
+  }
+
+  _NavEntry _reportLeaf({
+    required String key,
+    required String title,
+    required IconData icon,
+  }) {
+    final routeId = PosRouteIds.report(key);
+    return _NavEntry(
+      icon: icon,
+      title: title,
+      active: _isActive(routeId),
+      onTap: () => PosNavigation.openSingleton(
+        routeId: routeId,
+        builder: (_) => EnterpriseReportsWorkspaceScreen(initialReportKey: key),
+      ),
+    );
+  }
+
+  _NavEntry _reportSection({
+    required String title,
+    required IconData icon,
+    required List<_NavEntry> children,
+  }) {
+    return _NavEntry(
+      icon: icon,
+      title: title,
+      active: children.any((entry) => entry.active),
+      children: children,
+      initiallyExpanded: children.any((entry) => entry.active),
+    );
+  }
+
+  _NavEntry _reportsTree() {
+    final sales = <_NavEntry>[
+      _reportLeaf(key: 'sales-summary', title: 'Sales Summary', icon: Icons.summarize_rounded),
+      _reportLeaf(key: 'sales-detail', title: 'Sales Detail', icon: Icons.receipt_long_rounded),
+      _reportLeaf(key: 'sales-by-product', title: 'Sales by Product', icon: Icons.inventory_2_outlined),
+      _reportLeaf(key: 'sales-by-vendor', title: 'Sales by Vendor', icon: Icons.local_shipping_outlined),
+      _reportLeaf(key: 'sales-by-category', title: 'Sales by Category', icon: Icons.category_outlined),
+      _reportLeaf(key: 'sales-by-brand', title: 'Sales by Brand', icon: Icons.sell_outlined),
+      _reportLeaf(key: 'sales-by-customer', title: 'Sales by Customer', icon: Icons.people_alt_outlined),
+      _reportLeaf(key: 'sales-by-salesman', title: 'Sales by Cashier', icon: Icons.badge_outlined),
+      _reportLeaf(key: 'sales-by-hour', title: 'Hourly Sales', icon: Icons.schedule_outlined),
+      _reportLeaf(key: 'sales-by-payment-method', title: 'Payment Collection', icon: Icons.payments_outlined),
+      _reportLeaf(key: 'sales-by-source', title: 'Sales by Source', icon: Icons.hub_outlined),
+      _reportLeaf(key: 'sales-by-area', title: 'Sales by Town / Area', icon: Icons.location_on_outlined),
+      _reportLeaf(key: 'delivery-boy-cash', title: 'Delivery Boy Cash', icon: Icons.delivery_dining_outlined),
+      _reportLeaf(key: 'discount-report', title: 'Discount Report', icon: Icons.percent_rounded),
+      _reportLeaf(key: 'tax-report', title: 'Tax Report', icon: Icons.account_balance_outlined),
+    ];
+
+    final purchases = <_NavEntry>[
+      _reportLeaf(key: 'purchase-summary', title: 'Purchase Summary', icon: Icons.shopping_cart_checkout_outlined),
+      _reportLeaf(key: 'purchase-detail', title: 'Purchase Detail', icon: Icons.article_outlined),
+      _reportLeaf(key: 'purchase-by-product', title: 'Purchase by Product', icon: Icons.add_business_outlined),
+      _reportLeaf(key: 'purchase-by-vendor', title: 'Purchase by Vendor', icon: Icons.groups_2_outlined),
+      _reportLeaf(key: 'vendor-payment-summary', title: 'Vendor Payments', icon: Icons.outbox_outlined),
+      _reportLeaf(key: 'purchase-claim-summary', title: 'Purchase Claim Summary', icon: Icons.report_problem_outlined),
+      _reportLeaf(key: 'purchase-claim-detail', title: 'Purchase Claim Detail', icon: Icons.assignment_late_outlined),
+    ];
+
+    final inventory = <_NavEntry>[
+      _reportLeaf(key: 'current-stock', title: 'Current Stock', icon: Icons.warehouse_outlined),
+      _reportLeaf(key: 'low-stock', title: 'Low Stock / Reorder', icon: Icons.warning_amber_rounded),
+      _reportLeaf(key: 'stock-valuation', title: 'Stock Valuation', icon: Icons.price_check_outlined),
+      _reportLeaf(key: 'stock-movement', title: 'Stock Movement Ledger', icon: Icons.swap_vert_circle_outlined),
+      _reportLeaf(key: 'inventory-adjustment', title: 'Inventory Adjustment', icon: Icons.tune_rounded),
+    ];
+
+    final finance = <_NavEntry>[
+      _reportLeaf(key: 'profit-loss', title: 'Profit & Loss', icon: Icons.trending_up_rounded),
+      _reportLeaf(key: 'expense-report', title: 'Expense Report', icon: Icons.receipt_long_outlined),
+      _reportLeaf(key: 'trial-balance', title: 'Trial Balance', icon: Icons.balance_outlined),
+      _reportLeaf(key: 'ledger-detail', title: 'Ledger Detail', icon: Icons.list_alt_outlined),
+    ];
+
+    final parties = <_NavEntry>[
+      _reportLeaf(key: 'customer-receivables', title: 'Customer Receivables', icon: Icons.person_search_outlined),
+      _reportLeaf(key: 'vendor-payables', title: 'Vendor Payables', icon: Icons.group_work_outlined),
+      _reportLeaf(key: 'area-customer-potential', title: 'Area Customer Potential', icon: Icons.travel_explore_outlined),
+    ];
+
+    final returns = <_NavEntry>[
+      _reportLeaf(key: 'sale-return-summary', title: 'Sale Return Summary', icon: Icons.assignment_return_outlined),
+      _reportLeaf(key: 'sale-return-detail', title: 'Sale Return Detail', icon: Icons.undo_rounded),
+    ];
+
+    final sections = <_NavEntry>[
+      _reportSection(title: 'Sales', icon: Icons.point_of_sale_outlined, children: sales),
+      _reportSection(title: 'Purchases', icon: Icons.shopping_cart_outlined, children: purchases),
+      _reportSection(title: 'Inventory', icon: Icons.inventory_2_outlined, children: inventory),
+      _reportSection(title: 'Finance', icon: Icons.account_balance_wallet_outlined, children: finance),
+      _reportSection(title: 'Parties', icon: Icons.people_outline_rounded, children: parties),
+      _reportSection(title: 'Returns', icon: Icons.assignment_return_outlined, children: returns),
+    ];
+
+    return _NavEntry(
+      icon: Icons.analytics_outlined,
+      title: 'Reports',
+      shortcut: 'Ctrl+R',
+      active: PosRouteIds.isReportRoute(widget.activeRouteId),
+      children: sections,
+      initiallyExpanded: PosRouteIds.isReportRoute(widget.activeRouteId),
+    );
+  }
+
   List<_NavGroup> _branchRequiredNavigation(AuthProvider auth) {
     return [
       _NavGroup(
@@ -182,11 +304,10 @@ class _CounterIQDesktopShellState extends State<CounterIQDesktopShell> {
             _NavEntry(
               icon: Icons.workspace_premium_outlined,
               title: 'Subscriptions',
-              onTap: () => Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => const SubscriptionManagementScreen(),
-                ),
+              active: _isActive(PosRouteIds.subscriptions),
+              onTap: () => PosNavigation.openSingleton(
+                routeId: PosRouteIds.subscriptions,
+                builder: (_) => const SubscriptionManagementScreen(),
               ),
             ),
         ],
@@ -231,6 +352,26 @@ class _CounterIQDesktopShellState extends State<CounterIQDesktopShell> {
                 builder: (_) => const SalesScreen(),
               ),
             ),
+          if (auth.hasPermission('view-sales'))
+            _NavEntry(
+              icon: Icons.inventory_outlined,
+              title: 'Picking List',
+              active: _isActive(PosRouteIds.pickingList),
+              onTap: () => PosNavigation.openSingleton(
+                routeId: PosRouteIds.pickingList,
+                builder: (_) => const PickingListScreen(),
+              ),
+            ),
+          if (auth.hasPermission('view-sales'))
+            _NavEntry(
+              icon: Icons.assignment_return_outlined,
+              title: 'Sale Returns',
+              active: _isActive(PosRouteIds.saleReturns),
+              onTap: () => PosNavigation.openSingleton(
+                routeId: PosRouteIds.saleReturns,
+                builder: (_) => const SaleReturnsScreen(),
+              ),
+            ),
           if (auth.hasAnyPermission(const [
             'view-register-shifts',
             'open-register-shift',
@@ -259,6 +400,26 @@ class _CounterIQDesktopShellState extends State<CounterIQDesktopShell> {
               onTap: _isActive(PosRouteIds.products)
                   ? () {}
                   : widget.onOpenProducts,
+            ),
+          if (auth.hasPermission('view-products'))
+            _NavEntry(
+              icon: Icons.account_tree_outlined,
+              title: 'Product Groups',
+              active: _isActive(PosRouteIds.productGroups),
+              onTap: () => PosNavigation.openSingleton(
+                routeId: PosRouteIds.productGroups,
+                builder: (_) => const ProductGroupsScreen(),
+              ),
+            ),
+          if (auth.hasPermission('view-stock'))
+            _NavEntry(
+              icon: Icons.warning_amber_rounded,
+              title: 'Low Stock',
+              active: _isActive(PosRouteIds.lowStock),
+              onTap: () => PosNavigation.openSingleton(
+                routeId: PosRouteIds.lowStock,
+                builder: (_) => const LowStockScreen(),
+              ),
             ),
           if (auth.hasPermission('view-stock'))
             _NavEntry(
@@ -363,27 +524,16 @@ class _CounterIQDesktopShellState extends State<CounterIQDesktopShell> {
                 builder: (_) => const CashLedgerScreen(),
               ),
             ),
-          if (auth.hasPermission('view-reports'))
-            _NavEntry(
-              icon: Icons.analytics_outlined,
-              title: 'Reports',
-              shortcut: 'Ctrl+R',
-              active: _isActive(PosRouteIds.reports),
-              onTap: () => PosNavigation.openSingleton(
-                routeId: PosRouteIds.reports,
-                builder: (_) => const ReportsHubScreen(),
-              ),
-            ),
+          if (auth.hasPermission('view-reports')) _reportsTree(),
           if (auth.hasAddon('intelligence') &&
               auth.hasPermission('view-intelligence'))
             _NavEntry(
               icon: Icons.auto_awesome_rounded,
               title: 'Intelligence',
-              onTap: () => Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => const IntelligenceHubScreen(),
-                ),
+              active: _isActive(PosRouteIds.intelligence),
+              onTap: () => PosNavigation.openSingleton(
+                routeId: PosRouteIds.intelligence,
+                builder: (_) => const IntelligenceHubScreen(),
               ),
             ),
         ],
@@ -415,11 +565,10 @@ class _CounterIQDesktopShellState extends State<CounterIQDesktopShell> {
             _NavEntry(
               icon: Icons.print_outlined,
               title: 'Printer Settings',
-              onTap: () => Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => const PrinterSettingsScreen(),
-                ),
+              active: _isActive(PosRouteIds.printerSettings),
+              onTap: () => PosNavigation.openSingleton(
+                routeId: PosRouteIds.printerSettings,
+                builder: (_) => const PrinterSettingsScreen(),
               ),
             ),
           if (BackendConfig.isLocal &&
@@ -430,11 +579,10 @@ class _CounterIQDesktopShellState extends State<CounterIQDesktopShell> {
             _NavEntry(
               icon: Icons.backup_outlined,
               title: 'Backup & Restore',
-              onTap: () => Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => const BackupRestoreScreen(),
-                ),
+              active: _isActive(PosRouteIds.backupRestore),
+              onTap: () => PosNavigation.openSingleton(
+                routeId: PosRouteIds.backupRestore,
+                builder: (_) => const BackupRestoreScreen(),
               ),
             ),
           if (auth.isMasterAdmin)
@@ -448,22 +596,41 @@ class _CounterIQDesktopShellState extends State<CounterIQDesktopShell> {
             _NavEntry(
               icon: Icons.workspace_premium_outlined,
               title: 'Subscriptions',
-              onTap: () => Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => const SubscriptionManagementScreen(),
-                ),
+              active: _isActive(PosRouteIds.subscriptions),
+              onTap: () => PosNavigation.openSingleton(
+                routeId: PosRouteIds.subscriptions,
+                builder: (_) => const SubscriptionManagementScreen(),
               ),
             ),
           if (auth.isMasterAdmin)
             _NavEntry(
               icon: Icons.account_balance_outlined,
               title: 'Accounts',
-              onTap: () => Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const AccountsScreen()),
+              active: _isActive(PosRouteIds.accounts),
+              onTap: () => PosNavigation.openSingleton(
+                routeId: PosRouteIds.accounts,
+                builder: (_) => const AccountsScreen(),
               ),
             ),
+          if (auth.isMasterAdmin)
+            _NavEntry(
+              icon: Icons.payments_outlined,
+              title: 'Payment Methods',
+              active: _isActive(PosRouteIds.paymentMethods),
+              onTap: () => PosNavigation.openSingleton(
+                routeId: PosRouteIds.paymentMethods,
+                builder: (_) => const PaymentMethodsAdminScreen(),
+              ),
+            ),
+          _NavEntry(
+            icon: Icons.cloud_sync_outlined,
+            title: 'Offline Sync',
+            active: _isActive(PosRouteIds.offlineSync),
+            onTap: () => PosNavigation.openSingleton(
+              routeId: PosRouteIds.offlineSync,
+              builder: (_) => const OfflineSyncScreen(),
+            ),
+          ),
         ],
       ),
     ].where((group) => group.entries.isNotEmpty).toList(growable: false);
@@ -677,34 +844,101 @@ class _DesktopSidebar extends StatelessWidget {
   }
 }
 
-class _SidebarEntry extends StatelessWidget {
+class _SidebarEntry extends StatefulWidget {
   final _NavEntry entry;
   final bool compact;
+  final int depth;
 
-  const _SidebarEntry({required this.entry, required this.compact});
+  const _SidebarEntry({
+    super.key,
+    required this.entry,
+    required this.compact,
+    this.depth = 0,
+  });
+
+  @override
+  State<_SidebarEntry> createState() => _SidebarEntryState();
+}
+
+class _SidebarEntryState extends State<_SidebarEntry> {
+  late bool _expanded;
+
+  bool get _hasChildren => widget.entry.children.isNotEmpty;
+  bool get _hasActiveDescendant =>
+      widget.entry.children.any(_entryContainsActive);
+
+  bool _entryContainsActive(_NavEntry entry) {
+    if (entry.active) return true;
+    return entry.children.any(_entryContainsActive);
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _expanded = widget.entry.initiallyExpanded || _hasActiveDescendant;
+  }
+
+  @override
+  void didUpdateWidget(covariant _SidebarEntry oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (_hasActiveDescendant && !_expanded) {
+      _expanded = true;
+    }
+  }
+
+  VoidCallback? _firstAction(List<_NavEntry> entries) {
+    for (final entry in entries) {
+      if (entry.onTap != null) return entry.onTap;
+      final nested = _firstAction(entry.children);
+      if (nested != null) return nested;
+    }
+    return null;
+  }
+
+  void _handleTap() {
+    if (_hasChildren) {
+      if (widget.compact) {
+        _firstAction(widget.entry.children)?.call();
+      } else {
+        setState(() => _expanded = !_expanded);
+      }
+      return;
+    }
+    widget.entry.onTap?.call();
+  }
 
   @override
   Widget build(BuildContext context) {
+    final entry = widget.entry;
+    final compact = widget.compact;
     final foreground =
         entry.active ? AppTheme.primary : const Color(0xFF475569);
-    final child = Material(
-      color: entry.active
-          ? AppTheme.primary.withOpacity(.08)
-          : Colors.transparent,
+    final background = entry.active
+        ? AppTheme.primary.withOpacity(.08)
+        : Colors.transparent;
+
+    final row = Material(
+      color: background,
       borderRadius: BorderRadius.circular(9),
       child: InkWell(
         borderRadius: BorderRadius.circular(9),
-        onTap: entry.onTap,
+        onTap: _handleTap,
         child: SizedBox(
-          height: 39,
+          height: widget.depth == 0 ? 39 : 35,
           child: Padding(
-            padding: EdgeInsets.symmetric(horizontal: compact ? 0 : 10),
+            padding: EdgeInsets.only(
+              left: compact ? 0 : 10 + (widget.depth * 12),
+              right: compact ? 0 : 8,
+            ),
             child: Row(
-              mainAxisAlignment: compact
-                  ? MainAxisAlignment.center
-                  : MainAxisAlignment.start,
+              mainAxisAlignment:
+                  compact ? MainAxisAlignment.center : MainAxisAlignment.start,
               children: [
-                Icon(entry.icon, color: foreground, size: 19),
+                Icon(
+                  entry.icon,
+                  color: foreground,
+                  size: widget.depth == 0 ? 19 : 16.5,
+                ),
                 if (!compact) ...[
                   const SizedBox(width: 9),
                   Expanded(
@@ -714,14 +948,14 @@ class _SidebarEntry extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                       style: TextStyle(
                         color: foreground,
-                        fontSize: 12,
-                        fontWeight: entry.active
+                        fontSize: widget.depth == 0 ? 12 : 11.2,
+                        fontWeight: entry.active || _hasActiveDescendant
                             ? FontWeight.w900
                             : FontWeight.w700,
                       ),
                     ),
                   ),
-                  if (entry.shortcut != null)
+                  if (entry.shortcut != null && !_hasChildren)
                     Text(
                       entry.shortcut!,
                       style: const TextStyle(
@@ -730,6 +964,16 @@ class _SidebarEntry extends StatelessWidget {
                         fontWeight: FontWeight.w700,
                       ),
                     ),
+                  if (_hasChildren)
+                    Icon(
+                      _expanded
+                          ? Icons.keyboard_arrow_down_rounded
+                          : Icons.keyboard_arrow_right_rounded,
+                      size: 17,
+                      color: _hasActiveDescendant
+                          ? AppTheme.primary
+                          : AppTheme.textMuted,
+                    ),
                 ],
               ],
             ),
@@ -737,9 +981,26 @@ class _SidebarEntry extends StatelessWidget {
         ),
       ),
     );
-    return Padding(
+
+    final wrappedRow = Padding(
       padding: const EdgeInsets.symmetric(vertical: 1),
-      child: compact ? Tooltip(message: entry.title, child: child) : child,
+      child: compact ? Tooltip(message: entry.title, child: row) : row,
+    );
+
+    if (!_hasChildren || compact || !_expanded) return wrappedRow;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        wrappedRow,
+        for (final child in entry.children)
+          _SidebarEntry(
+            key: ValueKey('${widget.depth + 1}:${child.title}'),
+            entry: child,
+            compact: false,
+            depth: widget.depth + 1,
+          ),
+      ],
     );
   }
 }
@@ -1054,7 +1315,7 @@ class _CommandPaletteState extends State<_CommandPalette> {
                           ),
                           onTap: () {
                             Navigator.pop(context);
-                            entry.onTap();
+                            entry.onTap?.call();
                           },
                         );
                       },
@@ -1266,14 +1527,18 @@ class _NavEntry {
   final IconData icon;
   final String title;
   final String? shortcut;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
   final bool active;
+  final List<_NavEntry> children;
+  final bool initiallyExpanded;
 
   const _NavEntry({
     required this.icon,
     required this.title,
-    required this.onTap,
+    this.onTap,
     this.shortcut,
     this.active = false,
+    this.children = const <_NavEntry>[],
+    this.initiallyExpanded = false,
   });
 }

@@ -46,10 +46,13 @@ class _PartyPaymentsScreenState extends State<PartyPaymentsScreen> {
   // switches party while a request is in flight).
   int _detailGen = 0;
   int _partyLoadGen = 0;
-  int _partyPage = 1;
   int _partyLastPage = 1;
   int _partyTotal = 0;
   static const int _partyPageSize = 50;
+  static const int _maxPartyCachedPages = 6;
+  static const double _partyRowExtent = 86;
+  final Map<int, List<Map<String, dynamic>>> _partyPages = {};
+  final Set<int> _loadingPartyPages = {};
 
   final _searchController = TextEditingController();
   final _amountController = TextEditingController();
@@ -61,7 +64,7 @@ class _PartyPaymentsScreenState extends State<PartyPaymentsScreen> {
   String _method = 'cash';
   String? _detailError;
 
-  final List<Map<String, dynamic>> _parties = [];
+  List<Map<String, dynamic>> get _parties => _partyPages.values.expand((rows) => rows).toList(growable: false);
   final List<Map<String, dynamic>> _ledger = [];
   final List<Map<String, dynamic>> _openDocuments = [];
   final Map<int, double> _manualAllocations = {};
@@ -124,8 +127,12 @@ class _PartyPaymentsScreenState extends State<PartyPaymentsScreen> {
   }
 
   void _onPartyScroll() {
-    // Party Payments intentionally keeps one server page in memory.
-    // Do not append pages indefinitely on low-memory POS clients.
+    if (!_partyScrollController.hasClients || _partyTotal <= 0) return;
+    final first = (_partyScrollController.offset / _partyRowExtent).floor().clamp(0, _partyTotal - 1);
+    final last = (first + (_partyScrollController.position.viewportDimension / _partyRowExtent).ceil() + 5).clamp(0, _partyTotal - 1);
+    final firstPage = first ~/ _partyPageSize + 1, lastPage = last ~/ _partyPageSize + 1;
+    for (var page = firstPage; page <= lastPage; page++) { if (!_partyPages.containsKey(page)) _loadParties(page: page); }
+    if (lastPage < _partyLastPage && !_partyPages.containsKey(lastPage + 1)) _loadParties(page: lastPage + 1);
   }
 
   String get _balanceFilterCode => switch (_balanceFilter) {
@@ -135,77 +142,47 @@ class _PartyPaymentsScreenState extends State<PartyPaymentsScreen> {
       };
 
   Future<void> _loadParties({bool resetSelection = false, int page = 1, bool append = false}) async {
-    if (_loadingParties) return;
-    final gen = append ? _partyLoadGen : ++_partyLoadGen;
-    setState(() {
-      _loadingParties = true;
-      if (resetSelection) {
-        _parties.clear();
-        _partyPage = 1;
-        _partyLastPage = 1;
-        _partyTotal = 0;
-        _selectedParty = null;
-        _detail = null;
-        _ledger.clear();
-        _openDocuments.clear();
-        _manualAllocations.clear();
-        _allocationMode = PaymentAllocationMode.auto;
-        _unallocatedCredit = 0;
-        _detailError = null;
-      }
-    });
-
+    if (resetSelection) {
+      _partyPages.clear(); _loadingPartyPages.clear(); _partyLastPage = 1; _partyTotal = 0;
+      if (_partyScrollController.hasClients) _partyScrollController.jumpTo(0);
+      setState(() {
+        _selectedParty = null; _detail = null; _ledger.clear(); _openDocuments.clear(); _manualAllocations.clear();
+        _allocationMode = PaymentAllocationMode.auto; _unallocatedCredit = 0; _detailError = null;
+      });
+    }
+    if (_loadingPartyPages.contains(page) || page < 1 || (_partyTotal > 0 && page > _partyLastPage)) return;
+    final gen = resetSelection ? ++_partyLoadGen : _partyLoadGen;
+    _loadingPartyPages.add(page);
+    if (mounted && _partyPages.isEmpty) setState(() => _loadingParties = true);
     try {
       final branchId = context.read<BranchProvider>().selectedBranchId;
       final res = switch (_kind) {
-        PartyPaymentKind.customer => await _customerService.getCustomers(
-            page: page,
-            perPage: _partyPageSize,
-            search: _search,
-            includeBalance: true,
-            balanceFilter: _balanceFilterCode,
-            branchId: branchId,
-          ),
-        PartyPaymentKind.vendor => await _vendorService.getVendors(
-            page: page,
-            perPage: _partyPageSize,
-            search: _search,
-            includeBalance: true,
-            balanceFilter: _balanceFilterCode,
-            branchId: branchId,
-          ),
-        PartyPaymentKind.deliveryBoy => await _deliveryBoyService.getDeliveryBoys(
-            page: page,
-            perPage: _partyPageSize,
-            search: _search,
-            balanceFilter: _balanceFilterCode,
-            branchId: branchId,
-          ),
+        PartyPaymentKind.customer => await _customerService.getCustomers(page: page, perPage: _partyPageSize, search: _search, includeBalance: true, balanceFilter: _balanceFilterCode, branchId: branchId),
+        PartyPaymentKind.vendor => await _vendorService.getVendors(page: page, perPage: _partyPageSize, search: _search, includeBalance: true, balanceFilter: _balanceFilterCode, branchId: branchId),
+        PartyPaymentKind.deliveryBoy => await _deliveryBoyService.getDeliveryBoys(page: page, perPage: _partyPageSize, search: _search, balanceFilter: _balanceFilterCode, branchId: branchId),
       };
-
       final loaded = _extractParties(res);
       final pagination = _extractPartyPagination(res, fallbackCount: loaded.length, requestedPage: page);
       if (!mounted || gen != _partyLoadGen) return;
       setState(() {
-        if (!append) _parties.clear();
-        final knownIds = _parties.map(_idOf).whereType<int>().toSet();
-        _parties.addAll(loaded.where((party) {
-          final id = _idOf(party);
-          return id == null || knownIds.add(id);
-        }));
-        _partyPage = pagination.$1;
-        _partyLastPage = pagination.$2;
-        _partyTotal = pagination.$3;
+        _partyPages[page] = loaded; _partyLastPage = pagination.$2; _partyTotal = pagination.$3; _evictPartyPages(keepPage: page);
       });
+      if (resetSelection && loaded.isNotEmpty) await _selectParty(loaded.first);
+    } catch (e) { if (mounted) AppFeedback.error(context, 'Failed to load ${_kindLabelPlural.toLowerCase()}: $e'); }
+    finally { _loadingPartyPages.remove(page); if (mounted) setState(() => _loadingParties = false); }
+  }
 
-      if (resetSelection && !append && loaded.isNotEmpty) {
-        await _selectParty(loaded.first);
-      }
-    } catch (e) {
-      if (mounted) AppFeedback.error(context, 'Failed to load ${_kindLabelPlural.toLowerCase()}: $e');
-    } finally {
-      if (mounted) setState(() => _loadingParties = false);
-    }
+  Map<String,dynamic>? _partyAt(int index) {
+    final page = index ~/ _partyPageSize + 1, offset = index % _partyPageSize;
+    final rows = _partyPages[page];
+    if (rows == null) { _loadParties(page: page); return null; }
+    return offset < rows.length ? rows[offset] : null;
+  }
+
+  void _evictPartyPages({required int keepPage}) {
+    if (_partyPages.length <= _maxPartyCachedPages) return;
+    final keys = _partyPages.keys.toList()..sort((a,b)=>(b-keepPage).abs().compareTo((a-keepPage).abs()));
+    while (_partyPages.length > _maxPartyCachedPages && keys.isNotEmpty) _partyPages.remove(keys.removeAt(0));
   }
 
   (int, int, int) _extractPartyPagination(
@@ -416,7 +393,6 @@ class _PartyPaymentsScreenState extends State<PartyPaymentsScreen> {
       _allocationMode = PaymentAllocationMode.auto;
       _unallocatedCredit = 0;
       _detailError = null;
-      _partyPage = 1;
       _partyLastPage = 1;
       _partyTotal = 0;
     });
@@ -428,7 +404,6 @@ class _PartyPaymentsScreenState extends State<PartyPaymentsScreen> {
     ++_detailGen;
     setState(() {
       _balanceFilter = filter;
-      _partyPage = 1;
       _partyLastPage = 1;
       _partyTotal = 0;
       _selectedParty = null;
@@ -1380,7 +1355,7 @@ class _PartyPaymentsScreenState extends State<PartyPaymentsScreen> {
               title: _kindLabelPlural,
               subtitle: _loadingParties && _parties.isEmpty
                   ? 'Loading...'
-                  : '${_parties.length} of $_partyTotal loaded • ${switch (_balanceFilter) {
+                  : '$_partyTotal total • ${_partyPages.length}/$_maxPartyCachedPages pages cached • ${switch (_balanceFilter) {
                       PartyBalanceFilter.outstanding => 'outstanding',
                       PartyBalanceFilter.all => 'all',
                       PartyBalanceFilter.advanceCredit => 'advance / credit',
@@ -1399,62 +1374,22 @@ class _PartyPaymentsScreenState extends State<PartyPaymentsScreen> {
                         title: 'No $_kindLabelPlural found',
                         subtitle: _search.isEmpty ? 'Search or add parties before recording payments.' : 'No record matched your search.',
                       )
-                    : ListView.separated(
+                    : ListView.builder(
                         controller: _partyScrollController,
                         padding: const EdgeInsets.all(10),
-                        itemCount: _parties.length + (_partyLastPage > 1 ? 1 : 0),
-                        separatorBuilder: (_, __) => const SizedBox(height: 8),
+                        itemExtent: _partyRowExtent,
+                        cacheExtent: _partyRowExtent * 10,
+                        itemCount: _partyTotal,
                         itemBuilder: (context, index) {
-                          if (index == _parties.length) {
-                            return Padding(
-                              padding: const EdgeInsets.fromLTRB(4, 8, 4, 4),
-                              child: Row(
-                                children: [
-                                  Expanded(
-                                    child: OutlinedButton.icon(
-                                      onPressed: !_loadingParties && _partyPage > 1
-                                          ? () => _loadParties(page: _partyPage - 1)
-                                          : null,
-                                      icon: const Icon(Icons.chevron_left_rounded),
-                                      label: const Text('Previous'),
-                                    ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Text(
-                                    '$_partyPage / $_partyLastPage',
-                                    style: const TextStyle(
-                                      color: AppTheme.textMuted,
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Expanded(
-                                    child: OutlinedButton.icon(
-                                      onPressed: !_loadingParties && _partyPage < _partyLastPage
-                                          ? () => _loadParties(page: _partyPage + 1)
-                                          : null,
-                                      icon: const Icon(Icons.chevron_right_rounded),
-                                      label: const Text('Next'),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            );
-                          }
-                          final party = _parties[index];
+                          final party = _partyAt(index);
+                          if (party == null) return const Center(child: SizedBox(width:18,height:18,child:CircularProgressIndicator(strokeWidth:2)));
                           final selected = _selectedParty != null && _idOf(_selectedParty!) == _idOf(party);
-                          return _PartyCard(
-                            name: _partyName(party),
-                            initials: _partyInitials(party),
-                            subtitle: _partySubtitle(party),
-                            balance: _money(party['balance']),
-                            balanceColor: _balanceColor(_toDouble(party['balance'])),
-                            selected: selected,
-                            onTap: () => _selectParty(party),
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom:8),
+                            child: _PartyCard(name:_partyName(party), initials:_partyInitials(party), subtitle:_partySubtitle(party), balance:_money(party['balance']), balanceColor:_balanceColor(_toDouble(party['balance'])), selected:selected, onTap:()=>_selectParty(party)),
                           );
                         },
-                      ),
+                      )
           ),
         ],
       ),

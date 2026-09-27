@@ -9,6 +9,7 @@ import 'package:enterprise_pos/screens/cash_ledger/cash_ledger_subledgers.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/branch_indicator.dart';
 import 'package:enterprise_pos/widgets/enterprise/enterprise_panel.dart';
+import 'package:enterprise_pos/widgets/enterprise/enterprise_ui.dart';
 import 'package:flutter/material.dart';
 import 'package:enterprise_pos/services/app_currency.dart';
 import 'package:intl/intl.dart';
@@ -86,55 +87,71 @@ class _CashLedgerScreenState extends State<CashLedgerScreen> with SingleTickerPr
 
   @override
   Widget build(BuildContext context) {
-    // Watch auth so the tab bar reacts to live addon-state changes.
     final auth = context.watch<AuthProvider>();
-    final showLoans  = auth.hasAddon('loan_module');
+    final showLoans = auth.hasAddon('loan_module');
     final showQameti = auth.hasAddon('qameti_module');
 
-    // Build dynamic tab + body lists. Order: Ledger, Loans?, Qameti?,
-    // Expenses, Day Book — keeping the two optional tabs together in the
-    // middle so their position is predictable for the cashier.
     final tabs = <Tab>[
-      const Tab(text: 'Ledger',   icon: Icon(Icons.receipt_long_rounded,       size: 20)),
+      const Tab(text: 'Ledger', icon: Icon(Icons.receipt_long_rounded, size: 18)),
       if (showLoans)
-        const Tab(text: 'Loans',  icon: Icon(Icons.request_quote_rounded,       size: 20)),
+        const Tab(text: 'Loans', icon: Icon(Icons.request_quote_rounded, size: 18)),
       if (showQameti)
-        const Tab(text: 'Qameti', icon: Icon(Icons.savings_rounded,             size: 20)),
-      const Tab(text: 'Expenses', icon: Icon(Icons.receipt_rounded,             size: 20)),
-      const Tab(text: 'Day Book', icon: Icon(Icons.calendar_view_day_rounded,   size: 20)),
+        const Tab(text: 'Qameti', icon: Icon(Icons.savings_rounded, size: 18)),
+      const Tab(text: 'Expenses', icon: Icon(Icons.receipt_rounded, size: 18)),
+      const Tab(text: 'Day Book', icon: Icon(Icons.calendar_view_day_rounded, size: 18)),
     ];
 
     final bodies = <Widget>[
       _LedgerView(key: _ledgerKey),
-      if (showLoans)  const SubledgerView(kind: SubledgerKind.loans),
+      if (showLoans) const SubledgerView(kind: SubledgerKind.loans),
       if (showQameti) const SubledgerView(kind: SubledgerKind.qameti),
       const SubledgerView(kind: SubledgerKind.expenses),
       const _DayBookView(),
     ];
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Cash Ledger'),
-        actions: const [
-          Padding(padding: EdgeInsets.only(right: 8), child: BranchIndicator(tappable: false)),
-        ],
-        bottom: TabBar(
-          controller: _tabController,
-          isScrollable: true,
-          tabs: tabs,
+    return EnterprisePage(
+      title: 'Cash Ledger',
+      subtitle: 'Review cash movements, expenses, loans and day-book balances using the existing accounting ledger.',
+      icon: Icons.account_balance_wallet_outlined,
+      actions: [
+        FilledButton.icon(
+          onPressed: _openCreate,
+          icon: const Icon(Icons.add_rounded, size: 18),
+          label: const Text('Record Entry'),
         ),
-      ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: _openCreate,
-        icon: const Icon(Icons.add_rounded),
-        label: const Text('Record Entry'),
-      ),
-      body: TabBarView(
-        controller: _tabController,
-        children: bodies,
+      ],
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+      child: Column(
+        children: [
+          Container(
+            width: double.infinity,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: AppTheme.border),
+            ),
+            child: TabBar(
+              controller: _tabController,
+              isScrollable: true,
+              tabAlignment: TabAlignment.start,
+              labelColor: AppTheme.primary,
+              unselectedLabelColor: AppTheme.textMuted,
+              dividerColor: Colors.transparent,
+              tabs: tabs,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Expanded(
+            child: TabBarView(
+              controller: _tabController,
+              children: bodies,
+            ),
+          ),
+        ],
       ),
     );
   }
+
 }
 
 /// Tab 1: the flat, filterable feed of every cash movement.
@@ -152,9 +169,14 @@ class _LedgerViewState extends State<_LedgerView> {
   bool _loading = true;
   bool _loadingFlow = true;
 
-  List<Map<String, dynamic>> _items = [];
-  int _page = 1;
+  static const int _perPage = 40;
+  static const int _maxCachedPages = 6;
+  static const double _rowExtent = 82;
+  final ScrollController _scrollController = ScrollController();
+  final Map<int, List<Map<String, dynamic>>> _pages = {};
+  final Set<int> _loadingPages = {};
   int _lastPage = 1;
+  int _total = 0;
 
   Map<String, dynamic> _summary = {};
   num _opening = 0;
@@ -173,14 +195,21 @@ class _LedgerViewState extends State<_LedgerView> {
     super.initState();
     final token = context.read<AuthProvider>().token!;
     _service = CashLedgerService(token: token);
+    _scrollController.addListener(_onScroll);
     refresh();
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
   }
 
   String _fmtDate(DateTime d) =>
       "${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}";
 
   Future<void> refresh() async {
-    await Future.wait([_fetchFlow(), _fetchList(page: 1)]);
+    await Future.wait([_fetchFlow(), _fetchList(page: 1, reset: true)]);
   }
 
   Future<void> _fetchFlow() async {
@@ -204,35 +233,44 @@ class _LedgerViewState extends State<_LedgerView> {
     }
   }
 
-  Future<void> _fetchList({int page = 1}) async {
-    setState(() => _loading = true);
+  Future<void> _fetchList({int page = 1, bool reset = false}) async {
+    if (reset) { _pages.clear(); _loadingPages.clear(); _lastPage = 1; _total = 0; if (_scrollController.hasClients) _scrollController.jumpTo(0); }
+    if (_loadingPages.contains(page) || page < 1 || (_total > 0 && page > _lastPage)) return;
+    _loadingPages.add(page);
+    if (mounted && _pages.isEmpty) setState(() => _loading = true);
     try {
-      final data = await _service.getTransactions(
-        page: page,
-        perPage: 25,
-        from: _fmtDate(_dateFrom),
-        to: _fmtDate(_dateTo),
-        direction: _direction,
-        kind: _kind,
-      );
+      final data = await _service.getTransactions(page: page, perPage: _perPage, from: _fmtDate(_dateFrom), to: _fmtDate(_dateTo), direction: _direction, kind: _kind);
       if (!mounted) return;
-      final items = (data['items'] as List? ?? [])
-          .whereType<Map>()
-          .map((e) => e.cast<String, dynamic>())
-          .toList();
+      final items = (data['items'] as List? ?? []).whereType<Map>().map((e) => e.cast<String, dynamic>()).toList();
       setState(() {
-        _items = items;
-        _page = (data['current_page'] as num?)?.toInt() ?? page;
+        _pages[page] = items;
         _lastPage = (data['last_page'] as num?)?.toInt() ?? 1;
+        _total = (data['total'] as num?)?.toInt() ?? (_lastPage <= 1 ? items.length : _lastPage * _perPage);
+        _evictPages(keepPage: page);
       });
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(e.toString().replaceFirst('Exception: ', ''))),
-      );
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
+    } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString().replaceFirst('Exception: ', '')))); }
+    finally { _loadingPages.remove(page); if (mounted) setState(() => _loading = false); }
+  }
+
+  void _onScroll() {
+    if (!_scrollController.hasClients || _total <= 0) return;
+    final first = (_scrollController.offset / _rowExtent).floor().clamp(0,_total-1);
+    final last = (first + (_scrollController.position.viewportDimension/_rowExtent).ceil()+5).clamp(0,_total-1);
+    final fp=first~/_perPage+1, lp=last~/_perPage+1;
+    for(var page=fp; page<=lp; page++){ if(!_pages.containsKey(page)) _fetchList(page:page); }
+    if(lp<_lastPage && !_pages.containsKey(lp+1)) _fetchList(page:lp+1);
+  }
+
+  Map<String,dynamic>? _itemAt(int index){
+    final page=index~/_perPage+1, off=index%_perPage; final rows=_pages[page];
+    if(rows==null){ _fetchList(page:page); return null; }
+    return off<rows.length?rows[off]:null;
+  }
+
+  void _evictPages({required int keepPage}){
+    if(_pages.length<=_maxCachedPages)return;
+    final keys=_pages.keys.toList()..sort((a,b)=>(b-keepPage).abs().compareTo((a-keepPage).abs()));
+    while(_pages.length>_maxCachedPages&&keys.isNotEmpty){_pages.remove(keys.removeAt(0));}
   }
 
   Future<void> _pickDateRange() async {
@@ -437,20 +475,25 @@ class _LedgerViewState extends State<_LedgerView> {
 
   @override
   Widget build(BuildContext context) {
-    return RefreshIndicator(
-      onRefresh: refresh,
-      child: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 100),
-        children: [
-          _buildSummary(),
-          const SizedBox(height: 14),
-          _buildFilterBar(),
-          const SizedBox(height: 14),
-          _buildList(),
-          const SizedBox(height: 12),
-          _buildPager(),
-        ],
-      ),
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16,12,16,16),
+      child: Column(children:[
+        _buildSummary(), const SizedBox(height:12), _buildFilterBar(), const SizedBox(height:12),
+        Expanded(
+          child: _loading && _pages.isEmpty
+              ? const Center(child:CircularProgressIndicator())
+              : _total==0
+                  ? _buildList()
+                  : RefreshIndicator(
+                      onRefresh: refresh,
+                      child: ListView.builder(
+                        controller:_scrollController, itemExtent:_rowExtent, itemCount:_total, cacheExtent:_rowExtent*12,
+                        itemBuilder:(_,index){ final item=_itemAt(index); return item==null ? const Center(child:SizedBox(width:18,height:18,child:CircularProgressIndicator(strokeWidth:2))) : _buildRow(item); },
+                      ),
+                    ),
+        ),
+        if(_total>0) Padding(padding:const EdgeInsets.only(top:6), child:Align(alignment:Alignment.centerLeft, child:Text('$_total entries • bounded cache ${_pages.length}/$_maxCachedPages pages', style:const TextStyle(color:AppTheme.textMuted,fontSize:11,fontWeight:FontWeight.w700)))),
+      ]),
     );
   }
 
@@ -610,7 +653,7 @@ class _LedgerViewState extends State<_LedgerView> {
                 label: const Text('All'),
                 onSelected: (_) {
                   setState(() => _direction = 'all');
-                  _fetchList(page: 1);
+                  _fetchList(page: 1, reset: true);
                 },
               ),
               FilterChip(
@@ -618,7 +661,7 @@ class _LedgerViewState extends State<_LedgerView> {
                 label: const Text('Incoming'),
                 onSelected: (_) {
                   setState(() => _direction = 'in');
-                  _fetchList(page: 1);
+                  _fetchList(page: 1, reset: true);
                 },
               ),
               FilterChip(
@@ -626,7 +669,7 @@ class _LedgerViewState extends State<_LedgerView> {
                 label: const Text('Outgoing'),
                 onSelected: (_) {
                   setState(() => _direction = 'out');
-                  _fetchList(page: 1);
+                  _fetchList(page: 1, reset: true);
                 },
               ),
             ],
@@ -642,7 +685,7 @@ class _LedgerViewState extends State<_LedgerView> {
                 label: const Text('All sources'),
                 onSelected: (_) {
                   setState(() => _kind = 'all');
-                  _fetchList(page: 1);
+                  _fetchList(page: 1, reset: true);
                 },
               ),
               FilterChip(
@@ -650,7 +693,7 @@ class _LedgerViewState extends State<_LedgerView> {
                 label: const Text('Received'),
                 onSelected: (_) {
                   setState(() => _kind = 'received');
-                  _fetchList(page: 1);
+                  _fetchList(page: 1, reset: true);
                 },
               ),
               FilterChip(
@@ -658,7 +701,7 @@ class _LedgerViewState extends State<_LedgerView> {
                 label: const Text('Paid'),
                 onSelected: (_) {
                   setState(() => _kind = 'sent');
-                  _fetchList(page: 1);
+                  _fetchList(page: 1, reset: true);
                 },
               ),
               FilterChip(
@@ -666,7 +709,7 @@ class _LedgerViewState extends State<_LedgerView> {
                 label: const Text('Expenses'),
                 onSelected: (_) {
                   setState(() => _kind = 'expense');
-                  _fetchList(page: 1);
+                  _fetchList(page: 1, reset: true);
                 },
               ),
               FilterChip(
@@ -674,7 +717,7 @@ class _LedgerViewState extends State<_LedgerView> {
                 label: const Text('Module only'),
                 onSelected: (_) {
                   setState(() => _kind = 'module');
-                  _fetchList(page: 1);
+                  _fetchList(page: 1, reset: true);
                 },
               ),
             ],
@@ -691,7 +734,7 @@ class _LedgerViewState extends State<_LedgerView> {
         child: Center(child: CircularProgressIndicator()),
       );
     }
-    if (_items.isEmpty) {
+    if (_total == 0) {
       return EnterprisePanel(
         child: Column(
           children: [
@@ -727,9 +770,7 @@ class _LedgerViewState extends State<_LedgerView> {
         ),
       );
     }
-    return Column(
-      children: _items.map(_buildRow).toList(),
-    );
+    return const SizedBox.shrink();
   }
 
   Widget _buildRow(Map<String, dynamic> e) {
@@ -832,27 +873,7 @@ class _LedgerViewState extends State<_LedgerView> {
     );
   }
 
-  Widget _buildPager() {
-    if (_items.isEmpty) return const SizedBox.shrink();
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        ElevatedButton.icon(
-          onPressed: _page > 1 ? () => _fetchList(page: _page - 1) : null,
-          icon: const Icon(Icons.chevron_left),
-          label: const Text('Previous'),
-        ),
-        const SizedBox(width: 16),
-        Text('Page $_page of $_lastPage', style: const TextStyle(fontWeight: FontWeight.w800)),
-        const SizedBox(width: 16),
-        ElevatedButton.icon(
-          onPressed: _page < _lastPage ? () => _fetchList(page: _page + 1) : null,
-          icon: const Icon(Icons.chevron_right),
-          label: const Text('Next'),
-        ),
-      ],
-    );
-  }
+
 }
 
 /// Tab 2: the SAME cash movements, grouped by calendar day with running
@@ -870,12 +891,16 @@ class _DayBookViewState extends State<_DayBookView> {
   final _money = const AppMoneyFormatter();
   final _dayFmt = DateFormat('EEE, d MMM');
 
+  static const int _perPage = 40;
+  static const int _maxCachedPages = 6;
+  static const double _rowExtent = 78;
   bool _loading = true;
-  List<Map<String, dynamic>> _days = [];
+  final ScrollController _scrollController = ScrollController();
+  final Map<int,List<Map<String,dynamic>>> _pages = {};
+  final Set<int> _loadingPages = {};
   Map<String, dynamic> _totals = {};
   num _opening = 0;
-
-  int _page = 1;
+  int _total = 0;
   int _lastPage = 1;
 
   DateTime _dateFrom = DateTime.now().subtract(const Duration(days: 29));
@@ -886,8 +911,12 @@ class _DayBookViewState extends State<_DayBookView> {
     super.initState();
     final token = context.read<AuthProvider>().token!;
     _service = CashLedgerService(token: token);
-    _fetch(page: 1);
+    _scrollController.addListener(_onScroll);
+    _fetch(page: 1, reset: true);
   }
+
+  @override
+  void dispose(){ _scrollController.dispose(); super.dispose(); }
 
   String _fmtDate(DateTime d) =>
       "${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}";
@@ -898,38 +927,24 @@ class _DayBookViewState extends State<_DayBookView> {
     return num.tryParse(v.toString().replaceAll(',', '')) ?? 0;
   }
 
-  Future<void> _fetch({int page = 1}) async {
-    setState(() => _loading = true);
-    try {
-      final data = await _service.getDayBook(
-        from: _fmtDate(_dateFrom),
-        to: _fmtDate(_dateTo),
-        page: page,
-        perPage: 30,
-        order: 'desc',
-      );
-      if (!mounted) return;
-      final days = (data['days'] as List? ?? [])
-          .whereType<Map>()
-          .map((e) => e.cast<String, dynamic>())
-          .toList();
-      final p = Map<String, dynamic>.from(data['pagination'] ?? {});
-      setState(() {
-        _days = days;
-        _totals = Map<String, dynamic>.from(data['totals'] ?? {});
-        _opening = _toNum(data['opening']);
-        _page = (p['current_page'] as num?)?.toInt() ?? page;
-        _lastPage = (p['last_page'] as num?)?.toInt() ?? 1;
-      });
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(e.toString().replaceFirst('Exception: ', ''))),
-      );
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
+  Future<void> _fetch({int page = 1, bool reset = false}) async {
+    if(reset){_pages.clear();_loadingPages.clear();_lastPage=1;_total=0;if(_scrollController.hasClients)_scrollController.jumpTo(0);}
+    if(_loadingPages.contains(page)||page<1||(_total>0&&page>_lastPage))return;
+    _loadingPages.add(page); if(mounted&&_pages.isEmpty)setState(()=>_loading=true);
+    try{
+      final data=await _service.getDayBook(from:_fmtDate(_dateFrom),to:_fmtDate(_dateTo),page:page,perPage:_perPage,order:'desc');
+      if(!mounted)return;
+      final days=(data['days'] as List? ?? []).whereType<Map>().map((e)=>e.cast<String,dynamic>()).toList();
+      final pg=Map<String,dynamic>.from(data['pagination']??{});
+      setState((){_pages[page]=days; if(page==1){_totals=Map<String,dynamic>.from(data['totals']??{});_opening=_toNum(data['opening']);}
+        _lastPage=(pg['last_page'] as num?)?.toInt()??1; _total=(pg['total'] as num?)?.toInt()??(_lastPage<=1?days.length:_lastPage*_perPage); _evictPages(keepPage:page);});
+    }catch(e){if(mounted)ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text(e.toString().replaceFirst('Exception: ',''))));}
+    finally{_loadingPages.remove(page);if(mounted)setState(()=>_loading=false);}
   }
+
+  void _onScroll(){if(!_scrollController.hasClients||_total<=0)return;final first=(_scrollController.offset/_rowExtent).floor().clamp(0,_total-1);final last=(first+(_scrollController.position.viewportDimension/_rowExtent).ceil()+5).clamp(0,_total-1);final fp=first~/_perPage+1,lp=last~/_perPage+1;for(var p=fp;p<=lp;p++){if(!_pages.containsKey(p))_fetch(page:p);}if(lp<_lastPage&&!_pages.containsKey(lp+1))_fetch(page:lp+1);}
+  Map<String,dynamic>? _dayAt(int index){final p=index~/_perPage+1,o=index%_perPage;final rows=_pages[p];if(rows==null){_fetch(page:p);return null;}return o<rows.length?rows[o]:null;}
+  void _evictPages({required int keepPage}){if(_pages.length<=_maxCachedPages)return;final keys=_pages.keys.toList()..sort((a,b)=>(b-keepPage).abs().compareTo((a-keepPage).abs()));while(_pages.length>_maxCachedPages&&keys.isNotEmpty){_pages.remove(keys.removeAt(0));}}
 
   Future<void> _pickDateRange() async {
     final now = DateTime.now();
@@ -944,7 +959,7 @@ class _DayBookViewState extends State<_DayBookView> {
         _dateFrom = range.start;
         _dateTo = range.end;
       });
-      _fetch(page: 1);
+      _fetch(page: 1, reset: true);
     }
   }
 
@@ -957,18 +972,16 @@ class _DayBookViewState extends State<_DayBookView> {
 
   @override
   Widget build(BuildContext context) {
-    return RefreshIndicator(
-      onRefresh: () => _fetch(page: 1),
-      child: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 100),
-        children: [
-          _buildSummary(),
-          const SizedBox(height: 14),
-          _buildDaysList(),
-          const SizedBox(height: 12),
-          _buildPager(),
-        ],
-      ),
+    return Padding(
+      padding:const EdgeInsets.fromLTRB(16,12,16,16),
+      child:Column(children:[
+        _buildSummary(), const SizedBox(height:12),
+        Expanded(child:_loading&&_pages.isEmpty?const Center(child:CircularProgressIndicator()):_total==0?_buildDaysList():RefreshIndicator(
+          onRefresh:()=>_fetch(page:1,reset:true),
+          child:ListView.builder(controller:_scrollController,itemExtent:_rowExtent,itemCount:_total,cacheExtent:_rowExtent*12,itemBuilder:(_,i){final d=_dayAt(i);return d==null?const Center(child:SizedBox(width:18,height:18,child:CircularProgressIndicator(strokeWidth:2))):_buildDayRow(d);}),
+        )),
+        if(_total>0) Padding(padding:const EdgeInsets.only(top:6),child:Align(alignment:Alignment.centerLeft,child:Text('$_total days • bounded cache ${_pages.length}/$_maxCachedPages pages',style:const TextStyle(color:AppTheme.textMuted,fontSize:11,fontWeight:FontWeight.w700)))),
+      ]),
     );
   }
 
@@ -1054,7 +1067,7 @@ class _DayBookViewState extends State<_DayBookView> {
 
   Widget _buildDaysList() {
     if (_loading) return const SizedBox.shrink();
-    if (_days.isEmpty) {
+    if (_total == 0) {
       return EnterprisePanel(
         child: Column(
           children: const [
@@ -1067,7 +1080,7 @@ class _DayBookViewState extends State<_DayBookView> {
         ),
       );
     }
-    return Column(children: _days.map(_buildDayRow).toList());
+    return const SizedBox.shrink();
   }
 
   Widget _buildDayRow(Map<String, dynamic> d) {
@@ -1125,27 +1138,7 @@ class _DayBookViewState extends State<_DayBookView> {
     );
   }
 
-  Widget _buildPager() {
-    if (_days.isEmpty) return const SizedBox.shrink();
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        ElevatedButton.icon(
-          onPressed: _page > 1 ? () => _fetch(page: _page - 1) : null,
-          icon: const Icon(Icons.chevron_left),
-          label: const Text('Previous'),
-        ),
-        const SizedBox(width: 16),
-        Text('Page $_page of $_lastPage', style: const TextStyle(fontWeight: FontWeight.w800)),
-        const SizedBox(width: 16),
-        ElevatedButton.icon(
-          onPressed: _page < _lastPage ? () => _fetch(page: _page + 1) : null,
-          icon: const Icon(Icons.chevron_right),
-          label: const Text('Next'),
-        ),
-      ],
-    );
-  }
+
 }
 
 class _StatBox extends StatelessWidget {

@@ -34,10 +34,29 @@ abstract final class PosRouteIds {
   static const cashLedgerCreate = '/cash-ledger/create';
   static const expenseCreate = '/expenses/create';
   static const reports = '/reports';
+  static const reportPrefix = '/reports/';
+
+  static String report(String key) => '$reportPrefix$key';
+
+  static bool isReportRoute(String routeId) =>
+      routeId.startsWith(reportPrefix) && routeId.length > reportPrefix.length;
+
+  static String? reportKey(String routeId) {
+    if (!isReportRoute(routeId)) return null;
+    return routeId.substring(reportPrefix.length);
+  }
   static const users = '/users';
   static const units = '/units';
   static const saleReturns = '/sale-returns';
   static const branchControl = '/branch-control';
+  static const accounts = '/accounts';
+  static const paymentMethods = '/settings/payment-methods';
+  static const printerSettings = '/settings/printer-settings';
+  static const subscriptions = '/subscriptions';
+  static const productGroups = '/product-groups';
+  static const lowStock = '/low-stock';
+  static const pickingList = '/sales/picking-list';
+  static const intelligence = '/intelligence';
 }
 
 

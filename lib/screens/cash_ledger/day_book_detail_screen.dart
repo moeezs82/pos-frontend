@@ -7,6 +7,7 @@ import 'package:enterprise_pos/providers/payment_method_provider.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/branch_indicator.dart';
 import 'package:enterprise_pos/widgets/enterprise/enterprise_panel.dart';
+import 'package:enterprise_pos/widgets/enterprise/enterprise_ui.dart';
 import 'package:flutter/material.dart';
 import 'package:enterprise_pos/services/app_currency.dart';
 import 'package:intl/intl.dart';
@@ -30,14 +31,19 @@ class _DayBookDetailScreenState extends State<DayBookDetailScreen> {
   late final CashLedgerService _service;
   final _money = const AppMoneyFormatter();
 
+  static const int _perPage = 50;
+  static const int _maxCachedPages = 6;
+  static const double _rowExtent = 82;
   bool _loading = true;
-  List<Map<String, dynamic>> _items = [];
+  final ScrollController _scrollController = ScrollController();
+  final Map<int,List<Map<String,dynamic>>> _pages = {};
+  final Set<int> _loadingPages = {};
   Map<String, dynamic> _totals = {};
   num _opening = 0;
   num _closing = 0;
 
-  int _page = 1;
   int _lastPage = 1;
+  int _total = 0;
   String _direction = 'all'; // in|out|all
   String _kind = 'all'; // all|module|received|sent|expense
   String? _method; // null = all methods
@@ -50,8 +56,12 @@ class _DayBookDetailScreenState extends State<DayBookDetailScreen> {
     super.initState();
     final token = context.read<AuthProvider>().token!;
     _service = CashLedgerService(token: token);
-    _fetch(page: 1);
+    _scrollController.addListener(_onScroll);
+    _fetch(page: 1, reset: true);
   }
+
+  @override
+  void dispose(){ _scrollController.dispose(); super.dispose(); }
 
   num _toNum(dynamic v) {
     if (v == null) return 0;
@@ -91,7 +101,7 @@ class _DayBookDetailScreenState extends State<DayBookDetailScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Payment reversed.')),
       );
-      await _fetch(page: _page);
+      await _fetch(page: 1, reset: true);
     } catch (err) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -115,7 +125,7 @@ class _DayBookDetailScreenState extends State<DayBookDetailScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Entry voided and reversed.')),
       );
-      await _fetch(page: _page);
+      await _fetch(page: 1, reset: true);
     } catch (err) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -126,40 +136,24 @@ class _DayBookDetailScreenState extends State<DayBookDetailScreen> {
     }
   }
 
-  Future<void> _fetch({int page = 1}) async {
-    setState(() => _loading = true);
-    try {
-      final data = await _service.getDayBookDetails(
-        date: widget.date,
-        direction: _direction,
-        kind: _kind,
-        method: _method,
-        page: page,
-        perPage: 50,
-      );
-      if (!mounted) return;
-      final items = (data['items'] as List? ?? [])
-          .whereType<Map>()
-          .map((e) => e.cast<String, dynamic>())
-          .toList();
-      setState(() {
-        _items = items;
-        _totals = Map<String, dynamic>.from(data['totals'] ?? {});
-        _opening = _toNum(data['opening']);
-        _closing = _toNum(data['closing']);
-        final p = Map<String, dynamic>.from(data['pagination'] ?? {});
-        _page = (p['current_page'] as num?)?.toInt() ?? page;
-        _lastPage = (p['last_page'] as num?)?.toInt() ?? 1;
-      });
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(e.toString().replaceFirst('Exception: ', ''))),
-      );
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
+  Future<void> _fetch({int page = 1, bool reset = false}) async {
+    if(reset){_pages.clear();_loadingPages.clear();_lastPage=1;_total=0;if(_scrollController.hasClients)_scrollController.jumpTo(0);}
+    if(_loadingPages.contains(page)||page<1||(_total>0&&page>_lastPage))return;
+    _loadingPages.add(page);if(mounted&&_pages.isEmpty)setState(()=>_loading=true);
+    try{
+      final data=await _service.getDayBookDetails(date:widget.date,direction:_direction,kind:_kind,method:_method,page:page,perPage:_perPage);
+      if(!mounted)return;
+      final items=(data['items'] as List? ?? []).whereType<Map>().map((e)=>e.cast<String,dynamic>()).toList();
+      final pg=Map<String,dynamic>.from(data['pagination']??{});
+      setState((){_pages[page]=items;if(page==1){_totals=Map<String,dynamic>.from(data['totals']??{});_opening=_toNum(data['opening']);_closing=_toNum(data['closing']);}
+        _lastPage=(pg['last_page'] as num?)?.toInt()??1;_total=(pg['total'] as num?)?.toInt()??(_lastPage<=1?items.length:_lastPage*_perPage);_evictPages(keepPage:page);});
+    }catch(e){if(mounted)ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text(e.toString().replaceFirst('Exception: ',''))));}
+    finally{_loadingPages.remove(page);if(mounted)setState(()=>_loading=false);}
   }
+
+  void _onScroll(){if(!_scrollController.hasClients||_total<=0)return;final first=(_scrollController.offset/_rowExtent).floor().clamp(0,_total-1);final last=(first+(_scrollController.position.viewportDimension/_rowExtent).ceil()+5).clamp(0,_total-1);final fp=first~/_perPage+1,lp=last~/_perPage+1;for(var p=fp;p<=lp;p++){if(!_pages.containsKey(p))_fetch(page:p);}if(lp<_lastPage&&!_pages.containsKey(lp+1))_fetch(page:lp+1);}
+  Map<String,dynamic>? _itemAt(int index){final p=index~/_perPage+1,o=index%_perPage;final rows=_pages[p];if(rows==null){_fetch(page:p);return null;}return o<rows.length?rows[o]:null;}
+  void _evictPages({required int keepPage}){if(_pages.length<=_maxCachedPages)return;final keys=_pages.keys.toList()..sort((a,b)=>(b-keepPage).abs().compareTo((a-keepPage).abs()));while(_pages.length>_maxCachedPages&&keys.isNotEmpty){_pages.remove(keys.removeAt(0));}}
 
   String _fmtHeading() {
     try {
@@ -180,7 +174,7 @@ class _DayBookDetailScreenState extends State<DayBookDetailScreen> {
         ],
       ),
       body: RefreshIndicator(
-        onRefresh: () => _fetch(page: _page),
+        onRefresh: () => _fetch(page: 1, reset: true),
         child: ListView(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
           children: [
@@ -267,7 +261,7 @@ class _DayBookDetailScreenState extends State<DayBookDetailScreen> {
                         label: const Text('All'),
                         onSelected: (_) {
                           setState(() => _direction = 'all');
-                          _fetch(page: 1);
+                          _fetch(page: 1, reset: true);
                         },
                       ),
                       FilterChip(
@@ -275,7 +269,7 @@ class _DayBookDetailScreenState extends State<DayBookDetailScreen> {
                         label: const Text('Incoming'),
                         onSelected: (_) {
                           setState(() => _direction = 'in');
-                          _fetch(page: 1);
+                          _fetch(page: 1, reset: true);
                         },
                       ),
                       FilterChip(
@@ -283,7 +277,7 @@ class _DayBookDetailScreenState extends State<DayBookDetailScreen> {
                         label: const Text('Outgoing'),
                         onSelected: (_) {
                           setState(() => _direction = 'out');
-                          _fetch(page: 1);
+                          _fetch(page: 1, reset: true);
                         },
                       ),
                     ],
@@ -299,7 +293,7 @@ class _DayBookDetailScreenState extends State<DayBookDetailScreen> {
                         label: const Text('All sources'),
                         onSelected: (_) {
                           setState(() => _kind = 'all');
-                          _fetch(page: 1);
+                          _fetch(page: 1, reset: true);
                         },
                       ),
                       FilterChip(
@@ -307,7 +301,7 @@ class _DayBookDetailScreenState extends State<DayBookDetailScreen> {
                         label: const Text('Received'),
                         onSelected: (_) {
                           setState(() => _kind = 'received');
-                          _fetch(page: 1);
+                          _fetch(page: 1, reset: true);
                         },
                       ),
                       FilterChip(
@@ -315,7 +309,7 @@ class _DayBookDetailScreenState extends State<DayBookDetailScreen> {
                         label: const Text('Paid'),
                         onSelected: (_) {
                           setState(() => _kind = 'sent');
-                          _fetch(page: 1);
+                          _fetch(page: 1, reset: true);
                         },
                       ),
                       FilterChip(
@@ -323,7 +317,7 @@ class _DayBookDetailScreenState extends State<DayBookDetailScreen> {
                         label: const Text('Expenses'),
                         onSelected: (_) {
                           setState(() => _kind = 'expense');
-                          _fetch(page: 1);
+                          _fetch(page: 1, reset: true);
                         },
                       ),
                       FilterChip(
@@ -331,7 +325,7 @@ class _DayBookDetailScreenState extends State<DayBookDetailScreen> {
                         label: const Text('Module only'),
                         onSelected: (_) {
                           setState(() => _kind = 'module');
-                          _fetch(page: 1);
+                          _fetch(page: 1, reset: true);
                         },
                       ),
                     ],
@@ -350,7 +344,7 @@ class _DayBookDetailScreenState extends State<DayBookDetailScreen> {
                           label: const Text('All methods'),
                           onSelected: (_) {
                             setState(() => _method = null);
-                            _fetch(page: 1);
+                            _fetch(page: 1, reset: true);
                           },
                         ),
                         ...methods.map((m) => FilterChip(
@@ -358,7 +352,7 @@ class _DayBookDetailScreenState extends State<DayBookDetailScreen> {
                               label: Text(m.displayName),
                               onSelected: (_) {
                                 setState(() => _method = m.method);
-                                _fetch(page: 1);
+                                _fetch(page: 1, reset: true);
                               },
                             )),
                       ],
@@ -370,7 +364,7 @@ class _DayBookDetailScreenState extends State<DayBookDetailScreen> {
             const SizedBox(height: 14),
             if (_loading)
               const SizedBox.shrink()
-            else if (_items.isEmpty)
+            else if (_total == 0)
               EnterprisePanel(
                 child: Column(
                   children: const [
@@ -383,27 +377,17 @@ class _DayBookDetailScreenState extends State<DayBookDetailScreen> {
                 ),
               )
             else
-              Column(children: _items.map(_buildRow).toList()),
-            const SizedBox(height: 12),
-            if (_items.isNotEmpty && _lastPage > 1)
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  ElevatedButton.icon(
-                    onPressed: _page > 1 ? () => _fetch(page: _page - 1) : null,
-                    icon: const Icon(Icons.chevron_left),
-                    label: const Text('Previous'),
-                  ),
-                  const SizedBox(width: 16),
-                  Text('Page $_page of $_lastPage', style: const TextStyle(fontWeight: FontWeight.w800)),
-                  const SizedBox(width: 16),
-                  ElevatedButton.icon(
-                    onPressed: _page < _lastPage ? () => _fetch(page: _page + 1) : null,
-                    icon: const Icon(Icons.chevron_right),
-                    label: const Text('Next'),
-                  ),
-                ],
+              SizedBox(
+                height: 520,
+                child: ListView.builder(
+                  controller: _scrollController, itemExtent: _rowExtent, itemCount: _total, cacheExtent: _rowExtent * 12,
+                  itemBuilder: (_, index) { final item = _itemAt(index); return item == null ? const Center(child:SizedBox(width:18,height:18,child:CircularProgressIndicator(strokeWidth:2))) : _buildRow(item); },
+                ),
               ),
+            if (_total > 0) ...[
+              const SizedBox(height: 8),
+              Text('$_total transactions • bounded cache ${_pages.length}/$_maxCachedPages pages', style: const TextStyle(color:AppTheme.textMuted,fontSize:11,fontWeight:FontWeight.w700)),
+            ],
           ],
         ),
       ),

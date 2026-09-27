@@ -11,6 +11,7 @@ import 'package:flutter/material.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/app_feedback.dart';
 import 'package:enterprise_pos/widgets/branch_indicator.dart';
+import 'package:enterprise_pos/widgets/counteriq_desktop_shell.dart';
 import 'package:enterprise_pos/widgets/report_pdf_export_dialog.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
@@ -59,8 +60,15 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
   final Map<String, Set<String>> _hiddenColumnsByReport = <String, Set<String>>{};
   int? _observedBranchId;
   bool _branchRefreshScheduled = false;
-  int _page = 1;
-  int _perPage = 50;
+  static const int _perPage = 50;
+  static const int _maxCachedPages = 6;
+  static const double _reportRowExtent = 46;
+  final ScrollController _reportScrollController = ScrollController();
+  final ScrollController _reportHorizontalController = ScrollController();
+  final Map<int, _EnterpriseReportResponse> _reportPages = {};
+  final Set<int> _loadingReportPages = {};
+  int _lastPage = 1;
+  int _totalRows = 0;
 
   bool _ready = false;
   bool _loading = false;
@@ -148,6 +156,7 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
     );
 
     _searchCtrl.addListener(_onSearchChanged);
+    _reportScrollController.addListener(_onReportScroll);
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final token = context.read<AuthProvider>().token!;
@@ -194,7 +203,6 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
         if (!mounted) return;
         await Future.wait([_loadSaleSources(), _loadCustomerAreas(), _loadProductVendors(), _loadInventoryReportFilters(), _loadExpenseReportFilters()]);
         if (mounted) {
-          _page = 1;
           await _fetch();
         }
       });
@@ -206,6 +214,8 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
     _searchDebounce?.cancel();
     _searchCtrl.removeListener(_onSearchChanged);
     _searchCtrl.dispose();
+    _reportScrollController.dispose();
+    _reportHorizontalController.dispose();
     super.dispose();
   }
 
@@ -303,7 +313,7 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
     return id.isEmpty ? 'Vendor' : 'Vendor #$id';
   }
 
-  Map<String, dynamic> _filters({bool export = false}) {
+  Map<String, dynamic> _filters({bool export = false, int page = 1}) {
     return {
       if (_from != null) 'from': _dateTimeFmt.format(_from!),
       if (_to != null) 'to': _dateTimeFmt.format(_to!),
@@ -320,39 +330,78 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
       if (_supportsExpenseFilters && _expenseAccountId != null) 'account_id': _expenseAccountId,
       if (_supportsExpenseFilters && _expenseCreatedById != null) 'created_by': _expenseCreatedById,
       if (export && _hiddenColumns.isNotEmpty) 'hidden_columns': _hiddenColumns.join(','),
-      'page': export ? 1 : _page,
-      'per_page': export ? (_supportsExpenseFilters ? 5000 : 1000) : (_searchCtrl.text.trim().isNotEmpty ? 250 : _perPage),
+      'page': export ? 1 : page,
+      'per_page': export ? (_supportsExpenseFilters ? 5000 : 1000) : _perPage,
       'direction': 'desc',
     };
   }
 
   void _onSearchChanged() {
-    setState(() => _page = 1);
+    setState(() {});
     _searchDebounce?.cancel();
     _searchDebounce = Timer(const Duration(milliseconds: 450), () {
       if (mounted && _ready && !_loading) _fetch();
     });
   }
 
-  Future<void> _fetch() async {
-    setState(() {
-      _loading = true;
+  Future<void> _fetch({int page = 1, bool reset = true}) async {
+    if (reset) {
+      _reportPages.clear();
+      _loadingReportPages.clear();
+      _lastPage = 1;
+      _totalRows = 0;
+      _result = null;
       _error = null;
-    });
-
+      if (_reportScrollController.hasClients) _reportScrollController.jumpTo(0);
+    }
+    if (_loadingReportPages.contains(page) || page < 1 || (!reset && _totalRows > 0 && page > _lastPage)) return;
+    _loadingReportPages.add(page);
+    if (mounted && _reportPages.isEmpty) setState(() { _loading = true; _error = null; });
     try {
-      final data = await _service.runEnterpriseReport(
-        reportKey: _selectedReport.key,
-        filters: _filters(),
-      );
+      final data = await _service.runEnterpriseReport(reportKey: _selectedReport.key, filters: _filters(page: page));
       if (!mounted) return;
-      setState(() => _result = _EnterpriseReportResponse.fromJson(data));
+      final response = _EnterpriseReportResponse.fromJson(data);
+      setState(() {
+        _reportPages[page] = response;
+        if (page == 1 || _result == null) _result = response;
+        final pagination = response.pagination;
+        _lastPage = pagination?.lastPage ?? 1;
+        _totalRows = pagination?.total ?? response.rows.length;
+        _evictReportPages(keepPage: page);
+      });
     } catch (e) {
       if (!mounted) return;
-      setState(() => _error = e.toString());
+      if (_reportPages.isEmpty) setState(() => _error = e.toString());
     } finally {
+      _loadingReportPages.remove(page);
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  void _onReportScroll() {
+    if (!_reportScrollController.hasClients || _totalRows <= 0) return;
+    final first = (_reportScrollController.offset / _reportRowExtent).floor().clamp(0, _totalRows - 1);
+    final last = (first + (_reportScrollController.position.viewportDimension / _reportRowExtent).ceil() + 6).clamp(0, _totalRows - 1);
+    final firstPage = first ~/ _perPage + 1;
+    final lastPage = last ~/ _perPage + 1;
+    for (var page = firstPage; page <= lastPage; page++) {
+      if (!_reportPages.containsKey(page)) _fetch(page: page, reset: false);
+    }
+    if (lastPage < _lastPage && !_reportPages.containsKey(lastPage + 1)) _fetch(page: lastPage + 1, reset: false);
+  }
+
+  Map<String, dynamic>? _reportRowAt(int index) {
+    final page = index ~/ _perPage + 1;
+    final offset = index % _perPage;
+    final response = _reportPages[page];
+    if (response == null) { _fetch(page: page, reset: false); return null; }
+    return offset < response.rows.length ? response.rows[offset] : null;
+  }
+
+  void _evictReportPages({required int keepPage}) {
+    if (_reportPages.length <= _maxCachedPages) return;
+    final keys = _reportPages.keys.toList()..sort((a,b) => (b-keepPage).abs().compareTo((a-keepPage).abs()));
+    while (_reportPages.length > _maxCachedPages && keys.isNotEmpty) { _reportPages.remove(keys.removeAt(0)); }
   }
 
   Future<void> _export(String format) async {
@@ -414,7 +463,6 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
       } else {
         _to = value;
       }
-      _page = 1;
     });
     _fetch();
   }
@@ -423,7 +471,6 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
     if (_selectedReport.key == report.key) return;
     setState(() {
       _selectedReport = report;
-      _page = 1;
       _result = null;
       _error = null;
       _status = null;
@@ -442,6 +489,8 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
   Widget build(BuildContext context) {
     final width = MediaQuery.of(context).size.width;
     final isWide = width >= 980;
+    final insidePersistentShell =
+        CounterIQDesktopShell.isPersistentShellMounted(context);
 
     final deliveryEnabled = context.watch<BranchFeatureProvider>().deliveryEnabled;
     final reports = _effectiveReports(deliveryEnabled);
@@ -454,12 +503,53 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
       });
     }
 
+    final body = SafeArea(
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (isWide && !insidePersistentShell) _buildSideCatalog(reports),
+          Expanded(
+            child: CustomScrollView(
+              slivers: [
+                _buildHero(
+                  isWide: isWide || insidePersistentShell,
+                  reports: reports,
+                ),
+                _buildFilterPanel(isWide: isWide),
+                if (_loading)
+                  const SliverFillRemaining(
+                    hasScrollBody: false,
+                    child: Center(child: CircularProgressIndicator()),
+                  )
+                else if (_error != null)
+                  SliverFillRemaining(
+                    hasScrollBody: false,
+                    child: _ErrorState(message: _error!, onRetry: _fetch),
+                  )
+                else ...[
+                  _buildAreaInsights(),
+                  _buildTotals(),
+                  _buildExpenseAccountSummary(),
+                  _buildTable(),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+
+    if (insidePersistentShell) return body;
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('Enterprise Reports'),
         centerTitle: false,
         actions: [
-          const Padding(padding: EdgeInsets.only(right: 8), child: BranchIndicator(tappable: false)),
+          const Padding(
+            padding: EdgeInsets.only(right: 8),
+            child: BranchIndicator(tappable: false),
+          ),
           IconButton(
             tooltip: 'Refresh',
             onPressed: (!_ready || _loading) ? null : _fetch,
@@ -468,33 +558,7 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
           const SizedBox(width: 4),
         ],
       ),
-      body: SafeArea(
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            if (isWide) _buildSideCatalog(reports),
-            Expanded(
-              child: CustomScrollView(
-                slivers: [
-                  _buildHero(isWide: isWide, reports: reports),
-                  _buildFilterPanel(isWide: isWide),
-                  if (_loading)
-                    const SliverFillRemaining(hasScrollBody: false, child: Center(child: CircularProgressIndicator()))
-                  else if (_error != null)
-                    SliverFillRemaining(hasScrollBody: false, child: _ErrorState(message: _error!, onRetry: _fetch))
-                  else ...[
-                    _buildAreaInsights(),
-                    _buildTotals(),
-                    _buildExpenseAccountSummary(),
-                    _buildTable(),
-                    _buildPagination(),
-                  ],
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
+      body: body,
     );
   }
 
@@ -596,7 +660,7 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
         child: TextField(
           controller: _searchCtrl,
           onSubmitted: (_) {
-            setState(() => _page = 1);
+            setState(() {});
             _fetch();
           },
           decoration: InputDecoration(
@@ -610,7 +674,7 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
                     icon: const Icon(Icons.close_rounded),
                     onPressed: () {
                       _searchCtrl.clear();
-                      setState(() => _page = 1);
+                      setState(() {});
                       _fetch();
                     },
                   ),
@@ -656,8 +720,7 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
               onChanged: (value) {
                 setState(() {
                   _saleSourceId = value == 0 ? null : value;
-                  _page = 1;
-                });
+                            });
                 _fetch();
               },
             ),
@@ -697,8 +760,7 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
               onChanged: (value) {
                 setState(() {
                   _areaId = value == 0 ? null : value;
-                  _page = 1;
-                });
+                            });
                 _fetch();
               },
             ),
@@ -740,8 +802,7 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
               onChanged: (value) {
                 setState(() {
                   _productVendorId = value == 0 ? null : value;
-                  _page = 1;
-                });
+                            });
                 _fetch();
               },
             ),
@@ -780,8 +841,7 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
               onChanged: (value) {
                 setState(() {
                   _stockCategoryId = value == 0 ? null : value;
-                  _page = 1;
-                });
+                            });
                 _fetch();
               },
             ),
@@ -820,8 +880,7 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
               onChanged: (value) {
                 setState(() {
                   _stockBrandId = value == 0 ? null : value;
-                  _page = 1;
-                });
+                            });
                 _fetch();
               },
             ),
@@ -863,8 +922,7 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
               onChanged: (value) {
                 setState(() {
                   _stockVendorId = value == 0 ? null : value;
-                  _page = 1;
-                });
+                            });
                 _fetch();
               },
             ),
@@ -891,8 +949,7 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
               onChanged: (value) {
                 setState(() {
                   _customerType = value == null || value.isEmpty ? null : value;
-                  _page = 1;
-                });
+                            });
                 _fetch();
               },
             ),
@@ -927,8 +984,7 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
               onChanged: (value) {
                 setState(() {
                   _expenseAccountId = value == 0 ? null : value;
-                  _page = 1;
-                });
+                            });
                 _fetch();
               },
             ),
@@ -961,8 +1017,7 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
               onChanged: (value) {
                 setState(() {
                   _method = value == null || value.isEmpty ? null : value;
-                  _page = 1;
-                });
+                            });
                 _fetch();
               },
             ),
@@ -995,8 +1050,7 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
               onChanged: (value) {
                 setState(() {
                   _expenseCreatedById = value == 0 ? null : value;
-                  _page = 1;
-                });
+                            });
                 _fetch();
               },
             ),
@@ -1022,8 +1076,7 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
               onChanged: (value) {
                 setState(() {
                   _status = value == null || value.isEmpty ? null : value;
-                  _page = 1;
-                });
+                            });
                 _fetch();
               },
             ),
@@ -1033,21 +1086,6 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
         onPressed: _result == null ? null : _showColumnPicker,
         icon: const Icon(Icons.view_column_outlined),
         label: Text(_hiddenColumns.isEmpty ? 'Columns' : 'Columns (${_hiddenColumns.length} hidden)'),
-      ),
-      DropdownButtonHideUnderline(
-        child: DropdownButton<int>(
-          value: _perPage,
-          borderRadius: BorderRadius.circular(14),
-          items: const [25, 50, 100, 250].map((v) => DropdownMenuItem(value: v, child: Text('$v rows'))).toList(),
-          onChanged: (v) {
-            if (v == null) return;
-            setState(() {
-              _perPage = v;
-              _page = 1;
-            });
-            _fetch();
-          },
-        ),
       ),
       FilledButton.icon(
         onPressed: (!_ready || _loading) ? null : _fetch,
@@ -1296,68 +1334,64 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
   SliverToBoxAdapter _buildTable() {
     final result = _result;
     if (result == null) return const SliverToBoxAdapter(child: SizedBox.shrink());
-    final visibleRows = _visibleRows(result);
     final visibleColumns = result.columns.where((c) => !_hiddenColumns.contains(c.key)).toList(growable: false);
-    if (visibleRows.isEmpty) {
-      final searching = _searchCtrl.text.trim().isNotEmpty;
-      return SliverToBoxAdapter(
-        child: Padding(
-          padding: const EdgeInsets.all(32),
-          child: Center(child: Text(searching ? 'No rows match your search on this report' : 'No data found for selected filters', style: Theme.of(context).textTheme.titleMedium)),
-        ),
-      );
+    if (_totalRows == 0) {
+      return SliverToBoxAdapter(child: Padding(padding: const EdgeInsets.all(32), child: Center(child: Text('No data found for selected filters', style: Theme.of(context).textTheme.titleMedium))));
     }
-
+    final columnWidth = visibleColumns.length <= 5 ? 210.0 : 175.0;
+    final tableWidth = (visibleColumns.length * columnWidth).clamp(MediaQuery.of(context).size.width - 64, 5000.0).toDouble();
     return SliverToBoxAdapter(
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
         child: Card(
-          elevation: 0,
+          elevation: 0, clipBehavior: Clip.antiAlias,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18), side: BorderSide(color: Theme.of(context).dividerColor.withOpacity(.7))),
-          clipBehavior: Clip.antiAlias,
-          child: Scrollbar(
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: ConstrainedBox(
-                constraints: BoxConstraints(minWidth: MediaQuery.of(context).size.width >= 980 ? MediaQuery.of(context).size.width - 360 : MediaQuery.of(context).size.width - 32),
-                child: DataTable(
-                  headingRowHeight: 44,
-                  dataRowMinHeight: 44,
-                  dataRowMaxHeight: 64,
-                  columns: visibleColumns.map((c) => DataColumn(label: Text(c.label, style: const TextStyle(fontWeight: FontWeight.w800)))).toList(),
-                  rows: visibleRows.map((row) {
-                    return DataRow(
-                      cells: visibleColumns.map((c) => DataCell(Text(_formatValue(row[c.key], c.key), overflow: TextOverflow.ellipsis))).toList(),
-                    );
-                  }).toList(),
+          child: SizedBox(
+            height: 520,
+            child: Scrollbar(
+              controller: _reportHorizontalController,
+              thumbVisibility: true,
+              scrollbarOrientation: ScrollbarOrientation.bottom,
+              child: SingleChildScrollView(
+                controller: _reportHorizontalController,
+                scrollDirection: Axis.horizontal,
+                child: SizedBox(
+                  width: tableWidth,
+                  child: Column(children: [
+                    Container(
+                      height: 44, padding: const EdgeInsets.symmetric(horizontal: 12), color: AppTheme.surfaceSoft,
+                      child: Row(children: visibleColumns.map((c) => SizedBox(width: columnWidth, child: Padding(padding: const EdgeInsets.symmetric(horizontal: 8), child: Text(c.label, maxLines:1, overflow:TextOverflow.ellipsis, style: const TextStyle(fontWeight:FontWeight.w800, color:AppTheme.textMuted, fontSize:11))))).toList()),
+                    ),
+                    Expanded(
+                      child: Scrollbar(
+                        controller: _reportScrollController,
+                        thumbVisibility: true,
+                        child: ListView.builder(
+                          controller: _reportScrollController,
+                          itemExtent: _reportRowExtent,
+                          cacheExtent: _reportRowExtent * 14,
+                          itemCount: _totalRows,
+                          itemBuilder: (_, index) {
+                            final row = _reportRowAt(index);
+                            if (row == null) return const Align(alignment: Alignment.centerLeft, child: Padding(padding: EdgeInsets.symmetric(horizontal:20), child: SizedBox(width:18,height:18,child:CircularProgressIndicator(strokeWidth:2))));
+                            return Container(
+                              padding: const EdgeInsets.symmetric(horizontal:12),
+                              decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: AppTheme.border))),
+                              child: Row(children: visibleColumns.map((c) => SizedBox(width: columnWidth, child: Padding(padding: const EdgeInsets.symmetric(horizontal:8), child: Text(_formatValue(row[c.key], c.key), maxLines:1, overflow:TextOverflow.ellipsis)))).toList()),
+                            );
+                          },
+                        ),
+                      ),
+                    ),
+                    Container(
+                      height: 34, padding: const EdgeInsets.symmetric(horizontal:14), color: AppTheme.surfaceSoft,
+                      child: Row(children:[Text('$_totalRows records', style: const TextStyle(color:AppTheme.textMuted,fontSize:11,fontWeight:FontWeight.w700)), const Spacer(), Text('Bounded cache: ${_reportPages.length}/$_maxCachedPages pages', style: const TextStyle(color:AppTheme.textMuted,fontSize:11,fontWeight:FontWeight.w700))]),
+                    ),
+                  ]),
                 ),
               ),
             ),
           ),
-        ),
-      ),
-    );
-  }
-
-  SliverToBoxAdapter _buildPagination() {
-    final p = _result?.pagination;
-    if (p == null) return const SliverToBoxAdapter(child: SizedBox(height: 24));
-    return SliverToBoxAdapter(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 4, 16, 28),
-        child: Row(
-          children: [
-            Text(_searchCtrl.text.trim().isEmpty ? 'Page ${p.currentPage} of ${p.lastPage} • ${p.total} records' : '${_visibleRows(_result!).length} matching rows • server page ${p.currentPage}/${p.lastPage}'),
-            const Spacer(),
-            IconButton(
-              onPressed: p.currentPage <= 1 || _loading ? null : () { setState(() => _page = p.currentPage - 1); _fetch(); },
-              icon: const Icon(Icons.chevron_left_rounded),
-            ),
-            IconButton(
-              onPressed: p.currentPage >= p.lastPage || _loading ? null : () { setState(() => _page = p.currentPage + 1); _fetch(); },
-              icon: const Icon(Icons.chevron_right_rounded),
-            ),
-          ],
         ),
       ),
     );

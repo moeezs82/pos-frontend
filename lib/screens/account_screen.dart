@@ -2,9 +2,9 @@ import 'package:enterprise_pos/api/account_service.dart';
 import 'package:enterprise_pos/api/common_service.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/providers/branch_provider.dart';
-import 'package:enterprise_pos/screens/cashbook/widgets/cb_pagination.dart';
 import 'package:enterprise_pos/screens/settings/payment_methods_admin_screen.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
+import 'package:enterprise_pos/widgets/enterprise/enterprise_ui.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -16,28 +16,27 @@ class AccountsScreen extends StatefulWidget {
 }
 
 class _AccountsScreenState extends State<AccountsScreen> {
+  static const int _perPage = 40;
+  static const int _maxCachedPages = 6;
+  static const double _rowExtent = 56;
+
   late AccountService _svc;
   bool _isMasterAdmin = false;
-
-  // data
-  List<Map<String, dynamic>> _items = [];
   List<Map<String, dynamic>> _types = [];
 
-  // ui
-  bool _loading = true;
-  String? _error;
+  final Map<int, List<Map<String, dynamic>>> _pages = {};
+  final Set<int> _loadingPages = {};
   final _searchCtrl = TextEditingController();
-  bool? _activeOnly = true; // active by default
-  String? _typeCode;        // filter by type
-  int _currentPage = 1;
-  int _lastPage = 1;
-  final int _perPage = 25;
-
-  // scrolling
   final _vCtrl = ScrollController();
-  final _hCtrl = ScrollController();
+
+  bool? _activeOnly = true;
+  String? _typeCode;
+  int _lastPage = 1;
+  int _total = 0;
+  String? _error;
 
   bool get _enableCrud => _isMasterAdmin;
+  bool get _initialLoading => _loadingPages.contains(1) && _pages.isEmpty;
 
   static const _coreAccountCodes = {
     '1000', '1010', '1200', '1210', '1400',
@@ -50,276 +49,140 @@ class _AccountsScreenState extends State<AccountsScreen> {
     super.initState();
     final auth = Provider.of<AuthProvider>(context, listen: false);
     _isMasterAdmin = auth.isMasterAdmin;
-    if (!_isMasterAdmin || auth.token == null) {
-      _loading = false;
-      return;
-    }
-    final token = auth.token!;
-    _svc = AccountService(token: token);
+    if (!_isMasterAdmin || auth.token == null) return;
+    _svc = AccountService(token: auth.token!);
+    _vCtrl.addListener(_onScroll);
     _init();
   }
 
   Future<void> _init() async {
     try {
       final t = await _svc.getAccountTypes();
-      setState(() => _types = t);
-    } catch (_) {
-      // ignore: types can be fetched later
-    }
-    _fetch(page: 1);
-  }
-
-  Future<void> _fetch({int page = 1}) async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
-    try {
-      final res = await _svc.getAccounts(
-        isActive: _activeOnly == null ? null : _activeOnly!,
-        typeCode: _typeCode,
-        q: _searchCtrl.text.trim().isEmpty ? null : _searchCtrl.text.trim(),
-        perPage: _perPage,
-        page: page,
-      );
-      final items = List<Map<String, dynamic>>.from(res["items"] ?? const []);
-      final p = Map<String, dynamic>.from(res["pagination"] ?? const {});
-      setState(() {
-        _items = items;
-        _currentPage = (p["current_page"] ?? 1) as int;
-        _lastPage = (p["last_page"] ?? 1) as int;
-        _loading = false;
-      });
-    } catch (e) {
-      setState(() {
-        _loading = false;
-        _error = e.toString();
-      });
-    }
+      if (mounted) setState(() => _types = t);
+    } catch (_) {}
+    await _resetAndLoad();
   }
 
   @override
   void dispose() {
     _vCtrl.dispose();
-    _hCtrl.dispose();
     _searchCtrl.dispose();
     super.dispose();
   }
 
-  // ---------- UI helpers ----------
-
-  Widget _filters() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
-      child: Row(
-        children: [
-          // Type dropdown
-          SizedBox(
-            width: 240,
-            child: DropdownButtonFormField<String>(
-              isExpanded: true,
-              value: _typeCode,
-              decoration: const InputDecoration(
-                labelText: "Type",
-                border: OutlineInputBorder(),
-                isDense: true,
-              ),
-              items: [
-                const DropdownMenuItem<String>(value: null, child: Text("All types")),
-                ..._types.map((t) => DropdownMenuItem<String>(
-                      value: t["code"],
-                      child: Text("${t["name"]} (${t["code"]})"),
-                    )),
-              ],
-              onChanged: (v) {
-                setState(() {
-                  _typeCode = v;
-                  _currentPage = 1;
-                });
-                _fetch(page: 1);
-              },
-            ),
-          ),
-          const SizedBox(width: 8),
-          // Active filter
-          SizedBox(
-            width: 200,
-            child: DropdownButtonFormField<bool>(
-              isExpanded: true,
-              value: _activeOnly,
-              decoration: const InputDecoration(
-                labelText: "Status",
-                border: OutlineInputBorder(),
-                isDense: true,
-              ),
-              items: const [
-                DropdownMenuItem<bool>(value: true, child: Text("Active only")),
-                DropdownMenuItem<bool>(value: false, child: Text("Inactive only")),
-                DropdownMenuItem<bool>(value: null, child: Text("All")),
-              ],
-              onChanged: (v) {
-                setState(() {
-                  _activeOnly = v;
-                  _currentPage = 1;
-                });
-                _fetch(page: 1);
-              },
-            ),
-          ),
-          const SizedBox(width: 8),
-          // Search
-          Expanded(
-            child: TextField(
-              controller: _searchCtrl,
-              decoration: const InputDecoration(
-                labelText: "Search (code/name)",
-                prefixIcon: Icon(Icons.search),
-                border: OutlineInputBorder(),
-                isDense: true,
-              ),
-              onSubmitted: (_) {
-                setState(() => _currentPage = 1);
-                _fetch(page: 1);
-              },
-            ),
-          ),
-        ],
-      ),
-    );
+  Future<void> _resetAndLoad() async {
+    if (!mounted || !_isMasterAdmin) return;
+    setState(() {
+      _pages.clear();
+      _loadingPages.clear();
+      _lastPage = 1;
+      _total = 0;
+      _error = null;
+    });
+    await _loadPage(1, force: true);
+    if (_vCtrl.hasClients) _vCtrl.jumpTo(0);
   }
 
-  DataTable _table() {
-    return DataTable(
-      columnSpacing: 24,
-      headingRowHeight: 40,
-      dataRowMinHeight: 40,
-      dataRowMaxHeight: 44,
-      columns: const [
-        DataColumn(label: Text("Code")),
-        DataColumn(label: Text("Name")),
-        DataColumn(label: Text("Type")),
-        DataColumn(label: Text("Active")),
-        DataColumn(label: Text("Actions")),
-      ],
-      rows: _items.map((a) {
-        final active = (a["is_active"] ?? true) == true;
-        final isCore = _coreAccountCodes.contains(a["code"]?.toString());
-        return DataRow(cells: [
-          DataCell(Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(a["code"] ?? ""),
-              if (isCore) ...[
-                const SizedBox(width: 6),
-                const Tooltip(
-                  message: 'Protected system account',
-                  child: Icon(Icons.lock_rounded, size: 15, color: AppTheme.textMuted),
-                ),
-              ],
-            ],
-          )),
-          DataCell(Text(a["name"] ?? "")),
-          DataCell(Text(a["type"] ?? "")),
-          DataCell(Icon(
-            active ? Icons.check_circle : Icons.cancel,
-            color: active ? Colors.green : Colors.red,
-            size: 18,
-          )),
-          DataCell(Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (_enableCrud && !isCore)
-                IconButton(
-                  tooltip: "Edit",
-                  icon: const Icon(Icons.edit, size: 18),
-                  onPressed: () => _openCreateEditDialog(row: a),
-                ),
-              if (_enableCrud && !isCore)
-                IconButton(
-                  tooltip: active ? "Deactivate" : "Activate",
-                  icon: Icon(active ? Icons.visibility_off : Icons.visibility, size: 18),
-                  onPressed: () => _toggleActive(a),
-                ),
-            ],
-          )),
-        ]);
-      }).toList(),
-    );
-  }
+  Future<void> _loadPage(int page, {bool force = false}) async {
+    if (!_isMasterAdmin || page < 1) return;
+    if (_pages.isNotEmpty && page > _lastPage) return;
+    if (!force && (_pages.containsKey(page) || _loadingPages.contains(page))) return;
 
-  Widget _body() {
-    if (_loading) return const Center(child: CircularProgressIndicator());
-
-    if (_error != null) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text("Failed to load accounts"),
-              const SizedBox(height: 6),
-              Text(_error!, textAlign: TextAlign.center),
-              const SizedBox(height: 12),
-              OutlinedButton(
-                onPressed: () => _fetch(page: _currentPage),
-                child: const Text("Retry"),
-              ),
-            ],
-          ),
-        ),
+    if (mounted) setState(() => _loadingPages.add(page));
+    try {
+      final res = await _svc.getAccounts(
+        isActive: _activeOnly,
+        typeCode: _typeCode,
+        q: _searchCtrl.text.trim().isEmpty ? null : _searchCtrl.text.trim(),
+        perPage: _perPage,
+        page: page,
       );
+      final items = List<Map<String, dynamic>>.from(res['items'] ?? const []);
+      final p = Map<String, dynamic>.from(res['pagination'] ?? const {});
+      final current = (p['current_page'] as num?)?.toInt() ?? page;
+      final last = (p['last_page'] as num?)?.toInt() ?? 1;
+      final total = (p['total'] as num?)?.toInt() ??
+          (last <= 1 ? items.length : (last - 1) * _perPage + items.length);
+      if (!mounted) return;
+      setState(() {
+        _pages[current] = items;
+        _lastPage = last < 1 ? 1 : last;
+        _total = total < items.length ? items.length : total;
+        _loadingPages.remove(page);
+        _error = null;
+        _evictFarPages(_visiblePageEstimate());
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _loadingPages.remove(page);
+        _error = e.toString();
+      });
     }
-
-    if (_items.isEmpty) {
-      return const Center(child: Text("No accounts found"));
-    }
-
-    // vertical + horizontal scrolling with visible scrollbars
-    return Scrollbar(
-      controller: _vCtrl,
-      thumbVisibility: true,
-      child: SingleChildScrollView(
-        controller: _vCtrl, // vertical
-        padding: const EdgeInsets.all(12),
-        child: Scrollbar(
-          controller: _hCtrl,
-          notificationPredicate: (notif) => notif.metrics.axis == Axis.horizontal,
-          thumbVisibility: true,
-          child: SingleChildScrollView(
-            controller: _hCtrl, // horizontal
-            scrollDirection: Axis.horizontal,
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(minWidth: 900),
-              child: _table(),
-            ),
-          ),
-        ),
-      ),
-    );
   }
 
-  // ---------- CRUD ----------
+  int _visiblePageEstimate() {
+    if (!_vCtrl.hasClients || _total == 0) return 1;
+    final index = (_vCtrl.offset / _rowExtent).floor().clamp(0, _total - 1);
+    return (index ~/ _perPage) + 1;
+  }
+
+  void _evictFarPages(int anchor) {
+    if (_pages.length <= _maxCachedPages) return;
+    final keys = _pages.keys.toList()
+      ..sort((a, b) => (b - anchor).abs().compareTo((a - anchor).abs()));
+    for (final key in keys) {
+      if (_pages.length <= _maxCachedPages) break;
+      if ((key - anchor).abs() <= 1) continue;
+      _pages.remove(key);
+    }
+  }
+
+  void _onScroll() {
+    if (!_vCtrl.hasClients || _total == 0) return;
+    final first = (_vCtrl.offset / _rowExtent).floor().clamp(0, _total - 1);
+    final count = (_vCtrl.position.viewportDimension / _rowExtent).ceil() + 8;
+    final lastIndex = (first + count).clamp(0, _total - 1);
+    final firstPage = (first ~/ _perPage) + 1;
+    final lastPage = (lastIndex ~/ _perPage) + 1;
+    for (var page = firstPage; page <= lastPage; page++) {
+      _loadPage(page);
+    }
+    if (lastPage < _lastPage) _loadPage(lastPage + 1);
+    if (firstPage > 1) _loadPage(firstPage - 1);
+    if (_pages.length > _maxCachedPages && mounted) {
+      setState(() => _evictFarPages(firstPage));
+    }
+  }
+
+  Map<String, dynamic>? _accountAt(int index) {
+    final page = (index ~/ _perPage) + 1;
+    final local = index % _perPage;
+    final rows = _pages[page];
+    if (rows == null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _loadPage(page));
+      return null;
+    }
+    return local < rows.length ? rows[local] : null;
+  }
 
   Future<void> _openCreateEditDialog({Map<String, dynamic>? row}) async {
     if (!_enableCrud) return;
-    final isCore = row != null && _coreAccountCodes.contains(row["code"]?.toString());
-    final codeCtrl = TextEditingController(text: row?["code"] ?? "");
-    final nameCtrl = TextEditingController(text: row?["name"] ?? "");
-    bool isActive = (row?["is_active"] ?? true) == true;
+    final isCore = row != null && _coreAccountCodes.contains(row['code']?.toString());
+    final codeCtrl = TextEditingController(text: row?['code'] ?? '');
+    final nameCtrl = TextEditingController(text: row?['name'] ?? '');
+    bool isActive = (row?['is_active'] ?? true) == true;
     int? accountTypeId;
-
-    // Pre-select type if editing
-    if (row != null && row["type"] != null) {
-      final hit = _types.where((t) => t["code"] == row["type"]).toList();
-      if (hit.isNotEmpty) accountTypeId = hit.first["id"] as int;
+    if (row != null && row['type'] != null) {
+      final hit = _types.where((t) => t['code'] == row['type']).toList();
+      if (hit.isNotEmpty) accountTypeId = (hit.first['id'] as num).toInt();
     }
 
     await showDialog(
       context: context,
       builder: (_) => StatefulBuilder(
         builder: (context, setStateDialog) => AlertDialog(
-          title: Text(row == null ? "Create Account" : "Edit Account"),
+          title: Text(row == null ? 'Create Account' : 'Edit Account'),
           content: SizedBox(
             width: 560,
             child: Column(
@@ -328,42 +191,28 @@ class _AccountsScreenState extends State<AccountsScreen> {
                 TextField(
                   controller: codeCtrl,
                   readOnly: isCore,
-                  decoration: const InputDecoration(
-                    labelText: "Code",
-                    border: OutlineInputBorder(),
-                    isDense: true,
-                  ),
+                  decoration: const InputDecoration(labelText: 'Code', border: OutlineInputBorder(), isDense: true),
                 ),
                 const SizedBox(height: 12),
                 TextField(
                   controller: nameCtrl,
-                  decoration: const InputDecoration(
-                    labelText: "Name",
-                    border: OutlineInputBorder(),
-                    isDense: true,
-                  ),
+                  decoration: const InputDecoration(labelText: 'Name', border: OutlineInputBorder(), isDense: true),
                 ),
                 const SizedBox(height: 12),
                 DropdownButtonFormField<int>(
                   isExpanded: true,
                   value: accountTypeId,
-                  decoration: const InputDecoration(
-                    labelText: "Account Type",
-                    border: OutlineInputBorder(),
-                    isDense: true,
-                  ),
-                  items: _types.map((t) {
-                    return DropdownMenuItem<int>(
-                      value: t["id"] as int,
-                      child: Text("${t["name"]} (${t["code"]})"),
-                    );
-                  }).toList(),
+                  decoration: const InputDecoration(labelText: 'Account Type', border: OutlineInputBorder(), isDense: true),
+                  items: _types.map((t) => DropdownMenuItem<int>(
+                    value: (t['id'] as num).toInt(),
+                    child: Text('${t['name']} (${t['code']})'),
+                  )).toList(),
                   onChanged: isCore ? null : (v) => setStateDialog(() => accountTypeId = v),
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 8),
                 SwitchListTile(
                   dense: true,
-                  title: const Text("Active"),
+                  title: const Text('Active'),
                   value: isActive,
                   subtitle: isCore ? const Text('Required by system posting and reports') : null,
                   onChanged: isCore ? null : (v) => setStateDialog(() => isActive = v),
@@ -372,18 +221,15 @@ class _AccountsScreenState extends State<AccountsScreen> {
             ),
           ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(context), child: const Text("Cancel")),
-            ElevatedButton.icon(
-              icon: const Icon(Icons.save),
-              label: const Text("Save"),
+            TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+            FilledButton.icon(
+              icon: const Icon(Icons.save_rounded),
+              label: const Text('Save'),
               onPressed: () async {
                 try {
                   if (row == null) {
-                    // create
-                    if (codeCtrl.text.trim().isEmpty ||
-                        nameCtrl.text.trim().isEmpty ||
-                        accountTypeId == null) {
-                      throw Exception("Code, Name and Type are required.");
+                    if (codeCtrl.text.trim().isEmpty || nameCtrl.text.trim().isEmpty || accountTypeId == null) {
+                      throw Exception('Code, Name and Type are required.');
                     }
                     await _svc.createAccount(
                       code: codeCtrl.text.trim(),
@@ -392,26 +238,20 @@ class _AccountsScreenState extends State<AccountsScreen> {
                       isActive: isActive,
                     );
                   } else {
-                    // update
                     await _svc.updateAccount(
-                      id: row["id"].toString(),
+                      id: row['id'].toString(),
                       code: codeCtrl.text.trim().isEmpty ? null : codeCtrl.text.trim(),
                       name: nameCtrl.text.trim().isEmpty ? null : nameCtrl.text.trim(),
                       accountTypeId: accountTypeId,
                       isActive: isActive,
                     );
                   }
-                  if (mounted) {
-                    Navigator.pop(context);
-                    _fetch(page: _currentPage);
-                  }
+                  if (!mounted) return;
+                  Navigator.pop(context);
+                  await _resetAndLoad();
                 } catch (e) {
-                  if (mounted) {
-                    Navigator.pop(context);
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text(e.toString())),
-                    );
-                  }
+                  if (!mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
                 }
               },
             ),
@@ -423,78 +263,250 @@ class _AccountsScreenState extends State<AccountsScreen> {
 
   Future<void> _toggleActive(Map<String, dynamic> row) async {
     if (!_enableCrud) return;
-    final currentlyActive = (row["is_active"] ?? true) == true;
+    final currentlyActive = (row['is_active'] ?? true) == true;
     try {
-      await _svc.setActive(id: row["id"].toString(), active: !currentlyActive);
-      _fetch(page: _currentPage);
+      await _svc.setActive(id: row['id'].toString(), active: !currentlyActive);
+      await _resetAndLoad();
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Failed to change active state: $e")),
-        );
-      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed to change active state: $e')));
     }
   }
-
-  // ---------- build ----------
 
   @override
   Widget build(BuildContext context) {
     if (!_isMasterAdmin) {
-      return Scaffold(
-        appBar: AppBar(title: const Text('Chart of Accounts')),
-        body: const Center(
-          child: Padding(
-            padding: EdgeInsets.all(24),
-            child: Text('Chart of Accounts is available only to Master Admin.'),
-          ),
-        ),
+      return const EnterprisePage(
+        title: 'Chart of Accounts',
+        subtitle: 'System and operational ledger accounts.',
+        icon: Icons.account_balance_outlined,
+        child: Center(child: Text('Chart of Accounts is available only to Master Admin.')),
       );
     }
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text("Chart of Accounts"),
-        actions: [
-          TextButton.icon(
-            onPressed: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const PaymentMethodsAdminScreen()),
-            ),
-            icon: const Icon(Icons.account_balance_wallet_rounded),
-            label: const Text('Payment methods'),
+    return EnterprisePage(
+      title: 'Chart of Accounts',
+      subtitle: 'Maintain posting accounts while protecting the core system accounts used by reports and transactions.',
+      icon: Icons.account_balance_outlined,
+      actions: [
+        OutlinedButton.icon(
+          onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PaymentMethodsAdminScreen())),
+          icon: const Icon(Icons.payments_outlined, size: 18),
+          label: const Text('Payment Methods'),
+        ),
+        OutlinedButton.icon(
+          onPressed: _resetAndLoad,
+          icon: const Icon(Icons.refresh_rounded, size: 18),
+          label: const Text('Refresh'),
+        ),
+        if (_enableCrud)
+          FilledButton.icon(
+            onPressed: () => _openCreateEditDialog(),
+            icon: const Icon(Icons.add_rounded, size: 18),
+            label: const Text('New Account'),
           ),
-          IconButton(
-            onPressed: () => _fetch(page: _currentPage),
-            tooltip: "Refresh",
-            icon: const Icon(Icons.refresh),
-          ),
-          const SizedBox(width: 8),
-        ],
-      ),
-      floatingActionButton: _enableCrud
-          ? FloatingActionButton.extended(
-              onPressed: () => _openCreateEditDialog(),
-              icon: const Icon(Icons.add),
-              label: const Text("New Account"),
-            )
-          : null,
-      body: Column(
+      ],
+      child: Column(
         children: [
-          _filters(),
-          const SizedBox(height: 8),
-          Expanded(child: _body()),
-          CBPagination(
-            currentPage: _currentPage,
-            lastPage: _lastPage,
-            onPrev: _currentPage > 1 ? () => _fetch(page: _currentPage - 1) : null,
-            onNext: _currentPage < _lastPage ? () => _fetch(page: _currentPage + 1) : null,
+          EnterpriseToolbar(
+            children: [
+              SizedBox(
+                width: 220,
+                child: DropdownButtonFormField<String>(
+                  isExpanded: true,
+                  value: _typeCode,
+                  decoration: const InputDecoration(labelText: 'Type'),
+                  items: [
+                    const DropdownMenuItem<String>(value: null, child: Text('All types')),
+                    ..._types.map((t) => DropdownMenuItem<String>(
+                      value: t['code']?.toString(),
+                      child: Text('${t['name']} (${t['code']})'),
+                    )),
+                  ],
+                  onChanged: (v) { setState(() => _typeCode = v); _resetAndLoad(); },
+                ),
+              ),
+              SizedBox(
+                width: 190,
+                child: DropdownButtonFormField<bool>(
+                  isExpanded: true,
+                  value: _activeOnly,
+                  decoration: const InputDecoration(labelText: 'Status'),
+                  items: const [
+                    DropdownMenuItem<bool>(value: true, child: Text('Active only')),
+                    DropdownMenuItem<bool>(value: false, child: Text('Inactive only')),
+                    DropdownMenuItem<bool>(value: null, child: Text('All')),
+                  ],
+                  onChanged: (v) { setState(() => _activeOnly = v); _resetAndLoad(); },
+                ),
+              ),
+              SizedBox(
+                width: 360,
+                child: TextField(
+                  controller: _searchCtrl,
+                  onSubmitted: (_) => _resetAndLoad(),
+                  decoration: InputDecoration(
+                    hintText: 'Search code or account name…',
+                    prefixIcon: const Icon(Icons.search_rounded),
+                    suffixIcon: _searchCtrl.text.isEmpty ? null : IconButton(
+                      onPressed: () { _searchCtrl.clear(); _resetAndLoad(); setState(() {}); },
+                      icon: const Icon(Icons.close_rounded),
+                    ),
+                  ),
+                  onChanged: (_) => setState(() {}),
+                ),
+              ),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                decoration: BoxDecoration(
+                  color: AppTheme.surfaceSoft,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: AppTheme.border),
+                ),
+                child: Text('$_total accounts', style: const TextStyle(color: AppTheme.textMuted, fontWeight: FontWeight.w800)),
+              ),
+            ],
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 12),
+          Expanded(
+            child: Container(
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: AppTheme.border),
+              ),
+              clipBehavior: Clip.antiAlias,
+              child: _initialLoading
+                  ? const Center(child: CircularProgressIndicator(strokeWidth: 2))
+                  : _error != null && _pages.isEmpty
+                      ? _errorState()
+                      : _total == 0
+                          ? const Center(child: Text('No accounts found'))
+                          : Column(
+                              children: [
+                                _tableHeader(),
+                                Expanded(
+                                  child: Scrollbar(
+                                    controller: _vCtrl,
+                                    thumbVisibility: true,
+                                    child: ListView.builder(
+                                      controller: _vCtrl,
+                                      itemExtent: _rowExtent,
+                                      cacheExtent: _rowExtent * 12,
+                                      itemCount: _total,
+                                      itemBuilder: (_, index) {
+                                        final row = _accountAt(index);
+                                        return row == null ? _loadingRow() : _accountRow(row);
+                                      },
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+            ),
+          ),
         ],
       ),
     );
   }
+
+  Widget _tableHeader() => Container(
+        height: 44,
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        color: AppTheme.surfaceSoft,
+        child: const Row(
+          children: [
+            SizedBox(width: 120, child: Text('CODE', style: _headerStyle)),
+            SizedBox(width: 18),
+            Expanded(flex: 35, child: Text('ACCOUNT', style: _headerStyle)),
+            SizedBox(width: 18),
+            Expanded(flex: 22, child: Text('TYPE', style: _headerStyle)),
+            SizedBox(width: 18),
+            SizedBox(width: 120, child: Text('STATUS', style: _headerStyle)),
+            SizedBox(width: 18),
+            SizedBox(width: 110, child: Text('ACTIONS', style: _headerStyle)),
+          ],
+        ),
+      );
+
+  Widget _accountRow(Map<String, dynamic> row) {
+    final active = (row['is_active'] ?? true) == true;
+    final isCore = _coreAccountCodes.contains(row['code']?.toString());
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: AppTheme.border))),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 120,
+            child: Row(children: [
+              Flexible(child: Text(row['code']?.toString() ?? '—', style: const TextStyle(fontWeight: FontWeight.w800))),
+              if (isCore) ...[
+                const SizedBox(width: 6),
+                const Tooltip(message: 'Protected system account', child: Icon(Icons.lock_rounded, size: 14, color: AppTheme.textMuted)),
+              ],
+            ]),
+          ),
+          const SizedBox(width: 18),
+          Expanded(flex: 35, child: Text(row['name']?.toString() ?? '—', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700))),
+          const SizedBox(width: 18),
+          Expanded(flex: 22, child: Text(row['type']?.toString() ?? '—', maxLines: 1, overflow: TextOverflow.ellipsis)),
+          const SizedBox(width: 18),
+          SizedBox(width: 120, child: _statusBadge(active)),
+          const SizedBox(width: 18),
+          SizedBox(
+            width: 110,
+            child: Row(
+              children: [
+                if (_enableCrud && !isCore)
+                  IconButton(tooltip: 'Edit', onPressed: () => _openCreateEditDialog(row: row), icon: const Icon(Icons.edit_outlined, size: 18)),
+                if (_enableCrud && !isCore)
+                  IconButton(
+                    tooltip: active ? 'Deactivate' : 'Activate',
+                    onPressed: () => _toggleActive(row),
+                    icon: Icon(active ? Icons.visibility_off_outlined : Icons.visibility_outlined, size: 18),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _statusBadge(bool active) => Align(
+        alignment: Alignment.centerLeft,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+          decoration: BoxDecoration(
+            color: (active ? AppTheme.success : AppTheme.textMuted).withOpacity(.10),
+            borderRadius: BorderRadius.circular(999),
+          ),
+          child: Text(active ? 'Active' : 'Inactive', style: TextStyle(color: active ? AppTheme.success : AppTheme.textMuted, fontWeight: FontWeight.w800, fontSize: 11)),
+        ),
+      );
+
+  Widget _loadingRow() => const DecoratedBox(
+        decoration: BoxDecoration(border: Border(bottom: BorderSide(color: AppTheme.border))),
+        child: Center(child: SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))),
+      );
+
+  Widget _errorState() => Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.error_outline_rounded, color: AppTheme.danger, size: 32),
+            const SizedBox(height: 8),
+            const Text('Failed to load accounts', style: TextStyle(fontWeight: FontWeight.w800)),
+            const SizedBox(height: 4),
+            Text(_error ?? '', textAlign: TextAlign.center, style: const TextStyle(color: AppTheme.textMuted)),
+            const SizedBox(height: 12),
+            OutlinedButton.icon(onPressed: _resetAndLoad, icon: const Icon(Icons.refresh_rounded), label: const Text('Retry')),
+          ],
+        ),
+      );
+
+  static const TextStyle _headerStyle = TextStyle(color: AppTheme.textMuted, fontWeight: FontWeight.w800, fontSize: 11, letterSpacing: .25);
 }
 
 class BranchPaymentMappingsScreen extends StatefulWidget {

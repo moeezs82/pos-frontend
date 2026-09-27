@@ -9,6 +9,7 @@ import 'package:enterprise_pos/widgets/customer_picker_sheet.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
+import 'package:enterprise_pos/widgets/enterprise/enterprise_ui.dart';
 
 class PickingListScreen extends StatefulWidget {
   final DateTime? initialFromDate;
@@ -34,6 +35,7 @@ class _PickingListScreenState extends State<PickingListScreen> {
   late SaleService _service;
   final _printer = const PickingListPrintService();
   final _searchController = TextEditingController();
+  final ScrollController _tableHorizontalController = ScrollController();
   Timer? _searchDebounce;
 
   late DateTime _fromDate;
@@ -65,6 +67,7 @@ class _PickingListScreenState extends State<PickingListScreen> {
   void dispose() {
     _searchDebounce?.cancel();
     _searchController.dispose();
+    _tableHorizontalController.dispose();
     super.dispose();
   }
 
@@ -199,28 +202,34 @@ class _PickingListScreenState extends State<PickingListScreen> {
     final totalQty = _qty(data['total_quantity']);
     final excludedReturns = _toDouble(data['excluded_return_quantity']);
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Picking List'),
-        actions: [
-          const BranchIndicator(tappable: false),
-          IconButton(
-            tooltip: 'Refresh',
-            onPressed: _loading ? null : _load,
-            icon: const Icon(Icons.refresh_rounded),
-          ),
-          const SizedBox(width: 4),
-        ],
-      ),
-      body: Column(
+    return EnterprisePage(
+      title: 'Picking List',
+      subtitle: 'Consolidate sold products and variants into quantities to pick for packing.',
+      icon: Icons.inventory_2_outlined,
+      actions: [
+        OutlinedButton.icon(
+          onPressed: _loading ? null : _load,
+          icon: const Icon(Icons.refresh_rounded, size: 18),
+          label: const Text('Refresh'),
+        ),
+        FilledButton.icon(
+          onPressed: items.isEmpty || _printing ? null : _print,
+          icon: _printing
+              ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+              : const Icon(Icons.print_outlined, size: 18),
+          label: Text(_printing ? 'Preparing…' : 'Print / Save PDF'),
+        ),
+      ],
+      child: Column(
         children: [
           _filtersCard(),
           if (_loading) const LinearProgressIndicator(minHeight: 2),
+          const SizedBox(height: 8),
           Expanded(
             child: _error != null
                 ? _errorState()
                 : _loading && _data == null
-                    ? const Center(child: CircularProgressIndicator())
+                    ? const Center(child: CircularProgressIndicator(strokeWidth: 2))
                     : _content(
                         items: items,
                         sales: sales,
@@ -464,8 +473,11 @@ class _PickingListScreenState extends State<PickingListScreen> {
     return LayoutBuilder(
       builder: (context, constraints) {
         return Scrollbar(
+          controller: _tableHorizontalController,
           thumbVisibility: true,
+          scrollbarOrientation: ScrollbarOrientation.bottom,
           child: SingleChildScrollView(
+            controller: _tableHorizontalController,
             scrollDirection: Axis.horizontal,
             child: ConstrainedBox(
               constraints: BoxConstraints(minWidth: constraints.maxWidth, maxWidth: constraints.maxWidth < 1080 ? 1080 : constraints.maxWidth),

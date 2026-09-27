@@ -15,13 +15,17 @@ class UsersScreen extends StatefulWidget {
 }
 
 class _UsersScreenState extends State<UsersScreen> {
-  int _page = 1;
+  static const int _perPage = 40;
+  static const int _maxCachedPages = 6;
+  static const double _rowExtent = 62;
   int _lastPage = 1;
   int _total = 0;
   bool _loading = false;
   String _search = '';
-  final List<Map<String, dynamic>> _users = [];
+  final Map<int, List<Map<String, dynamic>>> _pages = {};
+  final Set<int> _loadingPages = {};
   final _searchController = TextEditingController();
+  final _scrollController = ScrollController();
 
   late final UsersService _usersService;
 
@@ -30,65 +34,73 @@ class _UsersScreenState extends State<UsersScreen> {
     super.initState();
     final token = context.read<AuthProvider>().token!;
     _usersService = UsersService(token: token);
+    _scrollController.addListener(_onScroll);
     _fetchUsers(reset: true);
   }
 
   @override
   void dispose() {
     _searchController.dispose();
+    _scrollController.dispose();
     super.dispose();
   }
 
-  Future<void> _fetchUsers({bool reset = false}) async {
-    if (!mounted) return;
-    setState(() => _loading = true);
-
+  Future<void> _fetchUsers({bool reset = false, int page = 1}) async {
     if (reset) {
-      _users.clear();
-      _page = 1;
+      _pages.clear(); _loadingPages.clear(); _lastPage = 1; _total = 0;
+      if (_scrollController.hasClients) _scrollController.jumpTo(0);
     }
-
+    if (_loadingPages.contains(page) || page < 1 || (_total > 0 && page > _lastPage)) return;
+    _loadingPages.add(page);
+    if (mounted && _pages.isEmpty) setState(() => _loading = true);
     try {
-      final response = await _usersService.getUsers(
-        page: _page,
-        perPage: 20,
-        search: _search,
-        excludeMasterAdmin: true,
-      );
-
+      final response = await _usersService.getUsers(page: page, perPage: _perPage, search: _search, excludeMasterAdmin: true);
       final responseData = response['data'];
       final pageData = _asMap(responseData) ?? const <String, dynamic>{};
-      final rawItems = responseData is List
-          ? responseData
-          : (pageData['data'] is List ? pageData['data'] as List : const []);
-      final items = rawItems
-          .whereType<Map>()
-          .map((item) => item.cast<String, dynamic>())
-          .where((user) => !_isMasterAdminUser(user))
-          .toList();
-
+      final rawItems = responseData is List ? responseData : (pageData['data'] is List ? pageData['data'] as List : const []);
+      final items = rawItems.whereType<Map>().map((item) => item.cast<String, dynamic>()).where((user) => !_isMasterAdminUser(user)).toList();
       if (!mounted) return;
       setState(() {
-        _users
-          ..clear()
-          ..addAll(items);
-        _page = _readInt(pageData['current_page']) ?? _page;
+        _pages[page] = items;
         _lastPage = _readInt(pageData['last_page']) ?? 1;
         _total = _readInt(pageData['total']) ?? items.length;
+        _evictPages(keepPage: page);
       });
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to load users: $e')),
-        );
-      }
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed to load users: $e')));
     } finally {
+      _loadingPages.remove(page);
       if (mounted) setState(() => _loading = false);
     }
   }
 
+  void _onScroll() {
+    if (!_scrollController.hasClients || _total <= 0) return;
+    final first = (_scrollController.offset / _rowExtent).floor().clamp(0, _total - 1);
+    final last = (first + (_scrollController.position.viewportDimension / _rowExtent).ceil() + 6).clamp(0, _total - 1);
+    final firstPage = first ~/ _perPage + 1, lastPage = last ~/ _perPage + 1;
+    for (var page = firstPage; page <= lastPage; page++) { if (!_pages.containsKey(page)) _fetchUsers(page: page); }
+    if (lastPage < _lastPage && !_pages.containsKey(lastPage + 1)) _fetchUsers(page: lastPage + 1);
+  }
+
+  Map<String, dynamic>? _userAt(int index) {
+    final page = index ~/ _perPage + 1, offset = index % _perPage;
+    final rows = _pages[page];
+    if (rows == null) { _fetchUsers(page: page); return null; }
+    return offset < rows.length ? rows[offset] : null;
+  }
+
+  void _evictPages({required int keepPage}) {
+    if (_pages.length <= _maxCachedPages) return;
+    final keys = _pages.keys.toList()..sort((a,b) => (b-keepPage).abs().compareTo((a-keepPage).abs()));
+    while (_pages.length > _maxCachedPages && keys.isNotEmpty) { _pages.remove(keys.removeAt(0)); }
+  }
+
+  List<Map<String,dynamic>> get _loadedUsers => _pages.values.expand((e) => e).toList(growable:false);
+
   void _onSearch() {
     setState(() => _search = _searchController.text.trim());
+    _scrollController.addListener(_onScroll);
     _fetchUsers(reset: true);
   }
 
@@ -126,8 +138,9 @@ class _UsersScreenState extends State<UsersScreen> {
     final auth = context.watch<AuthProvider>();
     final currentUserId = _readInt(auth.user?['id']);
     final canManageUsers = auth.hasPermission('manage-users');
-    final activeCount = _users.where((u) => _readBool(u['is_active'])).length;
-    final inactiveCount = _users.length - activeCount;
+    final loadedUsers = _loadedUsers;
+    final activeCount = loadedUsers.where((u) => _readBool(u['is_active'])).length;
+    final inactiveCount = loadedUsers.length - activeCount;
 
     return EnterprisePage(
       title: 'Users',
@@ -148,31 +161,6 @@ class _UsersScreenState extends State<UsersScreen> {
               ),
             ]
           : const [],
-      floatingActionButton: canManageUsers
-          ? FloatingActionButton.extended(
-              onPressed: _loading ? null : () => _openForm(),
-              icon: const Icon(Icons.person_add_alt_1_rounded),
-              label: const Text('Add User'),
-            )
-          : null,
-      bottomNavigationBar: EnterprisePaginationBar(
-        page: _page,
-        lastPage: _lastPage,
-        total: _total,
-        loading: _loading,
-        onPrevious: _page > 1
-            ? () {
-                setState(() => _page--);
-                _fetchUsers();
-              }
-            : null,
-        onNext: _page < _lastPage
-            ? () {
-                setState(() => _page++);
-                _fetchUsers();
-              }
-            : null,
-      ),
       child: Column(
         children: [
           EnterpriseToolbar(
@@ -192,7 +180,7 @@ class _UsersScreenState extends State<UsersScreen> {
               ),
               EnterpriseMetricChip(
                 label: 'Visible users',
-                value: '${_users.length}',
+                value: '$_total',
                 color: AppTheme.primary,
                 icon: Icons.people_alt_rounded,
               ),
@@ -214,9 +202,9 @@ class _UsersScreenState extends State<UsersScreen> {
           Expanded(
             child: RefreshIndicator(
               onRefresh: () => _fetchUsers(reset: true),
-              child: _loading && _users.isEmpty
+              child: _loading && _pages.isEmpty
                   ? const Center(child: CircularProgressIndicator())
-                  : _users.isEmpty
+                  : _total == 0
                       ? ListView(
                           children: [
                             const SizedBox(height: 70),
@@ -237,7 +225,10 @@ class _UsersScreenState extends State<UsersScreen> {
                           ],
                         )
                       : _UsersTable(
-                          users: _users,
+                          total: _total,
+                          rowExtent: _rowExtent,
+                          controller: _scrollController,
+                          userAt: _userAt,
                           currentUserId: currentUserId,
                           canManageUsers: canManageUsers,
                           onEdit: _openForm,
@@ -275,59 +266,43 @@ class _UsersScreenState extends State<UsersScreen> {
 }
 
 class _UsersTable extends StatelessWidget {
-  final List<Map<String, dynamic>> users;
+  final int total;
+  final double rowExtent;
+  final ScrollController controller;
+  final Map<String, dynamic>? Function(int index) userAt;
   final int? currentUserId;
   final bool canManageUsers;
   final ValueChanged<Map<String, dynamic>> onEdit;
   final ValueChanged<Map<String, dynamic>> onDelete;
 
-  const _UsersTable({
-    required this.users,
-    required this.currentUserId,
-    required this.canManageUsers,
-    required this.onEdit,
-    required this.onDelete,
-  });
+  const _UsersTable({required this.total, required this.rowExtent, required this.controller, required this.userAt, required this.currentUserId, required this.canManageUsers, required this.onEdit, required this.onDelete});
 
   @override
   Widget build(BuildContext context) {
-    return ListView(
-      children: [
-        Container(
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: AppTheme.border),
-          ),
-          child: Column(
-            children: [
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 14, vertical: 11),
-                child: Row(
-                  children: [
-                    Expanded(flex: 4, child: Text('USER', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: AppTheme.textMuted))),
-                    Expanded(flex: 4, child: Text('CONTACT', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: AppTheme.textMuted))),
-                    Expanded(flex: 3, child: Text('ROLE', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: AppTheme.textMuted))),
-                    Expanded(flex: 2, child: Text('STATUS', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: AppTheme.textMuted))),
-                    SizedBox(width: 92, child: Text('ACTIONS', textAlign: TextAlign.right, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: AppTheme.textMuted))),
-                  ],
-                ),
-              ),
-              const Divider(height: 1),
-              for (var i = 0; i < users.length; i++) ...[
-                _UserTableRow(
-                  user: users[i],
-                  currentUserId: currentUserId,
-                  canManageUsers: canManageUsers,
-                  onEdit: onEdit,
-                  onDelete: onDelete,
-                ),
-                if (i != users.length - 1) const Divider(height: 1),
-              ],
-            ],
-          ),
+    return Container(
+      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16), border: Border.all(color: AppTheme.border)),
+      clipBehavior: Clip.antiAlias,
+      child: Column(children: [
+        const Padding(
+          padding: EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+          child: Row(children: [
+            Expanded(flex:4, child: Text('USER', style: TextStyle(fontSize:11,fontWeight:FontWeight.w800,color:AppTheme.textMuted))),
+            Expanded(flex:4, child: Text('CONTACT', style: TextStyle(fontSize:11,fontWeight:FontWeight.w800,color:AppTheme.textMuted))),
+            Expanded(flex:3, child: Text('ROLE', style: TextStyle(fontSize:11,fontWeight:FontWeight.w800,color:AppTheme.textMuted))),
+            Expanded(flex:2, child: Padding(padding: EdgeInsets.only(right:12), child: Text('STATUS', style: TextStyle(fontSize:11,fontWeight:FontWeight.w800,color:AppTheme.textMuted)))),
+            SizedBox(width:12), SizedBox(width:92, child: Text('ACTIONS', textAlign:TextAlign.right, style: TextStyle(fontSize:11,fontWeight:FontWeight.w800,color:AppTheme.textMuted))),
+          ]),
         ),
-      ],
+        const Divider(height:1),
+        Expanded(child: ListView.builder(
+          controller: controller, itemExtent: rowExtent, itemCount: total, cacheExtent: rowExtent * 12,
+          itemBuilder: (_, index) {
+            final user = userAt(index);
+            if (user == null) return const Padding(padding: EdgeInsets.symmetric(horizontal:18), child: Align(alignment: Alignment.centerLeft, child: SizedBox(width:18,height:18,child:CircularProgressIndicator(strokeWidth:2))));
+            return Column(children:[Expanded(child:_UserTableRow(user:user,currentUserId:currentUserId,canManageUsers:canManageUsers,onEdit:onEdit,onDelete:onDelete)), const Divider(height:1)]);
+          },
+        )),
+      ]),
     );
   }
 }
@@ -410,6 +385,7 @@ class _UserTableRow extends StatelessWidget {
                 ],
               ),
             ),
+            const SizedBox(width: 12),
             SizedBox(
               width: 92,
               child: Row(

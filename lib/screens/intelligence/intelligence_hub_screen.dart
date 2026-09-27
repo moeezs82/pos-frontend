@@ -5,6 +5,7 @@ import 'package:enterprise_pos/screens/intelligence/replenishment_screen.dart';
 import 'package:enterprise_pos/screens/intelligence/seasons_screen.dart';
 import 'package:enterprise_pos/screens/intelligence/widgets/intelligence_widgets.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
+import 'package:enterprise_pos/widgets/enterprise/enterprise_ui.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -19,17 +20,13 @@ class IntelligenceHubScreen extends StatelessWidget {
     final canSeasons = auth.hasPermission('manage-business-seasons');
     final canSettings = auth.hasPermission('manage-intelligence-settings');
 
-    return Scaffold(
-      backgroundColor: AppTheme.bg,
-      appBar: AppBar(title: const Text('Intelligence')),
-      body: ListView(
-        padding: const EdgeInsets.all(20),
+    return EnterprisePage(
+      title: 'CounterIQ Intelligence',
+      subtitle: 'Operational answers from your existing sales and inventory history. Advisory only; no automatic business writes.',
+      icon: Icons.auto_awesome_rounded,
+      child: ListView(
+        padding: const EdgeInsets.all(4),
         children: [
-          const IntelligencePageHeader(
-            title: 'CounterIQ Intelligence',
-            subtitle: 'Operational answers derived from the sales and inventory history you already record. No hidden data capture and no automatic business writes.',
-          ),
-          const SizedBox(height: 16),
           const IntelligenceInfoBanner(
             icon: Icons.verified_user_outlined,
             title: 'Advisory by design',
@@ -42,60 +39,13 @@ class IntelligenceHubScreen extends StatelessWidget {
             runSpacing: 14,
             children: [
               if (canMoney)
-                _HubCard(
-                  icon: Icons.savings_outlined,
-                  title: 'Money Finder',
-                  subtitle: 'Margin leaks, repricing alerts and dead stock in one clear review area.',
-                  color: AppTheme.warning,
-                  bullets: const [
-                    'Recoverable margin',
-                    'Repricing watchlist',
-                    'Dead stock exposure',
-                  ],
-                  onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const MoneyFinderScreen())),
-                ),
+                _HubCard(icon: Icons.savings_outlined, title: 'Money Finder', subtitle: 'Margin leaks, repricing alerts and dead stock in one clear review area.', color: AppTheme.warning, bullets: const ['Recoverable margin','Repricing watchlist','Dead stock exposure'], onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const MoneyFinderScreen()))),
               if (canReplenish)
-                _HubCard(
-                  icon: Icons.inventory_2_outlined,
-                  title: 'Replenishment',
-                  subtitle: 'See what to buy, how much and why, using measured velocity, lead time and days of cover.',
-                  color: AppTheme.info,
-                  bullets: const [
-                    'Vendor-grouped reorder view',
-                    'Days of cover',
-                    'Season uplift awareness',
-                    'Package-aware suggestions',
-                  ],
-                  onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ReplenishmentScreen())),
-                ),
+                _HubCard(icon: Icons.inventory_2_outlined, title: 'Replenishment', subtitle: 'See what to buy, how much and why, using measured velocity, lead time and days of cover.', color: AppTheme.info, bullets: const ['Vendor-grouped reorder view','Days of cover','Season uplift awareness','Package-aware suggestions'], onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ReplenishmentScreen()))),
               if (canSeasons)
-                _HubCard(
-                  icon: Icons.event_repeat_rounded,
-                  title: 'Business Seasons',
-                  subtitle: 'Maintain owner-declared demand seasons such as Ramadan, Eid, summer and wedding season.',
-                  color: AppTheme.purple,
-                  bullets: const [
-                    'Annual fixed seasons',
-                    'Year-specific declared dates',
-                    'Product / brand / category tagging',
-                    'No guessed religious dates',
-                  ],
-                  onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const SeasonsScreen())),
-                ),
+                _HubCard(icon: Icons.event_repeat_rounded, title: 'Business Seasons', subtitle: 'Maintain owner-declared demand seasons such as Ramadan, Eid, summer and wedding season.', color: AppTheme.purple, bullets: const ['Annual fixed seasons','Year-specific declared dates','Product / brand / category tagging','No guessed religious dates'], onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const SeasonsScreen()))),
               if (canSettings)
-                _HubCard(
-                  icon: Icons.tune_rounded,
-                  title: 'Intelligence Settings',
-                  subtitle: 'Tune thresholds and advisory logic such as margin floors, dead-stock days and velocity windows.',
-                  color: AppTheme.primary,
-                  bullets: const [
-                    'Margin targets',
-                    'Velocity windows',
-                    'Lead-time fallback',
-                    'Snapshot cache TTL',
-                  ],
-                  onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const IntelligenceSettingsScreen())),
-                ),
+                _HubCard(icon: Icons.tune_rounded, title: 'Intelligence Settings', subtitle: 'Tune thresholds and advisory logic such as margin floors, dead-stock days and velocity windows.', color: AppTheme.primary, bullets: const ['Margin targets','Velocity windows','Lead-time fallback','Snapshot cache TTL'], onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const IntelligenceSettingsScreen()))),
             ],
           ),
         ],

@@ -3,6 +3,7 @@ import 'package:enterprise_pos/api/core/api_client.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/screens/sales/sale_detail.dart';
 import 'package:enterprise_pos/widgets/branch_indicator.dart';
+import 'package:enterprise_pos/widgets/enterprise/enterprise_ui.dart';
 import 'package:enterprise_pos/widgets/payment_method_dropdown.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
@@ -253,17 +254,11 @@ class _SaleReturnDetailScreenState extends State<SaleReturnDetailScreen> {
     final theme = Theme.of(context);
 
     if (_loading) {
-      return const Scaffold(
-        appBar: _SimpleAppBar(title: "Return"),
-        body: Center(child: CircularProgressIndicator()),
-      );
+      return const EnterprisePage(title: 'Return', icon: Icons.assignment_return_outlined, child: Center(child: CircularProgressIndicator()));
     }
 
     if (_return == null) {
-      return const Scaffold(
-        appBar: _SimpleAppBar(title: "Return"),
-        body: Center(child: Text("Failed to load return details")),
-      );
+      return const EnterprisePage(title: 'Return', icon: Icons.assignment_return_outlined, child: Center(child: Text('Failed to load return details')));
     }
 
     final status = (_return!['status'] ?? '').toString();
@@ -277,17 +272,12 @@ class _SaleReturnDetailScreenState extends State<SaleReturnDetailScreen> {
         if (didPop) return; // already popped; don't pop again
         Navigator.pop(context, _changed); // return result to parent
       },
-      child: Scaffold(
-        appBar: AppBar(
-          title: Text("Return #${_return!['return_no']}"),
-          actions: const [
-            Padding(
-              padding: EdgeInsets.only(right: 8),
-              child: BranchIndicator(tappable: false),
-            ),
-          ],
-        ),
-        body: RefreshIndicator(
+      child: EnterprisePage(
+        title: "Return #${_return!['return_no']}",
+        subtitle: 'Review returned items, approval state and refund activity.',
+        icon: Icons.assignment_return_outlined,
+        appBarActions: const [Padding(padding: EdgeInsets.only(right: 8), child: BranchIndicator(tappable: false))],
+        child: RefreshIndicator(
           onRefresh: _fetchDetail,
           child: SingleChildScrollView(
             physics: const AlwaysScrollableScrollPhysics(),

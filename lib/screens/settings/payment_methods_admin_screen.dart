@@ -9,6 +9,7 @@ import 'package:enterprise_pos/models/payment_method.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/providers/branch_provider.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
+import 'package:enterprise_pos/widgets/enterprise/enterprise_ui.dart';
 
 /// Master-Admin, per-branch payment method configuration. Replaces the fixed
 /// four-row Branch Payment Mappings screen with a dynamic list where methods
@@ -138,64 +139,72 @@ class _PaymentMethodsAdminScreenState extends State<PaymentMethodsAdminScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Payment Methods'),
-        actions: [
-          if (_branchId != null)
-            IconButton(
-              tooltip: 'Add method',
-              onPressed: () => _openEditor(null),
-              icon: const Icon(Icons.add_rounded),
-            ),
-        ],
-      ),
-      floatingActionButton: _branchId == null
-          ? null
-          : FloatingActionButton.extended(
-              onPressed: () => _openEditor(null),
-              icon: const Icon(Icons.add_rounded),
-              label: const Text('Add Method'),
-            ),
-      body: Column(
+    return EnterprisePage(
+      title: 'Payment Methods',
+      subtitle: 'Configure branch payment methods and map each method to its posting account.',
+      icon: Icons.payments_outlined,
+      actions: [
+        OutlinedButton.icon(
+          onPressed: _branchId == null ? null : () => _loadMethods(_branchId!),
+          icon: const Icon(Icons.refresh_rounded, size: 18),
+          label: const Text('Refresh'),
+        ),
+        FilledButton.icon(
+          onPressed: _branchId == null ? null : () => _openEditor(null),
+          icon: const Icon(Icons.add_rounded, size: 18),
+          label: const Text('Add Method'),
+        ),
+      ],
+      child: Column(
         children: [
-          _branchSelector(),
-          const Divider(height: 1),
-          Expanded(child: _body()),
-        ],
-      ),
-    );
-  }
-
-  Widget _branchSelector() {
-    return Container(
-      color: AppTheme.surfaceSoft,
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
-      child: Row(
-        children: [
-          const Icon(Icons.store_mall_directory_rounded, size: 18, color: AppTheme.textMuted),
-          const SizedBox(width: 10),
-          const Text('Branch', style: TextStyle(fontWeight: FontWeight.w600)),
-          const SizedBox(width: 16),
-          Expanded(
-            child: DropdownButtonFormField<int>(
-              value: _branchId,
-              isExpanded: true,
-              decoration: const InputDecoration(
-                isDense: true,
-                contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          EnterpriseToolbar(
+            children: [
+              SizedBox(
+                width: 340,
+                child: DropdownButtonFormField<int>(
+                  value: _branchId,
+                  isExpanded: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Branch',
+                    prefixIcon: Icon(Icons.store_mall_directory_outlined),
+                  ),
+                  items: _branches
+                      .map((b) => DropdownMenuItem<int>(
+                            value: _asInt(b['id']),
+                            child: Text('${b['name'] ?? 'Branch ${b['id']}'}'),
+                          ))
+                      .toList(),
+                  onChanged: (v) {
+                    if (v == null || v == _branchId) return;
+                    setState(() => _branchId = v);
+                    _loadMethods(v);
+                  },
+                ),
               ),
-              items: _branches
-                  .map((b) => DropdownMenuItem<int>(
-                        value: _asInt(b['id']),
-                        child: Text('${b['name'] ?? 'Branch ${b['id']}'}'),
-                      ))
-                  .toList(),
-              onChanged: (v) {
-                if (v == null || v == _branchId) return;
-                setState(() => _branchId = v);
-                _loadMethods(v);
-              },
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                decoration: BoxDecoration(
+                  color: AppTheme.surfaceSoft,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: AppTheme.border),
+                ),
+                child: Text(
+                  '${_methods.length} method${_methods.length == 1 ? '' : 's'}',
+                  style: const TextStyle(color: AppTheme.textMuted, fontWeight: FontWeight.w800),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Expanded(
+            child: Container(
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: AppTheme.border),
+              ),
+              clipBehavior: Clip.antiAlias,
+              child: _body(),
             ),
           ),
         ],
@@ -204,101 +213,152 @@ class _PaymentMethodsAdminScreenState extends State<PaymentMethodsAdminScreen> {
   }
 
   Widget _body() {
-    if (_loading) return const Center(child: CircularProgressIndicator());
+    if (_loading) return const Center(child: CircularProgressIndicator(strokeWidth: 2));
     if (_error != null) {
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(24),
-          child: Text(_error!, textAlign: TextAlign.center, style: const TextStyle(color: AppTheme.danger)),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.error_outline_rounded, color: AppTheme.danger, size: 34),
+              const SizedBox(height: 10),
+              Text(_error!, textAlign: TextAlign.center, style: const TextStyle(color: AppTheme.textMuted)),
+              const SizedBox(height: 12),
+              OutlinedButton.icon(
+                onPressed: _branchId == null ? null : () => _loadMethods(_branchId!),
+                icon: const Icon(Icons.refresh_rounded),
+                label: const Text('Retry'),
+              ),
+            ],
+          ),
         ),
       );
     }
     if (_methods.isEmpty) {
-      return const Center(child: Text('No payment methods configured for this branch yet.'));
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.payments_outlined, size: 38, color: AppTheme.textMuted),
+            const SizedBox(height: 10),
+            const Text('No payment methods configured', style: TextStyle(fontWeight: FontWeight.w800)),
+            const SizedBox(height: 12),
+            FilledButton.icon(onPressed: () => _openEditor(null), icon: const Icon(Icons.add_rounded), label: const Text('Add Method')),
+          ],
+        ),
+      );
     }
-    return ListView.separated(
-      padding: const EdgeInsets.fromLTRB(12, 12, 12, 96),
-      itemCount: _methods.length,
-      separatorBuilder: (_, __) => const SizedBox(height: 8),
-      itemBuilder: (_, i) => _methodCard(_methods[i]),
+
+    return Column(
+      children: [
+        Container(
+          height: 44,
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          color: AppTheme.surfaceSoft,
+          child: const Row(
+            children: [
+              Expanded(flex: 28, child: Text('METHOD', style: _headerStyle)),
+              SizedBox(width: 18),
+              Expanded(flex: 30, child: Text('POSTING ACCOUNT', style: _headerStyle)),
+              SizedBox(width: 18),
+              SizedBox(width: 120, child: Text('DRAWER', style: _headerStyle)),
+              SizedBox(width: 18),
+              SizedBox(width: 120, child: Text('STATUS', style: _headerStyle)),
+              SizedBox(width: 18),
+              SizedBox(width: 92, child: Text('ACTIONS', style: _headerStyle)),
+            ],
+          ),
+        ),
+        Expanded(
+          child: ListView.separated(
+            itemCount: _methods.length,
+            separatorBuilder: (_, __) => const Divider(height: 1, color: AppTheme.border),
+            itemBuilder: (_, i) => _methodRow(_methods[i]),
+          ),
+        ),
+      ],
     );
   }
 
-  Widget _methodCard(PaymentMethod m) {
+  Widget _methodRow(PaymentMethod m) {
     final busy = _busyId == m.id;
-    return Card(
-      margin: EdgeInsets.zero,
+    return SizedBox(
+      height: 58,
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(14, 12, 8, 12),
+        padding: const EdgeInsets.symmetric(horizontal: 16),
         child: Row(
           children: [
-            Icon(m.icon, color: m.isActive ? AppTheme.primary : AppTheme.textMuted),
-            const SizedBox(width: 12),
             Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+              flex: 28,
+              child: Row(
                 children: [
-                  Row(
-                    children: [
-                      Flexible(
-                        child: Text(
-                          m.displayName,
-                          style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      _chip(m.method, AppTheme.surfaceSoft, AppTheme.textMuted),
-                      if (m.affectsCashDrawer) ...[
-                        const SizedBox(width: 6),
-                        _chip('drawer', const Color(0xFFFEF3C7), AppTheme.warning),
+                  Icon(m.icon, color: m.isActive ? AppTheme.primary : AppTheme.textMuted, size: 20),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(m.displayName, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w800)),
+                        Text(m.method, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: AppTheme.textMuted, fontSize: 11)),
                       ],
-                      if (!m.isActive) ...[
-                        const SizedBox(width: 6),
-                        _chip('inactive', const Color(0xFFFEE2E2), AppTheme.danger),
-                      ],
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    '${m.accountCode ?? '—'} · ${m.accountName ?? 'No account'}',
-                    style: const TextStyle(color: AppTheme.textMuted, fontSize: 12.5),
+                    ),
                   ),
                 ],
               ),
             ),
-            if (busy)
-              const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 12),
-                child: SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)),
-              )
-            else
-              PopupMenuButton<String>(
-                onSelected: (v) {
-                  if (v == 'edit') _openEditor(m);
-                  if (v == 'toggle') _toggleActive(m);
-                },
-                itemBuilder: (_) => [
-                  const PopupMenuItem(value: 'edit', child: Text('Edit')),
-                  PopupMenuItem(
-                    value: 'toggle',
-                    child: Text(m.isActive ? 'Deactivate' : 'Activate'),
-                  ),
+            const SizedBox(width: 18),
+            Expanded(
+              flex: 30,
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(m.accountName ?? 'No account', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w700)),
+                  Text(m.accountCode ?? '—', style: const TextStyle(color: AppTheme.textMuted, fontSize: 11)),
                 ],
               ),
+            ),
+            const SizedBox(width: 18),
+            SizedBox(width: 120, child: Text(m.affectsCashDrawer ? 'Yes' : 'No')),
+            const SizedBox(width: 18),
+            SizedBox(width: 120, child: _statusBadge(m.isActive)),
+            const SizedBox(width: 18),
+            SizedBox(
+              width: 92,
+              child: busy
+                  ? const Center(child: SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)))
+                  : Row(
+                      children: [
+                        IconButton(tooltip: 'Edit', onPressed: () => _openEditor(m), icon: const Icon(Icons.edit_outlined, size: 18)),
+                        IconButton(
+                          tooltip: m.isActive ? 'Deactivate' : 'Activate',
+                          onPressed: () => _toggleActive(m),
+                          icon: Icon(m.isActive ? Icons.visibility_off_outlined : Icons.visibility_outlined, size: 18),
+                        ),
+                      ],
+                    ),
+            ),
           ],
         ),
       ),
     );
   }
 
-  Widget _chip(String text, Color bg, Color fg) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(6)),
-      child: Text(text, style: TextStyle(color: fg, fontSize: 11, fontWeight: FontWeight.w600)),
-    );
-  }
+  Widget _statusBadge(bool active) => Align(
+        alignment: Alignment.centerLeft,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+          decoration: BoxDecoration(
+            color: (active ? AppTheme.success : AppTheme.textMuted).withOpacity(.10),
+            borderRadius: BorderRadius.circular(999),
+          ),
+          child: Text(active ? 'Active' : 'Inactive', style: TextStyle(color: active ? AppTheme.success : AppTheme.textMuted, fontWeight: FontWeight.w800, fontSize: 11)),
+        ),
+      );
+
+  static const TextStyle _headerStyle = TextStyle(color: AppTheme.textMuted, fontSize: 11, fontWeight: FontWeight.w800, letterSpacing: .25);
 
   Future<void> _openEditor(PaymentMethod? existing) async {
     if (_branchId == null) return;

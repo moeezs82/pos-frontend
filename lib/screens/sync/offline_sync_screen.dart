@@ -9,6 +9,7 @@ import 'package:enterprise_pos/services/offline_sales_queue_service.dart';
 import 'package:enterprise_pos/services/offline_sync_service.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/app_feedback.dart';
+import 'package:enterprise_pos/widgets/enterprise/enterprise_ui.dart';
 
 /// Queued-sales list + "Sync Now" / per-row retry (handover doc §2.4).
 /// Every sync attempt here goes through the same POST /sales endpoint a
@@ -213,20 +214,29 @@ class _OfflineSyncScreenState extends State<OfflineSyncScreen> {
   @override
   Widget build(BuildContext context) {
     final pendingOrFailed = _items.where((i) => i.status != OfflineSaleStatus.synced).length;
+    final failed = _items.where((i) => i.status == OfflineSaleStatus.failed).length;
+    final synced = _items.where((i) => i.status == OfflineSaleStatus.synced).length;
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Offline Sales Sync'),
-        actions: [
-          IconButton(
-            tooltip: 'Refresh',
-            onPressed: _loading ? null : _load,
-            icon: const Icon(Icons.refresh_rounded),
-          ),
-        ],
-      ),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
+    return EnterprisePage(
+      title: 'Offline Sales Sync',
+      subtitle: 'Review locally queued sales and retry them through the same authoritative online sale endpoint.',
+      icon: Icons.cloud_sync_outlined,
+      actions: [
+        OutlinedButton.icon(
+          onPressed: _loading ? null : _load,
+          icon: const Icon(Icons.refresh_rounded, size: 18),
+          label: const Text('Refresh'),
+        ),
+        FilledButton.icon(
+          onPressed: (_syncing || pendingOrFailed == 0) ? null : _syncAll,
+          icon: _syncing
+              ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+              : const Icon(Icons.sync_rounded, size: 18),
+          label: Text(_syncing ? 'Syncing…' : 'Sync Now'),
+        ),
+      ],
+      child: _loading
+          ? const Center(child: CircularProgressIndicator(strokeWidth: 2))
           : _loadError != null
               ? Center(
                   child: Padding(
@@ -242,62 +252,52 @@ class _OfflineSyncScreenState extends State<OfflineSyncScreen> {
                           style: const TextStyle(color: AppTheme.textMuted, fontWeight: FontWeight.w600),
                         ),
                         const SizedBox(height: 16),
-                        FilledButton.icon(
-                          onPressed: _load,
-                          icon: const Icon(Icons.refresh_rounded),
-                          label: const Text('Retry'),
-                        ),
+                        FilledButton.icon(onPressed: _load, icon: const Icon(Icons.refresh_rounded), label: const Text('Retry')),
                       ],
                     ),
                   ),
                 )
               : Column(
                   children: [
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(16),
-                      color: AppTheme.surfaceSoft,
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              pendingOrFailed == 0
-                                  ? 'All sales are synced.'
-                                  : '$pendingOrFailed sale(s) waiting to sync.',
-                              style: const TextStyle(fontWeight: FontWeight.w800),
-                            ),
-                          ),
-                          FilledButton.icon(
-                            onPressed: (_syncing || pendingOrFailed == 0) ? null : _syncAll,
-                            icon: _syncing
-                                ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
-                                : const Icon(Icons.sync_rounded),
-                            label: Text(_syncing ? 'Syncing…' : 'Sync Now'),
-                          ),
-                        ],
-                      ),
+                    Row(
+                      children: [
+                        Expanded(child: _QueueStatCard(label: 'Waiting', value: pendingOrFailed, icon: Icons.schedule_rounded, color: AppTheme.warning)),
+                        const SizedBox(width: 10),
+                        Expanded(child: _QueueStatCard(label: 'Failed', value: failed, icon: Icons.error_outline_rounded, color: AppTheme.danger)),
+                        const SizedBox(width: 10),
+                        Expanded(child: _QueueStatCard(label: 'Synced', value: synced, icon: Icons.cloud_done_outlined, color: AppTheme.success)),
+                        const SizedBox(width: 10),
+                        Expanded(child: _QueueStatCard(label: 'Total', value: _items.length, icon: Icons.receipt_long_outlined, color: AppTheme.primary)),
+                      ],
                     ),
+                    const SizedBox(height: 12),
                     Expanded(
-                      child: _items.isEmpty
-                          ? const Center(child: Text('No offline sales recorded yet.'))
-                          : ListView.separated(
-                              padding: const EdgeInsets.all(12),
-                              itemCount: _items.length,
-                              separatorBuilder: (_, __) => const SizedBox(height: 8),
-                              itemBuilder: (_, i) {
-                                final item = _items[i];
-                                final isCollision = _isCollisionError(item);
-                                return _QueueRow(
-                                  item: item,
-                                  busy: _syncingRefs.contains(item.clientRef),
-                                  isCollision: isCollision,
-                                  onRetry: () => _retryOne(item),
-                                  onViewDetails: item.status == OfflineSaleStatus.failed
-                                      ? () => _viewDetails(item)
-                                      : null,
-                                );
-                              },
-                            ),
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(color: AppTheme.border),
+                        ),
+                        clipBehavior: Clip.antiAlias,
+                        child: _items.isEmpty
+                            ? const Center(child: Text('No offline sales recorded yet.'))
+                            : ListView.separated(
+                                padding: const EdgeInsets.all(10),
+                                itemCount: _items.length,
+                                separatorBuilder: (_, __) => const SizedBox(height: 8),
+                                itemBuilder: (_, i) {
+                                  final item = _items[i];
+                                  final isCollision = _isCollisionError(item);
+                                  return _QueueRow(
+                                    item: item,
+                                    busy: _syncingRefs.contains(item.clientRef),
+                                    isCollision: isCollision,
+                                    onRetry: () => _retryOne(item),
+                                    onViewDetails: item.status == OfflineSaleStatus.failed ? () => _viewDetails(item) : null,
+                                  );
+                                },
+                              ),
+                      ),
                     ),
                   ],
                 ),
@@ -502,6 +502,45 @@ class _QueueRow extends StatelessWidget {
   }
 }
 
+
+class _QueueStatCard extends StatelessWidget {
+  final String label;
+  final int value;
+  final IconData icon;
+  final Color color;
+
+  const _QueueStatCard({required this.label, required this.value, required this.icon, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppTheme.border),
+      ),
+      child: Row(
+        children: [
+          Container(
+            height: 38,
+            width: 38,
+            decoration: BoxDecoration(color: color.withOpacity(.10), borderRadius: BorderRadius.circular(11)),
+            child: Icon(icon, color: color, size: 20),
+          ),
+          const SizedBox(width: 10),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(label, style: const TextStyle(color: AppTheme.textMuted, fontWeight: FontWeight.w700, fontSize: 11)),
+              Text('$value', style: const TextStyle(color: AppTheme.navy, fontWeight: FontWeight.w900, fontSize: 18)),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared widgets

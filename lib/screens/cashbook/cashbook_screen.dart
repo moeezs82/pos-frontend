@@ -22,7 +22,10 @@ class _CashBookScreenState extends State<CashBookScreen> {
   static const int _pageSize = 40;
   static const int _maxCachedPages = 6;
   static const double _rowExtent = 58;
-  static const double _minTableWidth = 1280;
+  // Includes every fixed column plus the row's 14 px left/right padding.
+  // Keep this in sync with _tableHeader/_expenseRow so the horizontal
+  // viewport never becomes narrower than its children.
+  static const double _minTableWidth = 1360;
 
   late final CashLedgerService _service;
   final _money = const AppMoneyFormatter();
@@ -628,27 +631,41 @@ class _CashBookScreenState extends State<CashBookScreen> {
       padding: const EdgeInsets.symmetric(horizontal: 14),
       child: Row(
         children: [
-          _head('Date', 145),
-          _head('Account', 190),
-          _head('Description / Notes', 300),
-          _head('Method', 150),
-          _head('Amount', 140, align: TextAlign.right),
-          _head('Added By', 145),
-          _head('Status', 105),
-          _head('Actions', 90, align: TextAlign.center),
+          _head('Date', 150),
+          _head('Account', 195),
+          _head('Description / Notes', 310),
+          _head('Method', 155),
+          _head('Amount', 145, align: TextAlign.right),
+          _head('Added By', 150),
+          _head('Status', 115),
+          _head('Actions', 112, align: TextAlign.center),
         ],
       ),
     );
   }
 
-  Widget _head(String text, double width, {TextAlign align = TextAlign.left}) => SizedBox(
-        width: width,
+  Widget _head(
+    String text,
+    double width, {
+    TextAlign align = TextAlign.left,
+  }) {
+    return SizedBox(
+      width: width,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8),
         child: Text(
           text.toUpperCase(),
           textAlign: align,
-          style: const TextStyle(color: AppTheme.textMuted, fontSize: 11, fontWeight: FontWeight.w800, letterSpacing: .25),
+          style: const TextStyle(
+            color: AppTheme.textMuted,
+            fontSize: 11,
+            fontWeight: FontWeight.w800,
+            letterSpacing: .25,
+          ),
         ),
-      );
+      ),
+    );
+  }
 
   Widget _expenseRow(Map<String, dynamic> row, {required bool canManage}) {
     final status = '${row['status_code'] ?? ''}'.toLowerCase();
@@ -669,15 +686,15 @@ class _CashBookScreenState extends State<CashBookScreen> {
         ),
         child: Row(
           children: [
-            _cell(_displayDate(row), 145),
-            _cell('${row['expense_account'] ?? '—'}', 190, bold: true),
-            _cell(description.isEmpty ? '—' : description, 300),
-            _cell('${row['payment_method'] ?? '—'}', 150),
-            _cell(_money.format(row['amount']), 140, align: TextAlign.right, bold: true, color: voided ? AppTheme.textMuted : AppTheme.danger),
-            _cell('${row['created_by_name'] ?? '—'}', 145),
-            SizedBox(width: 105, child: Align(alignment: Alignment.centerLeft, child: _statusBadge(voided))),
+            _cell(_displayDate(row), 150),
+            _cell('${row['expense_account'] ?? '—'}', 195, bold: true),
+            _cell(description.isEmpty ? '—' : description, 310),
+            _cell('${row['payment_method'] ?? '—'}', 155),
+            _cell(_money.format(row['amount']), 145, align: TextAlign.right, bold: true, color: voided ? AppTheme.textMuted : AppTheme.danger),
+            _cell('${row['created_by_name'] ?? '—'}', 150),
+            SizedBox(width: 115, child: Padding(padding: const EdgeInsets.symmetric(horizontal: 8), child: Align(alignment: Alignment.centerLeft, child: _statusBadge(voided)))),
             SizedBox(
-              width: 90,
+              width: 112,
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
@@ -713,7 +730,9 @@ class _CashBookScreenState extends State<CashBookScreen> {
     Color? color,
   }) => SizedBox(
         width: width,
-        child: Text(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          child: Text(
           text,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
@@ -722,6 +741,7 @@ class _CashBookScreenState extends State<CashBookScreen> {
             color: color,
             fontWeight: bold ? FontWeight.w700 : FontWeight.w500,
             fontSize: 12.5,
+            ),
           ),
         ),
       );

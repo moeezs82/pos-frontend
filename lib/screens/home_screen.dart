@@ -11,19 +11,24 @@ import 'package:enterprise_pos/screens/cash_ledger/cash_ledger_screen.dart';
 import 'package:enterprise_pos/screens/cashbook/cashbook_screen.dart';
 import 'package:enterprise_pos/screens/customers/customers_screen.dart';
 import 'package:enterprise_pos/screens/dashboard/command_center_dashboard.dart';
+import 'package:enterprise_pos/screens/dashboard/low_stock_screen.dart';
 import 'package:enterprise_pos/screens/intelligence/intelligence_hub_screen.dart';
 import 'package:enterprise_pos/screens/login_screen.dart';
 import 'package:enterprise_pos/screens/payments/party_payments_screen.dart';
 import 'package:enterprise_pos/screens/product_screen.dart';
+import 'package:enterprise_pos/screens/product_groups_screen.dart';
 import 'package:enterprise_pos/screens/purchases/purchase_claim_screen.dart';
 import 'package:enterprise_pos/screens/purchases/purchase_create.dart';
 import 'package:enterprise_pos/screens/purchases/purchases_screen.dart';
 import 'package:enterprise_pos/screens/register_shifts/register_shift_screen.dart';
 import 'package:enterprise_pos/screens/reports/credit_control_screen.dart';
-import 'package:enterprise_pos/screens/reports/report_hub_screen.dart';
+import 'package:enterprise_pos/screens/reports/enterprise_reports_workspace_screen.dart';
 import 'package:enterprise_pos/screens/sales/sale_create.dart';
+import 'package:enterprise_pos/screens/sales/picking_list_screen.dart';
+import 'package:enterprise_pos/screens/sales/sale_returns_screen.dart';
 import 'package:enterprise_pos/screens/sales/sale_screen.dart';
 import 'package:enterprise_pos/screens/settings/backup_restore_screen.dart';
+import 'package:enterprise_pos/screens/settings/payment_methods_admin_screen.dart';
 import 'package:enterprise_pos/screens/settings/printer_settings_screen.dart';
 import 'package:enterprise_pos/screens/stock_screen.dart';
 import 'package:enterprise_pos/screens/subscription/branch_lock_screen.dart';
@@ -67,6 +72,19 @@ class _HomeScreenState extends State<HomeScreen> {
     PosRouteIds.expenses,
     PosRouteIds.users,
     PosRouteIds.units,
+    PosRouteIds.cashLedger,
+    PosRouteIds.accounts,
+    PosRouteIds.paymentMethods,
+    PosRouteIds.printerSettings,
+    PosRouteIds.branchControl,
+    PosRouteIds.subscriptions,
+    PosRouteIds.productGroups,
+    PosRouteIds.lowStock,
+    PosRouteIds.pickingList,
+    PosRouteIds.saleReturns,
+    PosRouteIds.offlineSync,
+    PosRouteIds.backupRestore,
+    PosRouteIds.intelligence,
   };
 
   @override
@@ -82,10 +100,17 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   bool _openWorkspaceRoute(String routeId) {
-    if (!_workspaceRoutes.contains(routeId) || !mounted) return false;
+    if (!mounted) return false;
 
-    if (_activeWorkspaceRoute != routeId) {
-      setState(() => _activeWorkspaceRoute = routeId);
+    final targetRoute = routeId == PosRouteIds.reports
+        ? PosRouteIds.report('sales-summary')
+        : routeId;
+    final supported = _workspaceRoutes.contains(targetRoute) ||
+        PosRouteIds.isReportRoute(targetRoute);
+    if (!supported) return false;
+
+    if (_activeWorkspaceRoute != targetRoute) {
+      setState(() => _activeWorkspaceRoute = targetRoute);
     }
 
     // If the request came from a detail/form route or a global shortcut while
@@ -105,6 +130,14 @@ class _HomeScreenState extends State<HomeScreen> {
     required String userName,
     required String role,
   }) {
+    final reportKey = PosRouteIds.reportKey(_activeWorkspaceRoute);
+    if (reportKey != null) {
+      return EnterpriseReportsWorkspaceScreen(
+        key: ValueKey(_activeWorkspaceRoute),
+        initialReportKey: reportKey,
+      );
+    }
+
     switch (_activeWorkspaceRoute) {
       case PosRouteIds.sales:
         return const SalesScreen(key: ValueKey(PosRouteIds.sales));
@@ -132,6 +165,32 @@ class _HomeScreenState extends State<HomeScreen> {
         return const UsersScreen(key: ValueKey(PosRouteIds.users));
       case PosRouteIds.units:
         return UnitsScreen(key: const ValueKey(PosRouteIds.units), token: auth.token!);
+      case PosRouteIds.cashLedger:
+        return const CashLedgerScreen(key: ValueKey(PosRouteIds.cashLedger));
+      case PosRouteIds.accounts:
+        return const AccountsScreen(key: ValueKey(PosRouteIds.accounts));
+      case PosRouteIds.paymentMethods:
+        return const PaymentMethodsAdminScreen(key: ValueKey(PosRouteIds.paymentMethods));
+      case PosRouteIds.printerSettings:
+        return const PrinterSettingsScreen(key: ValueKey(PosRouteIds.printerSettings));
+      case PosRouteIds.branchControl:
+        return const BranchControlScreen(key: ValueKey(PosRouteIds.branchControl));
+      case PosRouteIds.subscriptions:
+        return const SubscriptionManagementScreen(key: ValueKey(PosRouteIds.subscriptions));
+      case PosRouteIds.productGroups:
+        return const ProductGroupsScreen(key: ValueKey(PosRouteIds.productGroups));
+      case PosRouteIds.lowStock:
+        return const LowStockScreen(key: ValueKey(PosRouteIds.lowStock));
+      case PosRouteIds.pickingList:
+        return const PickingListScreen(key: ValueKey(PosRouteIds.pickingList));
+      case PosRouteIds.saleReturns:
+        return const SaleReturnsScreen(key: ValueKey(PosRouteIds.saleReturns));
+      case PosRouteIds.offlineSync:
+        return const OfflineSyncScreen(key: ValueKey(PosRouteIds.offlineSync));
+      case PosRouteIds.backupRestore:
+        return const BackupRestoreScreen(key: ValueKey(PosRouteIds.backupRestore));
+      case PosRouteIds.intelligence:
+        return const IntelligenceHubScreen(key: ValueKey(PosRouteIds.intelligence));
       case PosRouteIds.home:
       default:
         return SingleChildScrollView(
@@ -390,7 +449,7 @@ class _HomeScreenState extends State<HomeScreen> {
               shortcut: 'Ctrl+R',
               onTap: () => PosNavigation.openSingleton(
                 routeId: PosRouteIds.reports,
-                builder: (_) => const ReportsHubScreen(),
+                builder: (_) => const EnterpriseReportsWorkspaceScreen(initialReportKey: 'sales-summary'),
               ),
             ),
           if (auth.hasAddon('intelligence') && auth.hasPermission('view-intelligence'))
@@ -527,7 +586,7 @@ class _HomeScreenState extends State<HomeScreen> {
           title: 'Reports',
           onTap: () => PosNavigation.openSingleton(
             routeId: PosRouteIds.reports,
-            builder: (_) => const ReportsHubScreen(),
+            builder: (_) => const EnterpriseReportsWorkspaceScreen(initialReportKey: 'sales-summary'),
           ),
         ),
     ];

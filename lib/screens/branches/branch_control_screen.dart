@@ -3,6 +3,7 @@ import 'package:enterprise_pos/providers/branch_provider.dart';
 import 'package:enterprise_pos/screens/branches/branch_feature_settings_screen.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/branch_select_sheet.dart';
+import 'package:enterprise_pos/widgets/enterprise/enterprise_ui.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -14,77 +15,84 @@ class BranchControlScreen extends StatelessWidget {
     final auth = context.watch<AuthProvider>();
     final branch = context.watch<BranchProvider>();
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Branch Control'),
-      ),
-      body: !auth.isMasterAdmin
+    return EnterprisePage(
+      title: 'Branch Control',
+      subtitle: 'Select the working branch and configure branch-specific workflow settings.',
+      icon: Icons.account_tree_outlined,
+      child: !auth.isMasterAdmin
           ? const _NotAllowedPanel()
           : Column(
               children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-                  child: Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(18),
-                      border: Border.all(color: AppTheme.border),
-                      boxShadow: AppTheme.softShadow,
-                    ),
-                    child: Row(
-                      children: [
-                        Container(
-                          height: 48,
-                          width: 48,
-                          decoration: BoxDecoration(
-                            color: branch.hasActiveBranch ? AppTheme.primarySoft : AppTheme.warning.withOpacity(.12),
-                            borderRadius: BorderRadius.circular(15),
-                          ),
-                          child: Icon(
-                            branch.hasActiveBranch ? Icons.apartment_rounded : Icons.warning_amber_rounded,
-                            color: branch.hasActiveBranch ? AppTheme.primary : AppTheme.warning,
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const Text(
-                                'Master admin working branch',
-                                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900, color: AppTheme.navy),
-                              ),
-                              const SizedBox(height: 4),
-                              Text(
-                                branch.hasActiveBranch
-                                    ? 'Currently locked to ${branch.label}. All backend data will load for this branch only.'
-                                    : 'Select a branch before creating or loading branch-scoped business data.',
-                                style: const TextStyle(color: AppTheme.textMuted, fontWeight: FontWeight.w600),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: AppTheme.border),
                   ),
-                ),
-                // ── Master Admin tools ────────────────────────────────────
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                  child: _MasterAdminToolTile(
-                    icon: Icons.toggle_on_rounded,
-                    title: 'Module & Workflow Settings',
-                    subtitle: 'Enable or disable delivery and vendor features per branch.',
-                    onTap: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => const BranchFeatureSettingsScreen(),
+                  child: Row(
+                    children: [
+                      Container(
+                        height: 46,
+                        width: 46,
+                        decoration: BoxDecoration(
+                          color: branch.hasActiveBranch
+                              ? AppTheme.primarySoft
+                              : AppTheme.warning.withOpacity(.12),
+                          borderRadius: BorderRadius.circular(13),
+                        ),
+                        child: Icon(
+                          branch.hasActiveBranch
+                              ? Icons.apartment_rounded
+                              : Icons.warning_amber_rounded,
+                          color: branch.hasActiveBranch
+                              ? AppTheme.primary
+                              : AppTheme.warning,
+                        ),
                       ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'Working branch',
+                              style: TextStyle(
+                                fontSize: 15,
+                                fontWeight: FontWeight.w900,
+                                color: AppTheme.navy,
+                              ),
+                            ),
+                            const SizedBox(height: 3),
+                            Text(
+                              branch.hasActiveBranch
+                                  ? '${branch.label} • all branch-scoped data and actions use this branch.'
+                                  : 'Select a branch before working with branch-scoped business data.',
+                              style: const TextStyle(
+                                color: AppTheme.textMuted,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
+                _MasterAdminToolTile(
+                  icon: Icons.toggle_on_rounded,
+                  title: 'Module & Workflow Settings',
+                  subtitle: 'Enable or disable delivery and vendor features per branch.',
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const BranchFeatureSettingsScreen(),
                     ),
                   ),
                 ),
+                const SizedBox(height: 12),
                 const Expanded(child: BranchSelectSheet()),
               ],
             ),

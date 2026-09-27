@@ -10,6 +10,7 @@ import 'package:enterprise_pos/services/backup_runner_service.dart';
 import 'package:enterprise_pos/services/connectivity_auto_sync_service.dart';
 import 'package:enterprise_pos/services/local_backup_client_state_service.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
+import 'package:enterprise_pos/widgets/enterprise/enterprise_ui.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -61,6 +62,21 @@ class _BackupRestoreScreenState extends State<BackupRestoreScreen> {
       // Reminder settings are advisory; the card hides itself if unavailable.
     }
     if (mounted) setState(() => _loading = false);
+  }
+
+  Future<void> _setReminderInterval(String interval) async {
+    if (_savingReminder || _service == null) return;
+    setState(() => _savingReminder = true);
+    try {
+      final reminder = await _service!.updateReminder(interval);
+      if (!mounted) return;
+      setState(() => _reminder = reminder);
+    } catch (error) {
+      if (!mounted) return;
+      _showError('Unable to update backup reminder', error);
+    } finally {
+      if (mounted) setState(() => _savingReminder = false);
+    }
   }
 
   Future<void> _createBackup() async {
@@ -297,24 +313,45 @@ class _BackupRestoreScreenState extends State<BackupRestoreScreen> {
     final canRestore = auth.hasPermission('restore-backups');
 
     if (!BackendConfig.isLocal || !Platform.isWindows) {
-      return const Scaffold(
-        body: Center(child: Text('Backup & Restore is available only in the local Windows edition (host or LAN client).')),
+      return const EnterprisePage(
+        title: 'Backup & Restore',
+        subtitle: 'Protect the local CounterIQ database and recovery state.',
+        icon: Icons.backup_outlined,
+        child: Center(
+          child: Text('Backup & Restore is available only in the local Windows edition (host or LAN client).'),
+        ),
       );
     }
 
     final scopeText = BackendConfig.isLocalClient
-        ? 'A CounterIQ backup is created by the host PC and downloaded to this workstation. It contains the complete shared business database for all branches and all uploaded product images.'
+        ? 'A CounterIQ backup is created by the host PC and downloaded to this workstation. It contains the complete shared business database for all branches and uploaded product images.'
         : 'A CounterIQ backup contains the complete local business database for all branches, uploaded product images, and this host workstation\'s critical offline recovery state.';
 
-    return Scaffold(
-      appBar: AppBar(title: const Text('Backup & Restore')),
-      body: Stack(
+    return EnterprisePage(
+      title: 'Backup & Restore',
+      subtitle: 'Create verified backups and restore the complete local CounterIQ business database safely.',
+      icon: Icons.backup_outlined,
+      actions: [
+        if (canCreate)
+          OutlinedButton.icon(
+            onPressed: _busy ? null : _createBackup,
+            icon: const Icon(Icons.backup_rounded, size: 18),
+            label: const Text('Create Backup'),
+          ),
+        if (canRestore)
+          FilledButton.icon(
+            onPressed: _busy ? null : _restoreBackup,
+            icon: const Icon(Icons.restore_rounded, size: 18),
+            label: const Text('Restore Backup'),
+          ),
+      ],
+      child: Stack(
         children: [
           ListView(
-            padding: const EdgeInsets.all(24),
+            padding: const EdgeInsets.only(bottom: 24),
             children: [
               Container(
-                padding: const EdgeInsets.all(18),
+                padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
                   color: AppTheme.primary.withValues(alpha: 0.06),
                   borderRadius: BorderRadius.circular(14),
@@ -325,64 +362,79 @@ class _BackupRestoreScreenState extends State<BackupRestoreScreen> {
                   children: [
                     const Icon(Icons.shield_rounded, color: AppTheme.primary),
                     const SizedBox(width: 12),
-                    Expanded(child: Text(scopeText)),
+                    Expanded(child: Text(scopeText, style: const TextStyle(fontWeight: FontWeight.w600))),
                   ],
                 ),
               ),
-              const SizedBox(height: 20),
-              _ActionCard(
-                icon: Icons.backup_rounded,
-                title: 'Create Backup',
-                subtitle:
-                    'Create one verified .ciqbak file that can be stored on USB, external storage, NAS, OneDrive or another safe location.',
-                enabled: canCreate && !_busy,
-                buttonText: 'Create Backup',
-                onPressed: _createBackup,
-              ),
-              const SizedBox(height: 16),
-              _ActionCard(
-                icon: Icons.restore_rounded,
-                title: 'Restore Backup',
-                subtitle:
-                    'Restore the complete shared CounterIQ database on the host PC. A safety backup of the current host data is created automatically first.',
-                enabled: canRestore && !_busy,
-                buttonText: 'Restore Backup',
-                danger: true,
-                onPressed: _restoreBackup,
+              const SizedBox(height: 14),
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final wide = constraints.maxWidth >= 900;
+                  final cards = [
+                    Expanded(
+                      child: _ActionCard(
+                        icon: Icons.backup_rounded,
+                        title: 'Create Backup',
+                        subtitle: 'Create one verified .ciqbak file that can be stored on USB, NAS, OneDrive or another safe location.',
+                        enabled: canCreate && !_busy,
+                        buttonText: 'Create Backup',
+                        onPressed: _createBackup,
+                      ),
+                    ),
+                    Expanded(
+                      child: _ActionCard(
+                        icon: Icons.restore_rounded,
+                        title: 'Restore Backup',
+                        subtitle: 'Restore the complete shared database. CounterIQ creates a safety backup of the current host first.',
+                        enabled: canRestore && !_busy,
+                        buttonText: 'Restore Backup',
+                        danger: true,
+                        onPressed: _restoreBackup,
+                      ),
+                    ),
+                  ];
+                  if (wide) {
+                    return Row(children: [cards[0], const SizedBox(width: 14), cards[1]]);
+                  }
+                  return Column(children: [cards[0], const SizedBox(height: 14), cards[1]]);
+                },
               ),
               if (!canRestore && canCreate) ...[
                 const SizedBox(height: 10),
                 const Text(
                   'Your role can create backups but cannot restore them. Restore access can be granted separately from Roles & Permissions.',
+                  style: TextStyle(color: AppTheme.textMuted),
                 ),
               ],
-              const SizedBox(height: 16),
+              const SizedBox(height: 14),
               _buildReminderCard(),
-              const SizedBox(height: 24),
+              const SizedBox(height: 14),
               _buildStatusCard(),
             ],
           ),
           if (_busy)
             Positioned.fill(
               child: ColoredBox(
-                color: Colors.black.withValues(alpha: 0.28),
+                color: Colors.black.withValues(alpha: 0.20),
                 child: Center(
-                  child: Card(
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 22),
-                      child: ConstrainedBox(
-                        constraints: const BoxConstraints(maxWidth: 460),
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const CircularProgressIndicator(),
-                            const SizedBox(height: 16),
-                            Text(_operationText ?? 'Working...', textAlign: TextAlign.center),
-                            const SizedBox(height: 8),
-                            const Text('Do not close CounterIQ during this operation.', textAlign: TextAlign.center),
-                          ],
-                        ),
-                      ),
+                  child: Container(
+                    constraints: const BoxConstraints(maxWidth: 460),
+                    padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 22),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: AppTheme.border),
+                      boxShadow: AppTheme.softShadow,
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const CircularProgressIndicator(),
+                        const SizedBox(height: 16),
+                        Text(_operationText ?? 'Working...', textAlign: TextAlign.center, style: const TextStyle(fontWeight: FontWeight.w800)),
+                        const SizedBox(height: 8),
+                        const Text('Do not close CounterIQ during this operation.', textAlign: TextAlign.center, style: TextStyle(color: AppTheme.textMuted)),
+                      ],
                     ),
                   ),
                 ),
@@ -391,20 +443,6 @@ class _BackupRestoreScreenState extends State<BackupRestoreScreen> {
         ],
       ),
     );
-  }
-
-  Future<void> _setReminderInterval(String interval) async {
-    if (_service == null || _savingReminder) return;
-    setState(() => _savingReminder = true);
-    try {
-      final updated = await _service!.updateReminder(interval);
-      if (!mounted) return;
-      setState(() => _reminder = updated);
-    } catch (error) {
-      if (mounted) _showError('Could not update reminder', error);
-    } finally {
-      if (mounted) setState(() => _savingReminder = false);
-    }
   }
 
   Widget _buildReminderCard() {

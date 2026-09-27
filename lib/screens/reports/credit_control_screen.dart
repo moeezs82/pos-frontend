@@ -107,8 +107,12 @@ class _CreditAuditPanelState extends State<CreditAuditPanel> {
   bool _loading = true;
   bool _exporting = false;
   String? _error;
-  List<Map<String, dynamic>> _rows = [];
-  int _page = 1;
+  static const int _perPage = 40;
+  static const int _maxCachedPages = 6;
+  static const double _rowExtent = 154;
+  final ScrollController _scrollController = ScrollController();
+  final Map<int,List<Map<String,dynamic>>> _pages = {};
+  final Set<int> _loadingPages = {};
   int _lastPage = 1;
   int _total = 0;
   String _partyType = '';
@@ -122,49 +126,33 @@ class _CreditAuditPanelState extends State<CreditAuditPanel> {
     super.initState();
     _service = CreditControlService(token: context.read<AuthProvider>().token!);
     _partyType = widget.partyType ?? '';
-    WidgetsBinding.instance.addPostFrameCallback((_) => _load(page: 1));
+    _scrollController.addListener(_onScroll);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _load(page: 1, reset: true));
   }
 
   @override
   void dispose() {
     _searchTimer?.cancel();
     _search.dispose();
+    _scrollController.dispose();
     super.dispose();
   }
 
-  Future<void> _load({required int page}) async {
-    if (_loading && _rows.isNotEmpty) return;
-    if (!mounted) return;
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
+  Future<void> _load({required int page, bool reset = false}) async {
+    if (reset) { _pages.clear(); _loadingPages.clear(); _lastPage = 1; _total = 0; _error = null; if (_scrollController.hasClients) _scrollController.jumpTo(0); }
+    if (_loadingPages.contains(page) || page < 1 || (_total > 0 && page > _lastPage)) return;
+    _loadingPages.add(page); if (mounted && _pages.isEmpty) setState(() => _loading = true);
     try {
-      final data = await _service.audits(
-        page: page,
-        perPage: widget.partyId == null ? 25 : 15,
-        partyType: _partyType.isEmpty ? null : _partyType,
-        partyId: widget.partyId,
-        outcome: _outcome.isEmpty ? null : _outcome,
-        sourceType: _sourceType.isEmpty ? null : _sourceType,
-        from: _date(_from),
-        to: _date(_to),
-        search: _search.text.trim(),
-      );
+      final data = await _service.audits(page: page, perPage: _perPage, partyType: _partyType.isEmpty ? null : _partyType, partyId: widget.partyId, outcome: _outcome.isEmpty ? null : _outcome, sourceType: _sourceType.isEmpty ? null : _sourceType, from: _date(_from), to: _date(_to), search: _search.text.trim());
       if (!mounted) return;
-      setState(() {
-        _rows = _list(data['audits']);
-        _page = _int(data['page'], fallback: page);
-        final parsedLastPage = _int(data['last_page'], fallback: 1);
-        _lastPage = parsedLastPage < 1 ? 1 : parsedLastPage;
-        _total = _int(data['total']);
-      });
-    } catch (e) {
-      if (mounted) setState(() => _error = 'Failed to load credit-control history: $e');
-    } finally {
-      if (mounted) setState(() => _loading = false);
-    }
+      setState(() { _pages[page] = _list(data['audits']); final parsedLastPage = _int(data['last_page'], fallback: 1); _lastPage = parsedLastPage < 1 ? 1 : parsedLastPage; _total = _int(data['total']); _evictPages(keepPage: page); });
+    } catch (e) { if (mounted && _pages.isEmpty) setState(() => _error = 'Failed to load credit-control history: $e'); }
+    finally { _loadingPages.remove(page); if (mounted) setState(() => _loading = false); }
   }
+
+  void _onScroll(){if(!_scrollController.hasClients||_total<=0)return;final first=(_scrollController.offset/_rowExtent).floor().clamp(0,_total-1);final last=(first+(_scrollController.position.viewportDimension/_rowExtent).ceil()+4).clamp(0,_total-1);final fp=first~/_perPage+1,lp=last~/_perPage+1;for(var p=fp;p<=lp;p++){if(!_pages.containsKey(p))_load(page:p);}if(lp<_lastPage&&!_pages.containsKey(lp+1))_load(page:lp+1);}
+  Map<String,dynamic>? _rowAt(int index){final p=index~/_perPage+1,o=index%_perPage;final rows=_pages[p];if(rows==null){_load(page:p);return null;}return o<rows.length?rows[o]:null;}
+  void _evictPages({required int keepPage}){if(_pages.length<=_maxCachedPages)return;final keys=_pages.keys.toList()..sort((a,b)=>(b-keepPage).abs().compareTo((a-keepPage).abs()));while(_pages.length>_maxCachedPages&&keys.isNotEmpty){_pages.remove(keys.removeAt(0));}}
 
   Future<void> _export() async {
     if (_exporting) return;
@@ -196,7 +184,7 @@ class _CreditAuditPanelState extends State<CreditAuditPanel> {
 
   void _searchChanged(String _) {
     _searchTimer?.cancel();
-    _searchTimer = Timer(const Duration(milliseconds: 450), () => _load(page: 1));
+    _searchTimer = Timer(const Duration(milliseconds: 450), () => _load(page: 1, reset: true));
   }
 
   Future<void> _pickDate(bool from) async {
@@ -217,7 +205,7 @@ class _CreditAuditPanelState extends State<CreditAuditPanel> {
         if (_from != null && _from!.isAfter(picked)) _from = picked;
       }
     });
-    await _load(page: 1);
+    await _load(page: 1, reset: true);
   }
 
   bool get _hasActiveFilters =>
@@ -237,7 +225,7 @@ class _CreditAuditPanelState extends State<CreditAuditPanel> {
       _from = null;
       _to = null;
     });
-    _load(page: 1);
+    _load(page: 1, reset: true);
   }
 
   Widget _buildFilterToolbar(bool canFilterParty) {
@@ -296,7 +284,7 @@ class _CreditAuditPanelState extends State<CreditAuditPanel> {
                       items: const {'': 'All parties', 'customer': 'Customers', 'vendor': 'Vendors'},
                       onChanged: (v) {
                         setState(() => _partyType = v);
-                        _load(page: 1);
+                        _load(page: 1, reset: true);
                       },
                     ),
                   _FilterDropdown(
@@ -312,7 +300,7 @@ class _CreditAuditPanelState extends State<CreditAuditPanel> {
                     },
                     onChanged: (v) {
                       setState(() => _outcome = v);
-                      _load(page: 1);
+                      _load(page: 1, reset: true);
                     },
                   ),
                   _FilterDropdown(
@@ -330,7 +318,7 @@ class _CreditAuditPanelState extends State<CreditAuditPanel> {
                     },
                     onChanged: (v) {
                       setState(() => _sourceType = v);
-                      _load(page: 1);
+                      _load(page: 1, reset: true);
                     },
                   ),
                   _DateButton(width: 174, label: 'From date', date: _from, onTap: () => _pickDate(true)),
@@ -376,41 +364,26 @@ class _CreditAuditPanelState extends State<CreditAuditPanel> {
         ],
         _buildFilterToolbar(canFilterParty),
         const SizedBox(height: 12),
-        if (_loading && _rows.isEmpty)
-          const Padding(
-            padding: EdgeInsets.all(40),
-            child: Center(child: CircularProgressIndicator()),
-          )
-        else if (_error != null)
-          _ErrorCard(message: _error!, onRetry: () => _load(page: _page))
-        else if (_rows.isEmpty)
+        if (_loading && _pages.isEmpty)
+          const Padding(padding: EdgeInsets.all(40), child: Center(child: CircularProgressIndicator()))
+        else if (_error != null && _pages.isEmpty)
+          _ErrorCard(message: _error!, onRetry: () => _load(page: 1, reset: true))
+        else if (_total == 0)
           const _EmptyAuditState()
         else ...[
-          LayoutBuilder(
-            builder: (context, constraints) {
-              if (constraints.maxWidth >= 1050) {
-                return _AuditTable(rows: _rows);
-              }
-              return Column(children: _rows.map((row) => _AuditCard(row: row)).toList());
-            },
+          SizedBox(
+            height: 540,
+            child: ListView.builder(
+              controller: _scrollController, itemExtent: _rowExtent, itemCount: _total, cacheExtent: _rowExtent * 10,
+              itemBuilder: (_, index) {
+                final row = _rowAt(index);
+                if (row == null) return const Center(child:SizedBox(width:18,height:18,child:CircularProgressIndicator(strokeWidth:2)));
+                return Padding(padding: const EdgeInsets.only(bottom:8), child: _AuditCard(row: row));
+              },
+            ),
           ),
-          const SizedBox(height: 10),
-          Row(
-            children: [
-              Expanded(child: Text('$_total event${_total == 1 ? '' : 's'}')),
-              IconButton(
-                tooltip: 'Previous page',
-                onPressed: _page > 1 && !_loading ? () => _load(page: _page - 1) : null,
-                icon: const Icon(Icons.chevron_left_rounded),
-              ),
-              Text('Page $_page of $_lastPage', style: const TextStyle(fontWeight: FontWeight.w700)),
-              IconButton(
-                tooltip: 'Next page',
-                onPressed: _page < _lastPage && !_loading ? () => _load(page: _page + 1) : null,
-                icon: const Icon(Icons.chevron_right_rounded),
-              ),
-            ],
-          ),
+          const SizedBox(height: 8),
+          Text('$_total events • bounded cache ${_pages.length}/$_maxCachedPages pages', style: const TextStyle(color:AppTheme.textMuted,fontSize:11,fontWeight:FontWeight.w700)),
         ],
       ],
     );
@@ -771,7 +744,7 @@ class _AuditCard extends StatelessWidget {
             ),
             if (reason.isNotEmpty) ...[
               const SizedBox(height: 10),
-              Text('Reason: $reason'),
+              Text('Reason: $reason', maxLines: 1, overflow: TextOverflow.ellipsis),
             ],
           ],
         ),

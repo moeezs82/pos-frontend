@@ -39,12 +39,16 @@ class _CustomerEditScreenState extends State<CustomerEditScreen>
   String? _errorHeader;
   Map<String, dynamic>? customer;
 
-  final int _pageSize = 10;
+  static const int _pageSize = 40;
+  static const int _maxSalesCachedPages = 6;
+  static const double _salesRowExtent = 88;
   bool _loadingSales = false;
   bool _loadedSalesOnce = false;
   String? _errorSales;
-  int _salesPage = 1, _salesLastPage = 1, _salesTotal = 0;
-  final List<Map<String, dynamic>> _sales = [];
+  int _salesLastPage = 1, _salesTotal = 0;
+  final ScrollController _salesScrollController = ScrollController();
+  final Map<int,List<Map<String,dynamic>>> _salesPages = {};
+  final Set<int> _loadingSalesPages = {};
 
   bool _loadingLedger = false;
 
@@ -75,10 +79,11 @@ class _CustomerEditScreenState extends State<CustomerEditScreen>
     _service = CustomerService(token: token);
     _tab = TabController(length: _canViewCreditAudits ? 4 : 3, vsync: this);
     _tab.addListener(_onTabChanged);
+    _salesScrollController.addListener(_onSalesScroll);
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadHeader();
-      _loadSales(page: 1);
+      _loadSales(page: 1, reset: true);
     });
   }
 
@@ -88,12 +93,13 @@ class _CustomerEditScreenState extends State<CustomerEditScreen>
     _tab.dispose();
     _amountController.dispose();
     _referenceController.dispose();
+    _salesScrollController.dispose();
     super.dispose();
   }
 
   void _onTabChanged() {
     if (!_tab.indexIsChanging) {
-      if (_tab.index == 0 && !_loadedSalesOnce) _loadSales(page: 1);
+      if (_tab.index == 0 && !_loadedSalesOnce) _loadSales(page: 1, reset: true);
       // Ledgers open on the latest (last) page so the newest entries show first.
       if (_tab.index == 1 && !_loadedLedgerOnce) _loadLedger(page: 1, latest: true);
       if (_tab.index == 2 && !_loadedLoanOnce) _loadLoanLedger(page: 1, latest: true);
@@ -123,40 +129,23 @@ class _CustomerEditScreenState extends State<CustomerEditScreen>
     }
   }
 
-  Future<void> _loadSales({required int page}) async {
-    if (_loadingSales) return;
-    setState(() {
-      _loadingSales = true;
-      _errorSales = null;
-    });
-    try {
-      final branchId = context.read<BranchProvider>().selectedBranchId;
-      final res = await _service.getCustomerSales(
-        id: widget.customerId,
-        page: page,
-        perPage: _pageSize,
-        branchId: branchId,
-      );
-      final wrap = (res['data'] as Map).cast<String, dynamic>();
-      final items = ((wrap['items'] as List?) ?? const [])
-          .map((e) => (e as Map).cast<String, dynamic>())
-          .toList();
-      if (!mounted) return;
-      setState(() {
-        _sales
-          ..clear()
-          ..addAll(items);
-        _salesPage = (wrap['current_page'] as num?)?.toInt() ?? page;
-        _salesLastPage = (wrap['last_page'] as num?)?.toInt() ?? _salesLastPage;
-        _salesTotal = (wrap['total'] as num?)?.toInt() ?? _salesTotal;
-        _loadedSalesOnce = true;
-      });
-    } catch (e) {
-      if (mounted) setState(() => _errorSales = 'Failed to load sales: $e');
-    } finally {
-      if (mounted) setState(() => _loadingSales = false);
-    }
+  Future<void> _loadSales({required int page, bool reset = false}) async {
+    if(reset){_salesPages.clear();_loadingSalesPages.clear();_salesLastPage=1;_salesTotal=0;if(_salesScrollController.hasClients)_salesScrollController.jumpTo(0);}
+    if(_loadingSalesPages.contains(page)||page<1||(_salesTotal>0&&page>_salesLastPage))return;
+    _loadingSalesPages.add(page);if(mounted&&_salesPages.isEmpty)setState(()=>_loadingSales=true);
+    try{
+      final branchId=context.read<BranchProvider>().selectedBranchId;
+      final res=await _service.getCustomerSales(id:widget.customerId,page:page,perPage:_pageSize,branchId:branchId);
+      final wrap=(res['data'] as Map).cast<String,dynamic>();
+      final items=((wrap['items'] as List?)??const[]).map((e)=>(e as Map).cast<String,dynamic>()).toList();
+      if(!mounted)return;
+      setState((){_salesPages[page]=items;_salesLastPage=(wrap['last_page'] as num?)?.toInt()??1;_salesTotal=(wrap['total'] as num?)?.toInt()??items.length;_loadedSalesOnce=true;_evictSalesPages(keepPage:page);});
+    }catch(e){if(mounted)setState(()=>_errorSales='Failed to load sales: $e');}
+    finally{_loadingSalesPages.remove(page);if(mounted)setState(()=>_loadingSales=false);}
   }
+  void _onSalesScroll(){if(!_salesScrollController.hasClients||_salesTotal<=0)return;final first=(_salesScrollController.offset/_salesRowExtent).floor().clamp(0,_salesTotal-1);final last=(first+(_salesScrollController.position.viewportDimension/_salesRowExtent).ceil()+5).clamp(0,_salesTotal-1);final fp=first~/_pageSize+1,lp=last~/_pageSize+1;for(var p=fp;p<=lp;p++){if(!_salesPages.containsKey(p))_loadSales(page:p);}if(lp<_salesLastPage&&!_salesPages.containsKey(lp+1))_loadSales(page:lp+1);}
+  Map<String,dynamic>? _saleAt(int index){final p=index~/_pageSize+1,o=index%_pageSize;final rows=_salesPages[p];if(rows==null){_loadSales(page:p);return null;}return o<rows.length?rows[o]:null;}
+  void _evictSalesPages({required int keepPage}){if(_salesPages.length<=_maxSalesCachedPages)return;final keys=_salesPages.keys.toList()..sort((a,b)=>(b-keepPage).abs().compareTo((a-keepPage).abs()));while(_salesPages.length>_maxSalesCachedPages&&keys.isNotEmpty){_salesPages.remove(keys.removeAt(0));}}
 
   /// Reverse a customer receipt / vendor payment straight from the trade
   /// ledger. The backend already decides eligibility (`can_reverse` is false
@@ -307,7 +296,7 @@ class _CustomerEditScreenState extends State<CustomerEditScreen>
     if (_loadingHeader || _loadingSales || _loadingLedger || _loadingLoan) return;
     await _loadHeader();
     if (_tab.index == 0) {
-      await _loadSales(page: _salesPage);
+      await _loadSales(page: 1, reset: true);
     } else if (_tab.index == 1) {
       await _loadLedger(page: _ldgPage);
     } else {
@@ -324,7 +313,7 @@ class _CustomerEditScreenState extends State<CustomerEditScreen>
     );
     if (result == true) {
       await _loadHeader();
-      if (_tab.index == 0 && _loadedSalesOnce) _loadSales(page: _salesPage);
+      if (_tab.index == 0 && _loadedSalesOnce) _loadSales(page: 1, reset: true);
       if (_tab.index == 1 && _loadedLedgerOnce) _loadLedger(page: _ldgPage);
       if (_tab.index == 2 && _loadedLoanOnce) _loadLoanLedger(page: _loanPage);
       if (mounted) AppFeedback.success(context, 'Customer updated');
@@ -476,7 +465,7 @@ class _CustomerEditScreenState extends State<CustomerEditScreen>
       await _loadHeader();
       // After posting, jump to the page containing the newest entry (last page).
       if (_tab.index == 0 && _loadedSalesOnce) {
-        await _loadSales(page: _salesPage);
+        await _loadSales(page: 1, reset: true);
       } else if (_tab.index == 1 && _loadedLedgerOnce) {
         await _loadLedger(page: _ldgPage, latest: true);
       } else if (_tab.index == 2 && _loadedLoanOnce) {
@@ -577,16 +566,16 @@ class _CustomerEditScreenState extends State<CustomerEditScreen>
                           controller: _tab,
                           children: [
                             _SalesTab(
-                              items: _sales,
                               isLoading: _loadingSales,
                               error: _errorSales,
-                              page: _salesPage,
-                              lastPage: _salesLastPage,
                               total: _salesTotal,
-                              onRetry: () => _loadSales(page: _salesPage),
-                              onPrev: () => _loadSales(page: _salesPage - 1),
-                              onNext: () => _loadSales(page: _salesPage + 1),
-                              onRefresh: () async => _loadSales(page: 1),
+                              rowExtent: _salesRowExtent,
+                              controller: _salesScrollController,
+                              itemAt: _saleAt,
+                              cachedPages: _salesPages.length,
+                              maxCachedPages: _maxSalesCachedPages,
+                              onRetry: () => _loadSales(page: 1, reset: true),
+                              onRefresh: () async => _loadSales(page: 1, reset: true),
                               money: _money,
                               toInt: _toInt,
                             ),
@@ -729,88 +718,16 @@ class _CustomerEditScreenState extends State<CustomerEditScreen>
 }
 
 class _SalesTab extends StatelessWidget {
-  const _SalesTab({
-    required this.items,
-    required this.isLoading,
-    required this.error,
-    required this.page,
-    required this.lastPage,
-    required this.total,
-    required this.onRetry,
-    required this.onPrev,
-    required this.onNext,
-    required this.onRefresh,
-    required this.money,
-    required this.toInt,
-  });
-
-  final List<Map<String, dynamic>> items;
-  final bool isLoading;
-  final String? error;
-  final int page, lastPage, total;
-  final VoidCallback onRetry, onPrev, onNext;
-  final Future<void> Function() onRefresh;
-  final String Function(dynamic value) money;
-  final int Function(dynamic value) toInt;
-
-  @override
-  Widget build(BuildContext context) {
-    if (isLoading && items.isEmpty) {
-      return const Center(child: CircularProgressIndicator());
-    }
-    if (error != null && items.isEmpty) {
-      return _PartyErrorView(message: error!, onRetry: onRetry);
-    }
-
-    return RefreshIndicator(
-      onRefresh: onRefresh,
-      child: ListView(
-        physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.fromLTRB(16, 4, 16, 22),
-        children: [
-          if (isLoading) ...[
-            const LinearProgressIndicator(minHeight: 2),
-            const SizedBox(height: 10),
-          ],
-          if (items.isEmpty)
-            const _PartyEmptyState(
-              icon: Icons.receipt_long_rounded,
-              title: 'No sales yet',
-              subtitle: 'Sales generated for this customer will appear here.',
-            )
-          else ...[
-            for (final s in items) ...[
-              _PartyDocumentRow(
-                icon: Icons.receipt_long_rounded,
-                accentColor: AppTheme.info,
-                title: (s['invoice_no'] ?? 'Invoice').toString(),
-                amount: money(s['total']),
-                primaryMeta: "Date ${s['invoice_date'] ?? '—'}",
-                secondaryMeta: "Due ${s['due_date'] ?? '—'}",
-                openAmount: money(s['open_amount']),
-                onTap: () {
-                  final id = toInt(s['id']);
-                  if (id <= 0) return;
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => SaleDetailScreen(saleId: id)),
-                  );
-                },
-              ),
-              if (s != items.last) const SizedBox(height: 10),
-            ],
-          ],
-          const SizedBox(height: 12),
-          _PartyPager(
-            page: page,
-            lastPage: lastPage,
-            total: total,
-            onPrev: onPrev,
-            onNext: onNext,
-          ),
-        ],
-      ),
-    );
+  const _SalesTab({required this.isLoading,required this.error,required this.total,required this.rowExtent,required this.controller,required this.itemAt,required this.cachedPages,required this.maxCachedPages,required this.onRetry,required this.onRefresh,required this.money,required this.toInt});
+  final bool isLoading; final String? error; final int total,cachedPages,maxCachedPages; final double rowExtent; final ScrollController controller; final Map<String,dynamic>? Function(int) itemAt; final VoidCallback onRetry; final Future<void> Function() onRefresh; final String Function(dynamic) money; final int Function(dynamic) toInt;
+  @override Widget build(BuildContext context){
+    if(isLoading&&total==0)return const Center(child:CircularProgressIndicator());
+    if(error!=null&&total==0)return _PartyErrorView(message:error!,onRetry:onRetry);
+    if(total==0)return const _PartyEmptyState(icon:Icons.receipt_long_rounded,title:'No sales yet',subtitle:'Sales generated for this customer will appear here.');
+    return Column(children:[
+      Expanded(child:RefreshIndicator(onRefresh:onRefresh,child:ListView.builder(controller:controller,itemExtent:rowExtent,itemCount:total,cacheExtent:rowExtent*10,padding:const EdgeInsets.fromLTRB(16,4,16,8),itemBuilder:(_,index){final sale=itemAt(index);if(sale==null)return const Center(child:SizedBox(width:18,height:18,child:CircularProgressIndicator(strokeWidth:2)));return Padding(padding:const EdgeInsets.only(bottom:8),child:_PartyDocumentRow(icon:Icons.receipt_long_rounded,accentColor:AppTheme.info,title:(sale['invoice_no']??'Invoice').toString(),amount:money(sale['total']),primaryMeta:"Date ${sale['invoice_date']??'—'}",secondaryMeta:"Due ${sale['due_date']??'—'}",openAmount:money(sale['open_amount']),onTap:(){final id=toInt(sale['id']);if(id>0)Navigator.push(context,MaterialPageRoute(builder:(_)=>SaleDetailScreen(saleId:id)));}));}))),
+      Padding(padding:const EdgeInsets.fromLTRB(16,4,16,8),child:Align(alignment:Alignment.centerLeft,child:Text('$total sales • bounded cache $cachedPages/$maxCachedPages pages',style:const TextStyle(color:AppTheme.textMuted,fontSize:11,fontWeight:FontWeight.w700)))),
+    ]);
   }
 }
 
@@ -2392,65 +2309,6 @@ class _AmountBadge extends StatelessWidget {
   }
 }
 
-class _PartyPager extends StatelessWidget {
-  const _PartyPager({
-    super.key,
-    required this.page,
-    required this.lastPage,
-    required this.total,
-    required this.onPrev,
-    required this.onNext,
-  });
-
-  final int page;
-  final int lastPage;
-  final int total;
-  final VoidCallback onPrev;
-  final VoidCallback onNext;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppTheme.border),
-      ),
-      child: Wrap(
-        spacing: 10,
-        runSpacing: 8,
-        crossAxisAlignment: WrapCrossAlignment.center,
-        alignment: WrapAlignment.spaceBetween,
-        children: [
-          Text(
-            'Total $total  •  Page $page of $lastPage',
-            style: const TextStyle(
-              color: AppTheme.textMuted,
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              OutlinedButton.icon(
-                onPressed: page > 1 ? onPrev : null,
-                icon: const Icon(Icons.chevron_left_rounded),
-                label: const Text('Previous'),
-              ),
-              const SizedBox(width: 8),
-              FilledButton.icon(
-                onPressed: page < lastPage ? onNext : null,
-                icon: const Icon(Icons.chevron_right_rounded),
-                label: const Text('Next'),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-}
 
 class _PartyEmptyState extends StatelessWidget {
   const _PartyEmptyState({

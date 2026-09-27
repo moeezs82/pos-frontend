@@ -660,7 +660,9 @@ class _PurchasesScreenState extends State<PurchasesScreen> {
           final numeric = index >= 3 && index <= 5;
           return SizedBox(
             width: widths[index],
-            child: Text(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              child: Text(
               cells[index],
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
@@ -669,6 +671,7 @@ class _PurchasesScreenState extends State<PurchasesScreen> {
                 color: header ? AppTheme.textMuted : AppTheme.navy,
                 fontSize: header ? 11 : 12,
                 fontWeight: header ? FontWeight.w800 : FontWeight.w600,
+                ),
               ),
             ),
           );
