@@ -9,6 +9,7 @@ import 'package:enterprise_pos/widgets/app_feedback.dart';
 import 'package:enterprise_pos/widgets/branch_indicator.dart';
 import 'package:enterprise_pos/widgets/ledger_pager.dart';
 import 'package:enterprise_pos/widgets/payment_method_dropdown.dart';
+import 'package:enterprise_pos/widgets/party_financial_ledger.dart';
 import 'package:flutter/material.dart';
 import 'package:enterprise_pos/services/app_currency.dart';
 import 'package:provider/provider.dart';
@@ -51,6 +52,7 @@ class _VendorEditScreenState extends State<VendorEditScreen>
 
   /// payment_id currently being reversed (spinner on that row only).
   int? _reversingPaymentId;
+  int _ledgerRevision = 0;
   bool _loadedLedgerOnce = false;
   String? _errorLedger;
   int _ldgPage = 1, _ldgLastPage = 1, _ldgTotal = 0;
@@ -96,9 +98,6 @@ class _VendorEditScreenState extends State<VendorEditScreen>
   void _onTabChanged() {
     if (!_tab.indexIsChanging) {
       if (_tab.index == 0 && !_loadedPurchasesOnce) _loadPurchases(page: 1, reset: true);
-      // Ledgers open on the latest (last) page so newest entries show first.
-      if (_tab.index == 1 && !_loadedLedgerOnce) _loadLedger(page: 1, latest: true);
-      if (_tab.index == 2 && !_loadedLoanOnce) _loadLoanLedger(page: 1, latest: true);
     }
   }
 
@@ -152,8 +151,8 @@ class _VendorEditScreenState extends State<VendorEditScreen>
     try {
       await _service.reversePayment(vendorId: widget.vendorId, paymentId: payId, reason: reason);
       if (!mounted) return;
+      setState(() => _ledgerRevision++);
       AppFeedback.success(context, 'Payment reversed.');
-      await _loadLedger(page: _ldgPage);
     } catch (e) {
       if (mounted) AppFeedback.error(context, 'Failed to reverse payment: $e');
     } finally {
@@ -287,10 +286,8 @@ class _VendorEditScreenState extends State<VendorEditScreen>
     await _loadHeader();
     if (_tab.index == 0) {
       await _loadPurchases(page: 1, reset: true);
-    } else if (_tab.index == 1) {
-      await _loadLedger(page: _ldgPage);
     } else {
-      await _loadLoanLedger(page: _loanPage);
+      setState(() => _ledgerRevision++);
     }
     if (mounted) AppFeedback.info(context, 'Vendor details refreshed');
   }
@@ -461,7 +458,10 @@ class _VendorEditScreenState extends State<VendorEditScreen>
       } else if (_tab.index == 2 && _loadedLoanOnce) {
         await _loadLoanLedger(page: _loanPage, latest: true);
       }
-      if (mounted) AppFeedback.success(context, 'Payment recorded successfully');
+      if (mounted) {
+        setState(() => _ledgerRevision++);
+        AppFeedback.success(context, 'Payment recorded successfully');
+      }
     } catch (e) {
       if (mounted) AppFeedback.error(context, 'Failed to save payment: $e');
     } finally {
@@ -576,39 +576,27 @@ class _VendorEditScreenState extends State<VendorEditScreen>
                               money: _money,
                               toInt: _toInt,
                             ),
-                            _LedgerTab(
-                              items: _ledger,
-                              opening: _opening,
-                              openingForPage: _openingForPage,
-                              isLoading: _loadingLedger,
-                              error: _errorLedger,
-                              page: _ldgPage,
-                              lastPage: _ldgLastPage,
-                              total: _ldgTotal,
-                              onRetry: () => _loadLedger(page: _ldgPage),
-                              onGoToPage: (p) => _loadLedger(page: p),
-                              onRefresh: () async => _loadLedger(page: _ldgPage),
+                            PartyTradeLedgerView(
+                              key: ValueKey('vendor-trade-${widget.vendorId}-$_ledgerRevision'),
+                              partyLabel: (vendor?['company_name'] ?? vendor?['name'] ?? 'Vendor').toString(),
+                              loadPage: ({required page, required perPage, from, to, latest = false}) =>
+                                  _service.getVendorLedger(id: widget.vendorId, page: page, perPage: perPage, from: from, to: to, latest: latest),
+                              exportLedger: ({required format, from, to, orientation = 'auto', paperSize = 'a4'}) =>
+                                  _service.exportTradeLedger(id: widget.vendorId, format: format, from: from, to: to, orientation: orientation, paperSize: paperSize),
                               money: _money,
                               toDouble: _toDouble,
-                              canReversePayments: context
-                                  .read<AuthProvider>()
-                                  .hasPermission('reverse-party-payments'),
+                              canReversePayments: context.read<AuthProvider>().hasPermission('reverse-party-payments'),
                               reversingPaymentId: _reversingPaymentId,
                               onReversePayment: _reverseLedgerPayment,
                             ),
-                            _LoanLedgerTab(
-                              items: _loanRows,
-                              summary: _loanSummary,
-                              opening: _loanOpening,
-                              openingForPage: _loanOpeningForPage,
-                              isLoading: _loadingLoan,
-                              error: _errorLoan,
-                              page: _loanPage,
-                              lastPage: _loanLastPage,
-                              total: _loanTotal,
-                              onRetry: () => _loadLoanLedger(page: _loanPage),
-                              onGoToPage: (p) => _loadLoanLedger(page: p),
-                              onRefresh: () async => _loadLoanLedger(page: _loanPage),
+                            PartyLoanLedgerView(
+                              key: ValueKey('vendor-loan-${widget.vendorId}-$_ledgerRevision'),
+                              partyLabel: (vendor?['company_name'] ?? vendor?['name'] ?? 'Vendor').toString(),
+                              partyType: 'vendor',
+                              loadPage: ({required page, required perPage, from, to, latest = false}) =>
+                                  _service.getVendorLoanLedger(id: widget.vendorId, page: page, perPage: perPage, from: from, to: to, latest: latest),
+                              exportLedger: ({required format, from, to, orientation = 'auto', paperSize = 'a4'}) =>
+                                  _service.exportLoanLedger(id: widget.vendorId, format: format, from: from, to: to, orientation: orientation, paperSize: paperSize),
                               money: _money,
                               toDouble: _toDouble,
                             ),

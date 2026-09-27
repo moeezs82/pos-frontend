@@ -11,6 +11,7 @@ import 'package:enterprise_pos/widgets/app_feedback.dart';
 import 'package:enterprise_pos/widgets/branch_indicator.dart';
 import 'package:enterprise_pos/widgets/ledger_pager.dart';
 import 'package:enterprise_pos/widgets/payment_method_dropdown.dart';
+import 'package:enterprise_pos/widgets/party_financial_ledger.dart';
 import 'package:flutter/material.dart';
 import 'package:enterprise_pos/services/app_currency.dart';
 import 'package:provider/provider.dart';
@@ -54,6 +55,7 @@ class _CustomerEditScreenState extends State<CustomerEditScreen>
 
   /// payment_id currently being reversed (spinner on that row only).
   int? _reversingPaymentId;
+  int _ledgerRevision = 0;
   bool _loadedLedgerOnce = false;
   String? _errorLedger;
   int _ldgPage = 1, _ldgLastPage = 1, _ldgTotal = 0;
@@ -100,9 +102,6 @@ class _CustomerEditScreenState extends State<CustomerEditScreen>
   void _onTabChanged() {
     if (!_tab.indexIsChanging) {
       if (_tab.index == 0 && !_loadedSalesOnce) _loadSales(page: 1, reset: true);
-      // Ledgers open on the latest (last) page so the newest entries show first.
-      if (_tab.index == 1 && !_loadedLedgerOnce) _loadLedger(page: 1, latest: true);
-      if (_tab.index == 2 && !_loadedLoanOnce) _loadLoanLedger(page: 1, latest: true);
     }
   }
 
@@ -162,8 +161,8 @@ class _CustomerEditScreenState extends State<CustomerEditScreen>
     try {
       await _service.reverseReceipt(customerId: widget.customerId, receiptId: payId, reason: reason);
       if (!mounted) return;
+      setState(() => _ledgerRevision++);
       AppFeedback.success(context, 'Payment reversed.');
-      await _loadLedger(page: _ldgPage);
     } catch (e) {
       if (mounted) AppFeedback.error(context, 'Failed to reverse payment: $e');
     } finally {
@@ -297,10 +296,8 @@ class _CustomerEditScreenState extends State<CustomerEditScreen>
     await _loadHeader();
     if (_tab.index == 0) {
       await _loadSales(page: 1, reset: true);
-    } else if (_tab.index == 1) {
-      await _loadLedger(page: _ldgPage);
     } else {
-      await _loadLoanLedger(page: _loanPage);
+      setState(() => _ledgerRevision++);
     }
     if (mounted) AppFeedback.info(context, 'Customer details refreshed');
   }
@@ -471,7 +468,10 @@ class _CustomerEditScreenState extends State<CustomerEditScreen>
       } else if (_tab.index == 2 && _loadedLoanOnce) {
         await _loadLoanLedger(page: _loanPage, latest: true);
       }
-      if (mounted) AppFeedback.success(context, 'Receipt recorded successfully');
+      if (mounted) {
+        setState(() => _ledgerRevision++);
+        AppFeedback.success(context, 'Receipt recorded successfully');
+      }
     } catch (e) {
       if (mounted) AppFeedback.error(context, 'Failed to save receipt: $e');
     } finally {
@@ -579,39 +579,27 @@ class _CustomerEditScreenState extends State<CustomerEditScreen>
                               money: _money,
                               toInt: _toInt,
                             ),
-                            _LedgerTab(
-                              items: _ledger,
-                              opening: _opening,
-                              openingForPage: _openingForPage,
-                              isLoading: _loadingLedger,
-                              error: _errorLedger,
-                              page: _ldgPage,
-                              lastPage: _ldgLastPage,
-                              total: _ldgTotal,
-                              onRetry: () => _loadLedger(page: _ldgPage),
-                              onGoToPage: (p) => _loadLedger(page: p),
-                              onRefresh: () async => _loadLedger(page: _ldgPage),
+                            PartyTradeLedgerView(
+                              key: ValueKey('customer-trade-${widget.customerId}-$_ledgerRevision'),
+                              partyLabel: (customer?['full_name'] ?? customer?['first_name'] ?? 'Customer').toString(),
+                              loadPage: ({required page, required perPage, from, to, latest = false}) =>
+                                  _service.getCustomerLedger(id: widget.customerId, page: page, perPage: perPage, from: from, to: to, latest: latest),
+                              exportLedger: ({required format, from, to, orientation = 'auto', paperSize = 'a4'}) =>
+                                  _service.exportTradeLedger(id: widget.customerId, format: format, from: from, to: to, orientation: orientation, paperSize: paperSize),
                               money: _money,
                               toDouble: _toDouble,
-                              canReversePayments: context
-                                  .read<AuthProvider>()
-                                  .hasPermission('reverse-party-payments'),
+                              canReversePayments: context.read<AuthProvider>().hasPermission('reverse-party-payments'),
                               reversingPaymentId: _reversingPaymentId,
                               onReversePayment: _reverseLedgerPayment,
                             ),
-                            _LoanLedgerTab(
-                              items: _loanRows,
-                              summary: _loanSummary,
-                              opening: _loanOpening,
-                              openingForPage: _loanOpeningForPage,
-                              isLoading: _loadingLoan,
-                              error: _errorLoan,
-                              page: _loanPage,
-                              lastPage: _loanLastPage,
-                              total: _loanTotal,
-                              onRetry: () => _loadLoanLedger(page: _loanPage),
-                              onGoToPage: (p) => _loadLoanLedger(page: p),
-                              onRefresh: () async => _loadLoanLedger(page: _loanPage),
+                            PartyLoanLedgerView(
+                              key: ValueKey('customer-loan-${widget.customerId}-$_ledgerRevision'),
+                              partyLabel: (customer?['full_name'] ?? customer?['first_name'] ?? 'Customer').toString(),
+                              partyType: 'customer',
+                              loadPage: ({required page, required perPage, from, to, latest = false}) =>
+                                  _service.getCustomerLoanLedger(id: widget.customerId, page: page, perPage: perPage, from: from, to: to, latest: latest),
+                              exportLedger: ({required format, from, to, orientation = 'auto', paperSize = 'a4'}) =>
+                                  _service.exportLoanLedger(id: widget.customerId, format: format, from: from, to: to, orientation: orientation, paperSize: paperSize),
                               money: _money,
                               toDouble: _toDouble,
                             ),

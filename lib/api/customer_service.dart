@@ -200,4 +200,40 @@ class CustomerService {
     };
     return await _client.get('/customers/$id/loan-ledger', query: params);
   }
+  Future<ApiDownloadResponse> exportTradeLedger({
+    required int id,
+    required String format,
+    String? from,
+    String? to,
+    String orientation = 'auto',
+    String paperSize = 'a4',
+  }) async {
+    final query = <String, String>{
+      'format': format,
+      if (from != null && from.isNotEmpty) 'from': from,
+      if (to != null && to.isNotEmpty) 'to': to,
+      if (format == 'pdf') 'orientation': orientation,
+      if (format == 'pdf') 'paper_size': paperSize,
+    };
+    return _client.download('/customers/$id/ledger/export', query: query);
+  }
+
+  Future<ApiDownloadResponse> exportLoanLedger({
+    required int id,
+    required String format,
+    String? from,
+    String? to,
+    String orientation = 'auto',
+    String paperSize = 'a4',
+  }) async {
+    final query = <String, String>{
+      'format': format,
+      if (from != null && from.isNotEmpty) 'from': from,
+      if (to != null && to.isNotEmpty) 'to': to,
+      if (format == 'pdf') 'orientation': orientation,
+      if (format == 'pdf') 'paper_size': paperSize,
+    };
+    return _client.download('/customers/$id/loan-ledger/export', query: query);
+  }
+
 }

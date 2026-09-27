@@ -4,8 +4,8 @@ import 'package:enterprise_pos/api/common_service.dart';
 import 'package:enterprise_pos/api/core/api_client.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/providers/branch_provider.dart';
-import 'package:enterprise_pos/screens/sales/sale_return_create.dart';
-import 'package:enterprise_pos/screens/sales/sale_return_detail.dart';
+import 'package:enterprise_pos/screens/sales/sale_create.dart';
+import 'package:enterprise_pos/screens/sales/sale_detail.dart';
 import 'package:enterprise_pos/widgets/enterprise/enterprise_ui.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/customer_picker_sheet.dart';
@@ -42,7 +42,6 @@ class _SaleReturnsScreenState extends State<SaleReturnsScreen> {
   String? _selectedBranchId; // used only when global=All
   int? _selectedCustomerId;
   String? _selectedCustomerLabel;
-  String? _status; // pending|approved|rejected|closed
   String _searchQuery = "";
   DateTime? _fromDate;
   DateTime? _toDate;
@@ -115,7 +114,6 @@ class _SaleReturnsScreenState extends State<SaleReturnsScreen> {
       if (!isAll && globalBranchId != null) 'branch_id': globalBranchId.toString(),
       if (isAll && _selectedBranchId != null) 'branch_id': _selectedBranchId!,
       if (_selectedCustomerId != null) 'customer_id': _selectedCustomerId!.toString(),
-      if (_status != null && _status!.isNotEmpty) 'status': _status!,
       if (_searchQuery.isNotEmpty) 'search': _searchQuery,
       if (_fromDate != null) 'date_from': _fmtDate(_fromDate!),
       if (_toDate != null) 'date_to': _fmtDate(_toDate!),
@@ -219,20 +217,6 @@ class _SaleReturnsScreenState extends State<SaleReturnsScreen> {
     return double.tryParse(v.toString()) ?? 0.0;
   }
 
-  Color _statusColor(String s) {
-    switch (s) {
-      case 'approved':
-        return Colors.green;
-      case 'pending':
-        return Colors.orange;
-      case 'rejected':
-        return Colors.red;
-      case 'closed':
-        return Colors.blueGrey;
-      default:
-        return Colors.grey;
-    }
-  }
 
   int? _toInt(dynamic value) {
     if (value is int) return value;
@@ -265,6 +249,55 @@ class _SaleReturnsScreenState extends State<SaleReturnsScreen> {
     });
 
     await _fetchInitial();
+  }
+
+  Future<void> _startReturnWorkflow() async {
+    final invoiceController = TextEditingController();
+    final invoice = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Start Sale Return'),
+        content: SizedBox(
+          width: 420,
+          child: TextField(
+            controller: invoiceController,
+            autofocus: true,
+            decoration: const InputDecoration(
+              labelText: 'Original invoice number',
+              hintText: 'e.g. INV-20260927-008',
+              prefixIcon: Icon(Icons.receipt_long_outlined),
+            ),
+            onSubmitted: (value) {
+              final trimmed = value.trim();
+              if (trimmed.isNotEmpty) Navigator.pop(dialogContext, trimmed);
+            },
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () {
+              final trimmed = invoiceController.text.trim();
+              if (trimmed.isNotEmpty) Navigator.pop(dialogContext, trimmed);
+            },
+            child: const Text('Continue'),
+          ),
+        ],
+      ),
+    );
+    invoiceController.dispose();
+    if (!mounted || invoice == null || invoice.trim().isEmpty) return;
+
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => CreateSaleScreen(initialReturnInvoice: invoice.trim()),
+      ),
+    );
+    if (mounted) _fetchInitial();
   }
 
   Future<void> _pickFromDate() async {
@@ -310,7 +343,7 @@ class _SaleReturnsScreenState extends State<SaleReturnsScreen> {
 
     return EnterprisePage(
       title: 'Sale Returns',
-      subtitle: 'Review linked sale returns and open the existing return workflow without changing refund or inventory posting logic.',
+      subtitle: 'Review formal and inline sale returns using the same return history definition as Reports.',
       icon: Icons.assignment_return_outlined,
       actions: [
         OutlinedButton.icon(
@@ -320,13 +353,7 @@ class _SaleReturnsScreenState extends State<SaleReturnsScreen> {
         ),
         if (canCreate)
           FilledButton.icon(
-            onPressed: () async {
-              final result = await Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const CreateSaleReturnScreen()),
-              );
-              if (result == true && mounted) _fetchInitial();
-            },
+            onPressed: _startReturnWorkflow,
             icon: const Icon(Icons.add_rounded, size: 18),
             label: const Text('Add Return'),
           ),
@@ -369,21 +396,6 @@ class _SaleReturnsScreenState extends State<SaleReturnsScreen> {
                       ],
                     ),
                   ),
-                ),
-              ),
-              SizedBox(
-                width: 170,
-                child: DropdownButtonFormField<String?>(
-                  value: _status,
-                  decoration: const InputDecoration(labelText: 'Status'),
-                  items: const [
-                    DropdownMenuItem<String?>(value: null, child: Text('All statuses')),
-                    DropdownMenuItem<String?>(value: 'pending', child: Text('Pending')),
-                    DropdownMenuItem<String?>(value: 'approved', child: Text('Approved')),
-                    DropdownMenuItem<String?>(value: 'rejected', child: Text('Rejected')),
-                    DropdownMenuItem<String?>(value: 'closed', child: Text('Closed')),
-                  ],
-                  onChanged: (v) { setState(() => _status = v); _fetchInitial(); },
                 ),
               ),
               SizedBox(
@@ -479,8 +491,6 @@ class _SaleReturnsScreenState extends State<SaleReturnsScreen> {
             SizedBox(width: 16),
             SizedBox(width: 140, child: Text('AMOUNT', style: _headerStyle)),
             SizedBox(width: 16),
-            SizedBox(width: 120, child: Text('STATUS', style: _headerStyle)),
-            SizedBox(width: 16),
             SizedBox(width: 84, child: Text('ACTIONS', style: _headerStyle)),
           ],
         ),
@@ -488,23 +498,26 @@ class _SaleReturnsScreenState extends State<SaleReturnsScreen> {
 
   Widget _returnRow(Map<String, dynamic> r) {
     final returnNo = (r['return_no'] ?? '').toString();
-    final status = (r['status'] ?? '').toString();
+    final kind = (r['kind'] ?? 'formal').toString();
     final sale = r['sale'] as Map?;
-    final invoice = (sale?['invoice_no'] ?? 'N/A').toString();
+    final invoice = (sale?['invoice_no'] ?? r['invoice_no'] ?? 'N/A').toString();
+    final customerMap = sale?['customer'] as Map?;
     final customer = [
-      (sale?['customer']?['first_name'] ?? '').toString(),
-      (sale?['customer']?['last_name'] ?? '').toString(),
+      (customerMap?['first_name'] ?? r['customer_first_name'] ?? '').toString(),
+      (customerMap?['last_name'] ?? r['customer_last_name'] ?? '').toString(),
     ].where((x) => x.trim().isNotEmpty).join(' ');
     final total = _toDouble(r['total']);
     final dt = _tryParseDate((r['created_at'] ?? '').toString());
+    final saleId = _toInt(r['sale_id'] ?? sale?['id']);
 
     return InkWell(
       onTap: () async {
-        final changed = await Navigator.push(
+        if (saleId == null || saleId <= 0) return;
+        await Navigator.push(
           context,
-          MaterialPageRoute(builder: (_) => SaleReturnDetailScreen(returnId: _toInt(r['id']) ?? 0)),
+          MaterialPageRoute(builder: (_) => SaleDetailScreen(saleId: saleId)),
         );
-        if (changed == true && mounted) _fetchInitial();
+        if (mounted) _fetchInitial();
       },
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -521,21 +534,23 @@ class _SaleReturnsScreenState extends State<SaleReturnsScreen> {
             const SizedBox(width: 16),
             SizedBox(width: 140, child: Text(_currency.format(total), style: const TextStyle(fontWeight: FontWeight.w800))),
             const SizedBox(width: 16),
-            SizedBox(width: 120, child: _statusBadge(status)),
-            const SizedBox(width: 16),
             SizedBox(
               width: 84,
               child: Row(
                 children: [
                   IconButton(
                     tooltip: 'Copy return #',
-                    onPressed: () async {
+                    onPressed: returnNo.isEmpty ? null : () async {
                       await Clipboard.setData(ClipboardData(text: returnNo));
                       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Copied: $returnNo')));
                     },
                     icon: const Icon(Icons.copy_outlined, size: 18),
                   ),
-                  const Icon(Icons.chevron_right_rounded, color: AppTheme.textMuted),
+                  Icon(
+                    kind == 'inline' ? Icons.receipt_long_outlined : Icons.chevron_right_rounded,
+                    size: 19,
+                    color: AppTheme.textMuted,
+                  ),
                 ],
               ),
             ),
@@ -545,17 +560,6 @@ class _SaleReturnsScreenState extends State<SaleReturnsScreen> {
     );
   }
 
-  Widget _statusBadge(String status) {
-    final color = _statusColor(status);
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
-        decoration: BoxDecoration(color: color.withOpacity(.10), borderRadius: BorderRadius.circular(999), border: Border.all(color: color.withOpacity(.22))),
-        child: Text(status.isEmpty ? 'Unknown' : status[0].toUpperCase() + status.substring(1), style: TextStyle(color: color, fontWeight: FontWeight.w800, fontSize: 11)),
-      ),
-    );
-  }
 
   Widget _loadingRow() => const DecoratedBox(
         decoration: BoxDecoration(border: Border(bottom: BorderSide(color: AppTheme.border))),
