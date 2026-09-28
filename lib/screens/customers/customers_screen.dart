@@ -36,6 +36,7 @@ class _CustomersScreenState extends State<CustomersScreen> {
   final _scrollController = ScrollController();
   final Map<int, List<Map<String, dynamic>>> _pages = {};
   final Set<int> _loadingPages = {};
+  int _requestGeneration = 0;
   late CustomerService _customerService;
   VoidCallback? _branchListener;
 
@@ -61,6 +62,8 @@ class _CustomersScreenState extends State<CustomersScreen> {
   }
 
   Future<void> _fetchCustomers({bool reset = false, int page = 1}) async {
+    if (reset) ++_requestGeneration;
+    final generation = _requestGeneration;
     if (reset) {
       _pages.clear();
       _loadingPages.clear();
@@ -78,7 +81,7 @@ class _CustomersScreenState extends State<CustomersScreen> {
       );
       final wrapper = (data['data'] as Map<String, dynamic>?) ?? const {};
       final rows = (wrapper['customers'] as List?)?.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList() ?? const <Map<String, dynamic>>[];
-      if (!mounted) return;
+      if (!mounted || generation != _requestGeneration) return;
       setState(() {
         _pages[page] = rows;
         _lastPage = (wrapper['last_page'] as num?)?.toInt() ?? _lastPage;

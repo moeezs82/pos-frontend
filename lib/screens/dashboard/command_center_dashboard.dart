@@ -291,11 +291,11 @@ class _CommandCenterDashboardState extends State<CommandCenterDashboard> {
       final results = await Future.wait<Map<String, dynamic>>([
         reports.runEnterpriseReport(
           reportKey: 'sales-summary',
-          filters: {...currentFilters, 'per_page': 500},
+          filters: {...currentFilters, 'per_page': 1},
         ).catchError((_) => <String, dynamic>{}),
         reports.runEnterpriseReport(
           reportKey: 'sales-summary',
-          filters: {...previousFilters, 'per_page': 500},
+          filters: {...previousFilters, 'per_page': 1},
         ).catchError((_) => <String, dynamic>{}),
         reports.runEnterpriseReport(
           reportKey: 'dashboard-sales-trend',

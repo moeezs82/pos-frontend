@@ -58,6 +58,7 @@ class _PartyTradeLedgerViewState extends State<PartyTradeLedgerView> {
   final ScrollController _horizontal = ScrollController();
   final Map<int, List<Map<String, dynamic>>> _pages = {};
   final Set<int> _loadingPages = {};
+  int _requestGeneration = 0;
   DateTime? _from;
   DateTime? _to;
   int _perPage = _requestedPageSize;
@@ -89,6 +90,8 @@ class _PartyTradeLedgerViewState extends State<PartyTradeLedgerView> {
   static String _date(DateTime d) => '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
 
   Future<void> _load(int page, {bool latest = false, bool reset = false}) async {
+    if (reset) ++_requestGeneration;
+    final generation = _requestGeneration;
     if (reset) {
       _pages.clear();
       _loadingPages.clear();
@@ -104,7 +107,7 @@ class _PartyTradeLedgerViewState extends State<PartyTradeLedgerView> {
       final res = await widget.loadPage(page: page, perPage: _requestedPageSize, from: _fromText, to: _toText, latest: latest);
       final wrap = (res['data'] as Map).cast<String, dynamic>();
       final items = ((wrap['items'] as List?) ?? const []).whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
-      if (!mounted) return;
+      if (!mounted || generation != _requestGeneration) return;
       setState(() {
         _perPage = math.max(1, (wrap['per_page'] as num?)?.toInt() ?? _requestedPageSize).toInt();
         _total = (wrap['total'] as num?)?.toInt() ?? items.length;
@@ -306,6 +309,7 @@ class _PartyLoanLedgerViewState extends State<PartyLoanLedgerView> {
   final ScrollController _horizontal = ScrollController();
   final Map<int, List<Map<String, dynamic>>> _pages = {};
   final Set<int> _loadingPages = {};
+  int _requestGeneration = 0;
   DateTime? _from;
   DateTime? _to;
   int _perPage = _requestedPageSize, _total = 0, _lastPage = 1, _currentPage = 1;
@@ -323,6 +327,8 @@ class _PartyLoanLedgerViewState extends State<PartyLoanLedgerView> {
   static String _date(DateTime d) => '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
 
   Future<void> _load(int page, {bool latest = false, bool reset = false}) async {
+    if (reset) ++_requestGeneration;
+    final generation = _requestGeneration;
     if (reset) { _pages.clear(); _loadingPages.clear(); _total = 0; _lastPage = 1; _currentPage = 1; _error = null; }
     if (_loadingPages.contains(page) || page < 1 || (_total > 0 && page > _lastPage)) return;
     _loadingPages.add(page); if (mounted && _pages.isEmpty) setState(() => _loading = true);
@@ -330,7 +336,7 @@ class _PartyLoanLedgerViewState extends State<PartyLoanLedgerView> {
       final res = await widget.loadPage(page: page, perPage: _requestedPageSize, from: _fromText, to: _toText, latest: latest);
       final wrap = (res['data'] as Map).cast<String, dynamic>();
       final items = ((wrap['items'] as List?) ?? const []).whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
-      if (!mounted) return;
+      if (!mounted || generation != _requestGeneration) return;
       setState(() {
         _perPage = math.max(1, (wrap['per_page'] as num?)?.toInt() ?? _requestedPageSize).toInt();
         _total = (wrap['total'] as num?)?.toInt() ?? items.length;

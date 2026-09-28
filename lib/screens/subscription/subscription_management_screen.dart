@@ -25,7 +25,9 @@ class SubscriptionManagementScreen extends StatefulWidget {
 
 class _SubscriptionManagementScreenState
     extends State<SubscriptionManagementScreen> {
-  List<Map<String, dynamic>> _branches = [];
+  static const int _maxCachedPages = 6;
+  final Map<int, List<Map<String, dynamic>>> _pages = {};
+  final Set<int> _loadingPages = {};
   Map<String, dynamic> _summary = {};
   bool _loading = true;
   String? _error;
@@ -33,9 +35,10 @@ class _SubscriptionManagementScreenState
   String? _statusFilter;
   late SubscriptionApiService _api;
   final ScrollController _scrollController = ScrollController();
-  int _page = 1;
+  int _total = 0;
+  int _perPage = 20;
   int _lastPage = 1;
-  bool _loadingMore = false;
+  int _requestGeneration = 0;
 
   // not_configured is a computed status (no row in branch_subscriptions)
   final _filters = [
@@ -58,71 +61,75 @@ class _SubscriptionManagementScreenState
     _load();
   }
 
-  Future<void> _load({bool reset = true}) async {
+  Future<void> _load({bool reset = true, int page = 1}) async {
     if (reset) {
-      setState(() {
-        _loading = true;
-        _loadingMore = false;
-        _page = 1;
-        _lastPage = 1;
-        _error = null;
-      });
-    } else {
-      if (_loadingMore || _page >= _lastPage) return;
-      setState(() => _loadingMore = true);
+      ++_requestGeneration;
+      _pages.clear();
+      _loadingPages.clear();
+      _total = 0;
+      _lastPage = 1;
+      if (_scrollController.hasClients) _scrollController.jumpTo(0);
+      if (mounted) setState(() { _loading = true; _error = null; });
     }
-
-    final targetPage = reset ? 1 : _page + 1;
+    final generation = _requestGeneration;
+    if (page < 1 || _loadingPages.contains(page) || (!reset && _pages.containsKey(page)) || (_total > 0 && page > _lastPage)) return;
+    _loadingPages.add(page);
     try {
-      final res = await _api.listBranches(
-        search: _search,
-        status: _statusFilter,
-        page: targetPage,
-      );
+      final res = await _api.listBranches(search: _search, status: _statusFilter, page: page);
       final outer = res['data'] as Map? ?? {};
       final paged = outer['branches'] as Map? ?? {};
-      final items = (paged['data'] as List? ?? [])
-          .map((e) => Map<String, dynamic>.from(e as Map))
-          .toList(growable: false);
+      final items = (paged['data'] as List? ?? []).map((e) => Map<String, dynamic>.from(e as Map)).toList(growable: false);
+      if (!mounted || generation != _requestGeneration) return;
       final summary = Map<String, dynamic>.from((outer['summary'] as Map?) ?? {});
-      final current = (paged['current_page'] as num?)?.toInt() ?? targetPage;
-      final last = (paged['last_page'] as num?)?.toInt() ?? current;
-
-      if (!mounted) return;
+      final current = (paged['current_page'] as num?)?.toInt() ?? page;
+      final per = (paged['per_page'] as num?)?.toInt() ?? (items.isEmpty ? _perPage : items.length);
+      final total = (paged['total'] as num?)?.toInt() ?? items.length;
+      final last = (paged['last_page'] as num?)?.toInt() ?? 1;
       setState(() {
-        if (reset) {
-          _branches = items;
-        } else {
-          final seen = _branches.map((e) => e['id']).toSet();
-          _branches.addAll(items.where((e) => !seen.contains(e['id'])));
-          if (_branches.length > 240) {
-            _branches.removeRange(0, _branches.length - 240);
-          }
-        }
+        _pages[current] = items;
         _summary = summary;
-        _page = current;
-        _lastPage = last;
+        _perPage = per <= 0 ? 20 : per;
+        _total = total;
+        _lastPage = last < 1 ? 1 : last;
         _loading = false;
-        _loadingMore = false;
         _error = null;
+        _evictPages(current);
       });
     } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _error = e.toString();
-        _loading = false;
-        _loadingMore = false;
-      });
+      if (!mounted || generation != _requestGeneration) return;
+      setState(() { _error = e.toString(); _loading = false; });
+    } finally {
+      _loadingPages.remove(page);
     }
   }
 
-  void _reload() => _load(reset: true);
+  int get _loadedCount => _pages.values.fold<int>(0, (n, rows) => n + rows.length);
+
+  Map<String, dynamic>? _branchAt(int index) {
+    final page = index ~/ _perPage + 1;
+    final offset = index % _perPage;
+    final rows = _pages[page];
+    if (rows == null) { _load(reset: false, page: page); return null; }
+    return offset < rows.length ? rows[offset] : null;
+  }
+
+  void _evictPages(int keepPage) {
+    if (_pages.length <= _maxCachedPages) return;
+    final keys = _pages.keys.toList()..sort((a,b) => (b-keepPage).abs().compareTo((a-keepPage).abs()));
+    while (_pages.length > _maxCachedPages && keys.isNotEmpty) { _pages.remove(keys.removeAt(0)); }
+  }
+
+  void _reload() => _load(reset: true, page: 1);
 
   void _onScroll() {
-    if (!_scrollController.hasClients || _loading || _loadingMore) return;
-    if (_scrollController.position.extentAfter < 500 && _page < _lastPage) {
-      _load(reset: false);
-    }
+    if (!_scrollController.hasClients || _loading || _total <= 0) return;
+    final first = (_scrollController.offset / 86).floor().clamp(0, _total - 1);
+    final last = (first + (_scrollController.position.viewportDimension / 86).ceil() + 6).clamp(0, _total - 1);
+    final firstPage = first ~/ _perPage + 1;
+    final lastPage = last ~/ _perPage + 1;
+    for (var p = firstPage; p <= lastPage; p++) { if (!_pages.containsKey(p)) _load(reset: false, page: p); }
+    if (lastPage < _lastPage && !_pages.containsKey(lastPage + 1)) _load(reset: false, page: lastPage + 1);
+    _evictPages(firstPage);
   }
 
   @override
@@ -200,7 +207,7 @@ class _SubscriptionManagementScreenState
                   border: Border.all(color: AppTheme.border),
                 ),
                 child: Text(
-                  '${_branches.length} loaded',
+                  '$_total branches • $_loadedCount cached',
                   style: const TextStyle(color: AppTheme.textMuted, fontWeight: FontWeight.w800),
                 ),
               ),
@@ -217,7 +224,7 @@ class _SubscriptionManagementScreenState
               clipBehavior: Clip.antiAlias,
               child: _loading
                   ? const Center(child: CircularProgressIndicator(strokeWidth: 2))
-                  : _error != null && _branches.isEmpty
+                  : _error != null && _pages.isEmpty
                       ? Center(
                           child: Padding(
                             padding: const EdgeInsets.all(24),
@@ -233,25 +240,19 @@ class _SubscriptionManagementScreenState
                             ),
                           ),
                         )
-                      : _branches.isEmpty
+                      : _total == 0
                           ? const Center(child: Text('No branches found.'))
                           : ListView.separated(
                               controller: _scrollController,
                               padding: const EdgeInsets.all(12),
-                              itemCount: _branches.length + (_loadingMore ? 1 : 0),
+                              itemCount: _total,
                               separatorBuilder: (_, __) => const SizedBox(height: 8),
                               itemBuilder: (ctx, i) {
-                                if (i >= _branches.length) {
-                                  return const Padding(
-                                    padding: EdgeInsets.all(16),
-                                    child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
-                                  );
+                                final branch = _branchAt(i);
+                                if (branch == null) {
+                                  return const SizedBox(height: 78, child: Center(child: LinearProgressIndicator(minHeight: 2)));
                                 }
-                                return _BranchSubscriptionTile(
-                                  branch: _branches[i],
-                                  api: _api,
-                                  onUpdated: _reload,
-                                );
+                                return _BranchSubscriptionTile(branch: branch, api: _api, onUpdated: _reload);
                               },
                             ),
             ),

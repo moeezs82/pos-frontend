@@ -36,6 +36,7 @@ class _SalesScreenState extends State<SalesScreen> {
   final Map<int, int> _pageAccessOrder = {};
   final Set<int> _loadingPages = {};
   int _cacheAccessTick = 0;
+  int _requestGeneration = 0;
   int _lastPage = 1;
   int _total = 0;
   bool _initialLoading = true;
@@ -86,6 +87,7 @@ class _SalesScreenState extends State<SalesScreen> {
 
   Future<void> _fetchInitial() async {
     if (!mounted) return;
+    ++_requestGeneration;
     setState(() {
       _initialLoading = true;
       _pageCache.clear();
@@ -103,6 +105,7 @@ class _SalesScreenState extends State<SalesScreen> {
 
   Future<void> _loadSalesPage({required int page}) async {
     if (page < 1 || _loadingPages.contains(page)) return;
+    final generation = _requestGeneration;
     if (_pageCache.containsKey(page)) {
       _touchPage(page);
       return;
@@ -127,6 +130,7 @@ class _SalesScreenState extends State<SalesScreen> {
       final uri = Uri.parse('${ApiClient.baseUrl}/sales').replace(queryParameters: params);
       final token = Provider.of<AuthProvider>(context, listen: false).token!;
       final res = await http.get(uri, headers: {'Authorization': 'Bearer $token', 'Accept': 'application/json'});
+      if (generation != _requestGeneration) return;
       if (res.statusCode != 200) {
         if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Failed to load sales')));
         return;
@@ -134,7 +138,7 @@ class _SalesScreenState extends State<SalesScreen> {
       final decoded = jsonDecode(res.body);
       final data = decoded['data'];
       final list = List<dynamic>.from(data['data'] ?? const []);
-      if (!mounted) return;
+      if (!mounted || generation != _requestGeneration) return;
       setState(() {
         _pageCache[page] = list;
         _lastPage = _toInt(data['last_page']) ?? 1;

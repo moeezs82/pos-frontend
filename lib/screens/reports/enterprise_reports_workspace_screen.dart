@@ -69,6 +69,7 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
   final Set<int> _loadingReportPages = {};
   int _lastPage = 1;
   int _totalRows = 0;
+  int _requestGeneration = 0;
 
   bool _ready = false;
   bool _loading = false;
@@ -345,6 +346,8 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
   }
 
   Future<void> _fetch({int page = 1, bool reset = true}) async {
+    if (reset) ++_requestGeneration;
+    final generation = _requestGeneration;
     if (reset) {
       _reportPages.clear();
       _loadingReportPages.clear();
@@ -359,7 +362,7 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
     if (mounted && _reportPages.isEmpty) setState(() { _loading = true; _error = null; });
     try {
       final data = await _service.runEnterpriseReport(reportKey: _selectedReport.key, filters: _filters(page: page));
-      if (!mounted) return;
+      if (!mounted || generation != _requestGeneration) return;
       final response = _EnterpriseReportResponse.fromJson(data);
       setState(() {
         _reportPages[page] = response;
@@ -370,7 +373,7 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
         _evictReportPages(keepPage: page);
       });
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted || generation != _requestGeneration) return;
       if (_reportPages.isEmpty) setState(() => _error = e.toString());
     } finally {
       _loadingReportPages.remove(page);

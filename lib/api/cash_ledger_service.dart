@@ -162,17 +162,19 @@ class CashLedgerService {
   }
 
   /// Read-only subledgers derived from the GL (branch-scoped).
-  Future<Map<String, dynamic>> getLoanSubledger({String? from, String? to, String? search}) =>
-      _getSubledger('loans', from: from, to: to, search: search);
+  Future<Map<String, dynamic>> getLoanSubledger({String? from, String? to, String? search, int page = 1, int perPage = 40}) =>
+      _getSubledger('loans', from: from, to: to, search: search, page: page, perPage: perPage);
 
-  Future<Map<String, dynamic>> getQametiSubledger({String? from, String? to, String? search}) =>
-      _getSubledger('qameti', from: from, to: to, search: search);
+  Future<Map<String, dynamic>> getQametiSubledger({String? from, String? to, String? search, int page = 1, int perPage = 40}) =>
+      _getSubledger('qameti', from: from, to: to, search: search, page: page, perPage: perPage);
 
-  Future<Map<String, dynamic>> getExpenseSubledger({String? from, String? to, String? search}) =>
-      _getSubledger('expenses', from: from, to: to, search: search);
+  Future<Map<String, dynamic>> getExpenseSubledger({String? from, String? to, String? search, int page = 1, int perPage = 40}) =>
+      _getSubledger('expenses', from: from, to: to, search: search, page: page, perPage: perPage);
 
-  Future<Map<String, dynamic>> _getSubledger(String which, {String? from, String? to, String? search}) async {
+  Future<Map<String, dynamic>> _getSubledger(String which, {String? from, String? to, String? search, int page = 1, int perPage = 40}) async {
     final q = <String, String>{
+      'page': page.toString(),
+      'per_page': perPage.toString(),
       if (from != null && from.isNotEmpty) 'from': from,
       if (to != null && to.isNotEmpty) 'to': to,
       if (search != null && search.isNotEmpty) 'search': search,

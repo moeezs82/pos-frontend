@@ -53,6 +53,7 @@ class _DayBookDetailScreenState extends State<DayBookDetailScreen> {
 
   int _lastPage = 1;
   int _total = 0;
+  int _requestGeneration = 0;
   String _direction = 'all'; // in|out|all
   String _kind = 'all'; // all|module|received|sent|expense
   String? _method; // null = all methods
@@ -146,12 +147,14 @@ class _DayBookDetailScreenState extends State<DayBookDetailScreen> {
   }
 
   Future<void> _fetch({int page = 1, bool reset = false}) async {
+    if (reset) ++_requestGeneration;
+    final generation = _requestGeneration;
     if(reset){_pages.clear();_loadingPages.clear();_lastPage=1;_total=0;_serverPerPage=_requestedPerPage;if(_scrollController.hasClients)_scrollController.jumpTo(0);if(_pageScrollController.hasClients)_pageScrollController.jumpTo(0);}
     if(_loadingPages.contains(page)||page<1||(_total>0&&page>_lastPage))return;
     _loadingPages.add(page);if(mounted&&_pages.isEmpty)setState(()=>_loading=true);
     try{
       final data=await _service.getDayBookDetails(date:widget.date,direction:_direction,kind:_kind,method:_method,page:page,perPage:_requestedPerPage);
-      if(!mounted)return;
+      if(!mounted||generation!=_requestGeneration)return;
       final items=(data['items'] as List? ?? []).whereType<Map>().map((e)=>e.cast<String,dynamic>()).toList();
       final pg=Map<String,dynamic>.from(data['pagination']??{});
       setState((){

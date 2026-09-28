@@ -35,6 +35,7 @@ class _CashBookScreenState extends State<CashBookScreen> {
   final Map<int, List<Map<String, dynamic>>> _pages = {};
   final Map<int, int> _pageAccess = {};
   final Set<int> _loadingPages = {};
+  int _requestGeneration = 0;
   int _accessTick = 0;
   int _total = 0;
   int _lastPage = 1;
@@ -84,6 +85,8 @@ class _CashBookScreenState extends State<CashBookScreen> {
     bool reset = false,
     bool includeFilters = false,
   }) async {
+    if (reset) ++_requestGeneration;
+    final generation = _requestGeneration;
     if (page < 1 || _loadingPages.contains(page)) return;
     if (!reset && _pages.containsKey(page)) {
       _touchPage(page);
@@ -119,7 +122,7 @@ class _CashBookScreenState extends State<CashBookScreen> {
         search: _search,
         includeFilters: includeFilters || !_filtersLoaded,
       );
-      if (!mounted) return;
+      if (!mounted || generation != _requestGeneration) return;
 
       final items = (data['items'] as List? ?? const [])
           .whereType<Map>()
@@ -147,7 +150,7 @@ class _CashBookScreenState extends State<CashBookScreen> {
       });
       _evictPages(around: page);
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted || generation != _requestGeneration) return;
       setState(() => _error = e.toString());
     } finally {
       if (!mounted) return;

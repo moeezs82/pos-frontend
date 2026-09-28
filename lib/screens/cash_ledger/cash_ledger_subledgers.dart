@@ -29,9 +29,19 @@ class _SubledgerViewState extends State<SubledgerView> {
   final ScrollController _pageScrollController = ScrollController();
   final ScrollController _transactionScrollController = ScrollController();
 
+  static const int _requestedPerPage = 40;
+  static const int _maxCachedPages = 6;
+  static const double _rowExtent = 58;
+
   bool _loading = true;
   String? _error;
   Map<String, dynamic> _data = {};
+  final Map<int, List<Map<String, dynamic>>> _pages = {};
+  final Set<int> _loadingPages = {};
+  int _total = 0;
+  int _serverPerPage = _requestedPerPage;
+  int _lastPage = 1;
+  int _requestGeneration = 0;
 
   DateTime? _from;
   DateTime? _to;
@@ -40,6 +50,7 @@ class _SubledgerViewState extends State<SubledgerView> {
   void initState() {
     super.initState();
     _service = CashLedgerService(token: context.read<AuthProvider>().token ?? '');
+    _transactionScrollController.addListener(_onTransactionScroll);
     _fetch();
   }
 
@@ -51,31 +62,99 @@ class _SubledgerViewState extends State<SubledgerView> {
     super.dispose();
   }
 
-  Future<void> _fetch() async {
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
+  Future<void> _fetch({int page = 1, bool reset = true}) async {
+    if (reset) {
+      _requestGeneration++;
+      _pages.clear();
+      _loadingPages.clear();
+      _total = 0;
+      _lastPage = 1;
+      _serverPerPage = _requestedPerPage;
+      if (_transactionScrollController.hasClients) {
+        _transactionScrollController.jumpTo(0);
+      }
+    }
+    if (page < 1 || _loadingPages.contains(page) || (!reset && _pages.containsKey(page))) return;
+    final generation = _requestGeneration;
+    _loadingPages.add(page);
+    if (mounted && _pages.isEmpty) {
+      setState(() { _loading = true; _error = null; });
+    }
     final from = _from == null ? null : _dateFmt.format(_from!);
     final to = _to == null ? null : _dateFmt.format(_to!);
     final search = _searchCtrl.text.trim();
     try {
       final data = switch (widget.kind) {
-        SubledgerKind.loans => await _service.getLoanSubledger(from: from, to: to, search: search),
-        SubledgerKind.qameti => await _service.getQametiSubledger(from: from, to: to, search: search),
-        SubledgerKind.expenses => await _service.getExpenseSubledger(from: from, to: to, search: search),
+        SubledgerKind.loans => await _service.getLoanSubledger(from: from, to: to, search: search, page: page, perPage: _requestedPerPage),
+        SubledgerKind.qameti => await _service.getQametiSubledger(from: from, to: to, search: search, page: page, perPage: _requestedPerPage),
+        SubledgerKind.expenses => await _service.getExpenseSubledger(from: from, to: to, search: search, page: page, perPage: _requestedPerPage),
       };
-      if (!mounted) return;
+      if (!mounted || generation != _requestGeneration) return;
+      final pagination = Map<String, dynamic>.from(data['pagination'] ?? const {});
+      final rows = List<Map<String, dynamic>>.from(
+        (data['transactions'] as List?)?.map((e) => Map<String, dynamic>.from(e as Map)) ?? const [],
+      );
+      final current = (pagination['current_page'] as num?)?.toInt() ?? page;
+      final perPage = (pagination['per_page'] as num?)?.toInt() ?? _requestedPerPage;
+      final total = (pagination['total'] as num?)?.toInt() ?? rows.length;
+      final last = (pagination['last_page'] as num?)?.toInt() ?? 1;
       setState(() {
         _data = data;
+        _pages[current] = rows;
+        _serverPerPage = perPage <= 0 ? _requestedPerPage : perPage;
+        _total = total;
+        _lastPage = last < 1 ? 1 : last;
         _loading = false;
+        _error = null;
+        _evictPages(current);
       });
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted || generation != _requestGeneration) return;
       setState(() {
         _loading = false;
         _error = e.toString().replaceFirst('Exception: ', '');
       });
+    } finally {
+      _loadingPages.remove(page);
+    }
+  }
+
+  void _onTransactionScroll() {
+    if (!_transactionScrollController.hasClients || _total <= 0) return;
+    final first = (_transactionScrollController.offset / _rowExtent).floor().clamp(0, _total - 1);
+    final visible = (_transactionScrollController.position.viewportDimension / _rowExtent).ceil() + 8;
+    final lastIndex = (first + visible).clamp(0, _total - 1);
+    final firstPage = first ~/ _serverPerPage + 1;
+    final lastPage = lastIndex ~/ _serverPerPage + 1;
+    for (var p = firstPage; p <= lastPage; p++) {
+      if (!_pages.containsKey(p)) _fetch(page: p, reset: false);
+    }
+    if (lastPage < _lastPage && !_pages.containsKey(lastPage + 1)) {
+      _fetch(page: lastPage + 1, reset: false);
+    }
+    if (firstPage > 1 && !_pages.containsKey(firstPage - 1)) {
+      _fetch(page: firstPage - 1, reset: false);
+    }
+    _evictPages(firstPage);
+  }
+
+  Map<String, dynamic>? _transactionAt(int index) {
+    final page = index ~/ _serverPerPage + 1;
+    final offset = index % _serverPerPage;
+    final rows = _pages[page];
+    if (rows == null) {
+      _fetch(page: page, reset: false);
+      return null;
+    }
+    return offset < rows.length ? rows[offset] : null;
+  }
+
+  void _evictPages(int keepPage) {
+    if (_pages.length <= _maxCachedPages) return;
+    final keys = _pages.keys.toList()
+      ..sort((a, b) => (b - keepPage).abs().compareTo((a - keepPage).abs()));
+    while (_pages.length > _maxCachedPages && keys.isNotEmpty) {
+      _pages.remove(keys.removeAt(0));
     }
   }
 
@@ -229,7 +308,6 @@ class _SubledgerViewState extends State<SubledgerView> {
     final s = Map<String, dynamic>.from(_data['summary'] ?? {});
     final rec = Map<String, dynamic>.from(_data['reconciliation'] ?? {});
     final borrowers = _list('borrowers');
-    final txns = _list('transactions');
     return [
       _summaryCard('Loans Receivable (1300)', [
         _stat('Opening', s['opening']),
@@ -266,7 +344,6 @@ class _SubledgerViewState extends State<SubledgerView> {
       _sectionLabel('Transactions'),
       _transactionPanel(
         height: transactionHeight,
-        items: txns,
         emptyText: 'No loan transactions in this period.',
         itemBuilder: (t) {
           final given = _n(t['given']) > 0;
@@ -298,7 +375,6 @@ class _SubledgerViewState extends State<SubledgerView> {
   List<Widget> _qametiBody(double transactionHeight) {
     final s = Map<String, dynamic>.from(_data['summary'] ?? {});
     final rec = Map<String, dynamic>.from(_data['reconciliation'] ?? {});
-    final txns = _list('transactions');
     return [
       _summaryCard('Qameti / Committee (1310)', [
         _stat('Opening', s['opening']),
@@ -311,7 +387,6 @@ class _SubledgerViewState extends State<SubledgerView> {
       _sectionLabel('Transactions'),
       _transactionPanel(
         height: transactionHeight,
-        items: txns,
         emptyText: 'No Qameti activity in this period.',
         itemBuilder: (t) => Card(
           elevation: 0,
@@ -343,7 +418,6 @@ class _SubledgerViewState extends State<SubledgerView> {
   List<Widget> _expensesBody(double transactionHeight) {
     final s = Map<String, dynamic>.from(_data['summary'] ?? {});
     final byAccount = _list('by_account');
-    final txns = _list('transactions');
     return [
       _summaryCard('Expenses (period activity)', [
         _stat('Total', s['total'], color: AppTheme.danger, strong: true),
@@ -378,7 +452,6 @@ class _SubledgerViewState extends State<SubledgerView> {
       _sectionLabel('Transactions'),
       _transactionPanel(
         height: transactionHeight,
-        items: txns,
         emptyText: 'No expenses in this period.',
         itemBuilder: (t) => Card(
           elevation: 0,
@@ -404,11 +477,10 @@ class _SubledgerViewState extends State<SubledgerView> {
 
   Widget _transactionPanel({
     required double height,
-    required List<Map<String, dynamic>> items,
     required String emptyText,
     required Widget Function(Map<String, dynamic>) itemBuilder,
   }) {
-    if (items.isEmpty) return _empty(emptyText);
+    if (_total == 0 && !_loading) return _empty(emptyText);
     return Container(
       height: height,
       decoration: BoxDecoration(
@@ -422,9 +494,20 @@ class _SubledgerViewState extends State<SubledgerView> {
         thumbVisibility: true,
         child: ListView.builder(
           controller: _transactionScrollController,
-          itemCount: items.length,
+          itemExtent: _rowExtent,
+          itemCount: _total,
+          cacheExtent: _rowExtent * 10,
           padding: const EdgeInsets.only(right: 8),
-          itemBuilder: (_, index) => itemBuilder(items[index]),
+          itemBuilder: (_, index) {
+            final row = _transactionAt(index);
+            if (row == null) {
+              return const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                child: LinearProgressIndicator(minHeight: 2),
+              );
+            }
+            return itemBuilder(row);
+          },
         ),
       ),
     );

@@ -35,6 +35,7 @@ class _VendorsScreenState extends State<VendorsScreen> {
   final _scrollController = ScrollController();
   final Map<int, List<Map<String, dynamic>>> _pages = {};
   final Set<int> _loadingPages = {};
+  int _requestGeneration = 0;
   late VendorService _vendorService;
   VoidCallback? _branchListener;
 
@@ -60,6 +61,8 @@ class _VendorsScreenState extends State<VendorsScreen> {
   }
 
   Future<void> _fetchVendors({bool reset = false, int page = 1}) async {
+    if (reset) ++_requestGeneration;
+    final generation = _requestGeneration;
     if (reset) { _pages.clear(); _loadingPages.clear(); _lastPage = 1; _total = 0; if (_scrollController.hasClients) _scrollController.jumpTo(0); }
     if (_loadingPages.contains(page) || page < 1 || (_total > 0 && page > _lastPage)) return;
     _loadingPages.add(page);
@@ -69,7 +72,7 @@ class _VendorsScreenState extends State<VendorsScreen> {
       final data = await _vendorService.getVendors(page: page, perPage: _perPage, search: _search, includeBalance: true, branchId: branchId);
       final wrapper = (data['data'] as Map<String, dynamic>?) ?? const {};
       final rows = (wrapper['vendors'] as List?)?.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList() ?? const <Map<String, dynamic>>[];
-      if (!mounted) return;
+      if (!mounted || generation != _requestGeneration) return;
       setState(() { _pages[page] = rows; _lastPage = (wrapper['last_page'] as num?)?.toInt() ?? _lastPage; _total = (wrapper['total'] as num?)?.toInt() ?? _total; _evictPages(keepPage: page); });
     } catch (e) { if (mounted) AppFeedback.error(context, 'Failed to load vendors: $e'); }
     finally { _loadingPages.remove(page); if (mounted) setState(() => _loading = false); }

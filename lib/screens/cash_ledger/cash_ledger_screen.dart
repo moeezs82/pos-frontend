@@ -206,6 +206,7 @@ class _LedgerViewState extends State<_LedgerView> {
   final Set<int> _loadingPages = {};
   int _lastPage = 1;
   int _total = 0;
+  int _requestGeneration = 0;
 
   Map<String, dynamic> _summary = {};
   num _opening = 0;
@@ -265,13 +266,15 @@ class _LedgerViewState extends State<_LedgerView> {
   }
 
   Future<void> _fetchList({int page = 1, bool reset = false}) async {
+    if (reset) ++_requestGeneration;
+    final generation = _requestGeneration;
     if (reset) { _pages.clear(); _loadingPages.clear(); _lastPage = 1; _total = 0; _serverPerPage = _requestedPerPage; if (_scrollController.hasClients) _scrollController.jumpTo(0); }
     if (_loadingPages.contains(page) || page < 1 || (_total > 0 && page > _lastPage)) return;
     _loadingPages.add(page);
     if (mounted && _pages.isEmpty) setState(() => _loading = true);
     try {
       final data = await _service.getTransactions(page: page, perPage: _requestedPerPage, from: _fmtDate(_dateFrom), to: _fmtDate(_dateTo), direction: _direction, kind: _kind);
-      if (!mounted) return;
+      if (!mounted || generation != _requestGeneration) return;
       final items = (data['items'] as List? ?? []).whereType<Map>().map((e) => e.cast<String, dynamic>()).toList();
       setState(() {
         final reportedPerPage = (data['per_page'] as num?)?.toInt();
@@ -944,6 +947,7 @@ class _DayBookViewState extends State<_DayBookView> {
   num _opening = 0;
   int _total = 0;
   int _lastPage = 1;
+  int _requestGeneration = 0;
 
   DateTime _dateFrom = DateTime.now().subtract(const Duration(days: 29));
   DateTime _dateTo = DateTime.now();
@@ -970,12 +974,14 @@ class _DayBookViewState extends State<_DayBookView> {
   }
 
   Future<void> _fetch({int page = 1, bool reset = false}) async {
+    if (reset) ++_requestGeneration;
+    final generation = _requestGeneration;
     if(reset){_pages.clear();_loadingPages.clear();_lastPage=1;_total=0;_serverPerPage=_requestedPerPage;if(_scrollController.hasClients)_scrollController.jumpTo(0);if(_pageScrollController.hasClients)_pageScrollController.jumpTo(0);}
     if(_loadingPages.contains(page)||page<1||(_total>0&&page>_lastPage))return;
     _loadingPages.add(page); if(mounted&&_pages.isEmpty)setState(()=>_loading=true);
     try{
       final data=await _service.getDayBook(from:_fmtDate(_dateFrom),to:_fmtDate(_dateTo),page:page,perPage:_requestedPerPage,order:'desc');
-      if(!mounted)return;
+      if(!mounted||generation!=_requestGeneration)return;
       final days=(data['days'] as List? ?? []).whereType<Map>().map((e)=>e.cast<String,dynamic>()).toList();
       final pg=Map<String,dynamic>.from(data['pagination']??{});
       setState((){

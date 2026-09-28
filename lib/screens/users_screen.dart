@@ -24,6 +24,7 @@ class _UsersScreenState extends State<UsersScreen> {
   String _search = '';
   final Map<int, List<Map<String, dynamic>>> _pages = {};
   final Set<int> _loadingPages = {};
+  int _requestGeneration = 0;
   final _searchController = TextEditingController();
   final _scrollController = ScrollController();
 
@@ -46,6 +47,8 @@ class _UsersScreenState extends State<UsersScreen> {
   }
 
   Future<void> _fetchUsers({bool reset = false, int page = 1}) async {
+    if (reset) ++_requestGeneration;
+    final generation = _requestGeneration;
     if (reset) {
       _pages.clear(); _loadingPages.clear(); _lastPage = 1; _total = 0;
       if (_scrollController.hasClients) _scrollController.jumpTo(0);
@@ -59,7 +62,7 @@ class _UsersScreenState extends State<UsersScreen> {
       final pageData = _asMap(responseData) ?? const <String, dynamic>{};
       final rawItems = responseData is List ? responseData : (pageData['data'] is List ? pageData['data'] as List : const []);
       final items = rawItems.whereType<Map>().map((item) => item.cast<String, dynamic>()).where((user) => !_isMasterAdminUser(user)).toList();
-      if (!mounted) return;
+      if (!mounted || generation != _requestGeneration) return;
       setState(() {
         _pages[page] = items;
         _lastPage = _readInt(pageData['last_page']) ?? 1;

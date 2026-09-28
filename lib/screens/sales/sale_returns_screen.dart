@@ -31,6 +31,7 @@ class _SaleReturnsScreenState extends State<SaleReturnsScreen> {
 
   final Map<int, List<Map<String, dynamic>>> _pages = {};
   final Set<int> _loadingPages = {};
+  int _requestGeneration = 0;
   List<Map<String, dynamic>> _branches = [];
   int _perPage = _defaultPerPage;
   int _lastPage = 1;
@@ -80,6 +81,7 @@ class _SaleReturnsScreenState extends State<SaleReturnsScreen> {
 
   Future<void> _fetchInitial() async {
     if (!mounted) return;
+    ++_requestGeneration;
     setState(() {
       _initialLoading = true;
       _pages.clear();
@@ -101,6 +103,7 @@ class _SaleReturnsScreenState extends State<SaleReturnsScreen> {
 
   Future<void> _fetchReturns({required int page, bool force = false}) async {
     if (page < 1) return;
+    final generation = _requestGeneration;
     if (_pages.isNotEmpty && page > _lastPage) return;
     if (!force && (_pages.containsKey(page) || _loadingPages.contains(page))) return;
 
@@ -137,7 +140,7 @@ class _SaleReturnsScreenState extends State<SaleReturnsScreen> {
       final total = (paginator['total'] as num?)?.toInt() ??
           (last <= 1 ? rows.length : (last - 1) * perPage + rows.length);
 
-      if (!mounted) return;
+      if (!mounted || generation != _requestGeneration) return;
       setState(() {
         _pages[current] = rows;
         _lastPage = last < 1 ? 1 : last;
@@ -148,7 +151,7 @@ class _SaleReturnsScreenState extends State<SaleReturnsScreen> {
         _evictFarPages(_visiblePageEstimate());
       });
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted || generation != _requestGeneration) return;
       setState(() {
         _loadingPages.remove(page);
         _loadError = e.toString().replaceFirst('Exception: ', '');

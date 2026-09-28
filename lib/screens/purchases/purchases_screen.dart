@@ -36,6 +36,7 @@ class _PurchasesScreenState extends State<PurchasesScreen> {
   final Map<int, int> _pageAccessOrder = {};
   final Set<int> _loadingPages = {};
   int _cacheAccessTick = 0;
+  int _requestGeneration = 0;
   int _lastPage = 1;
   int _total = 0;
   bool _initialLoading = true;
@@ -83,6 +84,7 @@ class _PurchasesScreenState extends State<PurchasesScreen> {
 
   Future<void> _fetchInitial() async {
     if (!mounted) return;
+    ++_requestGeneration;
     setState(() {
       _initialLoading = true;
       _pageCache.clear();
@@ -97,6 +99,7 @@ class _PurchasesScreenState extends State<PurchasesScreen> {
 
   Future<void> _loadPage(int page) async {
     if (page < 1 || _loadingPages.contains(page)) return;
+    final generation = _requestGeneration;
     if (_pageCache.containsKey(page)) {
       _touchPage(page);
       return;
@@ -123,6 +126,7 @@ class _PurchasesScreenState extends State<PurchasesScreen> {
           'Accept': 'application/json',
         },
       );
+      if (generation != _requestGeneration) return;
       if (res.statusCode != 200) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -135,7 +139,7 @@ class _PurchasesScreenState extends State<PurchasesScreen> {
       final decoded = jsonDecode(res.body);
       final data = decoded['data'];
       final rows = List<dynamic>.from(data['data'] ?? const []);
-      if (!mounted) return;
+      if (!mounted || generation != _requestGeneration) return;
       setState(() {
         _pageCache[page] = rows;
         _lastPage = _toInt(data['last_page']) ?? 1;

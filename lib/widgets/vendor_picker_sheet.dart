@@ -176,6 +176,12 @@ class _VendorPickerSheetState extends State<VendorPickerSheet> {
   }
 
   @override
+  void dispose() {
+    _debounce?.cancel();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return SafeArea(
       child: Padding(
