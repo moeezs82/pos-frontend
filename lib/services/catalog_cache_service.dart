@@ -67,7 +67,7 @@ class CatalogCacheService {
     final path = p.join(dbPath, 'catalog_cache.db');
     return openDatabase(
       path,
-      version: 15,
+      version: 16,
       // v1 → v2 adds the unit columns. ADDITIVE ONLY, and deliberately not a
       // table rebuild or a cache wipe: this database is a read replica, but a
       // "just delete and re-download" upgrade would strand a till that is
@@ -307,6 +307,13 @@ class CatalogCacheService {
             whereArgs: const ['catalog_version:%', 'last_synced_at:%'],
           );
         }
+        // v15 → v16: durable staging tables for chunked initial catalog sync.
+        // Chunks are written here first and only promoted after every product,
+        // customer and metadata chunk succeeds, so an interrupted full sync
+        // never replaces the currently usable offline catalog.
+        if (oldVersion < 16) {
+          await _createSnapshotStagingTables(db);
+        }
       },
       onCreate: (db, version) async {
         await db.execute('''
@@ -420,9 +427,104 @@ class CatalogCacheService {
             value TEXT
           )
         ''');
+        await _createSnapshotStagingTables(db);
       },
     );
   }
+
+  Future<void> _createSnapshotStagingTables(DatabaseExecutor db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS products_snapshot_stage (
+        snapshot_key TEXT NOT NULL,
+        id INTEGER NOT NULL,
+        branch_id INTEGER,
+        sku TEXT,
+        barcode TEXT,
+        name TEXT,
+        name_lower TEXT,
+        secondary_name TEXT,
+        secondary_name_lower TEXT,
+        price REAL,
+        cost_price REAL,
+        wholesale_price REAL,
+        tax_rate REAL,
+        tax_inclusive INTEGER,
+        discount REAL,
+        discount_type TEXT,
+        vendor_id INTEGER,
+        vendor_name TEXT,
+        category_id INTEGER,
+        brand_id INTEGER,
+        unit_id INTEGER,
+        unit_name TEXT,
+        unit_allow_decimal INTEGER,
+        product_group_id INTEGER,
+        variant_size TEXT,
+        variant_color TEXT,
+        is_active INTEGER DEFAULT 1,
+        updated_at TEXT,
+        PRIMARY KEY (snapshot_key, id)
+      )
+    ''');
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS product_packagings_snapshot_stage (
+        snapshot_key TEXT NOT NULL,
+        id INTEGER NOT NULL,
+        branch_id INTEGER NOT NULL,
+        product_id INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        short_name TEXT,
+        base_quantity REAL NOT NULL,
+        retail_price REAL,
+        wholesale_price REAL,
+        is_active INTEGER NOT NULL DEFAULT 1,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (snapshot_key, id)
+      )
+    ''');
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS customers_snapshot_stage (
+        snapshot_key TEXT NOT NULL,
+        id INTEGER NOT NULL,
+        branch_id INTEGER,
+        area_id INTEGER,
+        customer_code TEXT,
+        customer_type TEXT NOT NULL DEFAULT 'retail',
+        first_name TEXT,
+        last_name TEXT,
+        phone TEXT,
+        phone_numbers TEXT,
+        email TEXT,
+        address TEXT,
+        status TEXT,
+        credit_limit REAL,
+        credit_limit_mode TEXT NOT NULL DEFAULT 'block',
+        trade_balance REAL NOT NULL DEFAULT 0,
+        search_blob TEXT,
+        updated_at TEXT,
+        PRIMARY KEY (snapshot_key, id)
+      )
+    ''');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_products_snapshot_stage_branch ON products_snapshot_stage(branch_id, snapshot_key)');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_packagings_snapshot_stage_branch ON product_packagings_snapshot_stage(branch_id, snapshot_key)');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_customers_snapshot_stage_branch ON customers_snapshot_stage(branch_id, snapshot_key)');
+  }
+
+  static const String _productColumnList =
+      'id,branch_id,sku,barcode,name,name_lower,secondary_name,secondary_name_lower,'
+      'price,cost_price,wholesale_price,tax_rate,tax_inclusive,discount,discount_type,'
+      'vendor_id,vendor_name,category_id,brand_id,unit_id,unit_name,unit_allow_decimal,'
+      'product_group_id,variant_size,variant_color,is_active,updated_at';
+  static const String _packagingColumnList =
+      'id,branch_id,product_id,name,short_name,base_quantity,retail_price,wholesale_price,'
+      'is_active,sort_order';
+  static const String _customerColumnList =
+      'id,branch_id,area_id,customer_code,customer_type,first_name,last_name,phone,'
+      'phone_numbers,email,address,status,credit_limit,credit_limit_mode,trade_balance,'
+      'search_blob,updated_at';
 
   // ---------------------------------------------------------------------------
   // Sync
@@ -493,170 +595,468 @@ class CatalogCacheService {
       final db = await _database;
       final since = await _getMeta(_versionKey(branchId));
 
-      final Map<String, dynamic> data;
-      final bool full;
+      CatalogRefreshResult result;
       if (since == null || since.isEmpty) {
-        data = await service.snapshot(branchId: branchId);
-        full = true;
+        result = await _refreshChunkedSnapshot(
+          service: service,
+          db: db,
+          branchId: branchId,
+        );
       } else {
-        data = await service.changes(since: since, branchId: branchId);
-        full = false;
-      }
-
-      final products = (data['products'] as List?) ?? const [];
-      final customers = (data['customers'] as List?) ?? const [];
-      final deletedProducts = (data['deleted_products'] as List?) ?? const [];
-      final deletedCustomers = (data['deleted_customers'] as List?) ?? const [];
-      final saleSources = (data['sale_sources'] as List?) ?? const [];
-      final customerAreasRaw = data['customer_areas'];
-      final List customerAreas =
-          customerAreasRaw is List ? customerAreasRaw : const [];
-      final newVersion = (data['catalog_version'] ?? '').toString();
-
-      await db.transaction((txn) async {
-        if (full) {
-          final purge = txn.batch();
-          if (branchId != null) {
-            purge.delete('product_packagings', where: 'branch_id = ?', whereArgs: [branchId]);
-          } else {
-            purge.delete('product_packagings');
-          }
-          purge.delete('products', where: 'branch_id IS ?', whereArgs: [branchId]);
-          if (branchId != null) {
-            purge.delete('customers', where: 'branch_id = ?', whereArgs: [branchId]);
-          } else {
-            purge.delete('customers');
-          }
-          await purge.commit(noResult: true);
+        final data = await service.changes(since: since, branchId: branchId);
+        final newVersion = (data['catalog_version'] ?? '').toString();
+        if (newVersion.isEmpty) {
+          throw Exception('Catalog changes response did not include catalog_version');
         }
-
-        const productChunkSize = 200;
-        for (var start = 0; start < products.length; start += productChunkSize) {
-          final finish = (start + productChunkSize < products.length)
-              ? start + productChunkSize
-              : products.length;
-          final batch = txn.batch();
-          for (var i = start; i < finish; i++) {
-            final product = products[i] as Map;
-            final productId = _asInt(product['id']);
-            final productBranchId = product['branch_id'] != null
-                ? _asInt(product['branch_id'])
-                : branchId;
-            batch.insert('products', _productRow(product, branchId),
-                conflictAlgorithm: ConflictAlgorithm.replace);
-            batch.delete('product_packagings', where: 'product_id = ?', whereArgs: [productId]);
-            final rawPackagings = product['packagings'];
-            if (productBranchId != null && rawPackagings is List) {
-              for (final rawPackaging in rawPackagings) {
-                if (rawPackaging is! Map) continue;
-                batch.insert(
-                  'product_packagings',
-                  _packagingRow(rawPackaging, productId, productBranchId),
-                  conflictAlgorithm: ConflictAlgorithm.replace,
-                );
-              }
-            }
-          }
-          await batch.commit(noResult: true);
-        }
-
-        const customerChunkSize = 300;
-        for (var start = 0; start < customers.length; start += customerChunkSize) {
-          final finish = (start + customerChunkSize < customers.length)
-              ? start + customerChunkSize
-              : customers.length;
-          final batch = txn.batch();
-          for (var i = start; i < finish; i++) {
-            batch.insert('customers', _customerRow(customers[i] as Map),
-                conflictAlgorithm: ConflictAlgorithm.replace);
-          }
-          await batch.commit(noResult: true);
-        }
-
-        if (deletedProducts.isNotEmpty || deletedCustomers.isNotEmpty) {
-          final batch = txn.batch();
-          for (final id in deletedProducts) {
-            final productId = _asInt(id);
-            batch.delete('product_packagings', where: 'product_id = ?', whereArgs: [productId]);
-            batch.delete('products', where: 'id = ?', whereArgs: [productId]);
-          }
-          for (final id in deletedCustomers) {
-            batch.delete('customers', where: 'id = ?', whereArgs: [_asInt(id)]);
-          }
-          await batch.commit(noResult: true);
-        }
-
-        if (data.containsKey('customer_areas') && branchId != null) {
-          final batch = txn.batch();
-          batch.delete('customer_areas', where: 'branch_id = ?', whereArgs: [branchId]);
-          for (final raw in customerAreas) {
-            final area = raw as Map;
-            final areaBranchId = area['branch_id'] != null ? _asInt(area['branch_id']) : branchId;
-            if (areaBranchId != branchId) continue;
-            batch.insert(
-              'customer_areas',
-              {
-                'id': _asInt(area['id']),
-                'branch_id': areaBranchId,
-                'name': (area['name'] ?? '').toString(),
-                'is_active': _asBoolInt(area['is_active'], defaultTrue: true),
-              },
-              conflictAlgorithm: ConflictAlgorithm.replace,
-            );
-          }
-          await batch.commit(noResult: true);
-        }
-
-        if (data.containsKey('sale_sources')) {
-          final batch = txn.batch();
-          if (branchId != null) {
-            batch.delete('sale_sources', where: 'branch_id = ?', whereArgs: [branchId]);
-          }
-          for (final raw in saleSources) {
-            final src = raw as Map;
-            final sourceBranchId = src['branch_id'] != null ? _asInt(src['branch_id']) : branchId;
-            if (sourceBranchId == null || sourceBranchId != branchId) continue;
-            batch.insert(
-              'sale_sources',
-              {
-                'id': _asInt(src['id']),
-                'branch_id': sourceBranchId,
-                'code': src['code']?.toString(),
-                'name': (src['name'] ?? '').toString(),
-                'is_active': _asBoolInt(src['is_active'], defaultTrue: true),
-                'is_default': _asBoolInt(src['is_default']),
-                'sort_order': _asInt(src['sort_order']),
-              },
-              conflictAlgorithm: ConflictAlgorithm.replace,
-            );
-          }
-          await batch.commit(noResult: true);
-        }
-      });
-
-      if (newVersion.isNotEmpty) {
-        await _setMeta(_versionKey(branchId), newVersion);
-      }
-      final syncedAt = DateTime.now();
-      await _setMeta(_syncedAtKey(branchId), syncedAt.toIso8601String());
-      _lastSuccessfulRefresh[key] = syncedAt;
-
-      final paymentMethods = data['payment_methods'] as List?;
-      if (paymentMethods != null && paymentMethods.isNotEmpty) {
-        await savePaymentMethods(
-          branchId,
-          paymentMethods.map((e) => Map<String, dynamic>.from(e as Map)).toList(),
+        await _applyDeltaPayload(
+          db: db,
+          data: data,
+          branchId: branchId,
+          newVersion: newVersion,
+        );
+        result = CatalogRefreshResult(
+          ok: true,
+          productsUpserted: ((data['products'] as List?) ?? const []).length,
+          customersUpserted: ((data['customers'] as List?) ?? const []).length,
         );
       }
 
-      return CatalogRefreshResult(
-        ok: true,
-        wasFullSnapshot: full,
-        productsUpserted: products.length,
-        customersUpserted: customers.length,
-      );
+      if (!result.ok) return result;
+      final syncedAt = DateTime.now();
+      await _setMeta(_syncedAtKey(branchId), syncedAt.toIso8601String());
+      _lastSuccessfulRefresh[key] = syncedAt;
+      return result;
     } catch (e) {
       return CatalogRefreshResult(ok: false, error: e.toString());
+    }
+  }
+
+  Future<CatalogRefreshResult> _refreshChunkedSnapshot({
+    required CatalogService service,
+    required Database db,
+    required int? branchId,
+  }) async {
+    final begin = await service.beginSnapshot(branchId: branchId);
+    final catalogVersion = (begin['catalog_version'] ?? '').toString();
+    if (catalogVersion.isEmpty) {
+      throw Exception('Catalog snapshot did not include catalog_version');
+    }
+    var chunkSize = _asInt(begin['chunk_size']);
+    if (chunkSize <= 0) chunkSize = 500;
+    if (chunkSize > 1000) chunkSize = 1000;
+
+    final snapshotKey = '${_branchKey(branchId)}|$catalogVersion';
+    await _prepareSnapshotStage(db, branchId);
+
+    var productCount = 0;
+    var afterProductId = 0;
+    while (true) {
+      final chunk = await service.snapshotProducts(
+        catalogVersion: catalogVersion,
+        afterId: afterProductId,
+        limit: chunkSize,
+        branchId: branchId,
+      );
+      final products = (chunk['products'] as List?) ?? const [];
+      await _stageProductChunk(
+        db: db,
+        snapshotKey: snapshotKey,
+        branchId: branchId,
+        products: products,
+      );
+      productCount += products.length;
+      final hasMore = chunk['has_more'] == true || chunk['has_more'] == 1;
+      final next = _asInt(chunk['next_after_id']);
+      if (!hasMore) break;
+      if (next <= afterProductId) {
+        throw Exception('Catalog product snapshot cursor did not advance');
+      }
+      afterProductId = next;
+    }
+
+    var customerCount = 0;
+    var afterCustomerId = 0;
+    while (true) {
+      final chunk = await service.snapshotCustomers(
+        catalogVersion: catalogVersion,
+        afterId: afterCustomerId,
+        limit: chunkSize,
+        branchId: branchId,
+      );
+      final customers = (chunk['customers'] as List?) ?? const [];
+      await _stageCustomerChunk(
+        db: db,
+        snapshotKey: snapshotKey,
+        customers: customers,
+      );
+      customerCount += customers.length;
+      final hasMore = chunk['has_more'] == true || chunk['has_more'] == 1;
+      final next = _asInt(chunk['next_after_id']);
+      if (!hasMore) break;
+      if (next <= afterCustomerId) {
+        throw Exception('Catalog customer snapshot cursor did not advance');
+      }
+      afterCustomerId = next;
+    }
+
+    final meta = await service.snapshotMeta(
+      catalogVersion: catalogVersion,
+      branchId: branchId,
+    );
+    await _activateSnapshot(
+      db: db,
+      snapshotKey: snapshotKey,
+      branchId: branchId,
+      catalogVersion: catalogVersion,
+      meta: meta,
+    );
+
+    // Catch up writes that happened after SnapshotBegin captured its boundary.
+    // If this request fails, the promoted snapshot and its boundary cursor are
+    // still valid; the next refresh resumes with /catalog/changes from there.
+    final catchUp = await service.changes(
+      since: catalogVersion,
+      branchId: branchId,
+    );
+    final catchUpVersion = (catchUp['catalog_version'] ?? '').toString();
+    if (catchUpVersion.isEmpty) {
+      throw Exception('Catalog catch-up did not include catalog_version');
+    }
+    await _applyDeltaPayload(
+      db: db,
+      data: catchUp,
+      branchId: branchId,
+      newVersion: catchUpVersion,
+    );
+
+    return CatalogRefreshResult(
+      ok: true,
+      wasFullSnapshot: true,
+      productsUpserted: productCount +
+          (((catchUp['products'] as List?) ?? const []).length),
+      customersUpserted: customerCount +
+          (((catchUp['customers'] as List?) ?? const []).length),
+    );
+  }
+
+  Future<void> _prepareSnapshotStage(Database db, int? branchId) async {
+    await db.transaction((txn) async {
+      if (branchId == null) {
+        await txn.delete('product_packagings_snapshot_stage');
+        await txn.delete('products_snapshot_stage');
+        await txn.delete('customers_snapshot_stage');
+      } else {
+        await txn.delete('product_packagings_snapshot_stage',
+            where: 'branch_id = ?', whereArgs: [branchId]);
+        await txn.delete('products_snapshot_stage',
+            where: 'branch_id = ?', whereArgs: [branchId]);
+        await txn.delete('customers_snapshot_stage',
+            where: 'branch_id = ?', whereArgs: [branchId]);
+      }
+    });
+  }
+
+  Future<void> _stageProductChunk({
+    required Database db,
+    required String snapshotKey,
+    required int? branchId,
+    required List products,
+  }) async {
+    if (products.isEmpty) return;
+    await db.transaction((txn) async {
+      final batch = txn.batch();
+      for (final raw in products) {
+        if (raw is! Map) continue;
+        final productId = _asInt(raw['id']);
+        final productBranchId = raw['branch_id'] != null
+            ? _asInt(raw['branch_id'])
+            : branchId;
+        final row = _productRow(raw, branchId);
+        batch.insert(
+          'products_snapshot_stage',
+          {'snapshot_key': snapshotKey, ...row},
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+        final rawPackagings = raw['packagings'];
+        if (productBranchId != null && rawPackagings is List) {
+          for (final rawPackaging in rawPackagings) {
+            if (rawPackaging is! Map) continue;
+            batch.insert(
+              'product_packagings_snapshot_stage',
+              {
+                'snapshot_key': snapshotKey,
+                ..._packagingRow(rawPackaging, productId, productBranchId),
+              },
+              conflictAlgorithm: ConflictAlgorithm.replace,
+            );
+          }
+        }
+      }
+      await batch.commit(noResult: true);
+    });
+  }
+
+  Future<void> _stageCustomerChunk({
+    required Database db,
+    required String snapshotKey,
+    required List customers,
+  }) async {
+    if (customers.isEmpty) return;
+    await db.transaction((txn) async {
+      final batch = txn.batch();
+      for (final raw in customers) {
+        if (raw is! Map) continue;
+        batch.insert(
+          'customers_snapshot_stage',
+          {'snapshot_key': snapshotKey, ..._customerRow(raw)},
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+      }
+      await batch.commit(noResult: true);
+    });
+  }
+
+  Future<void> _activateSnapshot({
+    required Database db,
+    required String snapshotKey,
+    required int? branchId,
+    required String catalogVersion,
+    required Map<String, dynamic> meta,
+  }) async {
+    await db.transaction((txn) async {
+      if (branchId == null) {
+        await txn.delete('product_packagings');
+        await txn.delete('products');
+        await txn.delete('customers');
+      } else {
+        await txn.delete('product_packagings',
+            where: 'branch_id = ?', whereArgs: [branchId]);
+        await txn.delete('products',
+            where: 'branch_id = ?', whereArgs: [branchId]);
+        await txn.delete('customers',
+            where: 'branch_id = ?', whereArgs: [branchId]);
+      }
+
+      await _promoteSnapshotRows(
+        txn: txn,
+        stageTable: 'products_snapshot_stage',
+        targetTable: 'products',
+        snapshotKey: snapshotKey,
+        columns: _productColumnList.split(','),
+      );
+      await _promoteSnapshotRows(
+        txn: txn,
+        stageTable: 'product_packagings_snapshot_stage',
+        targetTable: 'product_packagings',
+        snapshotKey: snapshotKey,
+        columns: _packagingColumnList.split(','),
+      );
+      await _promoteSnapshotRows(
+        txn: txn,
+        stageTable: 'customers_snapshot_stage',
+        targetTable: 'customers',
+        snapshotKey: snapshotKey,
+        columns: _customerColumnList.split(','),
+      );
+
+      await _applyReferenceData(txn, meta, branchId);
+      await txn.insert(
+        'sync_meta',
+        {'key': _versionKey(branchId), 'value': catalogVersion},
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+
+      await txn.delete('product_packagings_snapshot_stage',
+          where: 'snapshot_key = ?', whereArgs: [snapshotKey]);
+      await txn.delete('products_snapshot_stage',
+          where: 'snapshot_key = ?', whereArgs: [snapshotKey]);
+      await txn.delete('customers_snapshot_stage',
+          where: 'snapshot_key = ?', whereArgs: [snapshotKey]);
+    });
+  }
+
+  Future<void> _promoteSnapshotRows({
+    required Transaction txn,
+    required String stageTable,
+    required String targetTable,
+    required String snapshotKey,
+    required List<String> columns,
+  }) async {
+    var afterId = 0;
+    const chunkSize = 500;
+    while (true) {
+      final rows = await txn.query(
+        stageTable,
+        columns: columns,
+        where: 'snapshot_key = ? AND id > ?',
+        whereArgs: [snapshotKey, afterId],
+        orderBy: 'id',
+        limit: chunkSize,
+      );
+      if (rows.isEmpty) break;
+      final batch = txn.batch();
+      for (final row in rows) {
+        batch.insert(targetTable, row,
+            conflictAlgorithm: ConflictAlgorithm.replace);
+      }
+      await batch.commit(noResult: true);
+      afterId = _asInt(rows.last['id']);
+      if (rows.length < chunkSize) break;
+    }
+  }
+
+  Future<void> _applyDeltaPayload({
+    required Database db,
+    required Map<String, dynamic> data,
+    required int? branchId,
+    required String newVersion,
+  }) async {
+    final products = (data['products'] as List?) ?? const [];
+    final customers = (data['customers'] as List?) ?? const [];
+    final deletedProducts = (data['deleted_products'] as List?) ?? const [];
+    final deletedCustomers = (data['deleted_customers'] as List?) ?? const [];
+
+    await db.transaction((txn) async {
+      const productChunkSize = 200;
+      for (var start = 0; start < products.length; start += productChunkSize) {
+        final finish = (start + productChunkSize < products.length)
+            ? start + productChunkSize
+            : products.length;
+        final batch = txn.batch();
+        for (var i = start; i < finish; i++) {
+          final product = products[i] as Map;
+          final productId = _asInt(product['id']);
+          final productBranchId = product['branch_id'] != null
+              ? _asInt(product['branch_id'])
+              : branchId;
+          batch.insert('products', _productRow(product, branchId),
+              conflictAlgorithm: ConflictAlgorithm.replace);
+          batch.delete('product_packagings',
+              where: 'product_id = ?', whereArgs: [productId]);
+          final rawPackagings = product['packagings'];
+          if (productBranchId != null && rawPackagings is List) {
+            for (final rawPackaging in rawPackagings) {
+              if (rawPackaging is! Map) continue;
+              batch.insert(
+                'product_packagings',
+                _packagingRow(rawPackaging, productId, productBranchId),
+                conflictAlgorithm: ConflictAlgorithm.replace,
+              );
+            }
+          }
+        }
+        await batch.commit(noResult: true);
+      }
+
+      const customerChunkSize = 300;
+      for (var start = 0; start < customers.length; start += customerChunkSize) {
+        final finish = (start + customerChunkSize < customers.length)
+            ? start + customerChunkSize
+            : customers.length;
+        final batch = txn.batch();
+        for (var i = start; i < finish; i++) {
+          final raw = customers[i];
+          if (raw is! Map) continue;
+          batch.insert('customers', _customerRow(raw),
+              conflictAlgorithm: ConflictAlgorithm.replace);
+        }
+        await batch.commit(noResult: true);
+      }
+
+      if (deletedProducts.isNotEmpty || deletedCustomers.isNotEmpty) {
+        final batch = txn.batch();
+        for (final id in deletedProducts) {
+          final productId = _asInt(id);
+          batch.delete('product_packagings',
+              where: 'product_id = ?', whereArgs: [productId]);
+          batch.delete('products', where: 'id = ?', whereArgs: [productId]);
+        }
+        for (final id in deletedCustomers) {
+          batch.delete('customers', where: 'id = ?', whereArgs: [_asInt(id)]);
+        }
+        await batch.commit(noResult: true);
+      }
+
+      await _applyReferenceData(txn, data, branchId);
+      await txn.insert(
+        'sync_meta',
+        {'key': _versionKey(branchId), 'value': newVersion},
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    });
+  }
+
+  Future<void> _applyReferenceData(
+    DatabaseExecutor txn,
+    Map<String, dynamic> data,
+    int? branchId,
+  ) async {
+    if (data.containsKey('customer_areas') && branchId != null) {
+      final rawAreas = data['customer_areas'];
+      final areas = rawAreas is List ? rawAreas : const [];
+      final batch = txn.batch();
+      batch.delete('customer_areas',
+          where: 'branch_id = ?', whereArgs: [branchId]);
+      for (final raw in areas) {
+        if (raw is! Map) continue;
+        final areaBranchId = raw['branch_id'] != null
+            ? _asInt(raw['branch_id'])
+            : branchId;
+        if (areaBranchId != branchId) continue;
+        batch.insert(
+          'customer_areas',
+          {
+            'id': _asInt(raw['id']),
+            'branch_id': areaBranchId,
+            'name': (raw['name'] ?? '').toString(),
+            'is_active': _asBoolInt(raw['is_active'], defaultTrue: true),
+          },
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+      }
+      await batch.commit(noResult: true);
+    }
+
+    if (data.containsKey('sale_sources') && branchId != null) {
+      final rawSources = data['sale_sources'];
+      final sources = rawSources is List ? rawSources : const [];
+      final batch = txn.batch();
+      batch.delete('sale_sources',
+          where: 'branch_id = ?', whereArgs: [branchId]);
+      for (final raw in sources) {
+        if (raw is! Map) continue;
+        final sourceBranchId = raw['branch_id'] != null
+            ? _asInt(raw['branch_id'])
+            : branchId;
+        if (sourceBranchId != branchId) continue;
+        batch.insert(
+          'sale_sources',
+          {
+            'id': _asInt(raw['id']),
+            'branch_id': sourceBranchId,
+            'code': raw['code']?.toString(),
+            'name': (raw['name'] ?? '').toString(),
+            'is_active': _asBoolInt(raw['is_active'], defaultTrue: true),
+            'is_default': _asBoolInt(raw['is_default']),
+            'sort_order': _asInt(raw['sort_order']),
+          },
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+      }
+      await batch.commit(noResult: true);
+    }
+
+    if (data.containsKey('payment_methods')) {
+      final rawMethods = data['payment_methods'];
+      final methods = rawMethods is List ? rawMethods : const [];
+      await txn.insert(
+        'sync_meta',
+        {
+          'key': _paymentMethodsKey(branchId),
+          'value': jsonEncode(methods),
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
     }
   }
 

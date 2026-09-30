@@ -17,6 +17,57 @@ class CatalogService {
     return _data(res);
   }
 
+
+  /// Starts a bounded first-sync session and captures the authoritative upper
+  /// cursor used by all following chunks.
+  Future<Map<String, dynamic>> beginSnapshot({int? branchId}) async {
+    final res = await _client.get('/catalog/snapshot/begin', query: {
+      if (branchId != null) 'branch_id': branchId.toString(),
+    });
+    return _data(res);
+  }
+
+  Future<Map<String, dynamic>> snapshotProducts({
+    required String catalogVersion,
+    required int afterId,
+    required int limit,
+    int? branchId,
+  }) async {
+    final res = await _client.get('/catalog/snapshot/products', query: {
+      'catalog_version': catalogVersion,
+      'after_id': afterId.toString(),
+      'limit': limit.toString(),
+      if (branchId != null) 'branch_id': branchId.toString(),
+    });
+    return _data(res);
+  }
+
+  Future<Map<String, dynamic>> snapshotCustomers({
+    required String catalogVersion,
+    required int afterId,
+    required int limit,
+    int? branchId,
+  }) async {
+    final res = await _client.get('/catalog/snapshot/customers', query: {
+      'catalog_version': catalogVersion,
+      'after_id': afterId.toString(),
+      'limit': limit.toString(),
+      if (branchId != null) 'branch_id': branchId.toString(),
+    });
+    return _data(res);
+  }
+
+  Future<Map<String, dynamic>> snapshotMeta({
+    required String catalogVersion,
+    int? branchId,
+  }) async {
+    final res = await _client.get('/catalog/snapshot/meta', query: {
+      'catalog_version': catalogVersion,
+      if (branchId != null) 'branch_id': branchId.toString(),
+    });
+    return _data(res);
+  }
+
   /// Rows changed since [since] (an ISO-8601 `catalog_version` returned by a
   /// previous snapshot/changes call), plus tombstones for soft-deleted rows.
   Future<Map<String, dynamic>> changes({
