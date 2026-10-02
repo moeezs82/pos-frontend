@@ -55,6 +55,8 @@ import 'package:enterprise_pos/services/receipt_preview_service.dart';
 import 'package:enterprise_pos/models/whatsapp_invoice_format.dart';
 import 'package:enterprise_pos/services/whatsapp_invoice_service.dart';
 import 'package:enterprise_pos/services/whatsapp_message_template_service.dart';
+import 'package:enterprise_pos/models/sales_order.dart';
+import 'package:enterprise_pos/api/sales_order_service.dart';
 
 // local widgets split into small files
 import 'package:enterprise_pos/screens/sales/parts/sale_party_section.dart';
@@ -102,11 +104,18 @@ class CreateSaleScreen extends StatefulWidget {
   /// saves one audited desired-state amendment instead of POST /sales.
   final int? editSaleId;
 
+  /// When supplied, this screen becomes the conversion editor for an approved
+  /// sales order. Create mode is unchanged. Final submit posts to
+  /// POST /sales-orders/{id}/convert instead of POST /sales, so the backend
+  /// links the sale and flips the order status in one guarded operation.
+  final SalesOrderPrefill? salesOrderPrefill;
+
   const CreateSaleScreen({
     super.key,
     this.initialCustomer,
     this.initialReturnInvoice,
     this.editSaleId,
+    this.salesOrderPrefill,
   });
 
   @override
@@ -282,7 +291,57 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     });
     _walkInPhoneFocusNode.addListener(_handleWalkInPhoneFocusChange);
 
-    if (!_isEditing && widget.initialCustomer != null) {
+    if (!_isEditing && widget.salesOrderPrefill != null) {
+      final prefill = widget.salesOrderPrefill!;
+      final order = prefill.order;
+      final customer = order.customer;
+      if (customer != null) {
+        _selectedCustomerId = customer.id.toString();
+        _selectedCustomer = {
+          'id': customer.id,
+          'name': customer.name,
+          'phone': customer.phone,
+          if (customer.address != null) 'address': customer.address,
+        };
+        customerNameController.text = customer.name;
+        customerPhoneController.text = customer.phone;
+        addressController.text = customer.address ?? '';
+        _customerLocked = true;
+      }
+      if (order.salesmanId > 0) {
+        _selectedUserId = order.salesmanId;
+      }
+      if (order.salesman != null) {
+        _selectedUser = {
+          'id': order.salesman!.id,
+          'name': order.salesman!.name,
+          'email': order.salesman!.email,
+        };
+      }
+      _items = order.items.map((it) {
+        return <String, dynamic>{
+          'product_id': it.productId,
+          'name': it.productName.isNotEmpty ? it.productName : 'Product #${it.productId}',
+          'sku': it.productSku,
+          'quantity': it.quantity,
+          'price': it.unitPrice,
+          'discount_pct': 0.0,
+          'extra_discount': it.discount,
+          'discount_type': 'fixed',
+          'total': it.total,
+          SaleProfitCalculator.unitCostKey: it.unitCost,
+          SaleProfitCalculator.estimatedKey: false,
+          SaleProfitCalculator.sourceKey: 'Sales order snapshot',
+        };
+      }).toList();
+
+      if (order.discount > 0) {
+        discountController.text = order.discount.toStringAsFixed(2);
+      }
+      if (order.tax > 0) {
+        taxController.text = order.tax.toStringAsFixed(2);
+      }
+    } else if (!_isEditing && widget.initialCustomer != null) {
       final customer = widget.initialCustomer!;
       _selectedCustomer = customer;
       _selectedCustomerId = customer['id']?.toString();
@@ -3387,12 +3446,29 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       String? queueReason;
 
       Object? submitError;
-      try {
-        res = await _saleService
-            .createSaleFromPayload(payload)
-            .timeout(const Duration(seconds: 15));
-      } catch (e) {
-        submitError = e;
+      if (widget.salesOrderPrefill != null) {
+        final prefill = widget.salesOrderPrefill!;
+        try {
+          final convertRes = await SalesOrderService(token: auth.token!).convert(
+            prefill.order.id,
+            paymentMethod: effectiveMethod,
+            paid: paid,
+            payments: paymentsToSend.isNotEmpty ? paymentsToSend : null,
+            version: prefill.order.version,
+            creditLimitOverrideReason: prefill.creditLimitOverrideReason,
+          ).timeout(const Duration(seconds: 15));
+          res = {'data': convertRes};
+        } catch (e) {
+          submitError = e;
+        }
+      } else {
+        try {
+          res = await _saleService
+              .createSaleFromPayload(payload)
+              .timeout(const Duration(seconds: 15));
+        } catch (e) {
+          submitError = e;
+        }
       }
 
       // Credit control is party-ledger based. The server has already posted
@@ -3419,19 +3495,76 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         );
         if (!mounted) return;
         if (reason == null) return;
-        payload['credit_limit_override'] = {'reason': reason};
-        try {
-          res = await _saleService
-              .createSaleFromPayload(payload)
-              .timeout(const Duration(seconds: 15));
-          submitError = null;
-        } catch (e) {
-          submitError = e;
+        if (widget.salesOrderPrefill != null) {
+          final prefill = widget.salesOrderPrefill!;
+          try {
+            final convertRes = await SalesOrderService(token: auth.token!).convert(
+              prefill.order.id,
+              paymentMethod: effectiveMethod,
+              paid: paid,
+              payments: paymentsToSend.isNotEmpty ? paymentsToSend : null,
+              version: prefill.order.version,
+              creditLimitOverrideReason: reason,
+            ).timeout(const Duration(seconds: 15));
+            res = {'data': convertRes};
+            submitError = null;
+          } catch (e) {
+            submitError = e;
+          }
+        } else {
+          payload['credit_limit_override'] = {'reason': reason};
+          try {
+            res = await _saleService
+                .createSaleFromPayload(payload)
+                .timeout(const Duration(seconds: 15));
+            submitError = null;
+          } catch (e) {
+            submitError = e;
+          }
         }
       }
 
       if (submitError != null) {
         final e = submitError!;
+        if (widget.salesOrderPrefill != null) {
+          if (!mounted) return;
+          if (e is ApiException && e.statusCode == 409) {
+            final body = e.body is Map ? (e.body as Map) : null;
+            final invoiceNo = body?['invoice_no']?.toString();
+            final msg = (invoiceNo != null && invoiceNo.isNotEmpty)
+                ? 'This order has already been converted into invoice $invoiceNo.'
+                : (e.message.isNotEmpty ? e.message : 'This order was modified by another transaction.');
+            await showDialog<void>(
+              context: context,
+              builder: (ctx) => AlertDialog(
+                title: const Row(
+                  children: [
+                    Icon(Icons.warning_amber_rounded, color: AppTheme.warning),
+                    SizedBox(width: 8),
+                    Text('Order Conflict'),
+                  ],
+                ),
+                content: Text(msg),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.of(ctx).pop(),
+                    child: const Text('Stay Here'),
+                  ),
+                  FilledButton(
+                    onPressed: () {
+                      Navigator.of(ctx).pop();
+                      Navigator.of(context).pop(true);
+                    },
+                    child: const Text('Back to Order'),
+                  ),
+                ],
+              ),
+            );
+            return;
+          }
+          AppFeedback.error(context, e is ApiException ? e.message : e.toString().replaceFirst('Exception: ', ''));
+          return;
+        }
         // Linked returns are never queued offline: current returnable quantity,
         // old-invoice settlement and concurrent return locks must be verified
         // against the authoritative backend at posting time.
@@ -3993,10 +4126,21 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
             '${AppCurrency.format(refunded)} refunded$creditSuffix.',
           );
         } else {
-          AppFeedback.success(
-            context,
-            "Sale $receiptNo created successfully. Ready for next sale.",
-          );
+          if (widget.salesOrderPrefill != null) {
+            AppFeedback.success(
+              context,
+              "Order ${widget.salesOrderPrefill!.order.orderNumber} successfully converted to Sale $receiptNo.",
+            );
+            if (Navigator.of(context).canPop()) {
+              Navigator.of(context).pop(true);
+              return;
+            }
+          } else {
+            AppFeedback.success(
+              context,
+              "Sale $receiptNo created successfully. Ready for next sale.",
+            );
+          }
         }
       }
       // Return focus to the product search panel so the cashier can start
@@ -4807,6 +4951,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
                       // ── Light status bar (30 px) ──────────────────────
                       const SaleStatusBar(light: true, showBackButton: true),
                       if (_isEditing) _buildAmendmentHeader(total),
+                      if (widget.salesOrderPrefill != null) _buildSalesOrderConversionHeader(),
 
                       // ── 2-panel workspace ─────────────────────────────
                       Expanded(
@@ -5818,6 +5963,59 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
               fontWeight: FontWeight.w800,
               fontSize: 12,
               color: balance.abs() < 0.005 ? AppTheme.success : AppTheme.danger,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSalesOrderConversionHeader() {
+    final order = widget.salesOrderPrefill?.order;
+    final orderNumber = order?.orderNumber ?? 'Order';
+    return Container(
+      height: 38,
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      decoration: BoxDecoration(
+        color: AppTheme.primary.withOpacity(0.06),
+        border: const Border(bottom: BorderSide(color: AppTheme.border)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(
+              color: AppTheme.primary.withOpacity(.12),
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(color: AppTheme.primary.withOpacity(.24)),
+            ),
+            child: const Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.assignment_turned_in_outlined, size: 15, color: AppTheme.primary),
+                SizedBox(width: 4),
+                Text(
+                  'ORDER CONVERSION',
+                  style: TextStyle(
+                    color: AppTheme.primary,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: .5,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Creating sale from order $orderNumber · changes are recorded against the order',
+              style: const TextStyle(
+                color: AppTheme.navy,
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+              ),
+              overflow: TextOverflow.ellipsis,
             ),
           ),
         ],

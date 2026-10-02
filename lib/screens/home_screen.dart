@@ -27,6 +27,7 @@ import 'package:enterprise_pos/screens/sales/sale_create.dart';
 import 'package:enterprise_pos/screens/sales/picking_list_screen.dart';
 import 'package:enterprise_pos/screens/sales/sale_returns_screen.dart';
 import 'package:enterprise_pos/screens/sales/sale_screen.dart';
+import 'package:enterprise_pos/screens/sales_orders/sales_orders_screen.dart';
 import 'package:enterprise_pos/screens/settings/backup_restore_screen.dart';
 import 'package:enterprise_pos/screens/settings/payment_methods_admin_screen.dart';
 import 'package:enterprise_pos/screens/settings/printer_settings_screen.dart';
@@ -82,6 +83,7 @@ class _HomeScreenState extends State<HomeScreen> {
     PosRouteIds.lowStock,
     PosRouteIds.pickingList,
     PosRouteIds.saleReturns,
+    PosRouteIds.salesOrders,
     PosRouteIds.offlineSync,
     PosRouteIds.backupRestore,
     PosRouteIds.intelligence,
@@ -185,6 +187,8 @@ class _HomeScreenState extends State<HomeScreen> {
         return const PickingListScreen(key: ValueKey(PosRouteIds.pickingList));
       case PosRouteIds.saleReturns:
         return const SaleReturnsScreen(key: ValueKey(PosRouteIds.saleReturns));
+      case PosRouteIds.salesOrders:
+        return const SalesOrdersScreen(key: ValueKey(PosRouteIds.salesOrders));
       case PosRouteIds.offlineSync:
         return const OfflineSyncScreen(key: ValueKey(PosRouteIds.offlineSync));
       case PosRouteIds.backupRestore:

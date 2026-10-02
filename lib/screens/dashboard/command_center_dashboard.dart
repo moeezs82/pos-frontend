@@ -2,12 +2,15 @@ import 'dart:math' as math;
 
 import 'package:enterprise_pos/api/intelligence_service.dart';
 import 'package:enterprise_pos/api/reports_service.dart';
+import 'package:enterprise_pos/api/sales_order_service.dart';
+import 'package:enterprise_pos/models/sales_order.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/providers/offline_queue_provider.dart';
 import 'package:enterprise_pos/providers/register_shift_provider.dart';
 import 'package:enterprise_pos/screens/dashboard/low_stock_screen.dart';
 import 'package:enterprise_pos/screens/intelligence/intelligence_hub_screen.dart';
 import 'package:enterprise_pos/screens/register_shifts/register_shift_screen.dart';
+import 'package:enterprise_pos/screens/sales_orders/sales_orders_screen.dart';
 import 'package:enterprise_pos/screens/sync/offline_sync_screen.dart';
 import 'package:enterprise_pos/services/app_currency.dart';
 import 'package:enterprise_pos/services/app_navigator.dart';
@@ -89,6 +92,9 @@ class _CommandCenterDashboardState extends State<CommandCenterDashboard> {
   bool _hasIntelligence = false;
   double _recoverableMargin = 0;
   int _marginLeakLines = 0;
+
+  int _pendingOrders = 0;
+  double _pendingValue = 0;
 
   bool get _loading => _periodLoading || _liveLoading;
 
@@ -202,11 +208,30 @@ class _CommandCenterDashboardState extends State<CommandCenterDashboard> {
     if (!mounted) return;
     final auth = context.read<AuthProvider>();
     final token = auth.token;
-    if (token == null || !auth.hasPermission('view-reports')) {
+    if (token == null) {
       if (mounted) setState(() => _liveLoading = false);
       return;
     }
     setState(() => _liveLoading = true);
+
+    if (auth.hasPermission('view-sales-orders')) {
+      try {
+        final summary = await SalesOrderService(token: token).getSummary();
+        final pendingStat = summary.byStatus.firstWhere(
+          (s) => s.status.toUpperCase() == 'SUBMITTED',
+          orElse: () => const StatusSummary(status: 'SUBMITTED', count: 0, orderValue: 0),
+        );
+        _pendingOrders = pendingStat.count > 0 ? pendingStat.count : summary.totals.pendingApproval;
+        _pendingValue = pendingStat.orderValue;
+      } catch (_) {
+        // Sales orders summary remains optional; swallow errors if add-on is off
+      }
+    }
+
+    if (!auth.hasPermission('view-reports')) {
+      if (mounted) setState(() => _liveLoading = false);
+      return;
+    }
     try {
       final report = await ReportsService(token: token).runEnterpriseReport(
         reportKey: 'low-stock',
@@ -899,6 +924,7 @@ class _CommandCenterDashboardState extends State<CommandCenterDashboard> {
     OfflineQueueProvider offline,
     RegisterShiftProvider shift,
   ) {
+    final auth = context.read<AuthProvider>();
     final items = <_AttentionItem>[
       _AttentionItem(
         color: _lowStockCount > 0 ? AppTheme.danger : AppTheme.success,
@@ -922,6 +948,18 @@ class _CommandCenterDashboardState extends State<CommandCenterDashboard> {
           if (context.mounted) context.read<OfflineQueueProvider>().refresh();
         },
       ),
+      if (auth.hasPermission('view-sales-orders'))
+        _AttentionItem(
+          color: _pendingOrders > 0 ? AppTheme.warning : AppTheme.success,
+          title: _pendingOrders > 0
+              ? '$_pendingOrders sales orders waiting for approval'
+              : 'No sales orders waiting for approval',
+          subtitle: _pendingOrders > 0 ? '${_money.format(_pendingValue)} booked' : 'Field sales queue is clear',
+          onTap: () => PosNavigation.openSingleton(
+            routeId: PosRouteIds.salesOrders,
+            builder: (_) => const SalesOrdersScreen(),
+          ),
+        ),
       _AttentionItem(
         color: shift.hasPendingCloseRequest
             ? AppTheme.warning

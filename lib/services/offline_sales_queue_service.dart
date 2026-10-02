@@ -300,18 +300,30 @@ class OfflineSalesQueueService {
           ''');
         }
         if (oldVersion < 5) {
-          await db.execute(
-              "ALTER TABLE offline_sales_queue ADD COLUMN display_customer TEXT NOT NULL DEFAULT 'Walk-in customer'");
-          await db.execute(
-              'ALTER TABLE offline_sales_queue ADD COLUMN display_total REAL NOT NULL DEFAULT 0');
-          await db.execute(
-              'ALTER TABLE offline_sales_queue ADD COLUMN item_count INTEGER NOT NULL DEFAULT 0');
-          await db.execute(
-              'ALTER TABLE offline_sales_queue ADD COLUMN customer_id INTEGER');
-          await db.execute(
-              'ALTER TABLE offline_sales_queue ADD COLUMN trade_exposure_delta REAL NOT NULL DEFAULT 0');
-          await db.execute(
-              'ALTER TABLE offline_sales_queue ADD COLUMN synced_at TEXT');
+          try {
+            await db.execute(
+                "ALTER TABLE offline_sales_queue ADD COLUMN display_customer TEXT NOT NULL DEFAULT 'Walk-in customer'");
+          } catch (_) {}
+          try {
+            await db.execute(
+                'ALTER TABLE offline_sales_queue ADD COLUMN display_total REAL NOT NULL DEFAULT 0');
+          } catch (_) {}
+          try {
+            await db.execute(
+                'ALTER TABLE offline_sales_queue ADD COLUMN item_count INTEGER NOT NULL DEFAULT 0');
+          } catch (_) {}
+          try {
+            await db.execute(
+                'ALTER TABLE offline_sales_queue ADD COLUMN customer_id INTEGER');
+          } catch (_) {}
+          try {
+            await db.execute(
+                'ALTER TABLE offline_sales_queue ADD COLUMN trade_exposure_delta REAL NOT NULL DEFAULT 0');
+          } catch (_) {}
+          try {
+            await db.execute(
+                'ALTER TABLE offline_sales_queue ADD COLUMN synced_at TEXT');
+          } catch (_) {}
           await _backfillQueueSummaries(db);
           await db.execute('''
             CREATE INDEX IF NOT EXISTS offline_sales_queue_customer_exposure_idx

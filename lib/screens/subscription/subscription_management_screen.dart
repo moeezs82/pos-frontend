@@ -299,6 +299,7 @@ class _SummaryCards extends StatelessWidget {
       _SummaryCard('Qameti',         _n('qameti_module_addon'),    AppTheme.info),
       _SummaryCard('WhatsApp',       _n('whatsapp_invoice_addon'), const Color(0xFF128C7E)),
       _SummaryCard('Intelligence',    _n('intelligence_addon'),     AppTheme.purple),
+      _SummaryCard('Field Sales',     _n('field_sales_addon'),      AppTheme.primary),
     ];
 
     return SizedBox(
@@ -391,6 +392,7 @@ class _BranchSubscriptionTile extends StatelessWidget {
       'qameti_module':   'Qameti',
       'whatsapp_invoice': 'WhatsApp',
       'intelligence':     'Intelligence',
+      'field_sales':      'Field Sales',
     };
     const _addonColors = <String, Color>{
       'barcode_labels':  AppTheme.purple,
@@ -398,6 +400,7 @@ class _BranchSubscriptionTile extends StatelessWidget {
       'qameti_module':   AppTheme.info,
       'whatsapp_invoice': Color(0xFF128C7E),
       'intelligence':     AppTheme.purple,
+      'field_sales':      AppTheme.primary,
     };
     final activeAddons = _addonLabels.keys
         .where((k) => addons[k] == true)
@@ -412,16 +415,21 @@ class _BranchSubscriptionTile extends StatelessWidget {
       borderColor = AppTheme.border;
     }
 
-    return Container(
+    return DecoratedBox(
       decoration: BoxDecoration(
-        color: Colors.white,
         borderRadius: BorderRadius.circular(AppTheme.radius),
-        border: Border.all(color: borderColor),
         boxShadow: AppTheme.softShadow,
       ),
-      child: ListTile(
-        contentPadding:
-            const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Material(
+        color: Colors.white,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppTheme.radius),
+          side: BorderSide(color: borderColor),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: ListTile(
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         leading: _StatusBadge(status: status),
         title: Row(
           children: [
@@ -521,6 +529,7 @@ class _BranchSubscriptionTile extends StatelessWidget {
           child: Text(isNotConfigured ? 'Set Up' : 'Manage'),
         ),
       ),
+      ),
     );
   }
 
@@ -536,11 +545,12 @@ class _BranchSubscriptionTile extends StatelessWidget {
     );
     if (result == true) {
       onUpdated();
+      if (!context.mounted) return;
       final auth = context.read<AuthProvider>();
       final subProvider = context.read<SubscriptionProvider>();
       if (auth.activeBranchId == branchId && auth.token != null) {
         await subProvider.refresh(token: auth.token!, branchId: branchId);
-        await auth.refreshMe();
+        if (context.mounted) await auth.refreshMe();
       }
     }
   }
@@ -618,7 +628,6 @@ class _SubscriptionEditDialog extends StatefulWidget {
 }
 
 class _SubscriptionEditDialogState extends State<_SubscriptionEditDialog> {
-  Map<String, dynamic>? _detail;
   bool _loading = true;
   bool _saving = false;
   String? _error;
@@ -632,6 +641,7 @@ class _SubscriptionEditDialogState extends State<_SubscriptionEditDialog> {
   bool _qametiModuleAddon   = false;
   bool _whatsappInvoiceAddon = false;
   bool _intelligenceAddon    = false;
+  bool _fieldSalesAddon      = false;
   final _reasonCtrl = TextEditingController();
   final _suspendReasonCtrl = TextEditingController();
   final _notesCtrl = TextEditingController();
@@ -669,7 +679,6 @@ class _SubscriptionEditDialogState extends State<_SubscriptionEditDialog> {
         return v is Map ? v['active'] == true : v == true;
       }
       setState(() {
-        _detail = Map<String, dynamic>.from(data);
         _selectedStatus = sub['status']?.toString() ?? 'active';
         _expiresAt = sub['expires_at'] != null
             ? DateTime.tryParse(sub['expires_at'].toString())
@@ -684,6 +693,7 @@ class _SubscriptionEditDialogState extends State<_SubscriptionEditDialog> {
         _qametiModuleAddon    = _addonBool('qameti_module');
         _whatsappInvoiceAddon = _addonBool('whatsapp_invoice');
         _intelligenceAddon     = _addonBool('intelligence');
+        _fieldSalesAddon      = _addonBool('field_sales');
         _loading = false;
       });
     } catch (e) {
@@ -722,10 +732,18 @@ class _SubscriptionEditDialogState extends State<_SubscriptionEditDialog> {
           'qameti_module':   _qametiModuleAddon,
           'whatsapp_invoice': _whatsappInvoiceAddon,
           'intelligence':      _intelligenceAddon,
+          'field_sales':      _fieldSalesAddon,
         },
       };
 
       await widget.api.updateSubscription(widget.branchId, payload);
+
+      if (mounted) {
+        final auth = context.read<AuthProvider>();
+        if (auth.activeBranchId == widget.branchId) {
+          await auth.refreshMe();
+        }
+      }
 
       if (!mounted) return;
       Navigator.of(context).pop(true); // signal parent to reload
@@ -824,12 +842,13 @@ class _SubscriptionEditDialogState extends State<_SubscriptionEditDialog> {
                         style: TextStyle(
                             fontWeight: FontWeight.w700, fontSize: 13)),
                     const SizedBox(height: 6),
-                    Container(
-                      decoration: BoxDecoration(
-                        color: AppTheme.purple.withOpacity(.05),
+                    Material(
+                      color: AppTheme.purple.withOpacity(.05),
+                      shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: AppTheme.purple.withOpacity(.2)),
+                        side: BorderSide(color: AppTheme.purple.withOpacity(.2)),
                       ),
+                      clipBehavior: Clip.antiAlias,
                       child: SwitchListTile(
                         value: _barcodeLabelsAddon,
                         onChanged: (value) =>
@@ -848,12 +867,13 @@ class _SubscriptionEditDialogState extends State<_SubscriptionEditDialog> {
                       ),
                     ),
                     const SizedBox(height: 8),
-                    Container(
-                      decoration: BoxDecoration(
-                        color: AppTheme.teal.withOpacity(.05),
+                    Material(
+                      color: AppTheme.teal.withOpacity(.05),
+                      shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: AppTheme.teal.withOpacity(.2)),
+                        side: BorderSide(color: AppTheme.teal.withOpacity(.2)),
                       ),
+                      clipBehavior: Clip.antiAlias,
                       child: SwitchListTile(
                         value: _loanModuleAddon,
                         onChanged: (value) =>
@@ -872,12 +892,13 @@ class _SubscriptionEditDialogState extends State<_SubscriptionEditDialog> {
                       ),
                     ),
                     const SizedBox(height: 8),
-                    Container(
-                      decoration: BoxDecoration(
-                        color: AppTheme.info.withOpacity(.05),
+                    Material(
+                      color: AppTheme.info.withOpacity(.05),
+                      shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: AppTheme.info.withOpacity(.2)),
+                        side: BorderSide(color: AppTheme.info.withOpacity(.2)),
                       ),
+                      clipBehavior: Clip.antiAlias,
                       child: SwitchListTile(
                         value: _qametiModuleAddon,
                         onChanged: (value) =>
@@ -896,12 +917,13 @@ class _SubscriptionEditDialogState extends State<_SubscriptionEditDialog> {
                       ),
                     ),
                     const SizedBox(height: 8),
-                    Container(
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF128C7E).withOpacity(.05),
+                    Material(
+                      color: const Color(0xFF128C7E).withOpacity(.05),
+                      shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: const Color(0xFF128C7E).withOpacity(.2)),
+                        side: BorderSide(color: const Color(0xFF128C7E).withOpacity(.2)),
                       ),
+                      clipBehavior: Clip.antiAlias,
                       child: SwitchListTile(
                         value: _whatsappInvoiceAddon,
                         onChanged: (value) =>
@@ -920,14 +942,15 @@ class _SubscriptionEditDialogState extends State<_SubscriptionEditDialog> {
                       ),
                     ),
                     const SizedBox(height: 8),
-                    Container(
-                      decoration: BoxDecoration(
-                        color: AppTheme.purple.withOpacity(.05),
+                    Material(
+                      color: AppTheme.purple.withOpacity(.05),
+                      shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(10),
-                        border: Border.all(
+                        side: BorderSide(
                           color: AppTheme.purple.withOpacity(.2),
                         ),
                       ),
+                      clipBehavior: Clip.antiAlias,
                       child: SwitchListTile(
                         value: _intelligenceAddon,
                         onChanged: (value) =>
@@ -942,6 +965,33 @@ class _SubscriptionEditDialogState extends State<_SubscriptionEditDialog> {
                         ),
                         subtitle: const Text(
                           'Enables Money Finder, Replenishment, business seasons, and derived sales/inventory intelligence for this branch.',
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Material(
+                      color: AppTheme.primary.withOpacity(.05),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        side: BorderSide(
+                          color: AppTheme.primary.withOpacity(.2),
+                        ),
+                      ),
+                      clipBehavior: Clip.antiAlias,
+                      child: SwitchListTile(
+                        value: _fieldSalesAddon,
+                        onChanged: (value) =>
+                            setState(() => _fieldSalesAddon = value),
+                        secondary: const Icon(
+                          Icons.assignment_outlined,
+                          color: AppTheme.primary,
+                        ),
+                        title: const Text(
+                          'Field Sales & Orders',
+                          style: TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                        subtitle: const Text(
+                          'Enables field sales agent booking, sales orders management, stock allocation, and POS conversion.',
                         ),
                       ),
                     ),

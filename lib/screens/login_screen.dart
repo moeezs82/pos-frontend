@@ -253,14 +253,22 @@ class _LoginScreenState extends State<LoginScreen> {
                       decoration: const InputDecoration(labelText: 'Password', prefixIcon: Icon(Icons.lock_outline_rounded)),
                       validator: (v) => v == null || v.isEmpty ? 'Enter your password' : null,
                     ),
-                    const SizedBox(height: 8),
-                    CheckboxListTile(
-                      value: auth.rememberMe,
-                      dense: true,
-                      controlAffinity: ListTileControlAffinity.leading,
-                      contentPadding: EdgeInsets.zero,
-                      title: const Text('Remember me', style: TextStyle(fontWeight: FontWeight.w600)),
-                      onChanged: (val) => auth.setRememberMe(val ?? false),
+                    Row(
+                      children: [
+                        SizedBox(
+                          height: 24,
+                          width: 24,
+                          child: Checkbox(
+                            value: auth.rememberMe,
+                            onChanged: (val) => auth.setRememberMe(val ?? false),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        GestureDetector(
+                          onTap: () => auth.setRememberMe(!auth.rememberMe),
+                          child: const Text('Remember me', style: TextStyle(fontWeight: FontWeight.w600)),
+                        ),
+                      ],
                     ),
                     const SizedBox(height: 16),
                     FilledButton.icon(

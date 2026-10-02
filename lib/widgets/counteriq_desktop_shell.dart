@@ -22,6 +22,7 @@ import 'package:enterprise_pos/screens/sales/sale_create.dart';
 import 'package:enterprise_pos/screens/sales/sale_screen.dart';
 import 'package:enterprise_pos/screens/sales/picking_list_screen.dart';
 import 'package:enterprise_pos/screens/sales/sale_returns_screen.dart';
+import 'package:enterprise_pos/screens/sales_orders/sales_orders_screen.dart';
 import 'package:enterprise_pos/screens/settings/backup_restore_screen.dart';
 import 'package:enterprise_pos/screens/settings/payment_methods_admin_screen.dart';
 import 'package:enterprise_pos/screens/settings/printer_settings_screen.dart';
@@ -370,6 +371,16 @@ class _CounterIQDesktopShellState extends State<CounterIQDesktopShell> {
               onTap: () => PosNavigation.openSingleton(
                 routeId: PosRouteIds.saleReturns,
                 builder: (_) => const SaleReturnsScreen(),
+              ),
+            ),
+          if (auth.hasPermission('view-sales-orders'))
+            _NavEntry(
+              icon: Icons.assignment_outlined,
+              title: 'Sales Orders',
+              active: _isActive(PosRouteIds.salesOrders),
+              onTap: () => PosNavigation.openSingleton(
+                routeId: PosRouteIds.salesOrders,
+                builder: (_) => const SalesOrdersScreen(),
               ),
             ),
           if (auth.hasAnyPermission(const [
