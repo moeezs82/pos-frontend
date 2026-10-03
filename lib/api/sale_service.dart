@@ -1,3 +1,4 @@
+import 'package:enterprise_pos/screens/sales/services/sale_discount_payload.dart';
 import 'package:enterprise_pos/api/core/api_client.dart';
 
 class SaleService {
@@ -281,12 +282,7 @@ class SaleService {
               // package snapshot beside them. For fixed discounts the API
               // expects the amount per PACKAGE; the cart stores both forms so
               // existing base-unit profit/display helpers remain compatible.
-              "discount_pct":  it["packaging_id"] != null &&
-                      (it["discount_type"] ?? "percentage").toString() == "fixed"
-                  ? (it["packaging_discount_snapshot"] ?? it["discount_pct"])
-                  : it["discount_pct"],
-              "discount_type": it["discount_type"] ?? "percentage",
-              "extra_discount": it["extra_discount"] ?? 0,
+              ...SaleDiscountPayload.encode(it),
               if (it["packaging_id"] != null) ...{
                 "packaging_id": it["packaging_id"],
                 "packaging_name_snapshot": it["packaging_name_snapshot"],
@@ -294,9 +290,6 @@ class SaleService {
                 "packaging_factor_snapshot": it["packaging_factor_snapshot"],
                 "packaging_quantity": it["packaging_quantity"],
                 "packaging_unit_price": it["packaging_unit_price"],
-                if ((it["discount_type"] ?? "percentage").toString() == "fixed")
-                  "packaging_discount_snapshot":
-                      it["packaging_discount_snapshot"] ?? it["discount_pct"],
               },
             },
           )

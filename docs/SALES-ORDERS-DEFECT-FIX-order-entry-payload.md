@@ -615,3 +615,6 @@ Tests: `test/screens/sales/services/sales_order_submitter_test.dart` (9 tests), 
 ## Manual re-check
 1. Create order: loose 100 @ 5 disc + 1 Box (10 × 100). Open **Edit** → unit dropdown shows Box and Base unit; total 1,095.
 2. Approve → **Convert**: line Extra Disc 5, footer Disc 0, Box line still in Box; payable 1,095.
+
+
+> **Update:** the D2 instruction "do not add `discount_pct`/`discount_type` columns" is superseded by `SALES-ORDERS-DISCOUNT-MODEL-PARITY.md`. D2 now ships as the full discount shape, `lineDiscountMoney()` was removed, and the D7 per-pack derivation was replaced by a client-supplied snapshot.

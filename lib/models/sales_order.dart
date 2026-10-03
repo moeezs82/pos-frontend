@@ -129,7 +129,14 @@ class SalesOrderItem {
   final double quantity;
   final double unitPrice;
   final double unitCost;
+  /// Derived whole-line money (line discount + extra discount).
   final double discount;
+
+  /// Percent, or money when [discountType] is `fixed` (per pack for packaged
+  /// lines — the wire shape shared with Sales).
+  final double discountPct;
+  final String discountType; // 'percentage' | 'fixed'
+  final double extraDiscount;
   final double taxRate;
   final double subtotal;
   final double total;
@@ -155,6 +162,9 @@ class SalesOrderItem {
     required this.unitPrice,
     this.unitCost = 0.0,
     this.discount = 0.0,
+    this.discountPct = 0.0,
+    this.discountType = 'percentage',
+    this.extraDiscount = 0.0,
     this.taxRate = 0.0,
     required this.subtotal,
     required this.total,
@@ -182,6 +192,11 @@ class SalesOrderItem {
       unitPrice: _toDouble(json['unit_price']),
       unitCost: _toDouble(json['unit_cost']),
       discount: _toDouble(json['discount']),
+      discountPct: _toDouble(json['discount_pct']),
+      discountType: (json['discount_type']?.toString().isNotEmpty ?? false)
+          ? json['discount_type'].toString()
+          : 'percentage',
+      extraDiscount: _toDouble(json['extra_discount']),
       taxRate: _toDouble(json['tax_rate']),
       subtotal: _toDouble(json['subtotal']),
       total: _toDouble(json['total']),
@@ -217,6 +232,9 @@ class SalesOrderItem {
         'unit_price': unitPrice,
         'unit_cost': unitCost,
         'discount': discount,
+        'discount_pct': discountPct,
+        'discount_type': discountType,
+        'extra_discount': extraDiscount,
         'tax_rate': taxRate,
         'subtotal': subtotal,
         'total': total,

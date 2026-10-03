@@ -5,6 +5,7 @@ import 'package:enterprise_pos/api/sales_order_service.dart';
 import 'package:enterprise_pos/models/sales_order.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/screens/sales/services/sale_cart_validator.dart';
+import 'package:enterprise_pos/screens/sales/services/sale_discount_payload.dart';
 import 'package:enterprise_pos/services/sale_profit.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/app_feedback.dart';
@@ -51,10 +52,17 @@ class SalesOrderSubmitter {
 
   /// Rebuilds a POS cart row from a stored order line, in the same canonical
   /// shape SaleUnitConversionService produces: `quantity`/`price` are base
-  /// units, pack figures live in the `packaging_*` keys. Line discount is
-  /// whole-line money, carried as `extra_discount`.
+  /// units, pack figures live in the `packaging_*` keys, and the discount keeps
+  /// the shape that was entered.
+  ///
+  /// This is the one place arithmetic is unavoidable: for a packaged `fixed`
+  /// line the order stores the discount per PACK (the API wire shape) while the
+  /// cart keeps `discount_pct` per base unit.
   static Map<String, dynamic> _cartRowFromOrderItem(SalesOrderItem it) {
     final hasPkg = it.isPackaged;
+    final type = it.discountType;
+    final factor = it.packagingFactorSnapshot ?? 1.0;
+    final packagedFixed = hasPkg && type == 'fixed';
     return <String, dynamic>{
       'product_id': it.productId,
       'name': it.productName.isNotEmpty
@@ -63,9 +71,11 @@ class SalesOrderSubmitter {
       'sku': it.productSku,
       'quantity': it.quantity,
       'price': it.unitPrice,
-      'discount_pct': 0.0,
-      'extra_discount': it.discount,
-      'discount_type': 'fixed',
+      'discount_type': type,
+      'discount_pct': packagedFixed && factor > 0
+          ? (it.packagingDiscountSnapshot ?? it.discountPct) / factor
+          : it.discountPct,
+      'extra_discount': it.extraDiscount,
       'total': it.total,
       if (hasPkg) ...{
         'packaging_id': it.productPackagingId,
@@ -75,6 +85,9 @@ class SalesOrderSubmitter {
         'packaging_factor_snapshot': it.packagingFactorSnapshot,
         'packaging_quantity': it.packagingQuantity,
         'packaging_unit_price': it.packagingUnitPrice,
+        if (packagedFixed)
+          'packaging_discount_snapshot':
+              it.packagingDiscountSnapshot ?? it.discountPct,
       },
       SaleProfitCalculator.unitCostKey: it.unitCost,
       SaleProfitCalculator.estimatedKey: false,
@@ -190,45 +203,6 @@ class SalesOrderSubmitter {
     return confirmed == true;
   }
 
-  static double _roundTo(double value, int scale) {
-    var factor = 1.0;
-    for (var i = 0; i < scale; i++) {
-      factor *= 10;
-    }
-    return (value * factor).roundToDouble() / factor;
-  }
-
-  /// Collapses the POS cart's discount model (percentage / per-unit fixed /
-  /// per-pack fixed / extra) into the single whole-line money figure the
-  /// Sales Order API expects (`CreateOrderItemInput.Discount`).
-  ///
-  /// Mirrors SaleCartMutator.cartLineTotal() — keep the two in step.
-  static double lineDiscountMoney(Map<String, dynamic> it) {
-    final discountType =
-        (it['discount_type'] ?? 'percentage').toString().toLowerCase();
-    final extra = _rowNum(it['extra_discount']);
-    final pct = _rowNum(it['discount_pct']).clamp(0.0, 100.0) / 100.0;
-    double lineDisc;
-
-    if (it['packaging_id'] != null) {
-      final packQty = _rowNum(it['packaging_quantity']);
-      final packPrice = _rowNum(it['packaging_unit_price']);
-      final gross = _roundTo(packQty * packPrice, 2);
-      lineDisc = discountType == 'fixed'
-          ? _roundTo(packQty * _rowNum(it['packaging_discount_snapshot']), 2)
-          : _roundTo(gross * pct, 2);
-    } else {
-      final qty = _rowNum(it['quantity']);
-      final gross = _roundTo(qty * _rowNum(it['price']), 2);
-      lineDisc = discountType == 'fixed'
-          ? _roundTo(_rowNum(it['discount_pct']) * qty, 2)
-          : _roundTo(gross * pct, 2);
-    }
-
-    final total = lineDisc + extra;
-    return total.isFinite && total > 0 ? _roundTo(total, 2) : 0.0;
-  }
-
   /// Translates cart rows into the Sales Order items contract.
   ///
   /// Packaged cart rows are already canonical (base-unit `quantity`/`price`
@@ -241,33 +215,30 @@ class SalesOrderSubmitter {
       final packagingId = _metaInt(it['packaging_id']);
       final qty = _rowNum(it['quantity']);
       final price = _rowNum(it['price']);
-      final discount = lineDiscountMoney(it);
       final taxRate = _rowNum(it['tax_rate']);
       final notes = it['notes']?.toString();
 
       final packQty = _rowNum(it['packaging_quantity']);
       final packPrice = _rowNum(it['packaging_unit_price']);
-      if (packagingId != null &&
-          packagingId > 0 &&
-          packQty > 0 &&
-          packPrice > 0) {
-        return <String, dynamic>{
-          'product_id': prodId,
+      final hasPack =
+          packagingId != null && packagingId > 0 && packQty > 0 && packPrice > 0;
+
+      // A half-formed packaged row is treated as loose, so its discount must be
+      // encoded as loose too.
+      final discountRow = hasPack
+          ? it
+          : (Map<String, dynamic>.from(it)..remove('packaging_id'));
+
+      return <String, dynamic>{
+        'product_id': prodId,
+        if (hasPack) ...{
           'product_packaging_id': packagingId,
           'packaging_quantity': packQty,
           'packaging_unit_price': packPrice,
-          'quantity': qty,
-          'unit_price': price,
-          'discount': discount,
-          'tax_rate': taxRate,
-          if (notes != null && notes.trim().isNotEmpty) 'notes': notes.trim(),
-        };
-      }
-      return <String, dynamic>{
-        'product_id': prodId,
+        },
         'quantity': qty,
         'unit_price': price,
-        'discount': discount,
+        ...SaleDiscountPayload.encode(discountRow),
         'tax_rate': taxRate,
         if (notes != null && notes.trim().isNotEmpty) 'notes': notes.trim(),
       };

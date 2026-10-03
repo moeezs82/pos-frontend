@@ -123,17 +123,8 @@ class SalesOrderItemsTable extends StatelessWidget {
                           ],
                         ),
                       ),
-                      DataCell(Text(
-                        _formatQty(item.quantity),
-                        style: const TextStyle(
-                          fontWeight: FontWeight.w800,
-                          fontSize: 13,
-                        ),
-                      )),
-                      DataCell(Text(
-                        AppCurrency.format(item.unitPrice),
-                        style: const TextStyle(fontSize: 12.5),
-                      )),
+                      DataCell(_qtyCell(item)),
+                      DataCell(_unitPriceCell(item)),
                       if (canViewProfit)
                         DataCell(Text(
                           AppCurrency.format(item.unitCost),
@@ -142,16 +133,7 @@ class SalesOrderItemsTable extends StatelessWidget {
                             color: AppTheme.textMuted,
                           ),
                         )),
-                      DataCell(Text(
-                        item.discount > 0
-                            ? AppCurrency.format(item.discount)
-                            : '-',
-                        style: TextStyle(
-                          fontSize: 12.5,
-                          color: item.discount > 0 ? AppTheme.danger : AppTheme.textMuted,
-                          fontWeight: item.discount > 0 ? FontWeight.w700 : FontWeight.normal,
-                        ),
-                      )),
+                      DataCell(_discountCell(item)),
                       DataCell(Text(
                         item.taxRate > 0 ? '${item.taxRate.toStringAsFixed(1)}%' : '-',
                         style: const TextStyle(fontSize: 12.5),
@@ -248,6 +230,72 @@ class SalesOrderItemsTable extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+
+  static String _packLabel(SalesOrderItem item) {
+    final short = (item.packagingShortNameSnapshot ?? '').trim();
+    final name = (item.packagingNameSnapshot ?? '').trim();
+    return short.isNotEmpty ? short : (name.isNotEmpty ? name : 'pack');
+  }
+
+  /// Packaged lines read the way they were entered: `2 Box (20 pc)`.
+  Widget _qtyCell(SalesOrderItem item) {
+    const style = TextStyle(fontWeight: FontWeight.w800, fontSize: 13);
+    if (item.isPackaged && item.packagingQuantity != null) {
+      return Text(
+        '${_formatQty(item.packagingQuantity!)} ${_packLabel(item)} '
+        '(${_formatQty(item.quantity)} pc)',
+        style: style,
+      );
+    }
+    return Text(_formatQty(item.quantity), style: style);
+  }
+
+  Widget _unitPriceCell(SalesOrderItem item) {
+    const style = TextStyle(fontSize: 12.5);
+    if (item.isPackaged && item.packagingUnitPrice != null) {
+      return Text(
+        '${AppCurrency.format(item.packagingUnitPrice!)} per ${_packLabel(item)}',
+        style: style,
+      );
+    }
+    return Text(AppCurrency.format(item.unitPrice), style: style);
+  }
+
+  /// What was entered (`2 %`, `Rs 50 / Box`), the resolved money beneath it,
+  /// and any flat extra discount.
+  Widget _discountCell(SalesOrderItem item) {
+    if (item.discount <= 0) {
+      return const Text('-',
+          style: TextStyle(fontSize: 12.5, color: AppTheme.textMuted));
+    }
+    final String entered;
+    if (item.discountPct <= 0) {
+      entered = '';
+    } else if (item.discountType == 'fixed') {
+      entered = item.isPackaged
+          ? '${AppCurrency.format(item.packagingDiscountSnapshot ?? item.discountPct)} / ${_packLabel(item)}'
+          : '${AppCurrency.format(item.discountPct)} / pc';
+    } else {
+      entered = '${_formatQty(item.discountPct)} %';
+    }
+    const danger = TextStyle(
+        fontSize: 12.5, color: AppTheme.danger, fontWeight: FontWeight.w700);
+    const muted = TextStyle(fontSize: 11, color: AppTheme.textMuted);
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        Text(entered.isNotEmpty ? entered : AppCurrency.format(item.discount),
+            style: danger),
+        if (entered.isNotEmpty)
+          Text('- ${AppCurrency.format(item.discount - item.extraDiscount)}',
+              style: muted),
+        if (item.extraDiscount > 0)
+          Text('+ ${AppCurrency.format(item.extraDiscount)} extra',
+              style: muted),
+      ],
     );
   }
 
