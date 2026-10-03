@@ -1,3 +1,4 @@
+import 'package:enterprise_pos/models/sales_order.dart';
 import 'package:enterprise_pos/screens/sales/services/sale_cart_mutator.dart';
 import 'package:enterprise_pos/screens/sales/services/sale_unit_conversion_service.dart';
 import 'package:enterprise_pos/screens/sales/services/sales_order_submitter.dart';
@@ -176,6 +177,45 @@ void main() {
         expect(p.containsKey('submit_for_approval'), isFalse);
         expect(p.containsKey('discount'), isFalse);
         expect(p.containsKey('tax'), isFalse);
+      }
+    });
+
+    test('stored order lines round-trip through prefill without drift', () {
+      final order = SalesOrder.fromJson({
+        'id': 1,
+        'order_number': 'SO-1',
+        'status': 'SUBMITTED',
+        'discount': 5,
+        'items': [
+          {
+            'product_id': 1, 'quantity': 1, 'unit_price': 100,
+            'discount': 5, 'subtotal': 100, 'total': 95,
+          },
+          {
+            'product_id': 2, 'product_packaging_id': 7,
+            'packaging_name_snapshot': 'Box',
+            'packaging_factor_snapshot': 10, 'packaging_quantity': 1,
+            'packaging_unit_price': 1000, 'quantity': 10, 'unit_price': 100,
+            'subtotal': 1000, 'total': 1000,
+          },
+        ],
+      });
+      for (final data in [
+        SalesOrderSubmitter.parseOrder(order),
+        SalesOrderSubmitter.parsePrefill(SalesOrderPrefill(order: order)),
+      ]) {
+        // Header discount must not be loaded: lines already carry it.
+        expect(data.discount, isNull);
+        expect(data.tax, isNull);
+        final lines = SalesOrderSubmitter.buildItemsPayload(data.items);
+        expect(lines[0]['discount'], 5.0);
+        expect(lines[1]['product_packaging_id'], 7);
+        expect(lines[1]['packaging_quantity'], 1.0);
+        expect(lines[1]['quantity'], 10.0);
+        expect(lines[1]['unit_price'], 100.0);
+        final total = data.items.map(SaleCartMutator.cartLineTotal)
+            .reduce((a, b) => a + b);
+        expect(total, closeTo(1095.0, 0.01));
       }
     });
   });

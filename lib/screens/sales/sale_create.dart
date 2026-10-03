@@ -377,6 +377,12 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       _customerLocked = _selectedCustomerId != null;
     }
 
+    if ((widget.isSalesOrder && widget.editSalesOrder != null) ||
+        widget.salesOrderPrefill != null) {
+      WidgetsBinding.instance
+          .addPostFrameCallback((_) => _enrichPrefilledItems());
+    }
+
     void _recalc() => setState(() {});
     discountController.addListener(_recalc);
     taxController.addListener(_recalc);
@@ -396,6 +402,34 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     });
   }
 
+
+  /// Order lines only store snapshots. Pull the live product record so each
+  /// row regains its selling-unit choices (packagings) and quantity rule.
+  Future<void> _enrichPrefilledItems() async {
+    final ids = _items
+        .map((it) => int.tryParse(it['product_id']?.toString() ?? '') ?? 0)
+        .where((id) => id > 0)
+        .toSet();
+    final products = <int, Map<String, dynamic>>{};
+    for (final id in ids) {
+      try {
+        products[id] = await _productService.getProduct(id);
+      } catch (_) {
+        // Keep the snapshot row; the unit picker just stays limited.
+      }
+    }
+    if (!mounted || products.isEmpty) return;
+    setState(() {
+      for (final row in _items) {
+        final product =
+            products[int.tryParse(row['product_id']?.toString() ?? '') ?? 0];
+        if (product == null) continue;
+        row['packagings'] = product['packagings'];
+        row['wholesale_price'] ??= product['wholesale_price'];
+        row.addAll(QuantityRule.fromProduct(product).toRowFields());
+      }
+    });
+  }
 
   Future<void> _loadSaleSources({bool preferCache = false}) async {
     final branchId = int.tryParse(_effectiveBranchIdStr());

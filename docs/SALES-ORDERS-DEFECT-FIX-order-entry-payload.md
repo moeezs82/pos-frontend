@@ -575,3 +575,43 @@ Per the project reporting structure: Completed / Backend Changes / Flutter Chang
 - `/convert` silently drops `credit_limit_override_reason` and `version` → a credit-blocked order can never be converted. `ConvertOrderInput` (`convert.go:21`) has only `PaymentMethod`, `Paid`, `Payments`, while `sales_order_service.dart:169-187` already sends `version` and `credit_limit_override_reason`. **This is the highest-priority remaining backend defect after the above.**
 - `go:0047` packaging snapshot columns on `sales_order_items` (if still wanted after D3/D7).
 - Line-ending normalisation as its own isolated commit.
+
+
+---
+
+# Implementation status & Addendum (2026-10-03)
+
+## Status
+
+| Defect | Status |
+|---|---|
+| D1 status key + `UpdateOrderInput.Status` | **Done** (Flutter + Go). `SUBMITTED→DRAFT` is accepted on update (same permission gate as any edit) so "Save Draft" on a submitted order works. |
+| D2 line discount | **Done** — `SalesOrderSubmitter.lineDiscountMoney()` |
+| D3 packaging double factor | **Done** — packaged rows pass through; half-formed rows degrade to loose lines. **Data repair still required (ops).** |
+| D5 revalidation keys | **Done** |
+| D6 inert header inputs | **Done** — Disc/Tax/Ship and Sale-From hidden in order mode; `discount`/`tax` no longer sent |
+| D7 per-pack discount snapshot | **Done** (Go, create + update) |
+| D8 "Booked by" label | **Done** — shown when salesman == creator and revalidation has `SALESMAN_FALLBACK` |
+| D4 two databases | No code change; check the boot log |
+
+Tests: `test/screens/sales/services/sales_order_submitter_test.dart` (9 tests), Go `TestUpdateOrderStatusTransitions`, `TestPackagingDiscountSnapshotIsPerPack`.
+
+## Addendum — defects found in manual testing
+
+### D9 — Discount applied twice when converting an order
+**Symptom:** an order with a Rs 5 line discount opened in conversion showed Rs 5 in the line *Extra Disc* **and** Rs 5 in the footer *Disc(-)*; payable 1,090 instead of 1,095.
+**Cause:** `SalesOrderSubmitter.parsePrefill` (conversion) and `parseOrder` (edit) loaded `order.discount` / `order.tax` into the footer inputs. Order discount is only the sum of line discounts, which the rows already carry as `extra_discount`.
+**Fix:** neither prefill loads header discount/tax. Rule: *order-level discount/tax are derived, never inputs.*
+
+### D10 — Packaging lost on conversion and on edit
+**Symptoms:** (a) converting an order with a Box line produced a base-unit line; (b) editing showed the line but the unit dropdown only offered "Base unit".
+**Cause:** (a) `parsePrefill` built rows with no `packaging_*` fields. (b) `parseOrder` stored the pack count/price in `quantity`/`price` (non-canonical) and, for both paths, rows carried no `packagings` list or unit rule — an order line only stores snapshots.
+**Fix:**
+1. One shared `_cartRowFromOrderItem` builds rows in the canonical cart shape (`quantity`/`price` in base units, `packaging_quantity`, `packaging_unit_price`, `packaging_factor_snapshot`, name snapshots; line discount as `extra_discount`).
+2. `CreateSaleScreen._enrichPrefilledItems()` fetches each product after load and restores `packagings`, `wholesale_price` and the quantity rule (`unit_id`/`unit_name`/`unit_allow_decimal`), so the unit dropdown lists the product's real units.
+**Note:** if a product fetch fails the snapshot row is kept and still saves/converts correctly; only the unit picker is limited.
+**Test:** `stored order lines round-trip through prefill without drift` asserts prefill → payload → cart total is unchanged (1,095.00) with no header discount.
+
+## Manual re-check
+1. Create order: loose 100 @ 5 disc + 1 Box (10 × 100). Open **Edit** → unit dropdown shows Box and Base unit; total 1,095.
+2. Approve → **Convert**: line Extra Disc 5, footer Disc 0, Box line still in Box; payable 1,095.

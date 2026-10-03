@@ -49,6 +49,39 @@ class SalesOrderSubmitter {
     return int.tryParse(value?.toString() ?? '');
   }
 
+  /// Rebuilds a POS cart row from a stored order line, in the same canonical
+  /// shape SaleUnitConversionService produces: `quantity`/`price` are base
+  /// units, pack figures live in the `packaging_*` keys. Line discount is
+  /// whole-line money, carried as `extra_discount`.
+  static Map<String, dynamic> _cartRowFromOrderItem(SalesOrderItem it) {
+    final hasPkg = it.isPackaged;
+    return <String, dynamic>{
+      'product_id': it.productId,
+      'name': it.productName.isNotEmpty
+          ? it.productName
+          : 'Product #${it.productId}',
+      'sku': it.productSku,
+      'quantity': it.quantity,
+      'price': it.unitPrice,
+      'discount_pct': 0.0,
+      'extra_discount': it.discount,
+      'discount_type': 'fixed',
+      'total': it.total,
+      if (hasPkg) ...{
+        'packaging_id': it.productPackagingId,
+        'packaging_name_snapshot': it.packagingNameSnapshot,
+        if (it.packagingShortNameSnapshot != null)
+          'packaging_short_name_snapshot': it.packagingShortNameSnapshot,
+        'packaging_factor_snapshot': it.packagingFactorSnapshot,
+        'packaging_quantity': it.packagingQuantity,
+        'packaging_unit_price': it.packagingUnitPrice,
+      },
+      SaleProfitCalculator.unitCostKey: it.unitCost,
+      SaleProfitCalculator.estimatedKey: false,
+      SaleProfitCalculator.sourceKey: 'Sales order snapshot',
+    };
+  }
+
   /// Extracts form-state prefill data from an existing SalesOrder.
   static SalesOrderPrefillData parseOrder(SalesOrder order) {
     final customer = order.customer;
@@ -70,30 +103,7 @@ class SalesOrderSubmitter {
           }
         : null;
 
-    final items = order.items.map((it) {
-      final hasPkg = it.isPackaged;
-      return <String, dynamic>{
-        'product_id': it.productId,
-        'name': it.productName.isNotEmpty ? it.productName : 'Product #${it.productId}',
-        'sku': it.productSku,
-        'quantity': hasPkg ? (it.packagingQuantity ?? it.quantity) : it.quantity,
-        'price': hasPkg ? (it.packagingUnitPrice ?? it.unitPrice) : it.unitPrice,
-        'discount_pct': 0.0,
-        'extra_discount': it.discount,
-        'discount_type': 'fixed',
-        'total': it.total,
-        if (hasPkg) ...{
-          'packaging_id': it.productPackagingId,
-          'packaging_name_snapshot': it.packagingNameSnapshot,
-          'packaging_factor_snapshot': it.packagingFactorSnapshot,
-          'packaging_quantity': it.packagingQuantity,
-          'packaging_unit_price': it.packagingUnitPrice,
-        },
-        SaleProfitCalculator.unitCostKey: it.unitCost,
-        SaleProfitCalculator.estimatedKey: false,
-        SaleProfitCalculator.sourceKey: 'Sales order snapshot',
-      };
-    }).toList();
+    final items = order.items.map(_cartRowFromOrderItem).toList();
 
     return SalesOrderPrefillData(
       customerId: customerId,
@@ -104,8 +114,6 @@ class SalesOrderSubmitter {
       salesmanId: order.salesmanId > 0 ? order.salesmanId : null,
       salesman: salesmanMap,
       items: items,
-      discount: order.discount > 0 ? order.discount.toStringAsFixed(2) : null,
-      tax: order.tax > 0 ? order.tax.toStringAsFixed(2) : null,
       notes: (order.notes != null && order.notes!.isNotEmpty) ? order.notes : null,
       deliveryDate: order.deliveryDate != null ? DateTime.tryParse(order.deliveryDate!) : null,
     );
@@ -133,22 +141,7 @@ class SalesOrderSubmitter {
           }
         : null;
 
-    final items = order.items.map((it) {
-      return <String, dynamic>{
-        'product_id': it.productId,
-        'name': it.productName.isNotEmpty ? it.productName : 'Product #${it.productId}',
-        'sku': it.productSku,
-        'quantity': it.quantity,
-        'price': it.unitPrice,
-        'discount_pct': 0.0,
-        'extra_discount': it.discount,
-        'discount_type': 'fixed',
-        'total': it.total,
-        SaleProfitCalculator.unitCostKey: it.unitCost,
-        SaleProfitCalculator.estimatedKey: false,
-        SaleProfitCalculator.sourceKey: 'Sales order snapshot',
-      };
-    }).toList();
+    final items = order.items.map(_cartRowFromOrderItem).toList();
 
     return SalesOrderPrefillData(
       customerId: customerId,
@@ -158,9 +151,10 @@ class SalesOrderSubmitter {
       customerAddress: customer?.address ?? '',
       salesmanId: order.salesmanId > 0 ? order.salesmanId : null,
       salesman: salesmanMap,
+      // Order discount/tax are sums of the line figures, which the rows below
+      // already carry as per-line discount; loading them into the header too
+      // would apply the discount twice.
       items: items,
-      discount: order.discount > 0 ? order.discount.toStringAsFixed(2) : null,
-      tax: order.tax > 0 ? order.tax.toStringAsFixed(2) : null,
     );
   }
 
