@@ -60,37 +60,33 @@ import 'package:enterprise_pos/models/sales_order.dart';
 import 'package:enterprise_pos/api/sales_order_service.dart';
 
 // local widgets split into small files
+import 'package:enterprise_pos/screens/sales/services/sale_checkout_totals.dart';
+import 'package:enterprise_pos/screens/sales/services/sale_product_query_service.dart';
+import 'package:enterprise_pos/screens/sales/services/sale_submission_service.dart';
+import 'package:enterprise_pos/screens/sales/services/sale_cart_mutator.dart';
+import 'package:enterprise_pos/screens/sales/services/sale_customer_lookup_service.dart';
+import 'package:enterprise_pos/screens/sales/services/sale_reference_data_service.dart';
+import 'package:enterprise_pos/screens/sales/services/sale_unit_conversion_service.dart';
+import 'package:enterprise_pos/screens/sales/services/sale_return_service.dart';
+import 'package:enterprise_pos/screens/sales/services/sales_order_submitter.dart';
+import 'package:enterprise_pos/screens/sales/services/sale_picker_service.dart';
+import 'package:enterprise_pos/screens/sales/services/sale_amendment_service.dart';
+import 'package:enterprise_pos/screens/sales/services/sale_cart_validator.dart';
+import 'package:enterprise_pos/screens/sales/services/sale_meta_builder.dart';
+import 'package:enterprise_pos/screens/sales/parts/sale_cart_widgets.dart';
+import 'package:enterprise_pos/screens/sales/services/sale_offline_credit_service.dart';
+import 'package:enterprise_pos/screens/sales/services/sale_receipt_dispatcher.dart';
+import 'package:enterprise_pos/screens/sales/parts/sale_keyboard_shortcuts.dart';
+import 'package:enterprise_pos/screens/sales/parts/sale_action_bars.dart';
+import 'package:enterprise_pos/screens/sales/parts/sale_summary_row.dart';
+import 'package:enterprise_pos/screens/sales/parts/cart_product_search.dart';
+import 'package:enterprise_pos/screens/sales/parts/sale_amendment_dialog.dart';
+import 'package:enterprise_pos/screens/sales/parts/sale_item_edit_dialog.dart';
 import 'package:enterprise_pos/screens/sales/parts/sale_party_section.dart';
+import 'package:enterprise_pos/screens/sales/parts/sale_post_task_panel.dart';
+import 'package:enterprise_pos/screens/sales/parts/sale_return_source_dialog.dart';
+import 'package:enterprise_pos/screens/sales/parts/sale_walk_in_section.dart';
 
-
-class _PendingWhatsAppTask {
-  final String id;
-  final String receiptNo;
-  final WhatsAppInvoicePreparation prepared;
-  final String message;
-  bool opening;
-
-  _PendingWhatsAppTask({
-    required this.id,
-    required this.receiptNo,
-    required this.prepared,
-    required this.message,
-    this.opening = false,
-  });
-}
-
-class _OfflineCreditDecision {
-  final bool allowed;
-  final String? message;
-
-  const _OfflineCreditDecision._(this.allowed, this.message);
-
-  const _OfflineCreditDecision.allow([String? message])
-      : this._(true, message);
-
-  const _OfflineCreditDecision.deny(String message)
-      : this._(false, message);
-}
 
 class CreateSaleScreen extends StatefulWidget {
   final Map<String, dynamic>? initialCustomer;
@@ -232,8 +228,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
   // WhatsApp invoice preparation is intentionally non-blocking. Completed
   // attachments stay here until the cashier explicitly opens/dismisses them;
   // appearing tasks never steal keyboard focus from the next sale.
-  final List<_PendingWhatsAppTask> _pendingWhatsAppTasks = [];
-  int _postSaleTaskSequence = 0;
+  final SalePostTaskManager _postTaskManager = SalePostTaskManager();
 
   // Posted-sale amendment state. None of this is used by normal Create Sale.
   bool get _isEditing => widget.editSaleId != null;
@@ -305,68 +300,31 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
 
     if (widget.isSalesOrder) {
       if (widget.editSalesOrder != null) {
-        final order = widget.editSalesOrder!;
-        final customer = order.customer;
-        if (customer != null) {
-          _selectedCustomerId = customer.id.toString();
-          _selectedCustomer = {
-            'id': customer.id,
-            'name': customer.name,
-            'phone': customer.phone,
-            if (customer.address != null) 'address': customer.address,
-          };
-          customerNameController.text = customer.name;
-          customerPhoneController.text = customer.phone;
-          addressController.text = customer.address ?? '';
-          _customerLocked = true;
+        final prefill =
+            SalesOrderSubmitter.parseOrder(widget.editSalesOrder!);
+        _selectedCustomerId = prefill.customerId;
+        _selectedCustomer = prefill.customer;
+        customerNameController.text = prefill.customerName;
+        customerPhoneController.text = prefill.customerPhone;
+        addressController.text = prefill.customerAddress;
+        _customerLocked = prefill.customerId != null;
+        if (prefill.salesmanId != null) {
+          _selectedUserId = prefill.salesmanId;
         }
-        if (order.salesmanId > 0) {
-          _selectedUserId = order.salesmanId;
+        if (prefill.salesman != null) {
+          _selectedUser = prefill.salesman;
         }
-        if (order.salesman != null) {
-          _selectedUser = {
-            'id': order.salesman!.id,
-            'name': order.salesman!.name,
-            'email': order.salesman!.email,
-          };
+        _items = prefill.items;
+        if (prefill.discount != null) {
+          discountController.text = prefill.discount!;
         }
-        _items = order.items.map((it) {
-          final hasPkg = it.isPackaged;
-          return <String, dynamic>{
-            'product_id': it.productId,
-            'name': it.productName.isNotEmpty ? it.productName : 'Product #${it.productId}',
-            'sku': it.productSku,
-            'quantity': hasPkg ? (it.packagingQuantity ?? it.quantity) : it.quantity,
-            'price': hasPkg ? (it.packagingUnitPrice ?? it.unitPrice) : it.unitPrice,
-            'discount_pct': 0.0,
-            'extra_discount': it.discount,
-            'discount_type': 'fixed',
-            'total': it.total,
-            if (hasPkg) ...{
-              'packaging_id': it.productPackagingId,
-              'packaging_name_snapshot': it.packagingNameSnapshot,
-              'packaging_factor_snapshot': it.packagingFactorSnapshot,
-              'packaging_quantity': it.packagingQuantity,
-              'packaging_unit_price': it.packagingUnitPrice,
-            },
-            SaleProfitCalculator.unitCostKey: it.unitCost,
-            SaleProfitCalculator.estimatedKey: false,
-            SaleProfitCalculator.sourceKey: 'Sales order snapshot',
-          };
-        }).toList();
-
-        if (order.discount > 0) {
-          discountController.text = order.discount.toStringAsFixed(2);
+        if (prefill.tax != null) {
+          taxController.text = prefill.tax!;
         }
-        if (order.tax > 0) {
-          taxController.text = order.tax.toStringAsFixed(2);
+        if (prefill.notes != null) {
+          _salesOrderNotesController.text = prefill.notes!;
         }
-        if (order.notes != null && order.notes!.isNotEmpty) {
-          _salesOrderNotesController.text = order.notes!;
-        }
-        if (order.deliveryDate != null) {
-          _salesOrderDeliveryDate = DateTime.tryParse(order.deliveryDate!);
-        }
+        _salesOrderDeliveryDate = prefill.deliveryDate;
       } else {
         // New Sales Order: Default salesman to current logged in user
         WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -391,54 +349,26 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         }
       }
     } else if (!_isEditing && widget.salesOrderPrefill != null) {
-      final prefill = widget.salesOrderPrefill!;
-      final order = prefill.order;
-      final customer = order.customer;
-      if (customer != null) {
-        _selectedCustomerId = customer.id.toString();
-        _selectedCustomer = {
-          'id': customer.id,
-          'name': customer.name,
-          'phone': customer.phone,
-          if (customer.address != null) 'address': customer.address,
-        };
-        customerNameController.text = customer.name;
-        customerPhoneController.text = customer.phone;
-        addressController.text = customer.address ?? '';
-        _customerLocked = true;
+      final prefill =
+          SalesOrderSubmitter.parsePrefill(widget.salesOrderPrefill!);
+      _selectedCustomerId = prefill.customerId;
+      _selectedCustomer = prefill.customer;
+      customerNameController.text = prefill.customerName;
+      customerPhoneController.text = prefill.customerPhone;
+      addressController.text = prefill.customerAddress;
+      _customerLocked = prefill.customerId != null;
+      if (prefill.salesmanId != null) {
+        _selectedUserId = prefill.salesmanId;
       }
-      if (order.salesmanId > 0) {
-        _selectedUserId = order.salesmanId;
+      if (prefill.salesman != null) {
+        _selectedUser = prefill.salesman;
       }
-      if (order.salesman != null) {
-        _selectedUser = {
-          'id': order.salesman!.id,
-          'name': order.salesman!.name,
-          'email': order.salesman!.email,
-        };
+      _items = prefill.items;
+      if (prefill.discount != null) {
+        discountController.text = prefill.discount!;
       }
-      _items = order.items.map((it) {
-        return <String, dynamic>{
-          'product_id': it.productId,
-          'name': it.productName.isNotEmpty ? it.productName : 'Product #${it.productId}',
-          'sku': it.productSku,
-          'quantity': it.quantity,
-          'price': it.unitPrice,
-          'discount_pct': 0.0,
-          'extra_discount': it.discount,
-          'discount_type': 'fixed',
-          'total': it.total,
-          SaleProfitCalculator.unitCostKey: it.unitCost,
-          SaleProfitCalculator.estimatedKey: false,
-          SaleProfitCalculator.sourceKey: 'Sales order snapshot',
-        };
-      }).toList();
-
-      if (order.discount > 0) {
-        discountController.text = order.discount.toStringAsFixed(2);
-      }
-      if (order.tax > 0) {
-        taxController.text = order.tax.toStringAsFixed(2);
+      if (prefill.tax != null) {
+        taxController.text = prefill.tax!;
       }
     } else if (!_isEditing && widget.initialCustomer != null) {
       final customer = widget.initialCustomer!;
@@ -476,119 +406,44 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     if (branchId != null && _saleSourcesBranchId != branchId && mounted) {
       setState(() {
         _saleSources = const [];
-        // On a posted-sale amendment the saved source belongs to the sale
-        // being loaded. Keep that id while the branch-scoped source list is
-        // refreshed so the dropdown can restore the historical selection.
-        // New-sale branch changes should still clear their old selection.
         if (!_isEditing) _selectedSaleSourceId = null;
         _saleSourcesBranchId = branchId;
       });
     }
-    if (branchId == null) {
-      if (mounted) {
-        setState(() {
-          _saleSources = const [];
-          if (!_isEditing) _selectedSaleSourceId = null;
-          _saleSourcesBranchId = null;
-        });
-      }
-      return;
-    }
-    List<Map<String, dynamic>> sources = const [];
-    if (!preferCache) {
-      try {
-        sources = await _saleSourceService.getSaleSources();
-      } catch (_) {
-        // Offline sale entry falls back to the catalog read replica below.
-      }
-    }
-    if (sources.isEmpty) {
-      try {
-        sources = await CatalogCacheService.instance.saleSources(branchId: branchId);
-      } catch (_) {/* best-effort local reference data */}
-    }
-    if (!mounted || sources.isEmpty) return;
-    sources = sources.toList(growable: false)
-      ..sort((a, b) {
-        final ao = int.tryParse(a['sort_order']?.toString() ?? '') ?? 0;
-        final bo = int.tryParse(b['sort_order']?.toString() ?? '') ?? 0;
-        if (ao != bo) return ao.compareTo(bo);
-        return (a['name'] ?? '').toString().toLowerCase().compareTo(
-              (b['name'] ?? '').toString().toLowerCase(),
-            );
-      });
-    int? next = _selectedSaleSourceId;
-    final validCurrent = next != null &&
-        sources.any((e) => _metaInt(e['id']) == next);
-    if (!validCurrent && !_isEditing) {
-      final counter = sources.where((e) =>
-          _sourceDefault(e) && _sourceActive(e)).toList();
-      final active = sources.where(_sourceActive).toList();
-      next = _metaInt((counter.isNotEmpty ? counter.first : (active.isNotEmpty ? active.first : const <String, dynamic>{}))['id']);
-    }
+    final result = await SaleReferenceDataService.loadSaleSources(
+      service: _saleSourceService,
+      branchId: branchId,
+      currentSelectedId: _selectedSaleSourceId,
+      isEditing: _isEditing,
+      preferCache: preferCache,
+    );
+    if (!mounted) return;
     setState(() {
-      _saleSources = sources;
+      _saleSources = result.sources;
       _saleSourcesBranchId = branchId;
-      if (next != null) _selectedSaleSourceId = next;
+      _selectedSaleSourceId = result.selectedId;
     });
   }
 
-  bool _sourceActive(Map<String, dynamic> source) {
-    final value = source['is_active'];
-    return value == true || value == 1 || value?.toString().toLowerCase() == 'true';
-  }
-
-  bool _sourceDefault(Map<String, dynamic> source) {
-    final value = source['is_default'];
-    return value == true || value == 1 || value?.toString().toLowerCase() == 'true';
-  }
-
-  Map<String, dynamic>? get _selectedSaleSource {
-    for (final source in _saleSources) {
-      if (_metaInt(source['id']) == _selectedSaleSourceId) return source;
-    }
-    return null;
-  }
+  Map<String, dynamic>? get _selectedSaleSource =>
+      SaleReferenceDataService.findSourceById(_saleSources, _selectedSaleSourceId);
 
   Future<void> _manageSaleSources() async {
-    final result = await showSaleSourceManagerDialog(
+    final token = context.read<AuthProvider>().token!;
+    final newId = await SaleReferenceDataService.manageSaleSources(
       context: context,
       service: _saleSourceService,
       selectedId: _selectedSaleSourceId,
+      effectiveBranchId: _effectiveBranchIdStr(),
+      token: token,
+      onReload: _loadSaleSources,
     );
-    if (!mounted || result == null) return;
-    if (result.selectedId != null) {
-      setState(() => _selectedSaleSourceId = result.selectedId);
-    }
-    await _loadSaleSources();
-    if (result.changed) {
-      final branchId = int.tryParse(_effectiveBranchIdStr() ?? '');
-      final token = context.read<AuthProvider>().token!;
-      CatalogCacheService.instance
-          .refresh(token: token, branchId: branchId, force: true)
-          .then((_) => _loadSaleSources(preferCache: true));
-    }
+    if (!mounted || newId == null) return;
+    setState(() => _selectedSaleSourceId = newId);
   }
 
-  bool _areaActive(Map<String, dynamic> area) {
-    final value = area['is_active'];
-    return value == true ||
-        value == 1 ||
-        value?.toString().toLowerCase() == 'true';
-  }
-
-  Map<String, dynamic>? _areaById(int? id) {
-    if (id == null) return null;
-    for (final area in _customerAreas) {
-      if (_metaInt(area['id']) == id) return area;
-    }
-    return null;
-  }
-
-  String? get _selectedAreaName {
-    final name = (_areaById(_selectedAreaId)?['name'] ?? '').toString().trim();
-    return name.isEmpty ? null : name;
-  }
+  String? get _selectedAreaName =>
+      SaleReferenceDataService.areaNameById(_customerAreas, _selectedAreaId);
 
   Future<void> _loadCustomerAreas({bool preferCache = false}) async {
     final branchId = int.tryParse(_effectiveBranchIdStr());
@@ -599,90 +454,38 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         _customerAreasBranchId = branchId;
       });
     }
-    if (branchId == null) {
-      if (mounted) {
-        setState(() {
-          _customerAreas = const [];
-          if (!_isEditing) _selectedAreaId = null;
-          _customerAreasBranchId = null;
-        });
-      }
-      return;
-    }
-
-    List<Map<String, dynamic>> areas = const [];
-    if (!preferCache) {
-      try {
-        areas = await _customerAreaService.getAreas(activeOnly: true);
-      } catch (_) {
-        // Offline sale entry falls back to the catalog read replica below.
-      }
-    }
-    if (areas.isEmpty) {
-      try {
-        areas = await CatalogCacheService.instance.customerAreas(
-          branchId: branchId,
-          activeOnly: true,
-        );
-      } catch (_) {/* best-effort local reference data */}
-    }
+    final result = await SaleReferenceDataService.loadCustomerAreas(
+      service: _customerAreaService,
+      branchId: branchId,
+      currentSelectedId: _selectedAreaId,
+      isEditing: _isEditing,
+      preferCache: preferCache,
+    );
     if (!mounted) return;
-
-    areas = areas.toList(growable: false)
-      ..sort((a, b) => (a['name'] ?? '')
-          .toString()
-          .toLowerCase()
-          .compareTo((b['name'] ?? '').toString().toLowerCase()));
-
-    // Only active values are offered for new transactions. If a customer's
-    // stored default area has since been deactivated it is intentionally not
-    // carried into a fresh sale; the cashier can choose a current area.
-    final currentStillAvailable = _selectedAreaId == null ||
-        areas.any((area) => _metaInt(area['id']) == _selectedAreaId);
     setState(() {
-      _customerAreas = areas;
+      _customerAreas = result.areas;
       _customerAreasBranchId = branchId;
-      if (!_isEditing && !currentStillAvailable) _selectedAreaId = null;
+      _selectedAreaId = result.selectedId;
     });
   }
 
   Future<void> _manageCustomerAreas() async {
     final auth = context.read<AuthProvider>();
-    if (!auth.hasPermission('manage-customers')) {
-      AppFeedback.warning(
-        context,
-        'You do not have permission to manage customer town / area values.',
-      );
-      return;
-    }
-    final result = await showNamedReferenceManagerDialog(
+    final newId = await SaleReferenceDataService.manageCustomerAreas(
       context: context,
-      title: 'Town / Areas',
-      singularLabel: 'Town / Area',
-      icon: Icons.location_city_outlined,
+      service: _customerAreaService,
       selectedId: _selectedAreaId,
-      loadItems: () => _customerAreaService.getAreas(activeOnly: true),
-      createItem: _customerAreaService.createArea,
-      updateItem: _customerAreaService.updateArea,
-      subtitle: 'Create, rename, or choose an area without leaving the sale.',
-      selectedSubtitle: 'Selected for this sale',
+      effectiveBranchId: _effectiveBranchIdStr(),
+      token: auth.token!,
+      hasPermission: auth.hasPermission('manage-customers'),
+      onReload: _loadCustomerAreas,
     );
-    if (!mounted || result == null) return;
-    await _loadCustomerAreas();
     if (!mounted) return;
-    if (result.selectedId != null &&
-        _customerAreas.any((area) => _metaInt(area['id']) == result.selectedId)) {
-      setState(() => _selectedAreaId = result.selectedId);
-    } else if (result.selectedId == null) {
+    if (newId != null &&
+        _customerAreas.any((area) => _metaInt(area['id']) == newId)) {
+      setState(() => _selectedAreaId = newId);
+    } else if (newId == null) {
       setState(() => _selectedAreaId = null);
-    }
-
-    if (result.changed) {
-      final branchId = int.tryParse(_effectiveBranchIdStr());
-      final token = auth.token!;
-      CatalogCacheService.instance
-          .refresh(token: token, branchId: branchId, force: true)
-          .then((_) => _loadCustomerAreas(preferCache: true));
     }
   }
 
@@ -713,143 +516,57 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         throw const FormatException('The server returned an empty sale.');
       }
 
-      final items = <Map<String, dynamic>>[];
-      for (final raw in _listValue(sale['items'])) {
-        final line = _mapValue(raw);
-        final product = _mapValue(line['product']);
-        final productId = int.tryParse(
-              (line['product_id'] ?? product['id'] ?? '').toString(),
-            ) ??
-            0;
-        if (productId <= 0) continue;
-        final qty = _editNum(line['quantity']);
-        final price = _editNum(line['price']);
-        final discount = _editNum(line['discount']);
-        final discountType =
-            (line['discount_type'] ?? 'percentage').toString();
-        final unitCost = _editNum(line['unit_cost']);
-        final packagingId = int.tryParse(line['packaging_id']?.toString() ?? '');
-        final row = <String, dynamic>{
-          ...product,
-          'sale_item_id': int.tryParse(line['id']?.toString() ?? ''),
-          'product_id': productId,
-          'name': (product['name'] ?? 'Product #$productId').toString(),
-          'secondary_name': product['secondary_name'],
-          'quantity': qty,
-          'price': price,
-          'discount_pct': discount,
-          'extra_discount': _editNum(line['extra_discount']),
-          'discount_type': discountType,
-          if (packagingId != null) ...{
-            'packaging_id': packagingId,
-            'packaging_name_snapshot': line['packaging_name_snapshot'],
-            'packaging_short_name_snapshot':
-                line['packaging_short_name_snapshot'],
-            'packaging_factor_snapshot': line['packaging_factor_snapshot'],
-            'packaging_quantity': line['packaging_quantity'],
-            'packaging_unit_price': line['packaging_unit_price'],
-            'packaging_discount_snapshot':
-                line['packaging_discount_snapshot'],
-          },
-          SaleProfitCalculator.unitCostKey: unitCost,
-          SaleProfitCalculator.estimatedKey: true,
-          SaleProfitCalculator.sourceKey:
-              'Posted cost snapshot; final amendment COGS is confirmed by the server',
-        };
-        // Packaged history uses the immutable transaction snapshot. Base-unit
-        // rows preserve the exact legacy preview calculation.
-        row['total'] = packagingId != null
-            ? _editNum(line['total'])
-            : _lineTotal(
-                price: price,
-                qty: qty,
-                discPct: discount,
-                discountType: discountType,
-                extraDiscount: _editNum(line['extra_discount']),
-              );
-        items.add(row);
-      }
-      if (items.isEmpty) {
-        throw const FormatException(
-          'This invoice has no active sale items and cannot be amended here.',
-        );
-      }
+      final loaded = SaleAmendmentService.parseLoadedSale(
+        sale: sale,
+        lineTotalCalculator: ({
+          required price,
+          required qty,
+          required discPct,
+          required discountType,
+          required extraDiscount,
+        }) =>
+            _lineTotal(
+          price: price,
+          qty: qty,
+          discPct: discPct,
+          discountType: discountType,
+          extraDiscount: extraDiscount,
+        ),
+      );
 
-      final customer = _mapValue(sale['customer']);
-      final vendor = _mapValue(sale['vendor']);
-      final salesman = _mapValue(sale['salesman']);
-      final deliveryBoy = _mapValue(sale['delivery_boy']);
-      final branch = _mapValue(sale['branch']);
-      final meta = _mapValue(sale['meta']);
-      final customerSnapshot = _mapValue(meta['customer_snapshot']);
-      final customerId = int.tryParse(sale['customer_id']?.toString() ?? '');
-      final vendorId = int.tryParse(sale['vendor_id']?.toString() ?? '');
-      final salesmanId = int.tryParse(sale['salesman_id']?.toString() ?? '');
-      final deliveryBoyId =
-          int.tryParse(sale['delivery_boy_id']?.toString() ?? '');
-      final saleSourceId =
-          int.tryParse(sale['sale_source_id']?.toString() ?? '');
-      final saleAreaId = int.tryParse(sale['area_id']?.toString() ?? '');
-
-      discountController.text = _editNum(sale['discount']).toStringAsFixed(2);
-      taxController.text = _editNum(sale['tax']).toStringAsFixed(2);
-      shippingController.text = _editNum(sale['delivery']).toStringAsFixed(2);
-
-      if (customerId != null) {
-        customerNameController.text = [
-          (customer['first_name'] ?? '').toString(),
-          (customer['last_name'] ?? '').toString(),
-        ].where((v) => v.trim().isNotEmpty).join(' ').trim();
-        customerPhoneController.text = (customer['phone'] ?? '').toString();
-        addressController.text = (customer['address'] ?? '').toString();
-      } else {
-        customerNameController.text =
-            (customerSnapshot['name'] ?? 'Walk-in customer').toString();
-        customerPhoneController.text =
-            (customerSnapshot['phone'] ?? '').toString();
-        addressController.text =
-            (customerSnapshot['address'] ?? '').toString();
-      }
-
-      final selectedCustomerForEdit = customerId == null
-          ? null
-          : <String, dynamic>{
-              ...customer,
-              if (customerSnapshot.containsKey('phone_numbers'))
-                'phone_numbers': customerSnapshot['phone_numbers'],
-            };
+      discountController.text = loaded.discount.toStringAsFixed(2);
+      taxController.text = loaded.tax.toStringAsFixed(2);
+      shippingController.text = loaded.delivery.toStringAsFixed(2);
+      customerNameController.text = loaded.customerName;
+      customerPhoneController.text = loaded.customerPhone;
+      addressController.text = loaded.customerAddress;
 
       setState(() {
         _editSale = sale;
-        _editRevision =
-            int.tryParse(sale['revision_no']?.toString() ?? '') ?? 0;
-        _originalTotal = _editNum(sale['total']);
-        _existingNetPaid = _editNum(sale['net_paid']);
-        _items = items;
-        _originalItems = items
+        _editRevision = loaded.revision;
+        _originalTotal = loaded.originalTotal;
+        _existingNetPaid = loaded.existingNetPaid;
+        _items = loaded.items;
+        _originalItems = loaded.items
             .map((e) => Map<String, dynamic>.from(e))
             .toList(growable: false);
-        _selectedCustomerId = customerId?.toString();
-        _selectedCustomer = selectedCustomerForEdit;
-        _selectedVendorId = vendorId;
-        _selectedVendor = vendorId == null ? null : vendor;
-        _selectedUserId = salesmanId;
-        _selectedUser = salesmanId == null ? null : salesman;
-        _selectedDeliveryBoyId = deliveryBoyId;
-        _selectedDeliveryBoy = deliveryBoyId == null ? null : deliveryBoy;
-        _selectedSaleSourceId = saleSourceId;
-        _selectedAreaId = saleAreaId;
-        _selectedBranchId = sale['branch_id']?.toString();
-        _selectedBranch = branch.isEmpty ? null : branch;
+        _selectedCustomerId = loaded.customerId?.toString();
+        _selectedCustomer = loaded.customer;
+        _selectedVendorId = loaded.vendorId;
+        _selectedVendor = loaded.vendor;
+        _selectedUserId = loaded.salesmanId;
+        _selectedUser = loaded.salesman;
+        _selectedDeliveryBoyId = loaded.deliveryBoyId;
+        _selectedDeliveryBoy = loaded.deliveryBoy;
+        _selectedSaleSourceId = loaded.saleSourceId;
+        _selectedAreaId = loaded.areaId;
+        _selectedBranchId = loaded.branchId;
+        _selectedBranch = loaded.branch;
         _customerLocked = true;
         _payments = const [];
       });
 
-      // Sale sources are branch-owned. initState cannot load them for an
-      // amendment because the invoice branch is not known until the sale has
-      // been fetched above. Load them now, after both the branch and the saved
-      // sale_source_id are established, so "Sale From" is auto-selected
-      // deterministically instead of depending on the catalog-refresh race.
+      // Sale sources are branch-owned. Load them after both branch and saleSourceId are known.
       await _loadSaleSources();
       await _loadCustomerAreas();
       if (!mounted) return;
@@ -872,317 +589,52 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
 
   void _resetAmendmentDraft() {
     if (!_isEditing || _editSale == null) return;
-    final sale = _editSale!;
+    final reset = SaleAmendmentService.computeResetValues(
+      sale: _editSale!,
+      originalItems: _originalItems,
+    );
     setState(() {
-      _items = _originalItems
-          .map((e) => Map<String, dynamic>.from(e))
-          .toList(growable: true);
-      discountController.text = _editNum(sale['discount']).toStringAsFixed(2);
-      taxController.text = _editNum(sale['tax']).toStringAsFixed(2);
-      shippingController.text = _editNum(sale['delivery']).toStringAsFixed(2);
-      _selectedVendorId = int.tryParse(sale['vendor_id']?.toString() ?? '');
-      _selectedVendor = _selectedVendorId == null
-          ? null
-          : _mapValue(sale['vendor']);
-      _selectedUserId = int.tryParse(sale['salesman_id']?.toString() ?? '');
-      _selectedUser = _selectedUserId == null
-          ? null
-          : _mapValue(sale['salesman']);
-      _selectedDeliveryBoyId =
-          int.tryParse(sale['delivery_boy_id']?.toString() ?? '');
-      _selectedDeliveryBoy = _selectedDeliveryBoyId == null
-          ? null
-          : _mapValue(sale['delivery_boy']);
-      _selectedSaleSourceId =
-          int.tryParse(sale['sale_source_id']?.toString() ?? '');
+      _items = reset.items;
+      discountController.text = reset.discount;
+      taxController.text = reset.tax;
+      shippingController.text = reset.delivery;
+      _selectedVendorId = reset.vendorId;
+      _selectedVendor = reset.vendor;
+      _selectedUserId = reset.userId;
+      _selectedUser = reset.user;
+      _selectedDeliveryBoyId = reset.deliveryBoyId;
+      _selectedDeliveryBoy = reset.deliveryBoy;
+      _selectedSaleSourceId = reset.saleSourceId;
     });
   }
 
-  _AmendmentDiff _amendmentDiff({bool sourceChanged = false}) {
-    final beforeById = <int, Map<String, dynamic>>{};
-    for (final item in _originalItems) {
-      final id = int.tryParse(item['sale_item_id']?.toString() ?? '');
-      if (id != null) beforeById[id] = item;
-    }
-    final afterIds = <int>{};
-    var added = 0;
-    var quantityChanged = 0;
-    var priceChanged = 0;
-    var discountChanged = 0;
-    var packagingChanged = 0;
-    for (final item in _items) {
-      final id = int.tryParse(item['sale_item_id']?.toString() ?? '');
-      if (id == null) {
-        added++;
-        continue;
-      }
-      afterIds.add(id);
-      final old = beforeById[id];
-      if (old == null) {
-        added++;
-        continue;
-      }
-      if ((_editNum(old['quantity']) - _editNum(item['quantity'])).abs() > .0004) {
-        quantityChanged++;
-      }
-      if ((_editNum(old['price']) - _editNum(item['price'])).abs() > .0004) {
-        priceChanged++;
-      }
-      if ((_editNum(old['discount_pct']) -
-                  _editNum(item['discount_pct']))
-              .abs() >
-          .0004 ||
-          (old['discount_type'] ?? 'percentage').toString() !=
-              (item['discount_type'] ?? 'percentage').toString()) {
-        discountChanged++;
-      }
-      final oldPackageId = _metaInt(old['packaging_id']);
-      final newPackageId = _metaInt(item['packaging_id']);
-      if (oldPackageId != newPackageId ||
-          (_editNum(old['packaging_factor_snapshot']) -
-                      _editNum(item['packaging_factor_snapshot']))
-                  .abs() >
-              .0004 ||
-          (_editNum(old['packaging_quantity']) -
-                      _editNum(item['packaging_quantity']))
-                  .abs() >
-              .0004 ||
-          (_editNum(old['packaging_unit_price']) -
-                      _editNum(item['packaging_unit_price']))
-                  .abs() >
-              .0004 ||
-          (old['packaging_name_snapshot'] ?? '').toString() !=
-              (item['packaging_name_snapshot'] ?? '').toString()) {
-        packagingChanged++;
-      }
-    }
-    final removed = beforeById.keys.where((id) => !afterIds.contains(id)).length;
-    return _AmendmentDiff(
-      added: added,
-      removed: removed,
-      quantityChanged: quantityChanged,
-      priceChanged: priceChanged,
-      discountChanged: discountChanged,
-      packagingChanged: packagingChanged,
-      sourceChanged: sourceChanged,
-    );
-  }
-
   Future<void> _submitAmendment() async {
-    if (_editSale == null || widget.editSaleId == null) {
-      AppFeedback.error(context, 'The posted sale is not loaded yet.');
-      return;
-    }
-    final invoiceBranchId = int.tryParse(_selectedBranchId ?? '');
-    final workingBranchId = context.read<BranchProvider>().selectedBranchId;
-    if (invoiceBranchId == null || workingBranchId != invoiceBranchId) {
-      AppFeedback.warning(
-        context,
-        'This invoice belongs to Branch #${invoiceBranchId ?? '-'}.'
-        ' Switch back to that branch before saving this amendment.',
-      );
-      return;
-    }
-    if (_items.isEmpty) {
-      AppFeedback.warning(
-        context,
-        'A posted invoice must keep at least one item. Use the return/void workflow to reverse the entire invoice.',
-      );
-      return;
-    }
-    final quantityViolation = _firstQuantityViolation();
-    if (quantityViolation != null) {
-      AppFeedback.warning(context, quantityViolation);
-      return;
-    }
-
-    double subtotal = 0;
-    for (final item in _items) {
-      subtotal += _cartLineTotal(item);
-    }
-    final discount = _toDouble(discountController);
-    final tax = _toDouble(taxController);
-    final delivery = _toDouble(shippingController);
-    final revisedTotal = subtotal - discount + tax + delivery;
-    if (revisedTotal < -0.004) {
-      AppFeedback.warning(
-        context,
-        'The revised invoice total cannot be negative. Use the return/refund workflow instead.',
-      );
-      return;
-    }
-
-    final sourceChanged =
-        int.tryParse(_editSale!['sale_source_id']?.toString() ?? '') !=
-            _selectedSaleSourceId;
-    final diff = _amendmentDiff(sourceChanged: sourceChanged);
-    final saleLevelChanged =
-        (_editNum(_editSale!['discount']) - discount).abs() > .004 ||
-            (_editNum(_editSale!['tax']) - tax).abs() > .004 ||
-            (_editNum(_editSale!['delivery']) - delivery).abs() > .004 ||
-            int.tryParse(_editSale!['vendor_id']?.toString() ?? '') !=
-                _selectedVendorId ||
-            int.tryParse(_editSale!['salesman_id']?.toString() ?? '') !=
-                _selectedUserId ||
-            int.tryParse(_editSale!['delivery_boy_id']?.toString() ?? '') !=
-                _selectedDeliveryBoyId ||
-            sourceChanged;
-    if (!diff.hasChanges && !saleLevelChanged) {
-      AppFeedback.info(context, 'There are no changes to save.');
-      return;
-    }
-
-    final profit = SaleProfitCalculator.invoice(
-      items: _items,
-      invoiceDiscount: discount,
-      shippingRevenue: delivery,
-      tax: tax,
-    );
-    final pm = context.read<PaymentMethodProvider>();
-    final paymentMethods = pm.activeMethods
-        .map((m) => _AmendmentPaymentMethod(m.method, m.displayName))
-        .toList(growable: false);
-    final decision = await showDialog<_AmendmentReviewDecision>(
+    final success = await SaleAmendmentService.executeAmendment(
       context: context,
-      barrierDismissible: false,
-      builder: (_) => _SaleAmendmentReviewDialog(
-        invoiceNo: (_editSale!['invoice_no'] ?? widget.editSaleId).toString(),
-        revision: _editRevision,
-        originalTotal: _originalTotal,
-        revisedTotal: revisedTotal,
-        netPaid: _existingNetPaid,
-        customerAttached: _selectedCustomerId != null,
-        deliverySale: _selectedDeliveryBoyId != null,
-        diff: diff,
-        profit: context.read<AuthProvider>().hasPermission('view-sale-profit')
-            ? profit
-            : null,
-        paymentMethods: paymentMethods,
-      ),
+      saleService: _saleService,
+      editSaleId: widget.editSaleId,
+      editSale: _editSale,
+      editRevision: _editRevision,
+      originalTotal: _originalTotal,
+      existingNetPaid: _existingNetPaid,
+      selectedBranchId: _selectedBranchId,
+      selectedSaleSourceId: _selectedSaleSourceId,
+      selectedVendorId: _selectedVendorId,
+      selectedUserId: _selectedUserId,
+      selectedDeliveryBoyId: _selectedDeliveryBoyId,
+      selectedCustomerId: _selectedCustomerId,
+      items: _items,
+      originalItems: _originalItems,
+      discount: _toDouble(discountController),
+      tax: _toDouble(taxController),
+      delivery: _toDouble(shippingController),
+      lineTotalCalculator: _cartLineTotal,
+      onSubmittingChanged: (submitting) {
+        if (mounted) setState(() => _submitting = submitting);
+      },
     );
-    if (!mounted || decision == null) return;
-
-    final payload = <String, dynamic>{
-      'expected_revision': _editRevision,
-      'reason': decision.reason,
-      'items': _items.map((item) {
-        final id = int.tryParse(item['sale_item_id']?.toString() ?? '');
-        return <String, dynamic>{
-          if (id != null) 'sale_item_id': id,
-          'product_id': int.tryParse(item['product_id']?.toString() ?? '') ?? 0,
-          'quantity': _editNum(item['quantity']),
-          'price': _editNum(item['price']),
-          'discount_pct': item['packaging_id'] != null &&
-                  (item['discount_type'] ?? 'percentage').toString() == 'fixed'
-              ? (_metaNullableNum(item['packaging_discount_snapshot']) ??
-                  _editNum(item['discount_pct']))
-              : _editNum(item['discount_pct']),
-          'discount_type':
-              (item['discount_type'] ?? 'percentage').toString(),
-          'extra_discount': _editNum(item['extra_discount']),
-          if (item['packaging_id'] != null) ...{
-            'packaging_id': _metaInt(item['packaging_id']),
-            'packaging_name_snapshot': item['packaging_name_snapshot'],
-            'packaging_short_name_snapshot':
-                item['packaging_short_name_snapshot'],
-            'packaging_factor_snapshot':
-                _editNum(item['packaging_factor_snapshot']),
-            'packaging_quantity': _editNum(item['packaging_quantity']),
-            'packaging_unit_price': _editNum(item['packaging_unit_price']),
-            if ((item['discount_type'] ?? 'percentage').toString() == 'fixed')
-              'packaging_discount_snapshot':
-                  _metaNullableNum(item['packaging_discount_snapshot']) ??
-                      _editNum(item['discount_pct']),
-          },
-        };
-      }).toList(growable: false),
-      'discount': discount,
-      'tax': tax,
-      'delivery': delivery,
-      'vendor_id': _selectedVendorId,
-      'salesman_id': _selectedUserId,
-      'delivery_boy_id': _selectedDeliveryBoyId,
-      'sale_source_id': _selectedSaleSourceId,
-      if (decision.settlementAction != 'none')
-        'settlement': <String, dynamic>{
-          'action': decision.settlementAction,
-          'amount': decision.settlementAmount,
-          'method': decision.settlementMethod,
-          if (decision.reference.trim().isNotEmpty)
-            'reference': decision.reference.trim(),
-          'note': 'Sale amendment revision ${_editRevision + 1}',
-        },
-    };
-
-    setState(() => _submitting = true);
-    Object? submitError;
-    Map<String, dynamic>? response;
-    try {
-      try {
-        response = await _saleService
-            .amendSale(widget.editSaleId!, payload)
-            .timeout(const Duration(seconds: 20));
-      } catch (e) {
-        submitError = e;
-      }
-
-      final creditIssue = submitError == null
-          ? null
-          : CreditLimitIssue.fromException(submitError!);
-      if (creditIssue != null) {
-        final auth = context.read<AuthProvider>();
-        if (!creditIssue.canOverride ||
-            !auth.hasPermission('override-party-credit-limit')) {
-          if (mounted) AppFeedback.error(context, creditIssue.summary);
-          return;
-        }
-        final overrideReason = await showCreditLimitOverrideDialog(
-          context,
-          creditIssue,
-        );
-        if (!mounted || overrideReason == null) return;
-        payload['credit_limit_override'] = {'reason': overrideReason};
-        submitError = null;
-        try {
-          response = await _saleService
-              .amendSale(widget.editSaleId!, payload)
-              .timeout(const Duration(seconds: 20));
-        } catch (e) {
-          submitError = e;
-        }
-      }
-
-      if (submitError != null) {
-        final e = submitError!;
-        if (!mounted) return;
-        if (e is ApiException && e.statusCode == 409) {
-          AppFeedback.error(
-            context,
-            'This invoice was changed on another terminal. Your draft was not saved. Reload the invoice before applying it again.',
-          );
-        } else if (e is ApiException) {
-          _applyServerLineErrors(e);
-          AppFeedback.error(context, _describeRejection(e));
-        } else {
-          AppFeedback.error(
-            context,
-            'Sale amendment was not saved. Posted-sale editing requires an online server connection. $e',
-          );
-        }
-        return;
-      }
-
-      if (!mounted) return;
-      final amendment = _mapValue(_mapValue(response?['data'])['amendment']);
-      final revision =
-          amendment['revision_no']?.toString() ?? '${_editRevision + 1}';
-      AppFeedback.success(
-        context,
-        'Sale amended successfully • Revision $revision. Original financial history was preserved.',
-      );
+    if (success && mounted) {
       Navigator.of(context).pop(true);
-    } finally {
-      if (mounted) setState(() => _submitting = false);
     }
   }
 
@@ -1299,69 +751,29 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     }
   }
 
-  Future<bool> _performWalkInCustomerLookup(String phone, String key) async {
-    try {
-      final data = await _saleService.resolveCustomerByPhone(phone);
-      if (!mounted) return false;
-
-      // Ignore a stale response when the cashier changed/cleared the phone or
-      // explicitly selected a different customer while the request was away.
-      if (_selectedCustomerId != null ||
-          CustomerPhoneUtils.compareKey(customerPhoneController.text.trim()) !=
-              key) {
-        return true;
-      }
-      _lastWalkInPhoneLookupKey = key;
-
-      if (data['ambiguous'] == true) {
-        AppFeedback.warning(
-          context,
-          'This phone matches multiple customer records. Resolve the duplicate customers before saving this sale.',
-        );
-        return false;
-      }
-      if (data['archived'] == true) {
-        AppFeedback.warning(
-          context,
-          'An archived customer already uses this phone number. Restore or update that customer before saving.',
-        );
-        return false;
-      }
-
-      final raw = data['customer'];
-      if (raw is Map) {
-        final customer = Map<String, dynamic>.from(raw);
+  Future<bool> _performWalkInCustomerLookup(String phone, String key) {
+    return SaleCustomerLookupService.performLookup(
+      context: context,
+      saleService: _saleService,
+      phone: phone,
+      key: key,
+      isCurrentPhoneValid: () =>
+          _selectedCustomerId == null &&
+          CustomerPhoneUtils.compareKey(customerPhoneController.text.trim()) ==
+              key,
+      onCustomerMatched: (customer) {
+        _lastWalkInPhoneLookupKey = key;
         _applyCustomerSelection(customer);
-        if (!mounted) return false;
-        final type = SalePricing.normalizeCustomerType(customer['customer_type']);
-        final name = [
-          (customer['first_name'] ?? '').toString().trim(),
-          (customer['last_name'] ?? '').toString().trim(),
-        ].where((v) => v.isNotEmpty).join(' ').trim();
-        AppFeedback.info(
-          context,
-          '${name.isEmpty ? 'Existing customer' : name} selected from phone${type == 'retail' ? '' : ' • ${type[0].toUpperCase()}${type.substring(1)}'}.',
-        );
-      }
-      return true;
-    } catch (_) {
-      // No connectivity is not a reason to block sale composition. The exact
-      // same phone resolution/create step runs transactionally on the backend
-      // when an online or queued sale is eventually posted.
-      return true;
-    }
+      },
+    );
   }
 
   /// Opens the full customer browse sheet and returns whatever was picked
   /// (null means "cleared / walk-in"). Used both as the manual "Select
   /// Customer" action and as the autocomplete field's "Browse all" fallback.
-  Future<Map<String, dynamic>?> _openCustomerSheet() async {
+  Future<Map<String, dynamic>?> _openCustomerSheet() {
     final token = Provider.of<AuthProvider>(context, listen: false).token!;
-    return showModalBottomSheet<Map<String, dynamic>?>(
-      context: context,
-      isScrollControlled: true,
-      builder: (_) => CustomerPickerSheet(token: token),
-    );
+    return SalePickerService.openCustomerSheet(context, token: token);
   }
 
   void _applyCustomerSelection(Map<String, dynamic>? customer) {
@@ -1419,13 +831,9 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     });
   }
 
-  Future<Map<String, dynamic>?> _openVendorSheet() async {
+  Future<Map<String, dynamic>?> _openVendorSheet() {
     final token = Provider.of<AuthProvider>(context, listen: false).token!;
-    return showModalBottomSheet<Map<String, dynamic>?>(
-      context: context,
-      isScrollControlled: true,
-      builder: (_) => VendorPickerSheet(token: token),
-    );
+    return SalePickerService.openVendorSheet(context, token: token);
   }
 
   void _applyVendorSelection(Map<String, dynamic>? vendor) {
@@ -1455,12 +863,12 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     return globalBranchId?.toString() ?? _selectedBranchId ?? '';
   }
 
-  Future<Map<String, dynamic>?> _openUserSheet() async {
+  Future<Map<String, dynamic>?> _openUserSheet() {
     final token = Provider.of<AuthProvider>(context, listen: false).token!;
-    return showModalBottomSheet<Map<String, dynamic>?>(
-      context: context,
-      isScrollControlled: true,
-      builder: (_) => UserPickerSheet(token: token, branchId: _effectiveBranchIdStr()),
+    return SalePickerService.openUserSheet(
+      context,
+      token: token,
+      branchId: _effectiveBranchIdStr(),
     );
   }
 
@@ -1478,19 +886,12 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     _applyUserSelection(user);
   }
 
-  Future<Map<String, dynamic>?> _openDeliveryBoySheet() async {
+  Future<Map<String, dynamic>?> _openDeliveryBoySheet() {
     final token = Provider.of<AuthProvider>(context, listen: false).token!;
-    return showModalBottomSheet<Map<String, dynamic>?>(
-      context: context,
-      isScrollControlled: true,
-      builder: (_) => UserPickerSheet(
-        token: token,
-        branchId: _effectiveBranchIdStr(),
-        role: 'delivery',
-        title: 'Select Delivery Boy',
-        searchHint: 'Search delivery boy by name, email, phone…',
-        allowQuickAdd: false,
-      ),
+    return SalePickerService.openDeliveryBoySheet(
+      context,
+      token: token,
+      branchId: _effectiveBranchIdStr(),
     );
   }
 
@@ -1521,213 +922,37 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
   ///
   /// Call inside setState — does NOT call setState itself.
   void _addOrIncrementProduct(Map<String, dynamic> product) {
-    final productId = int.tryParse(product['id']?.toString() ?? '') ?? 0;
-    if (productId == 0) return;
-    final pickerAddQty =
-        double.tryParse(product['_picker_add_qty']?.toString() ?? '');
-    final addQty = pickerAddQty != null && pickerAddQty > 0 ? pickerAddQty : 1.0;
-
-    final price = SalePricing.effectiveProductPrice(
-      product,
+    SaleCartMutator.addOrIncrementProduct(
+      items: _items,
+      product: product,
       customerType: _selectedCustomerType,
     );
-    final profitCostFields =
-        SaleProfitCalculator.costFieldsFromProduct(product);
-
-    final idx = _items.indexWhere((it) {
-      final existingId =
-          int.tryParse(it['product_id']?.toString() ?? '') ?? 0;
-      if (existingId != productId) return false;
-      // Do not merge into inline-return rows or a packaged line. A base
-      // Piece and a Box/Carton of the same product are separate transaction
-      // identities even though both ultimately post base-unit stock.
-      if (it['packaging_id'] != null) return false;
-      final existingQty =
-          double.tryParse(it['quantity']?.toString() ?? '') ?? 0.0;
-      return existingQty >= 0;
-    });
-
-    if (idx != -1) {
-      // Increment quantity while preserving edited price, discount, and type.
-      final existingQty =
-          double.tryParse(_items[idx]['quantity']?.toString() ?? '') ?? 0.0;
-      final newQty = existingQty + addQty;
-      final discPct =
-          double.tryParse(_items[idx]['discount_pct']?.toString() ?? '') ?? 0.0;
-      final rowDiscType =
-          (_items[idx]['discount_type'] ?? 'percentage').toString();
-      final rowPrice =
-          double.tryParse(_items[idx]['price']?.toString() ?? '') ?? price;
-      _items[idx]['quantity'] = newQty;
-      _items[idx].addAll(profitCostFields);
-      _items[idx].addAll(ProductStock.toTransactionRowFields(product));
-      _items[idx]['product_vendor_id'] =
-          int.tryParse(product['vendor_id']?.toString() ?? '');
-      final productVendorName = (product['vendor_name'] ?? '').toString().trim();
-      _items[idx]['product_vendor_name'] =
-          productVendorName.isEmpty ? null : productVendorName;
-      if ((product['secondary_name'] ?? '').toString().trim().isNotEmpty) {
-        _items[idx]['secondary_name'] = product['secondary_name'];
-      }
-      _items[idx]['total'] =
-          _lineTotal(price: rowPrice, qty: newQty, discPct: discPct, discountType: rowDiscType);
-    } else {
-      final scanDiscPct  = double.tryParse(product['discount']?.toString() ?? '') ?? 0.0;
-      final scanDiscType = (product['discount_type'] ?? 'percentage').toString();
-      _items.add({
-        'product_id': productId,
-        'product_vendor_id': int.tryParse(product['vendor_id']?.toString() ?? ''),
-        'product_vendor_name': (product['vendor_name'] ?? '').toString().trim().isEmpty
-            ? null
-            : (product['vendor_name'] ?? '').toString().trim(),
-        'name': product['name'],
-        'secondary_name': product['secondary_name'],
-        'cost_price': product['cost_price'],
-        'wholesale_price': product['wholesale_price'],
-        ...profitCostFields,
-        ...ProductStock.toTransactionRowFields(product),
-        'quantity': addQty,
-        'price': price,
-        'discount_pct': scanDiscPct,
-        'discount_type': scanDiscType,
-        'total': _lineTotal(price: price, qty: addQty, discPct: scanDiscPct, discountType: scanDiscType),
-        // Keep packaging choices locally so this line can switch selling
-        // unit without another network request (also required offline).
-        'packagings': product['packagings'],
-        // Stamp the quantity contract onto the line — the product map this
-        // came from (search hit, scan lookup, cache row) is not kept.
-        ...QuantityRule.fromProduct(product).toRowFields(),
-      });
-    }
   }
 
-  /// Sets a product's cart quantity to an explicit [qty] value (used only by
-  /// the F2 multi-select picker where the user has intentionally specified the
-  /// quantity). Preserves the existing row's price and discount when updating.
-  ///
-  /// For all single-product entry points (barcode, autocomplete, product-panel
-  /// tap) use [_addOrIncrementProduct] instead.
-  ///
   /// Call inside setState — does NOT call setState itself.
   void _applyPickedProduct(Map<String, dynamic> product, {double qty = 1.0}) {
-    final productId = int.tryParse(product['id']?.toString() ?? '') ?? 0;
-    if (productId == 0) return;
-
-    final price = SalePricing.effectiveProductPrice(
-      product,
+    SaleCartMutator.applyPickedProduct(
+      items: _items,
+      product: product,
+      qty: qty,
       customerType: _selectedCustomerType,
     );
-    final profitCostFields =
-        SaleProfitCalculator.costFieldsFromProduct(product);
-
-    final idx = _items.indexWhere((it) {
-      if ((int.tryParse(it["product_id"].toString()) ?? 0) != productId) {
-        return false;
-      }
-      if (it['packaging_id'] != null) return false;
-      return (double.tryParse(it['quantity']?.toString() ?? '') ?? 0) >= 0;
-    });
-
-    if (idx != -1) {
-      _items[idx]["quantity"] = qty;
-      _items[idx].addAll(profitCostFields);
-      _items[idx].addAll(ProductStock.toTransactionRowFields(product));
-      _items[idx]['product_vendor_id'] =
-          int.tryParse(product['vendor_id']?.toString() ?? '');
-      final productVendorName = (product['vendor_name'] ?? '').toString().trim();
-      _items[idx]['product_vendor_name'] =
-          productVendorName.isEmpty ? null : productVendorName;
-      if ((product['secondary_name'] ?? '').toString().trim().isNotEmpty) {
-        _items[idx]['secondary_name'] = product['secondary_name'];
-      }
-      final discPct =
-          double.tryParse(_items[idx]["discount_pct"]?.toString() ?? '') ?? 0.0;
-      final existingDiscType =
-          (_items[idx]["discount_type"] ?? 'percentage').toString();
-      final rowPrice =
-          double.tryParse(_items[idx]["price"]?.toString() ?? '') ?? price;
-      _items[idx]["total"] = _lineTotal(price: rowPrice, qty: qty, discPct: discPct, discountType: existingDiscType);
-      // Refresh the rule too: the picker may know the unit for a line that was
-      // added before the unit was known (e.g. from a stale cache row).
-      _items[idx].addAll(QuantityRule.fromProduct(product).toRowFields());
-    } else {
-      final pickDiscPct  = double.tryParse(product['discount']?.toString() ?? '') ?? 0.0;
-      final pickDiscType = (product['discount_type'] ?? 'percentage').toString();
-      _items.add({
-        "product_id": productId,
-        "product_vendor_id": int.tryParse(product['vendor_id']?.toString() ?? ''),
-        "product_vendor_name": (product['vendor_name'] ?? '').toString().trim().isEmpty
-            ? null
-            : (product['vendor_name'] ?? '').toString().trim(),
-        "name": product['name'],
-        "secondary_name": product['secondary_name'],
-        "cost_price": product['cost_price'],
-        "wholesale_price": product['wholesale_price'],
-        ...profitCostFields,
-        ...ProductStock.toTransactionRowFields(product),
-        "quantity": qty,
-        "price": price,
-        "discount_pct": pickDiscPct,
-        "discount_type": pickDiscType,
-        "total": _lineTotal(price: price, qty: qty, discPct: pickDiscPct, discountType: pickDiscType),
-        'packagings': product['packagings'],
-        ...QuantityRule.fromProduct(product).toRowFields(),
-      });
-    }
   }
 
   Future<void> _addItemManual() async {
     final auth = context.read<AuthProvider>();
     final branch = context.read<BranchProvider>();
-    if (auth.isMasterAdmin && !branch.hasActiveBranch) {
-      AppFeedback.warning(context, 'Please select a working branch from Branch Control before selecting items.');
-      return;
-    }
-    final token = Provider.of<AuthProvider>(context, listen: false).token!;
-    // ✅ Already selected products in cart/items (for preselect)
-    final baseRows = _items
-        .where((it) => it['packaging_id'] == null && _metaNum(it['quantity']) >= 0)
-        .toList(growable: false);
-    final alreadySelectedIds = baseRows
-        .map((e) => int.tryParse(e["product_id"].toString()) ?? 0)
-        .where((id) => id > 0)
-        .toList();
-
-    // F2 edits the base-unit row only. A Box/Carton row for the same product
-    // must never pre-fill or overwrite this picker quantity.
-    final alreadySelectedQty = <int, double>{
-      for (final it in baseRows)
-        (int.tryParse(it["product_id"].toString()) ?? 0):
-            (double.tryParse(it["quantity"].toString()) ?? 1.0),
-    }..removeWhere((k, _) => k == 0);
-
-    final picked = await ProductPickerGridSheet.openMulti(
-      context,
-      token: token,
+    final picked = await SalePickerService.openMultiProductPicker(
+      context: context,
+      token: auth.token!,
+      items: _items,
       vendorId: _selectedVendorId,
       customerType: _selectedCustomerType,
-      alreadySelectedIds: alreadySelectedIds,
-      alreadySelectedQty: alreadySelectedQty,
-      alreadySelectedProducts: baseRows.map((item) {
-        return {
-          'id': item['product_id'],
-          'name': item['name'],
-          'secondary_name': item['secondary_name'],
-          'price': item['price'],
-          'cost_price': item['cost_price'],
-          'wholesale_price': item['wholesale_price'],
-          SaleProfitCalculator.unitCostKey:
-              item[SaleProfitCalculator.unitCostKey],
-          SaleProfitCalculator.estimatedKey:
-              item[SaleProfitCalculator.estimatedKey],
-          SaleProfitCalculator.sourceKey:
-              item[SaleProfitCalculator.sourceKey],
-          ...ProductStock.toTransactionRowFields(item),
-        };
-      }).toList(),
+      isMasterAdmin: auth.isMasterAdmin,
+      hasActiveBranch: branch.hasActiveBranch,
     );
 
-    if (picked == null || picked.isEmpty) return;
+    if (picked == null || picked.isEmpty || !mounted) return;
 
     setState(() {
       for (final x in picked) {
@@ -1739,710 +964,48 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     });
   }
 
-  double _roundTo(double value, int scale) {
-    var factor = 1.0;
-    for (var i = 0; i < scale; i++) {
-      factor *= 10;
-    }
-    return (value * factor).roundToDouble() / factor;
-  }
-
-  String _compactNumber(num value, {int scale = 4}) {
-    if (QuantityRule.isWhole(value)) return value.toInt().toString();
-    var text = value.toDouble().toStringAsFixed(scale);
-    text = text.replaceFirst(RegExp(r'0+$'), '');
-    return text.endsWith('.') ? text.substring(0, text.length - 1) : text;
-  }
-
-  List<ProductPackaging> _activePackagings(Map<String, dynamic> item) {
-    final values = ProductPackaging.listFromJson(item['packagings'])
-        .where((p) => p.id != null && p.isActive && p.baseQuantity > 0)
-        .toList(growable: false);
-    values.sort((a, b) {
-      final order = a.sortOrder.compareTo(b.sortOrder);
-      if (order != 0) return order;
-      return a.name.toLowerCase().compareTo(b.name.toLowerCase());
-    });
-    return values;
-  }
-
-  ProductPackaging? _snapshotPackaging(Map<String, dynamic> item) {
-    final id = _metaInt(item['packaging_id']);
-    final factor = _metaNum(item['packaging_factor_snapshot']);
-    final name = (item['packaging_name_snapshot'] ?? '').toString().trim();
-    if (id == null || factor <= 0 || name.isEmpty) return null;
-    return ProductPackaging(
-      id: id,
-      name: name,
-      shortName: (item['packaging_short_name_snapshot'] ?? '')
-              .toString()
-              .trim()
-              .isEmpty
-          ? null
-          : item['packaging_short_name_snapshot'].toString().trim(),
-      baseQuantity: factor,
-      retailPrice: _metaNullableNum(item['packaging_unit_price']),
-      isActive: true,
-    );
-  }
-
-  double? _metaNullableNum(dynamic value) {
-    if (value == null) return null;
-    if (value is num) return value.toDouble();
-    return double.tryParse(value.toString());
-  }
-
-  String _packagingDisplayLabel(
-    ProductPackaging packaging,
-    QuantityRule rule,
-  ) {
-    final unit = rule.unitName.trim().isEmpty ? 'base unit' : rule.unitName.trim();
-    final short = (packaging.shortName ?? '').trim();
-    final title = short.isEmpty || short.toLowerCase() == packaging.name.toLowerCase()
-        ? packaging.name
-        : '${packaging.name} ($short)';
-    return '$title = ${_compactNumber(packaging.baseQuantity)} $unit';
-  }
-
   void _changeSellingUnitQuick(int index, int? packagingId) {
-    if (index < 0 || index >= _items.length) return;
-    final current = Map<String, dynamic>.from(_items[index]);
-    final currentPackagingId = _metaInt(current['packaging_id']);
-    if ((packagingId == null && currentPackagingId == null) ||
-        (packagingId != null && currentPackagingId == packagingId)) {
-      return;
-    }
-
-    // Existing posted package snapshots are intentionally edited through the
-    // advanced amendment flow so historical conversion rules remain visible.
-    if (_isEditing && current['sale_item_id'] != null) {
-      // This callback can originate from PopupMenuButton.onSelected. Pushing a
-      // dialog while the popup route is still reversing can strand its modal
-      // barrier on Windows (dim screen, no clickable dialog). Defer only the
-      // posted-amendment editor; normal sale unit switching stays immediate.
-      Future<void>.delayed(const Duration(milliseconds: 350), () {
-        if (!mounted || index < 0 || index >= _items.length) return;
-        _editItem(index);
-      });
-      return;
-    }
-
-    final rule = QuantityRule.fromProduct(current);
-    final wasPackaged = current['packaging_id'] != null;
-    final displayedQty = wasPackaged
-        ? (_metaNullableNum(current['packaging_quantity']) ?? 0)
-        : _metaNum(current['quantity']);
-    final discountType =
-        (current['discount_type'] ?? 'percentage').toString();
-    final displayedDiscount = discountType == 'fixed' && wasPackaged
-        ? (_metaNullableNum(current['packaging_discount_snapshot']) ??
-            _metaNum(current['discount_pct']) *
-                _metaNum(current['packaging_factor_snapshot']))
-        : _metaNum(current['discount_pct']);
-
-    if (packagingId == null) {
-      if (!rule.allows(displayedQty)) {
-        AppFeedback.warning(context, rule.message);
-        return;
-      }
-      final next = Map<String, dynamic>.from(current);
-      next['quantity'] = _roundTo(displayedQty, 3);
-      next['price'] = SalePricing.effectiveProductPrice(
-        current,
-        customerType: _selectedCustomerType,
-      );
-      next['discount_pct'] = displayedDiscount;
-      next.remove('packaging_id');
-      next.remove('packaging_name_snapshot');
-      next.remove('packaging_short_name_snapshot');
-      next.remove('packaging_factor_snapshot');
-      next.remove('packaging_quantity');
-      next.remove('packaging_unit_price');
-      next.remove('packaging_discount_snapshot');
-      next['total'] = _cartLineTotal(next);
-      setState(() => _items[index] = next);
-      return;
-    }
-
-    ProductPackaging? selected;
-    for (final packaging in _activePackagings(current)) {
-      if (packaging.id == packagingId) {
-        selected = packaging;
-        break;
-      }
-    }
-    if (selected == null) {
-      AppFeedback.warning(
-        context,
-        'That packaging is no longer available. Refresh the product and try again.',
-      );
-      return;
-    }
-    if (displayedQty <= 0 || !QuantityRule.isWhole(displayedQty)) {
-      final unitLabel = rule.unitName.trim().isEmpty
-          ? 'the base unit'
-          : rule.unitName.trim();
-      AppFeedback.warning(
-        context,
-        'Package quantity must be a positive whole number. Use $unitLabel for loose quantity.',
-      );
-      return;
-    }
-
-    final factor = selected.baseQuantity;
-    final baseQty = _roundTo(displayedQty * factor, 3);
-    if (!rule.allows(baseQty)) {
-      AppFeedback.warning(context, rule.message);
-      return;
-    }
-    final packagePrice = SalePricing.effectivePackagingPrice(
-      current,
-      selected,
+    final next = SaleUnitConversionService.changeSellingUnitQuick(
+      context: context,
+      items: _items,
+      index: index,
+      packagingId: packagingId,
+      isEditing: _isEditing,
       customerType: _selectedCustomerType,
+      onEditDeferred: _editItem,
+      calculateCartLineTotal: _cartLineTotal,
     );
-    var nextDiscount = displayedDiscount;
-    if ((discountType == 'percentage' && nextDiscount > 100) ||
-        (discountType == 'fixed' && nextDiscount > packagePrice + 0.0004)) {
-      nextDiscount = 0;
-      AppFeedback.info(
-        context,
-        'The previous discount was not valid for the selected selling unit, so it was reset to 0.',
-      );
+    if (next != null) {
+      setState(() => _items[index] = next);
     }
-
-    final next = Map<String, dynamic>.from(current);
-    next['quantity'] = baseQty;
-    next['price'] = _roundTo(packagePrice / factor, 4);
-    next['discount_type'] = discountType;
-    if (discountType == 'fixed') {
-      next['discount_pct'] = _roundTo(nextDiscount / factor, 4);
-      next['packaging_discount_snapshot'] = _roundTo(nextDiscount, 4);
-    } else {
-      next['discount_pct'] = nextDiscount;
-      next.remove('packaging_discount_snapshot');
-    }
-    next['packaging_id'] = selected.id;
-    next['packaging_name_snapshot'] = selected.name;
-    final short = (selected.shortName ?? '').trim();
-    if (short.isEmpty) {
-      next.remove('packaging_short_name_snapshot');
-    } else {
-      next['packaging_short_name_snapshot'] = short;
-    }
-    next['packaging_factor_snapshot'] = factor;
-    next['packaging_quantity'] = displayedQty;
-    next['packaging_unit_price'] = packagePrice;
-    next['total'] = _cartLineTotal(next);
-    setState(() => _items[index] = next);
   }
 
-  void _editItem(int index) {
+  Future<void> _editItem(int index) async {
     if (!mounted || index < 0 || index >= _items.length || _itemEditorOpen) {
       return;
     }
-    final item = _items[index];
-    final rule = QuantityRule.fromProduct(item);
-    final existingSnapshot = _snapshotPackaging(item);
-    final existingPackageId = _metaInt(item['packaging_id']);
-    final isExistingPostedPackage =
-        _isEditing && item['sale_item_id'] != null && existingPackageId != null;
-
-    final active = _activePackagings(item);
-    final options = <String, ProductPackaging?>{'base': null};
-    if (existingSnapshot != null) {
-      options['snapshot'] = existingSnapshot;
-    }
-    for (final package in active) {
-      // A posted historical package keeps its original conversion. If today's
-      // row with the same ID changed, the amendment backend intentionally does
-      // not let that old line morph into the new conversion; it must be added
-      // as a separate line instead.
-      if (existingPackageId != null && package.id == existingPackageId) {
-        continue;
-      }
-      options['package:${package.id}'] = package;
-    }
-
-    var selectedKey = existingSnapshot != null ? 'snapshot' : 'base';
-    final initialQty = existingSnapshot == null
-        ? _metaNum(item['quantity'])
-        : (_metaNullableNum(item['packaging_quantity']) ??
-            (_metaNum(item['quantity']) / existingSnapshot.baseQuantity));
-    final initialPrice = existingSnapshot == null
-        ? _metaNum(item['price'])
-        : (_metaNullableNum(item['packaging_unit_price']) ??
-            (_metaNum(item['price']) * existingSnapshot.baseQuantity));
-    final qtyController = TextEditingController(
-      text: _compactNumber(initialQty),
-    );
-    final priceController = TextEditingController(
-      text: _compactNumber(initialPrice),
-    );
-    var discountType = (item['discount_type'] ?? 'percentage').toString();
-    final initialDiscount = discountType == 'fixed' && existingSnapshot != null
-        ? (_metaNullableNum(item['packaging_discount_snapshot']) ??
-            _metaNum(item['discount_pct']) * existingSnapshot.baseQuantity)
-        : _metaNum(item['discount_pct']);
-    final discountController = TextEditingController(
-      text: _compactNumber(initialDiscount),
-    );
-
-    final costPrice = item['cost_price'] ?? 0.0;
-    final wholesalePrice = item['wholesale_price'] ?? 0.0;
-    bool showHidden = false;
-    String? qtyError;
-    String? priceError;
-    String? discountError;
-
     _itemEditorOpen = true;
-    showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => StatefulBuilder(
-        builder: (context, setLocal) {
-          final selectedPackaging = options[selectedKey];
-          final packageMode = selectedPackaging != null;
-          final unitLabel = rule.unitName.trim().isEmpty
-              ? 'Base Unit'
-              : rule.unitName.trim();
-
-          void selectSellingUnit(String? nextKey) {
-            if (nextKey == null || nextKey == selectedKey) return;
-            final currentPackaging = options[selectedKey];
-            final enteredQty = double.tryParse(qtyController.text.trim()) ?? 0;
-            final currentBaseQty = currentPackaging == null
-                ? enteredQty
-                : enteredQty * currentPackaging.baseQuantity;
-            final next = options[nextKey];
-
-            selectedKey = nextKey;
-            qtyError = null;
-            priceError = null;
-            discountError = null;
-
-            // New-sale UX treats Qty as the cashier's entered count: changing
-            // 2 Piece -> Box means 2 Box. Posted amendment lines preserve the
-            // base-equivalent quantity so historical edits cannot silently
-            // reinterpret already-posted inventory.
-            if (isExistingPostedPackage) {
-              qtyController.text = _compactNumber(
-                next == null
-                    ? _roundTo(currentBaseQty, 3)
-                    : _roundTo(currentBaseQty / next.baseQuantity, 4),
-              );
-              if (discountType == 'fixed') {
-                final enteredDiscount =
-                    double.tryParse(discountController.text.trim()) ?? 0;
-                final baseDiscount = currentPackaging == null
-                    ? enteredDiscount
-                    : enteredDiscount / currentPackaging.baseQuantity;
-                discountController.text = _compactNumber(
-                  next == null
-                      ? baseDiscount
-                      : baseDiscount * next.baseQuantity,
-                );
-              }
-            } else {
-              qtyController.text = _compactNumber(enteredQty);
-            }
-
-            if (next == null) {
-              priceController.text = _compactNumber(
-                SalePricing.effectiveProductPrice(
-                  item,
-                  customerType: _selectedCustomerType,
-                ),
-              );
-            } else {
-              priceController.text = _compactNumber(
-                SalePricing.effectivePackagingPrice(
-                  item,
-                  next,
-                  customerType: _selectedCustomerType,
-                ),
-              );
-            }
-          }
-
-          // AlertDialog uses intrinsic sizing. Keep its content width explicit
-          // and do not place LayoutBuilder inside the dialog content: on
-          // Windows that combination can push the modal barrier successfully
-          // but fail while measuring the dialog, leaving a dimmed/untouchable
-          // screen with no visible editor. MediaQuery is safe here because it
-          // does not participate in intrinsic layout.
-          final dialogContentWidth = (MediaQuery.sizeOf(context).width - 96)
-              .clamp(320.0, 560.0)
-              .toDouble();
-
-          return AlertDialog(
-            title: Text("Edit ${item['name']}"),
-            content: SizedBox(
-              width: dialogContentWidth,
-              child: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    InputDecorator(
-                      decoration: const InputDecoration(
-                        labelText: 'Selling Unit',
-                        helperText: 'Select the selling unit for this line.',
-                      ),
-                      child: Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: options.entries.map((entry) {
-                          final package = entry.value;
-                          final historical = entry.key == 'snapshot' &&
-                              isExistingPostedPackage;
-                          final label = package == null
-                              ? unitLabel
-                              : '${_packagingDisplayLabel(package, rule)}${historical ? ' • invoice snapshot' : ''}';
-                          return ChoiceChip(
-                            label: Text(label),
-                            selected: selectedKey == entry.key,
-                            onSelected: (selected) {
-                              if (!selected) return;
-                              setLocal(() => selectSellingUnit(entry.key));
-                            },
-                          );
-                        }).toList(growable: false),
-                      ),
-                    ),
-                    if (isExistingPostedPackage) ...[
-                      const SizedBox(height: 8),
-                      const Align(
-                        alignment: Alignment.centerLeft,
-                        child: Text(
-                          'This posted line keeps its original package conversion. If the current package changed, add it as a new line instead.',
-                          style: TextStyle(fontSize: 12, color: Colors.grey),
-                        ),
-                      ),
-                    ],
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: qtyController,
-                      keyboardType: TextInputType.numberWithOptions(
-                        decimal: !packageMode && rule.allowDecimal,
-                        signed: !packageMode,
-                      ),
-                      onChanged: (v) {
-                        setLocal(() {
-                          final parsed = double.tryParse(v.trim());
-                          if (v.trim().isEmpty) {
-                            qtyError = null;
-                          } else if (parsed == null) {
-                            qtyError = 'Enter a valid quantity.';
-                          } else if (packageMode) {
-                            qtyError = parsed <= 0
-                                ? 'Package quantity must be greater than zero.'
-                                : (!QuantityRule.isWhole(parsed)
-                                    ? 'Package quantity must be a whole number. Use $unitLabel for loose quantity.'
-                                    : (rule.allows(parsed * selectedPackaging!.baseQuantity)
-                                        ? null
-                                        : rule.message));
-                          } else {
-                            qtyError = rule.validateText(v);
-                          }
-                        });
-                      },
-                      decoration: InputDecoration(
-                        labelText: packageMode
-                            ? '${selectedPackaging!.shortName ?? selectedPackaging.name} Quantity'
-                            : 'Quantity',
-                        helperText: packageMode
-                            ? 'Whole packages only • ${_packagingDisplayLabel(selectedPackaging!, rule)}'
-                            : (rule.allowDecimal
-                                ? null
-                                : 'Whole numbers only${rule.unitName.isEmpty ? '' : ' (${rule.unitName})'}'),
-                        errorText: qtyError,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: priceController,
-                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                      onChanged: (v) => setLocal(() {
-                        final parsed = double.tryParse(v.trim());
-                        priceError = v.trim().isEmpty || parsed == null
-                            ? 'Enter a valid sale price.'
-                            : (parsed < 0 ? 'Sale price cannot be negative.' : null);
-                      }),
-                      decoration: InputDecoration(
-                        labelText: packageMode
-                            ? 'Price per ${selectedPackaging!.shortName ?? selectedPackaging.name}'
-                            : 'Sale Price per $unitLabel',
-                        errorText: priceError,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Builder(
-                      builder: (context) {
-                        Widget buildDiscountField() => TextField(
-                              controller: discountController,
-                              keyboardType: const TextInputType.numberWithOptions(
-                                decimal: true,
-                              ),
-                              onChanged: (v) => setLocal(() {
-                                final parsed = double.tryParse(v.trim());
-                                final currentPrice =
-                                    double.tryParse(priceController.text.trim()) ?? 0;
-                                if (v.trim().isEmpty || parsed == null) {
-                                  discountError = 'Enter a valid discount.';
-                                } else if (parsed < 0) {
-                                  discountError = 'Discount cannot be negative.';
-                                } else if (discountType == 'percentage' &&
-                                    parsed > 100) {
-                                  discountError =
-                                      'Percentage discount cannot exceed 100%.';
-                                } else if (discountType == 'fixed' &&
-                                    parsed > currentPrice + 0.0004) {
-                                  discountError =
-                                      'Fixed discount cannot exceed the sale price.';
-                                } else {
-                                  discountError = null;
-                                }
-                              }),
-                              decoration: InputDecoration(
-                                labelText: discountType == 'fixed'
-                                    ? (packageMode
-                                        ? 'Discount per ${selectedPackaging!.shortName ?? selectedPackaging.name}'
-                                        : 'Discount per $unitLabel')
-                                    : 'Discount %',
-                                errorText: discountError,
-                              ),
-                            );
-
-                        Widget buildDiscountTypeField() => InputDecorator(
-                              decoration: const InputDecoration(
-                                labelText: 'Discount Type',
-                              ),
-                              child: Wrap(
-                                spacing: 8,
-                                runSpacing: 8,
-                                children: const <MapEntry<String, String>>[
-                                  MapEntry('percentage', 'Percentage'),
-                                  MapEntry('fixed', 'Fixed'),
-                                ].map((option) {
-                                  final value = option.key;
-                                  return ChoiceChip(
-                                    label: Text(option.value),
-                                    selected: discountType == value,
-                                    onSelected: (selected) {
-                                      if (!selected) return;
-                                      setLocal(() {
-                                        discountType = value;
-                                        final parsed = double.tryParse(
-                                              discountController.text.trim(),
-                                            ) ??
-                                            0;
-                                        final currentPrice = double.tryParse(
-                                              priceController.text.trim(),
-                                            ) ??
-                                            0;
-                                        if ((value == 'percentage' && parsed > 100) ||
-                                            (value == 'fixed' &&
-                                                parsed > currentPrice + 0.0004)) {
-                                          discountController.text = '0';
-                                        }
-                                        discountError = null;
-                                      });
-                                    },
-                                  );
-                                }).toList(growable: false),
-                              ),
-                            );
-
-                        if (dialogContentWidth < 430) {
-                          return Column(
-                            children: [
-                              buildDiscountField(),
-                              const SizedBox(height: 12),
-                              buildDiscountTypeField(),
-                            ],
-                          );
-                        }
-                        return Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Expanded(flex: 3, child: buildDiscountField()),
-                            const SizedBox(width: 12),
-                            Expanded(flex: 2, child: buildDiscountTypeField()),
-                          ],
-                        );
-                      },
-                    ),
-                    if (packageMode) ...[
-                      const SizedBox(height: 8),
-                      Align(
-                        alignment: Alignment.centerLeft,
-                        child: Text(
-                          'Stock / COGS equivalent: ${_compactNumber(_roundTo((double.tryParse(qtyController.text.trim()) ?? 0) * selectedPackaging!.baseQuantity, 3))} $unitLabel',
-                          style: const TextStyle(fontSize: 12, color: Colors.grey),
-                        ),
-                      ),
-                    ],
-                    const SizedBox(height: 12),
-                    TextButton.icon(
-                      icon: Icon(
-                        showHidden ? Icons.visibility_off : Icons.visibility,
-                      ),
-                      label: Text(
-                        showHidden ? 'Hide Cost/Wholesale' : 'Show Cost/Wholesale',
-                      ),
-                      onPressed: () => setLocal(() => showHidden = !showHidden),
-                    ),
-                    if (showHidden) ...[
-                      const Divider(),
-                      Align(
-                        alignment: Alignment.centerLeft,
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Base Cost: ${AppCurrency.format(costPrice)} / $unitLabel',
-                              style: const TextStyle(color: Colors.grey),
-                            ),
-                            Text(
-                              'Base Wholesale: ${AppCurrency.format(wholesalePrice)} / $unitLabel',
-                              style: const TextStyle(color: Colors.grey),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('Cancel'),
-              ),
-              ElevatedButton(
-                onPressed: () {
-                  final qty = double.tryParse(qtyController.text.trim());
-                  final price = double.tryParse(priceController.text.trim());
-                  final discount =
-                      double.tryParse(discountController.text.trim());
-                  final package = options[selectedKey];
-                  if (qty == null) {
-                    setLocal(() => qtyError = 'Enter a valid quantity.');
-                    return;
-                  }
-                  if (price == null || price < 0) {
-                    setLocal(() => priceError = price == null
-                        ? 'Enter a valid sale price.'
-                        : 'Sale price cannot be negative.');
-                    return;
-                  }
-                  if (discount == null || discount < 0 ||
-                      (discountType == 'percentage' && discount > 100) ||
-                      (discountType == 'fixed' && discount > price + .0004)) {
-                    setLocal(() {
-                      if (discount == null) {
-                        discountError = 'Enter a valid discount.';
-                      } else if (discount < 0) {
-                        discountError = 'Discount cannot be negative.';
-                      } else if (discountType == 'percentage') {
-                        discountError = 'Percentage discount cannot exceed 100%.';
-                      } else {
-                        discountError = 'Fixed discount cannot exceed the sale price.';
-                      }
-                    });
-                    return;
-                  }
-
-                  if (package == null) {
-                    final error = rule.validateText(qtyController.text);
-                    if (error != null) {
-                      setLocal(() => qtyError = error);
-                      return;
-                    }
-                    setState(() {
-                      final row = _items[index];
-                      row['quantity'] = qty;
-                      row['price'] = price;
-                      row['discount_type'] = discountType;
-                      row['discount_pct'] = discount;
-                      row.remove('packaging_id');
-                      row.remove('packaging_name_snapshot');
-                      row.remove('packaging_short_name_snapshot');
-                      row.remove('packaging_factor_snapshot');
-                      row.remove('packaging_quantity');
-                      row.remove('packaging_unit_price');
-                      row.remove('packaging_discount_snapshot');
-                      row['total'] = _cartLineTotal(row);
-                    });
-                    Navigator.pop(context);
-                    return;
-                  }
-
-                  if (qty <= 0 || !QuantityRule.isWhole(qty)) {
-                    setLocal(() => qtyError = qty <= 0
-                        ? 'Package quantity must be greater than zero.'
-                        : 'Package quantity must be a whole number. Use $unitLabel for loose quantity.');
-                    return;
-                  }
-                  final baseQty = _roundTo(qty * package.baseQuantity, 3);
-                  if (!rule.allows(baseQty)) {
-                    setLocal(() => qtyError = rule.message);
-                    return;
-                  }
-
-                  setState(() {
-                    final row = _items[index];
-                    row['discount_type'] = discountType;
-                    final packageFixedDiscount =
-                        discountType == 'fixed' ? discount : null;
-
-                    row['quantity'] = baseQty;
-                    // Keep the historical sale-item price contract in base-unit
-                    // terms. Exact packaged revenue comes from the immutable
-                    // package qty/price snapshot below.
-                    row['price'] = _roundTo(price / package.baseQuantity, 4);
-                    if (discountType == 'fixed') {
-                      row['discount_pct'] = _roundTo(
-                        (packageFixedDiscount ?? 0) / package.baseQuantity,
-                        4,
-                      );
-                      row['packaging_discount_snapshot'] =
-                          _roundTo(packageFixedDiscount ?? 0, 4);
-                    } else {
-                      row.remove('packaging_discount_snapshot');
-                    }
-                    row['packaging_id'] = package.id;
-                    row['packaging_name_snapshot'] = package.name;
-                    if ((package.shortName ?? '').trim().isEmpty) {
-                      row.remove('packaging_short_name_snapshot');
-                    } else {
-                      row['packaging_short_name_snapshot'] =
-                          package.shortName!.trim();
-                    }
-                    row['packaging_factor_snapshot'] = package.baseQuantity;
-                    row['packaging_quantity'] = qty;
-                    row['packaging_unit_price'] = price;
-                    row['total'] = _cartLineTotal(row);
-                  });
-                  Navigator.pop(context);
-                },
-                child: const Text('Save'),
-              ),
-            ],
-          );
-        },
-      ),
-    ).whenComplete(() {
-      // Route futures complete before the final reverse-transition frames can
-      // disappear on Windows. Keep controllers alive until that barrier has
-      // fully settled, and do not allow a second item editor to stack on top.
-      Future<void>.delayed(const Duration(milliseconds: 350), () {
-        qtyController.dispose();
-        priceController.dispose();
-        discountController.dispose();
+    try {
+      final updatedRow = await showDialog<Map<String, dynamic>>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => SaleItemEditDialog(
+          item: _items[index],
+          isEditing: _isEditing,
+          customerType: _customerType,
+        ),
+      );
+      if (updatedRow != null && mounted) {
+        setState(() {
+          updatedRow['total'] = _cartLineTotal(updatedRow);
+          _items[index] = updatedRow;
+        });
+      }
+    } finally {
+      Future<void>.delayed(const Duration(milliseconds: 250), () {
         if (mounted) _itemEditorOpen = false;
       });
-    });
+    }
   }
 
   SaleProfitSummary _currentProfitSummary() {
@@ -2489,32 +1052,14 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
   Future<void> _onBarcodeScanned(String code) async {
     if (code.isEmpty) return;
 
-    // Try the live lookup first; if the server is unreachable, fall back to
-    // the local catalog cache so scanning still works offline (handover doc
-    // G1). getProductByBarcode returns null for "not found" and throws for a
-    // network error — both fall through to the cache.
-    Map<String, dynamic>? product;
-    try {
-      product = await _productService.getProductByBarcode(
-        code,
-        vendorId: _selectedVendorId,
-      );
-    } catch (_) {
-      product = null;
-    }
-    product ??= await CatalogCacheService.instance.productByBarcode(
-      code,
-      branchId: int.tryParse(_effectiveBranchIdStr()),
+    final product = await SaleProductQueryService.lookupByBarcode(
+      productService: _productService,
+      barcode: code,
       vendorId: _selectedVendorId,
+      branchId: int.tryParse(_effectiveBranchIdStr()),
     );
     if (product != null) {
-      // Capture into a final local so Dart flow analysis narrows the type
-      // inside the setState closure (local variable reassigned via ??= above
-      // prevents automatic narrowing inside lambdas).
-      final p = product;
-      // Use the centralized merge method so repeated scans of the same
-      // barcode increment the existing cart row instead of creating duplicates.
-      setState(() => _addOrIncrementProduct(p));
+      setState(() => _addOrIncrementProduct(product));
     } else {
       if (!mounted) return;
       AppFeedback.warning(context, "Product not found: $code");
@@ -2532,50 +1077,17 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     double extraDiscount = 0,
     String discountType = 'percentage',
   }) {
-    final double t;
-    if (discountType == 'fixed') {
-      // discPct holds the fixed amount off per unit
-      t = qty * (price - discPct);
-    } else {
-      final d = (discPct / 100.0).clamp(0.0, 100.0);
-      t = qty * price * (1.0 - d);
-    }
-    final total = t - extraDiscount.clamp(0.0, double.infinity);
-    return total.isFinite ? total : 0.0;
+    return SaleCartMutator.lineTotal(
+      price: price,
+      qty: qty,
+      discPct: discPct,
+      extraDiscount: extraDiscount,
+      discountType: discountType,
+    );
   }
 
   double _cartLineTotal(Map<String, dynamic> item) {
-    final qty = _metaNum(item['quantity']);
-    if (qty < 0 && item['original_sale_item_id'] != null) {
-      return -_metaNum(item['return_credit']).abs();
-    }
-
-    if (item['packaging_id'] != null) {
-      final packageQty = _metaNum(item['packaging_quantity']);
-      final packagePrice = _metaNum(item['packaging_unit_price']);
-      final gross = _roundTo(packageQty * packagePrice, 2);
-      final discountType =
-          (item['discount_type'] ?? 'percentage').toString().toLowerCase();
-      final discount = discountType == 'fixed'
-          ? _roundTo(
-              packageQty * _metaNum(item['packaging_discount_snapshot']),
-              2,
-            )
-          : _roundTo(
-              gross *
-                  (_metaNum(item['discount_pct']).clamp(0.0, 100.0) / 100.0),
-              2,
-            );
-      return _roundTo(gross - discount - _metaNum(item['extra_discount']), 2);
-    }
-
-    return _lineTotal(
-      price: _metaNum(item['price']),
-      qty: qty,
-      discPct: _metaNum(item['discount_pct']),
-      extraDiscount: _metaNum(item['extra_discount']),
-      discountType: (item['discount_type'] ?? 'percentage').toString(),
-    );
+    return SaleCartMutator.cartLineTotal(item);
   }
 
   double get _linkedReturnCredit => _items
@@ -2591,271 +1103,36 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     return 0;
   }
 
-  Future<Map<String, String>?> _askReturnSource({
-    String initialInvoice = '',
-    String initialReason = '',
-  }) {
-    final seededInvoice = initialInvoice.trim().isNotEmpty
-        ? initialInvoice.trim()
-        : (widget.initialReturnInvoice ?? '').trim();
-    return showDialog<Map<String, String>>(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => _ReturnSourceDialog(
-        initialInvoice: seededInvoice,
-        initialReason: initialReason,
-      ),
-    );
-  }
-
-  Future<Map<String, dynamic>?> _chooseReturnSourceItem(List<dynamic> candidates) async {
-    if (candidates.isEmpty) return null;
-    if (candidates.length == 1 && candidates.first is Map) {
-      return Map<String, dynamic>.from(candidates.first as Map);
-    }
-    return showDialog<Map<String, dynamic>>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Select original sale line'),
-        content: SizedBox(
-          width: 520,
-          child: ListView.separated(
-            shrinkWrap: true,
-            itemCount: candidates.length,
-            separatorBuilder: (_, __) => const Divider(height: 1),
-            itemBuilder: (_, index) {
-              final row = Map<String, dynamic>.from(candidates[index] as Map);
-              return ListTile(
-                title: Text((row['product_name'] ?? 'Product').toString()),
-                subtitle: Text(
-                  'Sold ${row['sold_qty']} • Returned ${row['returned_qty']} • Returnable ${row['returnable_qty']}',
-                ),
-                trailing: Text(
-                  AppCurrency.format(_metaNum(row['return_credit'])),
-                  style: const TextStyle(fontWeight: FontWeight.w800),
-                ),
-                onTap: () => Navigator.pop(dialogContext, row),
-              );
-            },
-          ),
-        ),
-      ),
-    );
-  }
-
   Future<bool> _linkReturnForRow(
     int index,
     double quantity,
     double? packagingQuantity,
-  ) async {
-    if (!mounted || index < 0 || index >= _items.length || quantity <= 0) return false;
-    final current = Map<String, dynamic>.from(_items[index]);
-    final productId = _metaInt(current['product_id']);
-    if (productId == null || productId <= 0) return false;
-
-    final wasLinked = current['original_sale_item_id'] != null;
-    final requestedPackagingId = _metaInt(current['packaging_id']);
-    double? requestedPackagingQuantity;
-    if (requestedPackagingId != null) {
-      final factor = _metaNum(current['packaging_factor_snapshot']);
-      if (factor <= 0) {
-        AppFeedback.warning(
-          context,
-          'This package conversion is invalid. Re-select the selling unit before returning it.',
-        );
-        return false;
-      }
-      requestedPackagingQuantity = packagingQuantity;
-      if (requestedPackagingQuantity == null ||
-          requestedPackagingQuantity <= 0 ||
-          !QuantityRule.isWhole(requestedPackagingQuantity)) {
-        AppFeedback.warning(
-          context,
-          'Package return quantity must be a positive whole package count.',
-        );
-        return false;
-      }
-      requestedPackagingQuantity = _roundTo(requestedPackagingQuantity, 4);
-    }
-    String invoice = (current['return_source_invoice'] ?? '').toString().trim();
-    String reason = (current['return_reason'] ?? '').toString().trim();
-    if (!wasLinked) {
-      String defaultInvoice = (widget.initialReturnInvoice ?? '').trim();
-      for (final row in _items) {
-        if (row['original_sale_item_id'] != null) {
-          defaultInvoice = (row['return_source_invoice'] ?? '').toString();
-          break;
-        }
-      }
-      final request = await _askReturnSource(initialInvoice: defaultInvoice);
-      if (!mounted) return false;
-      if (request == null) {
-        // The row was never mutated before opening the return linker. Keep the
-        // exact pre-return package/base snapshot when the cashier cancels.
-        return false;
-      }
-      invoice = request['invoice']!;
-      reason = request['reason']!;
-    }
-
-    for (int i = 0; i < _items.length; i++) {
-      if (i == index) continue;
-      final otherInvoice = (_items[i]['return_source_invoice'] ?? '').toString().trim();
-      if (_items[i]['original_sale_item_id'] != null && otherInvoice.isNotEmpty && otherInvoice != invoice) {
-        AppFeedback.warning(context, 'All returned items in one transaction must come from the same original invoice ($otherInvoice).');
-        return false;
-      }
-    }
-
-    try {
-      final data = await _saleService.getReturnSource(
-        invoice: invoice,
-        productId: productId,
-        quantity: quantity,
-        packagingId: requestedPackagingId,
-        packagingQuantity: requestedPackagingQuantity,
-      );
-      if (!mounted) return false;
-      final candidates = data['items'] is List ? data['items'] as List : const <dynamic>[];
-      Map<String, dynamic>? picked;
-      if (wasLinked) {
-        final existingId = _metaInt(current['original_sale_item_id']);
-        for (final raw in candidates) {
-          if (raw is Map && _metaInt(raw['sale_item_id']) == existingId) {
-            picked = Map<String, dynamic>.from(raw);
-            break;
-          }
-        }
-      }
-      picked ??= await _chooseReturnSourceItem(candidates);
-      if (!mounted || picked == null) {
-        return false;
-      }
-      final sale = data['sale'] is Map ? Map<String, dynamic>.from(data['sale'] as Map) : <String, dynamic>{};
-      final sourceSaleId = _metaInt(sale['id']);
-      if (sourceSaleId == null) throw Exception('Original sale could not be resolved.');
-
-      final customer = sale['customer'];
-      if (customer is Map) {
-        _applyCustomerSelection(Map<String, dynamic>.from(customer));
-      } else {
-        _applyCustomerSelection(null);
-      }
-
-      final authoritativeQty = _metaNum(picked['quantity']);
-      if (authoritativeQty <= 0) {
-        throw Exception('The original invoice returned an invalid return quantity.');
-      }
-      final updated = Map<String, dynamic>.from(current)
-        ..['original_sale_id'] = sourceSaleId
-        ..['original_sale_item_id'] = _metaInt(picked['sale_item_id'])
-        ..['return_source_invoice'] = (sale['invoice_no'] ?? invoice).toString()
-        ..['return_reason'] = reason
-        ..['returnable_quantity'] = _metaNum(picked['returnable_qty'])
-        ..['return_original_outstanding'] = _metaNum(sale['outstanding'])
-        ..['return_credit'] = _metaNum(picked['return_credit'])
-        ..['return_merchandise_subtotal'] = _metaNum(picked['merchandise_subtotal'])
-        ..['return_invoice_discount'] = _metaNum(picked['invoice_discount_allocated'])
-        ..['return_tax'] = _metaNum(picked['tax_allocated'])
-        ..['return_linked_quantity'] = authoritativeQty
-        ..['price'] = _metaNum(picked['original_price'])
-        ..['discount_pct'] = _metaNum(picked['line_discount'])
-        ..['extra_discount'] = _metaNum(picked['extra_discount_allocated'])
-        ..['discount_type'] = (picked['discount_type'] ?? 'percentage').toString()
-        ..['quantity'] = -authoritativeQty
-        ..['total'] = -_metaNum(picked['return_credit']).abs();
-
-      if (requestedPackagingId != null) {
-        final returnPackagingId = _metaInt(picked['return_packaging_id']);
-        final returnFactor =
-            _metaNum(picked['return_packaging_factor_snapshot']);
-        final packageReturnQty =
-            _metaNum(picked['return_packaging_quantity']);
-        if (returnPackagingId != requestedPackagingId ||
-            returnFactor <= 0 ||
-            packageReturnQty <= 0 ||
-            !QuantityRule.isWhole(packageReturnQty)) {
-          throw Exception(
-            'The selected return package changed or is no longer valid. Refresh the product and choose the package again.',
-          );
-        }
-        final expectedBaseQty =
-            _roundTo(packageReturnQty * returnFactor, 3);
-        if ((expectedBaseQty - authoritativeQty).abs() > 0.0005) {
-          throw Exception(
-            'The selected return package no longer matches the requested base quantity. Refresh the product and try again.',
-          );
-        }
-        final returnName =
-            (picked['return_packaging_name_snapshot'] ?? '').toString().trim();
-        if (returnName.isEmpty) {
-          throw Exception('The selected return package snapshot is incomplete.');
-        }
-
-        // Keep the package the cashier actually receives (e.g. 2 Boxes) as
-        // the return-facing snapshot. Refund economics still come entirely
-        // from the original sale line; package selection only converts the
-        // physical quantity into canonical base units.
-        updated['packaging_id'] = returnPackagingId;
-        updated['packaging_name_snapshot'] = returnName;
-        final returnShort =
-            (picked['return_packaging_short_name_snapshot'] ?? '')
-                .toString()
-                .trim();
-        if (returnShort.isEmpty) {
-          updated.remove('packaging_short_name_snapshot');
-        } else {
-          updated['packaging_short_name_snapshot'] = returnShort;
-        }
-        updated['packaging_factor_snapshot'] = returnFactor;
-        updated['packaging_quantity'] = -packageReturnQty;
-
-        // Display the selected return package using the ORIGINAL sale's
-        // base-unit economics scaled to this package factor. This keeps the
-        // cashier-facing T.P/discount coherent without allowing today's
-        // package price to affect the refund credit.
-        final originalBasePrice = _metaNum(picked['original_price']);
-        updated['packaging_unit_price'] =
-            _roundTo(originalBasePrice * returnFactor, 4);
-        final returnDiscountType =
-            (picked['discount_type'] ?? 'percentage').toString().toLowerCase();
-        if (returnDiscountType == 'fixed') {
-          updated['packaging_discount_snapshot'] = _roundTo(
-            _metaNum(picked['line_discount']) * returnFactor,
-            4,
-          );
-        } else {
-          updated.remove('packaging_discount_snapshot');
-        }
-      }
-      setState(() {
-        _items[index] = updated;
-        // Return linkage can materially change what is payable/refundable.
-        // Stale split-tender amounts must never survive that recalculation.
-        _payments = [];
-        cashReceivedController.clear();
-      });
-      return true;
-    } catch (e) {
-      if (!mounted) return false;
-      final message = e is ApiException ? e.message : e.toString().replaceFirst('Exception: ', '');
-      AppFeedback.error(context, message);
-      setState(() {
-        if (index >= _items.length) return;
-        if (wasLinked) {
-          final previous = _metaNum(current['return_linked_quantity']);
-          _items[index] = current;
-          if (previous > 0) _items[index]['quantity'] = -previous;
-        } else {
-          // No return linkage was committed yet. Restore the exact row snapshot
-          // so package quantity/factor/base quantity cannot drift after an API
-          // rejection or cancelled source selection.
-          _items[index] = Map<String, dynamic>.from(current);
-        }
-        _items[index]['total'] = _cartLineTotal(_items[index]);
-      });
-      return false;
-    }
+  ) {
+    return SaleReturnService.linkReturnForRow(
+      context: context,
+      saleService: _saleService,
+      items: _items,
+      index: index,
+      quantity: quantity,
+      packagingQuantity: packagingQuantity,
+      initialReturnInvoice: widget.initialReturnInvoice,
+      onCustomerSelected: _applyCustomerSelection,
+      onRowUpdated: (updated) {
+        setState(() => _items[index] = updated);
+      },
+      onResetPayments: () {
+        setState(() {
+          _payments = [];
+          cashReceivedController.clear();
+        });
+      },
+      onRowRestore: (restored) {
+        setState(() {
+          _items[index] = restored;
+          _items[index]['total'] = _cartLineTotal(_items[index]);
+        });
+      },
+    );
   }
 
   Widget _hiddenBarcodeField() {
@@ -2888,564 +1165,34 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
 
   String _metaText(dynamic value) => (value ?? '').toString().trim();
 
-  Map<String, dynamic>? _partySnapshot(
-    Map<String, dynamic>? source, {
-    dynamic id,
-    String fallbackName = '',
-  }) {
-    if (source == null && id == null && fallbackName.trim().isEmpty) return null;
-
-    dynamic read(String key) => source == null ? null : source[key];
-
-    final firstName = _metaText(read('first_name'));
-    final lastName = _metaText(read('last_name'));
-    final directName = _metaText(read('name'));
-    final fallback = fallbackName.trim();
-    final combinedName = directName.isNotEmpty
-        ? directName
-        : [firstName, lastName].where((v) => v.isNotEmpty).join(' ').trim();
-
-    final snapshot = <String, dynamic>{};
-    final resolvedId = id ?? read('id');
-    if (resolvedId != null) snapshot['id'] = resolvedId;
-
-    final resolvedName = combinedName.isNotEmpty ? combinedName : fallback;
-    if (resolvedName.isNotEmpty) snapshot['name'] = resolvedName;
-
-    for (final key in const ['first_name', 'last_name', 'phone', 'mobile', 'email', 'address']) {
-      final value = _metaText(read(key));
-      if (value.isNotEmpty) snapshot[key] = value;
-    }
-
-    return snapshot.isEmpty ? null : snapshot;
-  }
-
-  Map<String, dynamic> _buildSaleMeta({
-    required String? effectiveBranchId,
-    required double subtotal,
-    required double discount,
-    required double tax,
-    required double shipping,
-    required double total,
-    required double paid,
-    required double balance,
-    required double cashReceived,
-    required double changeAmount,
-    required List<Map<String, dynamic>> paymentsToSend,
-  }) {
-    final pmProvider = context.read<PaymentMethodProvider>();
-    final typedPayments = paymentsToSend.map((payment) {
-      final ref = _metaText(payment['reference']);
-      final code =
-          _metaText(payment['method']).isEmpty ? 'cash' : _metaText(payment['method']);
-      return <String, dynamic>{
-        'method': code,
-        'label': pmProvider.displayNameFor(code),
-        'amount': _metaNum(payment['amount']),
-        if (ref.isNotEmpty) 'reference': ref,
-      };
-    }).toList(growable: false);
-
-    final snapshotPrimaryPhone = _selectedCustomerId != null
-        ? (_selectedCustomer?['phone'] ?? customerPhoneController.text)
-            .toString()
-            .trim()
-        : customerPhoneController.text.trim();
-    final snapshotSecondaryPhones = _selectedCustomerId != null
-        ? _selectedCustomerSecondaryPhones
-        : const <String>[];
-
-    final customerSnapshot = <String, dynamic>{
-      if (_selectedCustomerId != null) 'id': _selectedCustomerId,
-      if ((_selectedCustomer?['customer_code'] ?? '').toString().trim().isNotEmpty)
-        'customer_code': _selectedCustomer!['customer_code'],
-      if (_selectedCustomer != null)
-        'customer_type': SalePricing.normalizeCustomerType(
-          _selectedCustomer!['customer_type'],
-        ),
-      'name': _selectedCustomer != null
-          ? [
-              _metaText(_selectedCustomer?['first_name']),
-              _metaText(_selectedCustomer?['last_name']),
-            ].where((v) => v.isNotEmpty).join(' ').trim()
-          : (customerNameController.text.trim().isEmpty
-              ? 'Walk-in customer'
-              : customerNameController.text.trim()),
-      'phone': snapshotPrimaryPhone,
-      'phone_numbers': snapshotSecondaryPhones,
-      'address': addressController.text.trim(),
-      if (_selectedAreaId != null) 'area_id': _selectedAreaId,
-      if (_selectedAreaName != null) 'area_name': _selectedAreaName,
-      if (_selectedCustomer != null &&
-          _selectedCustomer!.containsKey('credit_limit'))
-        'credit_limit': _selectedCustomer!['credit_limit'],
-      if (_selectedCustomer?['credit_limit_mode'] != null)
-        'credit_limit_mode': _selectedCustomer!['credit_limit_mode'],
-      if ((_selectedCustomer?['balance'] ??
-              _selectedCustomer?['trade_balance']) !=
-          null)
-        'trade_balance': _selectedCustomer?['balance'] ??
-            _selectedCustomer?['trade_balance'],
-    };
-
-    final meta = <String, dynamic>{
-      'customer_snapshot': customerSnapshot,
-      'print_customer_phone_numbers': snapshotSecondaryPhones.isNotEmpty,
-      'branch_snapshot': {
-        if (effectiveBranchId != null && effectiveBranchId.isNotEmpty)
-          'id': effectiveBranchId,
-        if (_selectedBranch != null) ...{
-          if (_selectedBranch!['name'] != null) 'name': _selectedBranch!['name'],
-          if (_selectedBranch!['location'] != null) 'location': _selectedBranch!['location'],
-        },
-      },
-      'salesman_snapshot': _partySnapshot(
-        _selectedUser,
-        id: _selectedUserId,
-        fallbackName: _metaText(_selectedUser?['name']),
-      ),
-      'delivery_boy_snapshot': _partySnapshot(
-        _selectedDeliveryBoy,
-        id: _selectedDeliveryBoyId,
-        fallbackName: _metaText(_selectedDeliveryBoy?['name']),
-      ),
-      'vendor_snapshot': _partySnapshot(
-        _selectedVendor,
-        id: _selectedVendorId,
-      ),
-      if (_selectedSaleSourceId != null)
-        'sale_source_snapshot': {
-          'id': _selectedSaleSourceId,
-          'name': (_selectedSaleSource?['name'] ?? 'Counter').toString(),
-        },
-      if (_selectedAreaId != null)
-        'sale_area_snapshot': {
-          'id': _selectedAreaId,
-          if (_selectedAreaName != null) 'name': _selectedAreaName,
-        },
-      'totals_snapshot': {
-        'subtotal': subtotal,
-        'discount': discount,
-        'tax': tax,
-        'delivery': shipping,
-        'total': total,
-        'paid': paid,
-        'balance': balance,
-      },
-      'payments_snapshot': typedPayments,
-      'cash_received': cashReceived,
-      'change_amount': changeAmount,
-      'delivery': shipping,
-      'sale_type': _selectedDeliveryBoyId != null ? 'delivery' : 'counter',
-    };
-
-    meta.removeWhere((_, value) =>
-        value == null ||
-        (value is Map && value.isEmpty) ||
-        (value is List && value.isEmpty));
-    return meta;
-  }
-
-  double? _finiteCreditNumber(dynamic value) {
-    final parsed = value is num
-        ? value.toDouble()
-        : double.tryParse(value?.toString() ?? '');
-    return parsed != null && parsed.isFinite ? parsed : null;
-  }
-
-  /// Applies a conservative device-side check only when an online submission
-  /// could not be confirmed and the sale is about to enter the local queue.
-  /// The backend remains authoritative and rechecks the actual party trade
-  /// ledger during sync. No invoice allocation or paid/unpaid status is used.
-  Future<_OfflineCreditDecision> _prepareOfflineCreditQueue({
-    required Map<String, dynamic> payload,
-    required int branchId,
-    required double currentLedgerDelta,
-  }) async {
-    final customerId = int.tryParse(_selectedCustomerId ?? '');
-    if (customerId == null || customerId <= 0 || currentLedgerDelta <= 0.004) {
-      return const _OfflineCreditDecision.allow();
-    }
-
-    // A server-presented override may have been approved immediately before
-    // the retry lost connectivity. Preserve that reason and idempotency key.
-    final existingOverride = payload['credit_limit_override'];
-    if (existingOverride is Map &&
-        (existingOverride['reason']?.toString().trim().length ?? 0) >= 5) {
-      return const _OfflineCreditDecision.allow(
-        'This queued sale carries the authorized credit-limit override already approved online.',
-      );
-    }
-
-    final customer = _selectedCustomer;
-    final mode = (customer?['credit_limit_mode'] ?? 'block')
-        .toString()
-        .trim()
-        .toLowerCase();
-    final warningMode = mode == 'warning';
-    final auth = context.read<AuthProvider>();
-    final mayOverride =
-        auth.hasPermission('override-party-credit-limit');
-
-    Future<_OfflineCreditDecision> unknownDecision(String reason) async {
-      final message =
-          '$reason The authoritative customer trade balance will be checked when this sale synchronizes.';
-      if (warningMode) {
-        return _OfflineCreditDecision.allow('Credit warning: $message');
-      }
-      if (!mayOverride) {
-        return _OfflineCreditDecision.deny(
-          '$message An authorized credit-limit override is required before creating additional offline debt.',
-        );
-      }
-      final overrideReason = await showOfflineCreditDataOverrideDialog(
-        context,
-        message: message,
-      );
-      if (overrideReason == null) {
-        return const _OfflineCreditDecision.deny(
-          'Offline sale cancelled because credit approval was not completed.',
-        );
-      }
-      payload['credit_limit_override'] = {'reason': overrideReason};
-      return const _OfflineCreditDecision.allow(
-        'Queued with an authorized offline credit override. The server will validate it during synchronization.',
-      );
-    }
-
-    if (customer == null || !customer.containsKey('credit_limit')) {
-      return unknownDecision(
-        'This customer was selected from data that does not contain a verified credit-control configuration.',
-      );
-    }
-
-    // Explicit NULL is the production-compatible unlimited setting.
-    if (customer['credit_limit'] == null) {
-      return const _OfflineCreditDecision.allow();
-    }
-    final limit = _finiteCreditNumber(customer['credit_limit']);
-    if (limit == null || limit < 0) {
-      return unknownDecision(
-        'The cached customer credit limit is invalid or unavailable.',
-      );
-    }
-
-    final hasBalance = customer.containsKey('balance') ||
-        customer.containsKey('trade_balance');
-    final cachedBalance = _finiteCreditNumber(
-      customer['balance'] ?? customer['trade_balance'],
-    );
-    if (!hasBalance || cachedBalance == null) {
-      return unknownDecision(
-        'No reliable cached customer trade balance is available while offline.',
-      );
-    }
-
-    double pendingExposure;
-    try {
-      pendingExposure = await OfflineSalesQueueService.instance
-          .pendingCustomerExposure(
-        branchId: branchId,
-        customerId: customerId,
-      );
-    } catch (_) {
-      return unknownDecision(
-        "The device could not verify this customer's existing unsynced exposure.",
-      );
-    }
-
-    final balanceBefore = cachedBalance + pendingExposure;
-    final projected = balanceBefore + currentLedgerDelta;
-    if (projected <= limit + 0.004) {
-      return const _OfflineCreditDecision.allow();
-    }
-
-    final issue = CreditLimitIssue(
-      partyType: 'customer',
-      partyId: customerId,
-      limit: limit,
-      balanceBefore: balanceBefore,
-      projectedBalance: projected,
-      exceededBy: projected - limit,
-      mode: warningMode ? 'warning' : 'block',
-      canOverride: mayOverride,
-    );
-    if (warningMode) {
-      return _OfflineCreditDecision.allow(
-        'Credit warning: ${issue.summary} The server will recheck the current party ledger during synchronization.',
-      );
-    }
-    if (!mayOverride) {
-      return _OfflineCreditDecision.deny(
-        '${issue.summary} You do not have permission to approve this offline credit exposure.',
-      );
-    }
-
-    final reason = await showCreditLimitOverrideDialog(context, issue);
-    if (reason == null) {
-      return const _OfflineCreditDecision.deny(
-        'Offline sale cancelled because the credit-limit override was not approved.',
-      );
-    }
-    payload['credit_limit_override'] = {'reason': reason};
-    return _OfflineCreditDecision.allow(
-      'Queued with an authorized offline credit override. ${issue.summary}',
-    );
-  }
-
-  // ---------------- Submit ----------------
-  /// The first cart line whose quantity breaks its unit's rule, described in
-  /// a way that points at the line — or null when every line is acceptable.
-  ///
-  /// This mirrors the backend's own pre-write guard (units.FirstViolation), so
-  /// a sale that could only come back as a 422 never leaves the device — which
-  /// matters most when the device is offline and the rejection would otherwise
-  /// not surface until sync.
-  String? _firstQuantityViolation() {
-    for (var i = 0; i < _items.length; i++) {
-      final row = _items[i];
-      final name = (row['name'] ?? 'item').toString();
-      final qty = double.tryParse(row['quantity']?.toString() ?? '');
-      if (qty == null) {
-        return 'Line ${i + 1} ($name) has no valid quantity.';
-      }
-      if (row['packaging_id'] != null) {
-        final packageQty =
-            double.tryParse(row['packaging_quantity']?.toString() ?? '');
-        final factor =
-            double.tryParse(row['packaging_factor_snapshot']?.toString() ?? '');
-        final linkedReturn = qty < 0 && row['original_sale_item_id'] != null;
-        if (packageQty == null || packageQty == 0 ||
-            !QuantityRule.isWhole(packageQty)) {
-          return 'Line ${i + 1} — $name: package quantity must be a non-zero whole number.';
-        }
-        if (linkedReturn && packageQty >= 0) {
-          return 'Line ${i + 1} — $name: linked package return quantity must be negative.';
-        }
-        if (!linkedReturn && packageQty <= 0) {
-          return 'Line ${i + 1} — $name: package quantity must be a positive whole number.';
-        }
-        if (factor == null || factor <= 0) {
-          return 'Line ${i + 1} — $name: package conversion is invalid. Re-select the selling unit.';
-        }
-        final expectedBaseQty = _roundTo(packageQty * factor, 3);
-        if ((expectedBaseQty - qty).abs() > 0.0005) {
-          return 'Line ${i + 1} — $name: package quantity no longer matches its base-unit quantity. Re-select the selling unit.';
-        }
-      }
-      final rule = QuantityRule.fromProduct(row);
-      if (!rule.allows(qty)) {
-        return 'Line ${i + 1} — $name: ${rule.message}';
-      }
-    }
-    return null;
-  }
-
-  /// Reads a 422 bag and writes what it taught us back onto the cart.
-  ///
-  /// A `items.N.quantity` decimal rejection is the server stating that line
-  /// N's unit does not allow a fraction — authoritative, and newer than
-  /// whatever the line was carrying (a cache row from before the unit was
-  /// changed, or no unit information at all). Recording it turns the field
-  /// red and makes the client-side check catch the same mistake next time,
-  /// instead of another round trip.
-  void _applyServerLineErrors(ApiException e) {
-    for (final lineError in parseValidationBag(e.body?['errors'])) {
-      final rule = lineError.assertedRule;
-      if (rule == null) continue;
-      final index = lineError.index;
-      if (index < 0 || index >= _items.length) continue;
-      // Only what the server actually asserted: the rule, and the unit name
-      // when it named one. The unit id is not in the message, and blanking a
-      // known one would lose information.
-      _items[index]['unit_allow_decimal'] = false;
-      if (rule.unitName.isNotEmpty) _items[index]['unit_name'] = rule.unitName;
-    }
-  }
-
-  /// Cashier-readable text for a rejection that will never succeed on retry.
-  /// Field errors are listed with the cart line they belong to; anything else
-  /// falls back to the server's own message.
-  String _describeRejection(ApiException e) {
-    final lines = <String>[];
-    flattenBag(e.body?['errors']).forEach((key, message) {
-      final index =
-          key.startsWith('items.') ? int.tryParse(key.split('.')[1]) : null;
-      if (index != null && index >= 0 && index < _items.length) {
-        final name = (_items[index]['name'] ?? 'item').toString();
-        lines.add('Line ${index + 1} — $name: $message');
-      } else {
-        lines.add(message);
-      }
-    });
-    if (lines.isEmpty) return 'Sale not saved: ${e.message}';
-    return 'Sale not saved — please correct and try again.\n${lines.join('\n')}';
-  }
-
   Future<void> _submitSalesOrder({required bool submitForApproval}) async {
-    if (_selectedCustomerId == null && customerPhoneController.text.trim().isNotEmpty) {
-      final canContinue = await _resolveWalkInCustomerByPhone(force: true);
-      if (!canContinue || !mounted) return;
-    }
-    if (_selectedCustomerId == null) {
-      AppFeedback.warning(context, "Please select a customer for this sales order.");
-      _customerFocusNode.requestFocus();
-      return;
-    }
-    if (_items.isEmpty) {
-      AppFeedback.warning(context, "Add at least 1 item before saving sales order.");
-      return;
-    }
-
-    final quantityViolation = _firstQuantityViolation();
-    if (quantityViolation != null) {
-      AppFeedback.warning(context, quantityViolation);
-      return;
-    }
-
-    // Demotion guard when editing an APPROVED order (§5)
-    if (widget.editSalesOrder != null &&
-        widget.editSalesOrder!.status == SalesOrderStatus.approved) {
-      final confirmed = await showDialog<bool>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          title: const Row(
-            children: [
-              Icon(Icons.warning_amber_rounded, color: AppTheme.warning),
-              SizedBox(width: 10),
-              Text('Demote Approved Order?'),
-            ],
-          ),
-          content: const Text(
-            'This order is approved. Saving changes returns it to Submitted and it will need approval again.',
-            style: TextStyle(height: 1.45),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              style: FilledButton.styleFrom(backgroundColor: AppTheme.warning),
-              child: const Text('Proceed & Return to Submitted'),
-            ),
-          ],
-        ),
-      );
-      if (confirmed != true) return;
-    }
-
-    setState(() => _submitting = true);
-
-    final auth = context.read<AuthProvider>();
-    final currentUserId = int.tryParse(auth.user?['id']?.toString() ?? '0') ?? 0;
-    // When salesman is not selected the one who is creating sale order is salesman
-    final salesmanId = _selectedUserId ?? currentUserId;
-    final customerId = int.tryParse(_selectedCustomerId ?? '') ?? 0;
-
-    double _rowNum(v) => double.tryParse(v?.toString() ?? '') ?? 0.0;
-    double discount = double.tryParse(discountController.text.trim()) ?? 0.0;
-    double tax = double.tryParse(taxController.text.trim()) ?? 0.0;
-
-    final dateFmt = DateFormat('yyyy-MM-dd');
-    final deliveryDateStr = _salesOrderDeliveryDate != null
-        ? dateFmt.format(_salesOrderDeliveryDate!)
-        : null;
-
-    final itemsPayload = _items.map((it) {
-      final prodId = _metaInt(it['product_id']) ?? 0;
-      final packagingId = _metaInt(it['packaging_id']);
-      final qty = _rowNum(it['quantity']);
-      final price = _rowNum(it['price']);
-      final extraDisc = _rowNum(it['extra_discount']);
-      final taxRate = _rowNum(it['tax_rate']);
-      final notes = it['notes']?.toString();
-
-      if (packagingId != null && packagingId > 0) {
-        final factor = _rowNum(it['packaging_factor_snapshot']);
-        final effectiveFactor = factor > 0 ? factor : 1.0;
-        final baseUnits = qty * effectiveFactor;
-        final basePrice = price / effectiveFactor;
-        return <String, dynamic>{
-          'product_id': prodId,
-          'product_packaging_id': packagingId,
-          'packaging_quantity': qty,
-          'packaging_unit_price': price,
-          'quantity': baseUnits,
-          'unit_price': basePrice,
-          'discount': extraDisc,
-          'tax_rate': taxRate,
-          if (notes != null && notes.trim().isNotEmpty) 'notes': notes.trim(),
-        };
-      }
-      return <String, dynamic>{
-        'product_id': prodId,
-        'quantity': qty,
-        'unit_price': price,
-        'discount': extraDisc,
-        'tax_rate': taxRate,
-        if (notes != null && notes.trim().isNotEmpty) 'notes': notes.trim(),
-      };
-    }).toList();
-
-    final body = <String, dynamic>{
-      'customer_id': customerId,
-      if (salesmanId > 0) 'salesman_id': salesmanId,
-      'order_date': dateFmt.format(DateTime.now()),
-      if (deliveryDateStr != null) 'delivery_date': deliveryDateStr,
-      if (_salesOrderNotesController.text.trim().isNotEmpty)
-        'notes': _salesOrderNotesController.text.trim(),
-      if (discountController.text.trim().isNotEmpty) 'discount': discount,
-      if (taxController.text.trim().isNotEmpty) 'tax': tax,
-      'items': itemsPayload,
-      'submit_for_approval': submitForApproval,
-      if (widget.editSalesOrder != null) 'version': widget.editSalesOrder!.version,
-    };
-
-    try {
-      final service = SalesOrderService(token: auth.token!);
-      if (widget.editSalesOrder != null) {
-        await service.updateOrder(widget.editSalesOrder!.id, body);
-        if (!mounted) return;
-        AppFeedback.success(
-          context,
-          submitForApproval
-              ? 'Sales order #${widget.editSalesOrder!.orderNumber} submitted for approval.'
-              : 'Sales order #${widget.editSalesOrder!.orderNumber} saved as draft.',
-        );
-      } else {
-        final created = await service.createOrder(body);
-        if (!mounted) return;
-        AppFeedback.success(
-          context,
-          submitForApproval
-              ? 'Sales order #${created.orderNumber} submitted for approval.'
-              : 'Sales order #${created.orderNumber} saved as draft.',
-        );
-      }
+    final success = await SalesOrderSubmitter.executeSalesOrderSubmit(
+      context: context,
+      selectedCustomerId: _selectedCustomerId,
+      customerPhone: customerPhoneController.text,
+      onResolveCustomerByPhone: () =>
+          _resolveWalkInCustomerByPhone(force: true),
+      customerFocusNode: _customerFocusNode,
+      items: _items,
+      editSalesOrder: widget.editSalesOrder,
+      onSubmittingChanged: (submitting) {
+        if (mounted) setState(() => _submitting = submitting);
+      },
+      auth: context.read<AuthProvider>(),
+      selectedUserId: _selectedUserId,
+      discount: double.tryParse(discountController.text.trim()) ?? 0.0,
+      tax: double.tryParse(taxController.text.trim()) ?? 0.0,
+      deliveryDate: _salesOrderDeliveryDate,
+      notes: _salesOrderNotesController.text,
+      submitForApproval: submitForApproval,
+    );
+    if (!mounted) return;
+    if (success) {
       if (Navigator.of(context).canPop()) {
         Navigator.pop(context, true);
       } else {
         _resetForNextSale();
       }
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _submitting = false);
-      if (e is ApiException) {
-        if (e.statusCode == 409) {
-          AppFeedback.error(context, 'Version conflict: this sales order was modified by another user.');
-          return;
-        }
-        if (e.statusCode == 422) {
-          _applyServerLineErrors(e);
-          AppFeedback.error(context, _describeRejection(e));
-          return;
-        }
-        AppFeedback.error(context, e.message);
-        return;
-      }
-      AppFeedback.error(context, e.toString().replaceFirst('Exception: ', ''));
     }
   }
 
@@ -3458,967 +1205,118 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       await _submitAmendment();
       return;
     }
-    if (_items.isEmpty) {
-      AppFeedback.warning(context, "Add at least 1 item before creating sale.");
-      return;
-    }
-
-    // Quantity rules are checked before anything is built or sent. Offline,
-    // this is the only defence — nothing will validate the sale until it
-    // syncs, potentially hours later.
-    final quantityViolation = _firstQuantityViolation();
-    if (quantityViolation != null) {
-      AppFeedback.warning(context, quantityViolation);
-      return;
-    }
-
-    if (_sendInvoiceOnWhatsApp) {
-      try {
-        WhatsAppInvoiceService.instance.normalizePhone(
-          _whatsAppDestinationPhone(),
-        );
-      } on FormatException catch (e) {
-        AppFeedback.warning(context, e.message.toString());
-        return;
-      }
-    }
 
     final auth = context.read<AuthProvider>();
     final globalBranchId = context.read<BranchProvider>().selectedBranchId;
     final effectiveBranchId = globalBranchId?.toString() ?? _selectedBranchId;
+    final originBranchId = int.tryParse(effectiveBranchId ?? '') ?? 0;
 
-    if (auth.isMasterAdmin && globalBranchId == null) {
-      AppFeedback.warning(context, 'Please select a working branch from Branch Control before creating sale.');
-      return;
-    }
-    final originBranchId = int.tryParse(effectiveBranchId ?? '');
-    if (originBranchId == null || originBranchId <= 0) {
-      AppFeedback.warning(
-        context,
-        'A valid working branch is required before creating a sale.',
-      );
-      return;
-    }
+    final discount = _toDouble(discountController);
+    final tax = _toDouble(taxController);
+    final shipping = _toDouble(shippingController);
 
-    // Final online preflight for the compact walk-in phone field. Focus-loss
-    // usually resolves an existing customer earlier, but keyboard shortcuts or
-    // an immediate Save can bypass that event. Backend resolution remains the
-    // authority and also covers offline queued sales.
-    if (_selectedCustomerId == null && customerPhoneController.text.trim().isNotEmpty) {
-      final canContinue = await _resolveWalkInCustomerByPhone(force: true);
-      if (!canContinue || !mounted) return;
-    }
-
-    final originUserId = int.tryParse(auth.user?['id']?.toString() ?? '');
-    double _rowNum(v) => double.tryParse(v?.toString() ?? '') ?? 0.0;
-
-    final hasUnlinkedReturn = _items.any(
-      (i) => _rowNum(i['quantity']) < 0 && i['original_sale_item_id'] == null,
-    );
-    if (hasUnlinkedReturn) {
-      AppFeedback.warning(
-        context,
-        'Every negative quantity must be linked to its original invoice before saving.',
-      );
-      return;
-    }
-    final linkedReturns = _items
-        .where((i) => _rowNum(i['quantity']) < 0 && i['original_sale_item_id'] != null)
-        .toList();
-    final linkedInvoiceIds = linkedReturns
-        .map((i) => _metaInt(i['original_sale_id']))
-        .whereType<int>()
-        .toSet();
-    if (linkedInvoiceIds.length > 1) {
-      AppFeedback.warning(context, 'All returned items in one transaction must come from the same original invoice.');
-      return;
-    }
-
-    final subtotal = _items.fold<double>(0.0, (sum, i) {
-      final qty = _rowNum(i['quantity']);
-      if (qty <= 0) return sum;
-      return sum + _cartLineTotal(i);
-    });
-    double discount = double.tryParse(discountController.text.trim()) ?? 0.0;
-    double tax = double.tryParse(taxController.text.trim()) ?? 0.0;
-    double shipping = double.tryParse(shippingController.text.trim()) ?? 0.0;
-    if (subtotal <= .004 && linkedReturns.isNotEmpty &&
-        (discount.abs() > .004 || tax.abs() > .004 || shipping.abs() > .004)) {
-      AppFeedback.warning(
-        context,
-        'A return-only transaction cannot add a new invoice discount, tax, or delivery charge. Original delivery is non-refundable.',
-      );
-      return;
-    }
-    final saleTotal = subtotal - discount + tax + shipping;
-    if (saleTotal < -0.004) {
-      AppFeedback.warning(context, 'The new-sale total cannot be negative.');
-      return;
-    }
-    final returnCredit = linkedReturns.fold<double>(
-      0, (sum, i) => sum + _rowNum(i['return_credit']).abs(),
-    );
-    final originalOutstanding = linkedReturns.isEmpty
-        ? 0.0
-        : _rowNum(linkedReturns.first['return_original_outstanding']);
-    final appliedToOriginal = returnCredit.clamp(0.0, originalOutstanding).toDouble();
-    final afterOriginal = (returnCredit - appliedToOriginal).clamp(0.0, double.infinity).toDouble();
-    final appliedToExchange = afterOriginal.clamp(0.0, saleTotal).toDouble();
-    final refundDue = (afterOriginal - appliedToExchange).clamp(0.0, double.infinity).toDouble();
-    final customerPays = (saleTotal - appliedToExchange).clamp(0.0, double.infinity).toDouble();
-    // Customer-facing signed transaction total. Settlement is deliberately
-    // separate: some return credit may first reduce the old invoice balance.
-    final total = saleTotal - returnCredit;
-
-    // Resolve the selected tender (falls back to the branch default drawer
-    // method). Reference only applies to non-drawer methods (KNET/card/bank…).
     final pmProvider = context.read<PaymentMethodProvider>();
     final effectiveMethod =
         _saleMethod ?? pmProvider.defaultMethod?.method ?? 'cash';
     final isDrawerMethod =
         pmProvider.byCode(effectiveMethod)?.affectsCashDrawer ??
             (effectiveMethod == 'cash');
-    final saleReference = saleReferenceController.text.trim();
 
-    final List<Map<String, dynamic>> paymentsToSend = [];
-    if (customerPays > 0 && _payments.isNotEmpty) {
-      // Explicit split tender: send every row (method + amount + optional ref).
-      for (final p in _payments) {
-        final ref = (p['reference'] ?? '').toString().trim();
-        paymentsToSend.add({
-          "amount": _pmAmt(p['amount']).toStringAsFixed(2),
-          "method": p['method'] ?? 'cash',
-          if (ref.isNotEmpty) "reference": ref,
-        });
-      }
-    } else if (_autoCashIfEmpty && customerPays > 0) {
-      // Quick single tender via the selected method.
-      paymentsToSend.add({
-        "amount": customerPays.toStringAsFixed(2),
-        "method": effectiveMethod,
-        if (!isDrawerMethod && saleReference.isNotEmpty)
-          "reference": saleReference,
-      });
-    }
-    final Map<String, dynamic>? refundToSend =
-        linkedReturns.isNotEmpty && _autoCashIfEmpty && refundDue > .004
-        ? {
-            'mode': 'auto',
-            'method': effectiveMethod,
-            if (!isDrawerMethod && saleReference.isNotEmpty)
-              'reference': saleReference,
-          }
-        : null;
-
-    final paid = paymentsToSend.fold<double>(
-      0.0,
-      (sum, payment) => sum + _metaNum(payment['amount']),
+    final totals = SaleCheckoutTotals.calculate(
+      items: _items,
+      lineTotalCalculator: _cartLineTotal,
+      discount: discount,
+      tax: tax,
+      shipping: shipping,
+      splitPayments: _payments,
+      autoCashIfEmpty: _autoCashIfEmpty,
+      effectiveMethod: effectiveMethod,
+      isDrawerMethod: isDrawerMethod,
+      saleReference: saleReferenceController.text,
+      enteredCashReceived: _toDouble(cashReceivedController),
     );
-    final balance = customerPays - paid;
 
-    // Cash Received / Change apply to the CASH (drawer) portion only, and are
-    // printed on the invoice (e.g. bill 1500, cash received 2000 → change 500).
-    final cashDue = _saleCashDue(customerPays);
-    final enteredCashReceived = _toDouble(cashReceivedController);
-    final cashReceived =
-        enteredCashReceived > 0 ? enteredCashReceived : cashDue;
-    final changeAmount = cashDue > 0
-        ? (cashReceived - cashDue).clamp(0.0, double.infinity).toDouble()
-        : 0.0;
+    final valid = SaleSubmissionService.validatePreflight(
+      context: context,
+      items: _items,
+      sendInvoiceOnWhatsApp: _sendInvoiceOnWhatsApp,
+      whatsAppPhone: _whatsAppDestinationPhone(),
+      isMasterAdmin: auth.isMasterAdmin,
+      globalBranchId: globalBranchId,
+      originBranchId: originBranchId,
+      subtotal: totals.subtotal,
+      discount: totals.discount,
+      tax: totals.tax,
+      shipping: totals.shipping,
+      saleTotal: totals.saleTotal,
+    );
+    if (!valid) return;
+
+    if (_selectedCustomerId == null && customerPhoneController.text.trim().isNotEmpty) {
+      final canContinue = await _resolveWalkInCustomerByPhone(force: true);
+      if (!canContinue || !mounted) return;
+    }
 
     setState(() => _submitting = true);
 
-    // Every sale gets a client_ref, online or offline (handover doc §2.2) —
-    // this is the idempotency key the backend uses to guarantee a synced
-    // offline sale (or a retried/double-tapped submit) never creates a
-    // duplicate row. occurred_at is the on-device timestamp captured right
-    // now, at the moment "Save Sale" was pressed, so the sale still posts
-    // and reports as having happened today even if it ends up queued and
-    // synced later (§1.3).
-    final clientRef = const Uuid().v4();
-    final occurredAt = DateTime.now();
-
-    // Generate a customer-friendly offline invoice reference.  This is
-    // generated up-front for EVERY sale (online or offline) so:
-    //   • The same reference is printed on the receipt and stored on the
-    //     server record, enabling "find this receipt" searches later.
-    //   • The UUID client_ref remains internal (idempotency only).
-    //   • Online sales that succeed immediately also carry offline_invoice_no
-    //     so that receipts and server records are always cross-searchable.
-    final shiftProvider = context.read<RegisterShiftProvider>();
-    final registerCode =
-        shiftProvider.shift?['register']?['code']?.toString() ?? 'REG';
-    final branchIdForSeq = originBranchId;
-
-    String? offlineInvoiceNo;
     try {
-      offlineInvoiceNo = await OfflineInvoiceSeqService.instance.next(
-        branchId: branchIdForSeq,
-        registerCode: registerCode,
-        occurredAt: occurredAt,
-      );
-    } catch (e, s) {
-      // Non-fatal: fall back to null — the sale can still proceed without it.
-      debugPrint('offline_invoice_seq error: $e');
-      debugPrintStack(stackTrace: s);
-    }
+      final shiftProvider = context.read<RegisterShiftProvider>();
+      final registerCode =
+          shiftProvider.shift?['register']?['code']?.toString() ?? 'REG';
+      final originUserId = int.tryParse(auth.user?['id']?.toString() ?? '');
 
-    Map<String, dynamic>? res;
-    var queuedOffline = false;
-
-    try {
-      final meta = _buildSaleMeta(
-        effectiveBranchId: effectiveBranchId,
-        subtotal: subtotal,
-        discount: discount,
-        tax: tax,
-        shipping: shipping,
-        total: saleTotal,
-        paid: paid,
-        balance: balance,
-        cashReceived: cashReceived,
-        changeAmount: changeAmount,
-        paymentsToSend: paymentsToSend,
-      );
-      if (linkedReturns.isNotEmpty) {
-        meta['return_preview'] = {
-          'return_credit': returnCredit,
-          'applied_to_original': appliedToOriginal,
-          'applied_to_exchange': appliedToExchange,
-          'refund_due': refundDue,
-          'original_delivery_refund': 0,
-        };
-      }
-      final payload = _saleService.buildSalePayload(
-        branchId: effectiveBranchId,
-        customerId: _selectedCustomerId != null
-            ? int.tryParse(_selectedCustomerId!)
-            : null,
-        vendorId: _selectedVendorId,
-        userId: _selectedUserId,
-        deliveryBoyId: _selectedDeliveryBoyId,
-        saleSourceId: _selectedSaleSourceId,
-        areaId: _selectedAreaId,
-        areaName: _selectedAreaName,
-        saleType: _selectedDeliveryBoyId != null ? 'delivery' : null,
+      await SaleSubmissionService.executeSubmitSale(
+        context: context,
+        saleService: _saleService,
+        auth: auth,
         items: _items,
-        payments: paymentsToSend,
-        refund: refundToSend,
-        discount: discount,
-        tax: tax,
-        delivery: shipping,
-        meta: meta,
-        clientRef: clientRef,
+        totals: totals,
+        printReceipt: print,
+        sendInvoiceOnWhatsApp: _sendInvoiceOnWhatsApp,
+        whatsAppPhone: _whatsAppDestinationPhone(),
+        effectiveBranchId: effectiveBranchId!,
         originBranchId: originBranchId,
-        occurredAt: occurredAt,
-        offlineInvoiceNo: offlineInvoiceNo,
+        originUserId: originUserId,
+        registerCode: registerCode,
+        selectedCustomer: _selectedCustomer,
+        selectedCustomerId: _selectedCustomerId,
+        selectedCustomerSecondaryPhones: _selectedCustomerSecondaryPhones,
+        walkInCustomerName: customerNameController.text,
+        walkInPhone: customerPhoneController.text,
+        walkInAddress: addressController.text,
+        selectedAreaId: _selectedAreaId,
+        selectedAreaName: _selectedAreaName,
+        selectedUser: _selectedUser,
+        selectedUserId: _selectedUserId,
+        selectedDeliveryBoy: _selectedDeliveryBoy,
+        selectedDeliveryBoyId: _selectedDeliveryBoyId,
+        selectedVendor: _selectedVendor,
+        selectedVendorId: _selectedVendorId,
+        selectedSaleSourceId: _selectedSaleSourceId,
+        selectedSaleSourceName: _selectedSaleSource?['name']?.toString(),
+        selectedBranch: _selectedBranch,
+        effectiveMethod: effectiveMethod,
+        salesOrderPrefill: widget.salesOrderPrefill,
+        lineTotalFallback: _cartLineTotal,
+        onAddPendingWhatsAppTask: ({
+          required String receiptNo,
+          required WhatsAppInvoicePreparation prepared,
+          required String message,
+        }) {
+          _addPendingWhatsAppTask(
+            receiptNo: receiptNo,
+            prepared: prepared,
+            message: message,
+          );
+        },
+        onResetSale: ({required bool keepInitialCustomer}) {
+          _resetForNextSale(keepInitialCustomer: keepInitialCustomer);
+        },
+        keepInitialCustomer: widget.initialCustomer != null,
+        onFocusProductSearch: () {
+          if (mounted) _productSearchFocusNode.requestFocus();
+        },
       );
-
-      String? queueReason;
-
-      Object? submitError;
-      if (widget.salesOrderPrefill != null) {
-        final prefill = widget.salesOrderPrefill!;
-        try {
-          final convertRes = await SalesOrderService(token: auth.token!).convert(
-            prefill.order.id,
-            paymentMethod: effectiveMethod,
-            paid: paid,
-            payments: paymentsToSend.isNotEmpty ? paymentsToSend : null,
-            version: prefill.order.version,
-            creditLimitOverrideReason: prefill.creditLimitOverrideReason,
-          ).timeout(const Duration(seconds: 15));
-          res = {'data': convertRes};
-        } catch (e) {
-          submitError = e;
-        }
-      } else {
-        try {
-          res = await _saleService
-              .createSaleFromPayload(payload)
-              .timeout(const Duration(seconds: 15));
-        } catch (e) {
-          submitError = e;
-        }
-      }
-
-      // Credit control is party-ledger based. The server has already posted
-      // the sale and any same-screen party receipt inside one transaction,
-      // measured the resulting AR balance, and rolled everything back before
-      // returning this 422. An authorized user may retry the SAME idempotency
-      // reference once with an audited reason; no invoice allocation/status is
-      // introduced by this flow.
-      final firstCreditIssue = submitError == null
-          ? null
-          : CreditLimitIssue.fromException(submitError!);
-      if (firstCreditIssue != null) {
-        final auth = context.read<AuthProvider>();
-        final mayOverride = firstCreditIssue.canOverride &&
-            auth.hasPermission('override-party-credit-limit');
-        if (!mayOverride) {
-          if (!mounted) return;
-          AppFeedback.error(context, firstCreditIssue.summary);
-          return;
-        }
-        final reason = await showCreditLimitOverrideDialog(
-          context,
-          firstCreditIssue,
-        );
-        if (!mounted) return;
-        if (reason == null) return;
-        if (widget.salesOrderPrefill != null) {
-          final prefill = widget.salesOrderPrefill!;
-          try {
-            final convertRes = await SalesOrderService(token: auth.token!).convert(
-              prefill.order.id,
-              paymentMethod: effectiveMethod,
-              paid: paid,
-              payments: paymentsToSend.isNotEmpty ? paymentsToSend : null,
-              version: prefill.order.version,
-              creditLimitOverrideReason: reason,
-            ).timeout(const Duration(seconds: 15));
-            res = {'data': convertRes};
-            submitError = null;
-          } catch (e) {
-            submitError = e;
-          }
-        } else {
-          payload['credit_limit_override'] = {'reason': reason};
-          try {
-            res = await _saleService
-                .createSaleFromPayload(payload)
-                .timeout(const Duration(seconds: 15));
-            submitError = null;
-          } catch (e) {
-            submitError = e;
-          }
-        }
-      }
-
-      if (submitError != null) {
-        final e = submitError!;
-        if (widget.salesOrderPrefill != null) {
-          if (!mounted) return;
-          if (e is ApiException && e.statusCode == 409) {
-            final body = e.body is Map ? (e.body as Map) : null;
-            final invoiceNo = body?['invoice_no']?.toString();
-            final msg = (invoiceNo != null && invoiceNo.isNotEmpty)
-                ? 'This order has already been converted into invoice $invoiceNo.'
-                : (e.message.isNotEmpty ? e.message : 'This order was modified by another transaction.');
-            await showDialog<void>(
-              context: context,
-              builder: (ctx) => AlertDialog(
-                title: const Row(
-                  children: [
-                    Icon(Icons.warning_amber_rounded, color: AppTheme.warning),
-                    SizedBox(width: 8),
-                    Text('Order Conflict'),
-                  ],
-                ),
-                content: Text(msg),
-                actions: [
-                  TextButton(
-                    onPressed: () => Navigator.of(ctx).pop(),
-                    child: const Text('Stay Here'),
-                  ),
-                  FilledButton(
-                    onPressed: () {
-                      Navigator.of(ctx).pop();
-                      Navigator.of(context).pop(true);
-                    },
-                    child: const Text('Back to Order'),
-                  ),
-                ],
-              ),
-            );
-            return;
-          }
-          AppFeedback.error(context, e is ApiException ? e.message : e.toString().replaceFirst('Exception: ', ''));
-          return;
-        }
-        // Linked returns are never queued offline: current returnable quantity,
-        // old-invoice settlement and concurrent return locks must be verified
-        // against the authoritative backend at posting time.
-        if (linkedReturns.isNotEmpty &&
-            (!(e is ApiException) || e.isRetryable || e.isAuthFailure || e.statusCode == 402 || isNetworkFailure(e))) {
-          if (!mounted) return;
-          AppFeedback.error(
-            context,
-            'Return/exchange requires a live CounterIQ connection. Nothing was queued or posted.',
-          );
-          return;
-        }
-        // A DETERMINISTIC rejection must not be queued. The queue's premise is
-        // "this will work later"; re-POSTing an identical payload that the
-        // server already refused on its merits will be refused identically.
-        if (e is ApiException &&
-            !e.isRetryable &&
-            !e.isAuthFailure &&
-            e.statusCode != 402) {
-          _applyServerLineErrors(e);
-          if (!mounted) return;
-          setState(() {});
-          final issue = CreditLimitIssue.fromException(e);
-          AppFeedback.error(
-            context,
-            issue?.summary ?? _describeRejection(e),
-          );
-          return; // cart preserved; the outer finally clears _submitting
-        }
-
-        // Queue only failures that can validly succeed later: no connection,
-        // retryable infrastructure, authentication expiry, or subscription
-        // state. A party credit-limit rejection is deterministic and never
-        // enters the background queue without an authorized override reason.
-        queueReason = isNetworkFailure(e)
-            ? 'Offline: could not reach the server ($e).'
-            : 'Server responded with a retryable error, queued for review on sync: $e';
-
-        final refundAmount = 0.0;
-        final offlineCredit = await _prepareOfflineCreditQueue(
-          payload: payload,
-          branchId: originBranchId,
-          currentLedgerDelta: total - paid + refundAmount,
-        );
-        if (!mounted) return;
-        if (!offlineCredit.allowed) {
-          AppFeedback.error(
-            context,
-            offlineCredit.message ??
-                'This offline credit sale was not approved.',
-          );
-          return;
-        }
-        if (offlineCredit.message != null &&
-            offlineCredit.message!.trim().isNotEmpty) {
-          queueReason = '$queueReason ${offlineCredit.message}';
-        }
-
-        await OfflineSalesQueueService.instance.enqueue(
-          clientRef: clientRef,
-          originBranchId: originBranchId,
-          originUserId: originUserId,
-          payload: payload,
-          occurredAt: occurredAt,
-          offlineInvoiceNo: offlineInvoiceNo,
-          initialError: queueReason,
-        );
-        queuedOffline = true;
-        if (mounted) {
-          // ignore: use_build_context_synchronously
-          context.read<OfflineQueueProvider>().refresh();
-        }
-      }
-
-      final creditLimitNotice = queuedOffline
-          ? null
-          : CreditLimitIssue.fromWarning(
-              res?['data']?['credit_limit_warning'],
-            );
-
-      // receiptNo: prefer the server-confirmed invoice number for online
-      // sales; use the customer-friendly offline reference for queued sales.
-      // Never expose the UUID client_ref on a customer-facing receipt.
-      final receiptNo = queuedOffline
-          ? (offlineInvoiceNo ?? 'OFF-PENDING')
-          : (res?['data']?['invoice_no'] ??
-                  res?['data']?['sale']?['invoice_no'] ??
-                  res?['data']?['id'] ??
-                  'N/A')
-              .toString();
-
-      // WhatsApp delivery needs the receipt *document*, not a printer, so the
-      // document-building section below must also run on the Save-only path.
-      // Physical printing and the preview dialog stay gated on `print`.
-      final prepareWhatsAppInvoice = _sendInvoiceOnWhatsApp && !queuedOffline;
-
-      if (print || prepareWhatsAppInvoice) {
-      final receiptSubtotal = subtotal - returnCredit;
-      final receiptItems = _items.map((i) {
-        final name = (i['name'] ?? '').toString();
-        final packaged = i['packaging_id'] != null;
-        final basePrice = double.tryParse(i['price']?.toString() ?? '') ?? 0.0;
-        final baseQty = double.tryParse(i['quantity']?.toString() ?? '') ?? 0.0;
-        final price = packaged
-            ? _metaNum(i['packaging_unit_price'])
-            : basePrice;
-        final qty = packaged
-            ? _metaNum(i['packaging_quantity'])
-            : baseQty;
-        final lineTotal =
-            double.tryParse(i['total']?.toString() ?? '') ?? _cartLineTotal(i);
-        final gross = (price * qty).abs();
-        final net = lineTotal.abs();
-        final extraDiscount = _metaNum(i['extra_discount']).abs();
-        final lineDiscount =
-            (gross - net - extraDiscount).clamp(0.0, double.infinity).toDouble();
-        final unitRaw = i['unit_name'] ?? i['unit_symbol'] ?? i['unit'];
-        final baseUnitName = unitRaw is Map
-            ? (unitRaw['symbol'] ?? unitRaw['name'] ?? '').toString()
-            : (unitRaw ?? '').toString();
-        final packageLabel = (i['packaging_short_name_snapshot'] ??
-                i['packaging_name_snapshot'] ??
-                '')
-            .toString()
-            .trim();
-        final discountType =
-            (i['discount_type'] ?? 'percentage').toString();
-        return SaleReceiptItem(
-          name: name,
-          secondaryName: (i['secondary_name'] ?? '').toString().trim().isEmpty
-              ? null
-              : (i['secondary_name'] ?? '').toString().trim(),
-          price: price,
-          qty: qty,
-          total: lineTotal,
-          unitName: packaged && packageLabel.isNotEmpty
-              ? packageLabel
-              : baseUnitName,
-          packagingName: packaged
-              ? (i['packaging_name_snapshot'] ?? '').toString().trim()
-              : null,
-          packagingShortName: packaged
-              ? (i['packaging_short_name_snapshot'] ?? '').toString().trim()
-              : null,
-          packagingFactor: packaged
-              ? _metaNum(i['packaging_factor_snapshot'])
-              : null,
-          baseUnitName: baseUnitName,
-          discountAmount: lineDiscount,
-          discountType: discountType,
-          discountValue: discountType == 'fixed' && packaged
-              ? _metaNum(i['packaging_discount_snapshot'])
-              : _metaNum(i['discount_pct']),
-          extraDiscountAmount: extraDiscount,
-        );
-      }).toList();
-      final printerConfig = context.read<PrinterConfigProvider>();
-
-      if (!printerConfig.isConfigured) {
-        try {
-          final token = context.read<AuthProvider>().token;
-          if (token != null) await printerConfig.refresh(token);
-        } catch (e, s) {
-          debugPrint('Printer config refresh failed: $e');
-          debugPrintStack(stackTrace: s);
-        }
-      }
-
-      final effectiveShopName = printerConfig.shopName.isNotEmpty ? printerConfig.shopName : 'My Shop';
-      final effectiveShopAddress = printerConfig.shopAddress.isNotEmpty ? printerConfig.shopAddress : null;
-      final effectiveShopPhone = printerConfig.shopPhone.isNotEmpty ? printerConfig.shopPhone : null;
-      final mainTemplate = printerConfig.mainInvoiceTemplate;
-      final whatsappTemplate = printerConfig.whatsappInvoiceTemplate;
-      final whatsappPaperCode = printerConfig.whatsappPaperCode;
-      final secondaryTemplate = printerConfig.secondaryInvoiceTemplate;
-      final secondaryHeader = printerConfig.secondaryReceiptHeader.trim().isEmpty
-          ? 'KITCHEN COPY'
-          : printerConfig.secondaryReceiptHeader.trim();
-      final footerLines = printerConfig.footerLines;
-      final footerLineStyles = printerConfig.footerLineStyles;
-      final printMeta = <String, dynamic>{
-        ...meta,
-        'item_discount_display': printerConfig.itemDiscountDisplay.value,
-      };
-      final receiptPrintTime = DateTime.now();
-
-      Future<Uint8List> buildWhatsappPdf() {
-        return ReceiptPreviewService.instance.buildReceiptPdf(
-          shopName: effectiveShopName,
-          shopAddress: effectiveShopAddress,
-          shopPhone: effectiveShopPhone,
-          receiptNo: receiptNo,
-          dateTime: receiptPrintTime,
-          items: receiptItems,
-          subtotal: receiptSubtotal,
-          discount: discount,
-          tax: tax,
-          grandTotal: total,
-          meta: printMeta,
-          sections: whatsappTemplate.sections,
-          paperWidth: whatsappPaperCode,
-          footerLines: footerLines,
-          footerLineStyles: footerLineStyles,
-          invoiceHeading: printerConfig.invoiceHeading,
-          showLogo: printerConfig.printLogoEnabled &&
-              whatsappTemplate.isCustomerFacing,
-          logoData: printerConfig.printLogoData,
-          showQr: printerConfig.qrCodeEnabled &&
-              whatsappTemplate.isCustomerFacing,
-          qrUrl: printerConfig.qrCodeUrl,
-          qrCaption: printerConfig.qrCodeCaption,
-          template: whatsappTemplate,
-          devCreditEnabled: printerConfig.devCreditEnabled,
-          devCreditText: printerConfig.devCreditText,
-        );
-      }
-
-      final mainRawNetworkWillPrint = printerConfig.isNetworkPrinter &&
-          mainTemplate.supportsRawNetwork &&
-          (printerConfig.networkIp ?? '').trim().isNotEmpty;
-      final whatsappUsesDifferentPdf = whatsappTemplate != mainTemplate ||
-          whatsappPaperCode != printerConfig.mainPaperCode;
-
-      // Build an independently configured WhatsApp document while the physical
-      // receipt is printing. Previously this second PDF was generated only
-      // after printing completed, making WhatsApp feel unnecessarily slow.
-      // When a local Primary print uses the exact same PDF we instead reuse the
-      // bytes returned by LocalPrinterService and avoid the second render.
-      Future<Uint8List?>? whatsappPdfFuture;
-      Object? whatsappPdfError;
-      StackTrace? whatsappPdfStackTrace;
-      if (prepareWhatsAppInvoice &&
-          (!print || whatsappUsesDifferentPdf || mainRawNetworkWillPrint)) {
-        final timing = Stopwatch()..start();
-        whatsappPdfFuture = buildWhatsappPdf().then<Uint8List?>((bytes) {
-          debugPrint(
-            '[WHATSAPP-TIMING] PDF ready in ${timing.elapsedMilliseconds}ms bytes=${bytes.length}',
-          );
-          return bytes;
-        }).catchError((Object error, StackTrace stackTrace) {
-          // Capture the error now so an independently generated PDF cannot
-          // become an unhandled asynchronous error while the printer is busy.
-          whatsappPdfError = error;
-          whatsappPdfStackTrace = stackTrace;
-          return null;
-        });
-      }
-
-      // Reused by the WhatsApp task when the primary print produced a PDF
-      // identical to the configured WhatsApp document. Declared outside the
-      // print-only section because Save-only sales never populate it.
-      Uint8List? customerInvoicePdfBytes;
-
-      if (print) {
-      debugPrint('Active printer connection: ${printerConfig.activeConnection}, template: ${mainTemplate.value}');
-
-      var printedToHardware = false;
-      if (printerConfig.isNetworkPrinter && mainTemplate.supportsRawNetwork && (printerConfig.networkIp ?? '').trim().isNotEmpty) {
-        try {
-          await ThermalPrinterService.instance.printSaleReceiptNetwork(
-            printerIp: printerConfig.networkIp!.trim(),
-            port: printerConfig.networkPort,
-            shopName: effectiveShopName,
-            shopAddress: effectiveShopAddress,
-            shopPhone: effectiveShopPhone,
-            receiptNo: receiptNo,
-            dateTime: receiptPrintTime,
-            items: receiptItems,
-            subtotal: receiptSubtotal,
-            discount: discount,
-            tax: tax,
-            grandTotal: total,
-            cashReceived: cashReceived,
-            changeAmount: changeAmount,
-            meta: printMeta,
-            sections: mainTemplate.sections,
-            paperWidth: printerConfig.mainPaperCode,
-            invoiceHeading: printerConfig.invoiceHeading,
-            footerLines: footerLines,
-            footerLineStyles: footerLineStyles,
-            showLogo: printerConfig.printLogoEnabled && mainTemplate.isCustomerFacing,
-            logoData: printerConfig.printLogoData,
-            showQr: printerConfig.qrCodeEnabled && mainTemplate.isCustomerFacing,
-            qrUrl: printerConfig.qrCodeUrl,
-            qrCaption: printerConfig.qrCodeCaption,
-            template: mainTemplate,
-            devCreditEnabled: printerConfig.devCreditEnabled,
-            devCreditText: printerConfig.devCreditText,
-          );
-          printedToHardware = true;
-
-          if (printerConfig.secondaryPrintEnabled && (printerConfig.secondaryNetworkIp ?? '').trim().isNotEmpty) {
-            await ThermalPrinterService.instance.printSaleReceiptNetwork(
-              printerIp: printerConfig.secondaryNetworkIp!.trim(),
-              port: printerConfig.secondaryNetworkPort,
-              shopName: effectiveShopName,
-              shopAddress: effectiveShopAddress,
-              shopPhone: effectiveShopPhone,
-              receiptNo: receiptNo,
-              dateTime: receiptPrintTime,
-              items: receiptItems,
-              subtotal: receiptSubtotal,
-              discount: discount,
-              tax: tax,
-              grandTotal: total,
-              cashReceived: cashReceived,
-              changeAmount: changeAmount,
-              meta: printMeta,
-              sections: secondaryTemplate.sections,
-              paperWidth: secondaryTemplate.paperWidthCode,
-              invoiceHeading: printerConfig.invoiceHeading,
-              footerLines: footerLines,
-              footerLineStyles: footerLineStyles,
-              receiptHeader: secondaryHeader,
-              template: secondaryTemplate,
-              devCreditEnabled: printerConfig.devCreditEnabled,
-              devCreditText: printerConfig.devCreditText,
-            );
-          }
-        } catch (e, s) {
-          debugPrint('PRINT ERROR (network): $e');
-          debugPrintStack(stackTrace: s);
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text("Sale created but printing failed: $e")),
-            );
-          }
-        }
-      } else if (printerConfig.isLocalPrinter && (printerConfig.localPrinterName ?? '').trim().isNotEmpty) {
-        try {
-          customerInvoicePdfBytes =
-              await LocalPrinterService.instance.printSaleReceipt(
-            printerName: printerConfig.localPrinterName!.trim(),
-            shopName: effectiveShopName,
-            shopAddress: effectiveShopAddress,
-            shopPhone: effectiveShopPhone,
-            receiptNo: receiptNo,
-            dateTime: receiptPrintTime,
-            items: receiptItems,
-            subtotal: receiptSubtotal,
-            discount: discount,
-            tax: tax,
-            grandTotal: total,
-            cashReceived: cashReceived,
-            changeAmount: changeAmount,
-            meta: printMeta,
-            sections: mainTemplate.sections,
-            paperWidth: printerConfig.mainPaperCode,
-            footerLines: footerLines,
-            footerLineStyles: footerLineStyles,
-            invoiceHeading: printerConfig.invoiceHeading,
-            showLogo: printerConfig.printLogoEnabled && mainTemplate.isCustomerFacing,
-            logoData: printerConfig.printLogoData,
-            showQr: printerConfig.qrCodeEnabled && mainTemplate.isCustomerFacing,
-            qrUrl: printerConfig.qrCodeUrl,
-            qrCaption: printerConfig.qrCodeCaption,
-            template: mainTemplate,
-            devCreditEnabled: printerConfig.devCreditEnabled,
-            devCreditText: printerConfig.devCreditText,
-          );
-          printedToHardware = true;
-
-          if (printerConfig.secondaryPrintEnabled &&
-              (printerConfig.secondaryLocalPrinterName ?? '').trim().isNotEmpty) {
-            await LocalPrinterService.instance.printSaleReceipt(
-              printerName: printerConfig.secondaryLocalPrinterName!.trim(),
-              shopName: effectiveShopName,
-              shopAddress: effectiveShopAddress,
-              shopPhone: effectiveShopPhone,
-              receiptNo: receiptNo,
-              dateTime: receiptPrintTime,
-              items: receiptItems,
-              subtotal: receiptSubtotal,
-              discount: discount,
-              tax: tax,
-              grandTotal: total,
-              cashReceived: cashReceived,
-              changeAmount: changeAmount,
-              meta: printMeta,
-              sections: secondaryTemplate.sections,
-              paperWidth: secondaryTemplate.paperWidthCode,
-              footerLines: footerLines,
-              footerLineStyles: footerLineStyles,
-              receiptHeader: secondaryHeader,
-              template: secondaryTemplate,
-              jobName: 'Secondary Copy $receiptNo',
-              devCreditEnabled: printerConfig.devCreditEnabled,
-              devCreditText: printerConfig.devCreditText,
-            );
-          }
-        } catch (e, s) {
-          debugPrint('PRINT ERROR (local): $e');
-          debugPrintStack(stackTrace: s);
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text("Sale created but printing failed: $e")),
-            );
-          }
-        }
-      }
-
-      if (!printedToHardware) {
-        customerInvoicePdfBytes =
-            await ReceiptPreviewService.instance.previewReceipt(
-          shopName: effectiveShopName,
-          shopAddress: effectiveShopAddress,
-          shopPhone: effectiveShopPhone,
-          receiptNo: receiptNo,
-          dateTime: receiptPrintTime,
-          items: receiptItems,
-          subtotal: receiptSubtotal,
-          discount: discount,
-          tax: tax,
-          grandTotal: total,
-          meta: printMeta,
-          sections: mainTemplate.sections,
-          paperWidth: printerConfig.mainPaperCode,
-          footerLines: footerLines,
-          footerLineStyles: footerLineStyles,
-          invoiceHeading: printerConfig.invoiceHeading,
-          showLogo:
-              printerConfig.printLogoEnabled && mainTemplate.isCustomerFacing,
-          logoData: printerConfig.printLogoData,
-          showQr: printerConfig.qrCodeEnabled && mainTemplate.isCustomerFacing,
-          qrUrl: printerConfig.qrCodeUrl,
-          qrCaption: printerConfig.qrCodeCaption,
-          template: mainTemplate,
-          devCreditEnabled: printerConfig.devCreditEnabled,
-          devCreditText: printerConfig.devCreditText,
-        );
-      }
-      } // if (print) — hardware printing / preview
-
-      if (prepareWhatsAppInvoice) {
-        final whatsappFormat = printerConfig.whatsappInvoiceFormat;
-        final customerSnapshotRaw = meta['customer_snapshot'];
-        final customerSnapshot = customerSnapshotRaw is Map
-            ? Map<String, dynamic>.from(customerSnapshotRaw)
-            : const <String, dynamic>{};
-        final rawCustomerBalance = res?['data']?['customer_balance'];
-        final whatsappMessage = WhatsAppMessageTemplateService.render(
-          template: printerConfig.whatsappMessageTemplate,
-          showCustomerBalance: printerConfig.whatsappShowCustomerBalance,
-          values: {
-            'customer_name': _metaText(customerSnapshot['name']),
-            'customer_code': _metaText(customerSnapshot['customer_code']),
-            'invoice_no': receiptNo,
-            'invoice_amount': total.toStringAsFixed(2),
-            'amount_paid': paid.toStringAsFixed(2),
-            'invoice_balance': balance.toStringAsFixed(2),
-            'customer_balance': rawCustomerBalance == null
-                ? ''
-                : _metaNum(rawCustomerBalance).toStringAsFixed(2),
-            'business_name': effectiveShopName,
-            'date': '${occurredAt.day.toString().padLeft(2, '0')}/'
-                '${occurredAt.month.toString().padLeft(2, '0')}/'
-                '${occurredAt.year}',
-            'currency': AppCurrency.currency,
-            'attachment_format': whatsappFormat.label,
-          },
-        );
-        final whatsappPhone = _whatsAppDestinationPhone();
-        final reusablePrimaryPdf = whatsappTemplate == mainTemplate &&
-                whatsappPaperCode == printerConfig.mainPaperCode
-            ? customerInvoicePdfBytes
-            : null;
-
-        // Do not keep the cashier waiting for PDF/JPG conversion, disk IO or
-        // clipboard work. The immutable sale/print values above are captured
-        // by this task before _resetForNextSale() clears the workspace.
-        unawaited(() async {
-          try {
-            final pdfTiming = Stopwatch()..start();
-            Uint8List? pdfBytes = reusablePrimaryPdf;
-            if (pdfBytes == null && whatsappPdfFuture != null) {
-              pdfBytes = await whatsappPdfFuture;
-              if (pdfBytes == null && whatsappPdfError != null) {
-                Error.throwWithStackTrace(
-                  whatsappPdfError!,
-                  whatsappPdfStackTrace ?? StackTrace.current,
-                );
-              }
-            }
-            pdfBytes ??= await buildWhatsappPdf();
-            debugPrint(
-              '[WHATSAPP-TIMING] background PDF wait ${pdfTiming.elapsedMilliseconds}ms reused=${reusablePrimaryPdf != null}',
-            );
-
-            final prepareTiming = Stopwatch()..start();
-            final prepared =
-                await WhatsAppInvoiceService.instance.prepareAttachment(
-              pdfBytes: pdfBytes,
-              receiptNo: receiptNo,
-              phone: whatsappPhone,
-              format: whatsappFormat,
-            );
-            debugPrint(
-              '[WHATSAPP-TIMING] background attachment ready in ${prepareTiming.elapsedMilliseconds}ms format=${whatsappFormat.value}',
-            );
-            if (!mounted) return;
-            _addPendingWhatsAppTask(
-              receiptNo: receiptNo,
-              prepared: prepared,
-              message: whatsappMessage,
-            );
-          } catch (e, st) {
-            debugPrint('WHATSAPP INVOICE ERROR: $e');
-            debugPrintStack(stackTrace: st);
-            if (!mounted) return;
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(
-                  'Sale $receiptNo saved, but WhatsApp invoice preparation failed.',
-                ),
-                action: SnackBarAction(
-                  label: 'Dismiss',
-                  onPressed: () {},
-                ),
-              ),
-            );
-          }
-        }());
-      }
-      } // if (print || prepareWhatsAppInvoice)
-
-      if (!mounted) return;
-      final whatsappWasRequested = _sendInvoiceOnWhatsApp;
-      _resetForNextSale(keepInitialCustomer: widget.initialCustomer != null);
-      if (queuedOffline) {
-        AppFeedback.warning(
-          context,
-          "Offline — Pending Sync. Receipt: $receiptNo. ${queueReason ?? ''} Official invoice number will be assigned when synced.${whatsappWasRequested ? ' WhatsApp invoice was not prepared; send it after synchronization.' : ''}",
-        );
-      } else if (creditLimitNotice != null) {
-        AppFeedback.warning(
-          context,
-          creditLimitNotice.overrideUsed
-              ? 'Sale $receiptNo created with an authorized credit-limit override. ${creditLimitNotice.summary}'
-              : 'Sale $receiptNo created with a credit-limit warning. ${creditLimitNotice.summary}',
-        );
-      } else {
-        final postedReturn = res?['data']?['return'];
-        if (postedReturn is Map) {
-          final returned = _metaNum(postedReturn['return_credit']);
-          final appliedOld = _metaNum(postedReturn['applied_to_original']);
-          final appliedExchange = _metaNum(postedReturn['applied_to_exchange']);
-          final refunded = _metaNum(postedReturn['refunded']);
-          final creditLeft = _metaNum(postedReturn['customer_credit_left']);
-          final postedReturnNo = (postedReturn['return_no'] ?? receiptNo).toString();
-          final creditSuffix = creditLeft > .004
-              ? ' • ${AppCurrency.format(creditLeft)} customer credit'
-              : '';
-          AppFeedback.success(
-            context,
-            'Return $postedReturnNo posted: '
-            '${AppCurrency.format(returned)} credit • '
-            '${AppCurrency.format(appliedOld)} old balance • '
-            '${AppCurrency.format(appliedExchange)} exchange • '
-            '${AppCurrency.format(refunded)} refunded$creditSuffix.',
-          );
-        } else {
-          if (widget.salesOrderPrefill != null) {
-            AppFeedback.success(
-              context,
-              "Order ${widget.salesOrderPrefill!.order.orderNumber} successfully converted to Sale $receiptNo.",
-            );
-            if (Navigator.of(context).canPop()) {
-              Navigator.of(context).pop(true);
-              return;
-            }
-          } else {
-            AppFeedback.success(
-              context,
-              "Sale $receiptNo created successfully. Ready for next sale.",
-            );
-          }
-        }
-      }
-      // Return focus to the product search panel so the cashier can start
-      // the next sale immediately without touching the mouse.
-      Future.delayed(const Duration(milliseconds: 300), () {
-        if (mounted) _productSearchFocusNode.requestFocus();
-      });
     } catch (e) {
       if (!mounted) return;
       AppFeedback.error(context, "Failed to create sale: $e");
@@ -4434,185 +1332,35 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
   }) {
     if (!mounted) return;
     setState(() {
-      _pendingWhatsAppTasks.insert(
-        0,
-        _PendingWhatsAppTask(
-          id: '${DateTime.now().microsecondsSinceEpoch}-${_postSaleTaskSequence++}',
-          receiptNo: receiptNo,
-          prepared: prepared,
-          message: message,
-        ),
+      _postTaskManager.addTask(
+        receiptNo: receiptNo,
+        prepared: prepared,
+        message: message,
       );
-      // Keep a useful recent queue without allowing a busy shift to grow this
-      // state forever. Older generated files remain on disk and can be resent
-      // from the sale later.
-      if (_pendingWhatsAppTasks.length > 8) {
-        _pendingWhatsAppTasks.removeRange(8, _pendingWhatsAppTasks.length);
-      }
     });
   }
 
-  Future<void> _openPendingWhatsAppTask(_PendingWhatsAppTask task) async {
-    if (task.opening) return;
-    setState(() => task.opening = true);
-    try {
-      final copied = await WhatsAppInvoiceService.instance
-          .copyFilesToClipboard(task.prepared.attachmentPaths);
-      await WhatsAppInvoiceService.instance.openChat(
-        phone: task.prepared.normalizedPhone,
-        message: task.message,
-      );
-      if (!mounted) return;
-      if (copied) {
-        setState(
-          () => _pendingWhatsAppTasks.removeWhere((t) => t.id == task.id),
-        );
-      } else {
-        // Keep the task visible so the cashier still has a one-click folder
-        // fallback instead of losing the generated invoice.
-        setState(() => task.opening = false);
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          duration: const Duration(seconds: 4),
-          content: Text(
-            copied
-                ? '${task.receiptNo}: WhatsApp opened. Press Ctrl+V, then Send.'
-                : '${task.receiptNo}: WhatsApp opened. Clipboard copy failed; use the folder button on the ready task to attach the ${task.prepared.attachmentDescription}.',
-          ),
-        ),
-      );
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => task.opening = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not open WhatsApp for ${task.receiptNo}: $e')),
-      );
-    }
+  Future<void> _openPendingWhatsAppTask(PendingWhatsAppTask task) async {
+    await _postTaskManager.openTask(
+      context,
+      task,
+      notify: () {
+        if (mounted) setState(() {});
+      },
+    );
   }
 
-  void _dismissPendingWhatsAppTask(_PendingWhatsAppTask task) {
-    setState(() => _pendingWhatsAppTasks.removeWhere((t) => t.id == task.id));
+  void _dismissPendingWhatsAppTask(PendingWhatsAppTask task) {
+    setState(() => _postTaskManager.dismissTask(task));
   }
 
   Widget _buildPostSaleTaskPanel() {
-    if (_pendingWhatsAppTasks.isEmpty) return const SizedBox.shrink();
-    final visible = _pendingWhatsAppTasks.take(3).toList(growable: false);
-    return Material(
-      elevation: 10,
-      borderRadius: BorderRadius.circular(10),
-      color: Colors.white,
-      child: Container(
-        width: 360,
-        constraints: const BoxConstraints(maxHeight: 250),
-        decoration: BoxDecoration(
-          border: Border.all(color: AppTheme.border),
-          borderRadius: BorderRadius.circular(10),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 9, 8, 7),
-              child: Row(
-                children: [
-                  const Icon(Icons.chat_rounded, size: 17, color: Color(0xFF128C7E)),
-                  const SizedBox(width: 7),
-                  Expanded(
-                    child: Text(
-                      _pendingWhatsAppTasks.length == 1
-                          ? 'WhatsApp invoice ready'
-                          : '${_pendingWhatsAppTasks.length} WhatsApp invoices ready',
-                      style: const TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w800,
-                        color: AppTheme.navy,
-                      ),
-                    ),
-                  ),
-                  if (_pendingWhatsAppTasks.length > 3)
-                    Text(
-                      '+${_pendingWhatsAppTasks.length - 3} more',
-                      style: const TextStyle(fontSize: 10, color: AppTheme.textMuted),
-                    ),
-                ],
-              ),
-            ),
-            const Divider(height: 1, color: AppTheme.border),
-            ...visible.map(
-              (task) => Padding(
-                padding: const EdgeInsets.fromLTRB(12, 7, 6, 7),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            task.receiptNo,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                          const SizedBox(height: 2),
-                          Text(
-                            '+${task.prepared.normalizedPhone} • ${task.prepared.attachmentDescription}',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontSize: 10,
-                              color: AppTheme.textMuted,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(width: 6),
-                    TextButton.icon(
-                      onPressed: task.opening
-                          ? null
-                          : () => _openPendingWhatsAppTask(task),
-                      style: TextButton.styleFrom(
-                        visualDensity: VisualDensity.compact,
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-                      ),
-                      icon: task.opening
-                          ? const SizedBox(
-                              width: 12,
-                              height: 12,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Icon(Icons.open_in_new_rounded, size: 14),
-                      label: const Text('Open', style: TextStyle(fontSize: 10.5)),
-                    ),
-                    IconButton(
-                      tooltip: 'Open attachment folder',
-                      visualDensity: VisualDensity.compact,
-                      onPressed: task.opening
-                          ? null
-                          : () => WhatsAppInvoiceService.instance
-                              .openInvoiceFolder(task.prepared.primaryPath),
-                      icon: const Icon(Icons.folder_open_rounded, size: 16),
-                    ),
-                    IconButton(
-                      tooltip: 'Dismiss',
-                      visualDensity: VisualDensity.compact,
-                      onPressed: task.opening
-                          ? null
-                          : () => _dismissPendingWhatsAppTask(task),
-                      icon: const Icon(Icons.close_rounded, size: 16),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
+    return SalePostTaskPanel(
+      tasks: _postTaskManager.tasks,
+      onOpenTask: _openPendingWhatsAppTask,
+      onDismissTask: _dismissPendingWhatsAppTask,
+      onOpenFolder: (path) =>
+          WhatsAppInvoiceService.instance.openInvoiceFolder(path),
     );
   }
 
@@ -4660,118 +1408,18 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     });
   }
 
-  Future<List<ProductRef>> _queryProducts(String q) async {
-    try {
-      final res = await _productService.getProducts(
-        page: 1,
-        search: q,
-        vendorId: _selectedVendorId,
-      );
-      final data = res['data'];
-      List list = const [];
-
-      if (data is List && data.isNotEmpty) {
-        final first = data.first;
-        if (first is Map && first['products'] is List) {
-          list = first['products'] as List;
-        }
-      }
-
-      double _tp(Map m) {
-        for (final k in [
-          'tp',
-          'sell_price',
-          'price',
-          'unit_price',
-          'default_price',
-        ]) {
-          final v = m[k];
-          if (v != null) {
-            final n = double.tryParse(v.toString());
-            if (n != null) return n;
-          }
-        }
-        return 0.0;
-      }
-
-      return list
-          .map<ProductRef>((raw) {
-            final m = raw as Map<String, dynamic>;
-            return ProductRef(
-              id: _metaInt(m['id'] ?? m['product_id']) ?? 0,
-              name: (m['name'] ?? m['title'] ?? 'Unnamed').toString(),
-              tp: _tp(m),
-              sku: (m['sku'] ?? '').toString().trim().isEmpty
-                  ? null
-                  : m['sku'].toString().trim(),
-              barcode: (m['barcode'] ?? '').toString().trim().isEmpty
-                  ? null
-                  : m['barcode'].toString().trim(),
-              stock: ProductStock.quantity(m),
-              raw: m,
-            );
-          })
-          .toList(growable: false);
-    } catch (_) {
-      // Offline / server-unreachable fallback: search the local SQLite catalog
-      // so the product autocomplete keeps working with no connectivity.
-      // Uses the same CatalogCacheService that the barcode scanner already falls
-      // back to, giving the cashier a consistent offline experience.
-      try {
-        final branchIdInt = int.tryParse(_effectiveBranchIdStr());
-        final offlineRows = await CatalogCacheService.instance.searchProducts(
-          q,
-          branchId: branchIdInt,
-          vendorId: _selectedVendorId,
-          limit: 50,
-        );
-        return offlineRows.map<ProductRef>((m) {
-          double tp = 0;
-          for (final k in const ['price', 'tp', 'sell_price', 'unit_price']) {
-            final v = m[k];
-            if (v != null) {
-              final n = double.tryParse(v.toString());
-              if (n != null) {
-                tp = n;
-                break;
-              }
-            }
-          }
-          return ProductRef(
-            id: _metaInt(m['id']) ?? 0,
-            name: (m['name'] ?? 'Unnamed').toString(),
-            tp: tp,
-            sku: (m['sku'] ?? '').toString().trim().isEmpty
-                ? null
-                : m['sku'].toString().trim(),
-            barcode: (m['barcode'] ?? '').toString().trim().isEmpty
-                ? null
-                : m['barcode'].toString().trim(),
-            stock: null, // branch_stock not stored in the SQLite cache shape
-            raw: m,
-          );
-        }).toList(growable: false);
-      } catch (_) {
-        return const <ProductRef>[];
-      }
-    }
+  Future<List<ProductRef>> _queryProducts(String q) {
+    return SaleProductQueryService.queryProducts(
+      productService: _productService,
+      query: q,
+      vendorId: _selectedVendorId,
+      branchId: int.tryParse(_effectiveBranchIdStr()),
+    );
   }
 
   // helpers
   double _toDouble(TextEditingController c) =>
       double.tryParse(c.text.trim()) ?? 0.0;
-  String _money(num v) => v.toStringAsFixed(2);
-  Color _balanceColor(double balance) {
-    if (balance > 0) return Colors.red;
-    if (balance < 0) return Colors.orange;
-    return Colors.green;
-  }
-
-
-  static SingleActivator _ctrl(LogicalKeyboardKey key) => SingleActivator(key, control: true);
-  static SingleActivator _cmd(LogicalKeyboardKey key) => SingleActivator(key, meta: true);
-  static SingleActivator _ctrlShift(LogicalKeyboardKey key) => SingleActivator(key, control: true, shift: true);
-  static SingleActivator _cmdShift(LogicalKeyboardKey key) => SingleActivator(key, meta: true, shift: true);
 
   void _focusBarcodeScanner() {
     Future.delayed(const Duration(milliseconds: 50), () {
@@ -4853,99 +1501,15 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
   }
 
   Future<void> _addSalePaymentDialog(double total) async {
-    final pm = context.read<PaymentMethodProvider>();
-    var methods = pm.activeMethods;
-    if (methods.isEmpty) {
-      await pm.reload();
-      methods = pm.activeMethods;
-    }
-    if (methods.isEmpty) {
-      if (mounted) {
-        AppFeedback.error(context, 'No payment methods configured for this branch.');
-      }
-      return;
-    }
-
-    final remaining = total - _salePaid(total);
-    final amountCtl = TextEditingController(
-        text: remaining > 0 ? remaining.toStringAsFixed(2) : '');
-    final refCtl = TextEditingController();
-    String method = (pm.defaultMethod ?? methods.first).method;
-
-    await showDialog(
+    final payment = await showSaleAddPaymentDialog(
       context: context,
-      builder: (_) => StatefulBuilder(
-        builder: (context, setLocal) {
-          final selected = pm.byCode(method);
-          final showReference = selected != null && !selected.affectsCashDrawer;
-          return AlertDialog(
-            title: const Text('Add Payment'),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  controller: amountCtl,
-                  autofocus: true,
-                  keyboardType:
-                      const TextInputType.numberWithOptions(decimal: true),
-                  decoration: const InputDecoration(
-                    labelText: 'Amount',
-                    prefixIcon: Icon(Icons.payments_outlined),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                DropdownButtonFormField<String>(
-                  value: method,
-                  isExpanded: true,
-                  decoration: const InputDecoration(
-                    labelText: 'Method',
-                    prefixIcon: Icon(Icons.account_balance_wallet_outlined),
-                  ),
-                  items: methods
-                      .map((m) => DropdownMenuItem(
-                            value: m.method,
-                            child: Text(m.displayName),
-                          ))
-                      .toList(),
-                  onChanged: (v) => setLocal(() => method = v ?? method),
-                ),
-                if (showReference) ...[
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: refCtl,
-                    decoration: const InputDecoration(
-                      labelText: 'Reference (optional)',
-                      hintText: 'Txn / approval / cheque no…',
-                      prefixIcon: Icon(Icons.tag_outlined),
-                    ),
-                  ),
-                ],
-              ],
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('Cancel'),
-              ),
-              FilledButton(
-                onPressed: () {
-                  final amount = double.tryParse(amountCtl.text.trim()) ?? 0.0;
-                  if (amount <= 0) return;
-                  final ref = refCtl.text.trim();
-                  setState(() => _payments.add({
-                        'amount': amount,
-                        'method': method,
-                        if (ref.isNotEmpty) 'reference': ref,
-                      }));
-                  Navigator.pop(context);
-                },
-                child: const Text('Add'),
-              ),
-            ],
-          );
-        },
-      ),
+      total: total,
+      alreadyPaid: _salePaid(total),
+      pm: context.read<PaymentMethodProvider>(),
     );
+    if (payment != null && mounted) {
+      setState(() => _payments.add(payment));
+    }
   }
 
   @override
@@ -5086,49 +1650,31 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       });
     }
 
-    double rowNum(v) => double.tryParse(v?.toString() ?? '') ?? 0.0;
-    final subtotal = _items.fold<double>(0.0, (sum, i) {
-      final qty = rowNum(i['quantity']);
-      if (qty <= 0) return sum;
-      return sum + _cartLineTotal(i);
-    });
-    final discount = _toDouble(discountController);
-    final tax = _toDouble(taxController);
-    final shipping = _toDouble(shippingController);
-    final saleTotal = subtotal - discount + tax + shipping;
-    final returnCredit = _linkedReturnCredit;
-    final appliedOld = returnCredit.clamp(0.0, _linkedReturnOriginalOutstanding).toDouble();
-    final afterOld = (returnCredit - appliedOld).clamp(0.0, double.infinity).toDouble();
-    final appliedExchange = afterOld.clamp(0.0, saleTotal.clamp(0.0, double.infinity)).toDouble();
-    final refundDue = (afterOld - appliedExchange).clamp(0.0, double.infinity).toDouble();
-    final customerPays = (saleTotal - appliedExchange).clamp(0.0, double.infinity).toDouble();
-    // Signed checkout amount: positive means collect from customer; negative
-    // means refundable/credit value remains after settling old AR + exchange.
-    final total = customerPays > .004 ? customerPays : -refundDue;
+    final pmProvider = context.read<PaymentMethodProvider>();
+    final effectiveMethod =
+        _saleMethod ?? pmProvider.defaultMethod?.method ?? 'cash';
+    final isDrawerMethod =
+        pmProvider.byCode(effectiveMethod)?.affectsCashDrawer ??
+            (effectiveMethod == 'cash');
 
-    // Change is computed against the CASH (drawer) portion only — a split of
-    // 1000 cash + 500 bank on a 1500 bill has no change; 2000 cash on a 1500
-    // bill shows 500 change and prints it on the invoice.
-    final cashDue = _saleCashDue(total);
-    final enteredCashReceived = _toDouble(cashReceivedController);
-    final effectiveCashReceived =
-        enteredCashReceived > 0 ? enteredCashReceived : cashDue;
-    final changeAmount = cashDue > 0
-        ? (effectiveCashReceived - cashDue).clamp(0.0, double.infinity).toDouble()
-        : 0.0;
+    final checkoutTotals = SaleCheckoutTotals.calculate(
+      items: _items,
+      lineTotalCalculator: _cartLineTotal,
+      discount: _toDouble(discountController),
+      tax: _toDouble(taxController),
+      shipping: _toDouble(shippingController),
+      splitPayments: _payments,
+      autoCashIfEmpty: _autoCashIfEmpty,
+      effectiveMethod: effectiveMethod,
+      isDrawerMethod: isDrawerMethod,
+      saleReference: saleReferenceController.text,
+      enteredCashReceived: _toDouble(cashReceivedController),
+    );
+    final subtotal = checkoutTotals.subtotal;
+    final total = checkoutTotals.signedTotal;
+    final changeAmount = checkoutTotals.changeAmount;
 
     // ── Focus + shortcut scope ──────────────────────────────────────────────
-    // CallbackShortcuts must be an ANCESTOR of Focus(_pageFocusNode) so that
-    // the local bindings fire when _pageFocusNode holds focus (e.g. after
-    // clicking blank space). In the old layout _pageFocusNode was the parent
-    // of CallbackShortcuts — making it invisible to the local handler, so
-    // key events fell through to the global AppKeyboardShortcuts (where F2
-    // opens a new Create Sale screen instead of the product picker here).
-    //
-    // onTap instead of onTapDown: by the time onTap fires, any inner widget
-    // that was tapped (TextField, button) has already called requestFocus().
-    // We only take focus when no text-editing widget currently holds it, so
-    // TextFields stay interactive and shortcuts are never swallowed.
     return GestureDetector(
       behavior: HitTestBehavior.translucent,
       onTap: () {
@@ -5141,104 +1687,59 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         }
       },
       child: CallbackShortcuts(
-        bindings: <ShortcutActivator, VoidCallback>{
-            const SingleActivator(LogicalKeyboardKey.f2): () => _addItemManual(),
-            _ctrl(LogicalKeyboardKey.keyI): () => _addItemManual(),
-            _cmd(LogicalKeyboardKey.keyI): () => _addItemManual(),
-            if (!_isEditing) ...{
-              const SingleActivator(LogicalKeyboardKey.f3): () => _pickCustomer(),
-              _ctrlShift(LogicalKeyboardKey.keyC): () => _pickCustomer(),
-              _cmdShift(LogicalKeyboardKey.keyC): () => _pickCustomer(),
-            },
-            // Delivery shortcuts — only active when delivery module is enabled.
-            if (deliveryEnabled) ...{
-              const SingleActivator(LogicalKeyboardKey.f4): () => _pickDeliveryBoy(),
-              _ctrlShift(LogicalKeyboardKey.keyD): () => _pickDeliveryBoy(),
-              _cmdShift(LogicalKeyboardKey.keyD): () => _pickDeliveryBoy(),
-              _ctrlShift(LogicalKeyboardKey.keyB): () {
-                _deliveryBoyController.clear();
-                _deliveryBoyFocusNode.requestFocus();
-              },
-            },
-            const SingleActivator(LogicalKeyboardKey.f9): _focusBarcodeScanner,
-            _ctrl(LogicalKeyboardKey.enter): () => widget.isSalesOrder
-                ? _submitSalesOrder(submitForApproval: true)
-                : _submitSale(),
-            _cmd(LogicalKeyboardKey.enter): () => widget.isSalesOrder
-                ? _submitSalesOrder(submitForApproval: true)
-                : _submitSale(),
-            _ctrl(LogicalKeyboardKey.numpadEnter): () => widget.isSalesOrder
-                ? _submitSalesOrder(submitForApproval: true)
-                : _submitSale(),
-            _cmd(LogicalKeyboardKey.numpadEnter): () => widget.isSalesOrder
-                ? _submitSalesOrder(submitForApproval: true)
-                : _submitSale(),
-            if (widget.isSalesOrder) ...{
-              _ctrl(LogicalKeyboardKey.keyS): () =>
-                  _submitSalesOrder(submitForApproval: false),
-              _cmd(LogicalKeyboardKey.keyS): () =>
-                  _submitSalesOrder(submitForApproval: false),
-            },
-            _ctrl(LogicalKeyboardKey.slash): () =>
-                showAppShortcutGuide(
-                  context,
-                  includeSaleCreate: !widget.isSalesOrder,
-                  includeSalesOrder: widget.isSalesOrder,
-                ),
-            _cmd(LogicalKeyboardKey.slash): () =>
-                showAppShortcutGuide(
-                  context,
-                  includeSaleCreate: !widget.isSalesOrder,
-                  includeSalesOrder: widget.isSalesOrder,
-                ),
-            if (!_isEditing)
-              _ctrlShift(LogicalKeyboardKey.keyU): () {
-                _customerController.clear();
-                _customerFocusNode.requestFocus();
-              },
-            _ctrlShift(LogicalKeyboardKey.keyS): () {
-              _salesmanController.clear();
-              _salesmanFocusNode.requestFocus();
-            },
-            _ctrlShift(LogicalKeyboardKey.keyP): () {
-              _productSearchFocusNode.requestFocus();
-            },
-            // Vendor focus shortcuts — only when sale vendor is enabled.
-            if (saleVendorEnabled) ...{
-              _ctrlShift(LogicalKeyboardKey.keyV): () {
-                _vendorController.clear();
-                _vendorFocusNode.requestFocus();
-              },
-              _cmdShift(LogicalKeyboardKey.keyV): () {
-                _vendorController.clear();
-                _vendorFocusNode.requestFocus();
-              },
-            },
-            _ctrlShift(LogicalKeyboardKey.keyN): () {
-              _walkInNameFocusNode.requestFocus();
-            },
-            _ctrlShift(LogicalKeyboardKey.keyH): () {
-              _walkInPhoneFocusNode.requestFocus();
-            },
-            _ctrlShift(LogicalKeyboardKey.keyA): () {
-              _walkInAddressFocusNode.requestFocus();
-            },
-            _ctrlShift(LogicalKeyboardKey.keyR): () {
-              _focusAndSelectAll(_cashReceivedFocusNode, cashReceivedController);
-            },
-            _cmdShift(LogicalKeyboardKey.keyR): () {
-              _focusAndSelectAll(_cashReceivedFocusNode, cashReceivedController);
-            },
-            _ctrlShift(LogicalKeyboardKey.keyG): () {
-              _focusAndSelectAll(_discountFocusNode, discountController);
-            },
-            _ctrlShift(LogicalKeyboardKey.keyT): () {
-              _focusAndSelectAll(_taxFocusNode, taxController);
-            },
-            _ctrlShift(LogicalKeyboardKey.keyS): () {
-              _focusAndSelectAll(_shippingFocusNode, shippingController);
-            },
+        bindings: SaleShortcutBindings.buildBindings(
+          context: context,
+          isEditing: _isEditing,
+          isSalesOrder: widget.isSalesOrder,
+          deliveryEnabled: deliveryEnabled,
+          saleVendorEnabled: saleVendorEnabled,
+          onAddItemManual: _addItemManual,
+          onPickCustomer: _pickCustomer,
+          onPickDeliveryBoy: _pickDeliveryBoy,
+          onDeliveryBoyFocus: () {
+            _deliveryBoyController.clear();
+            _deliveryBoyFocusNode.requestFocus();
           },
+          onFocusBarcodeScanner: _focusBarcodeScanner,
+          onSubmitPrimary: () => widget.isSalesOrder
+              ? _submitSalesOrder(submitForApproval: true)
+              : _submitSale(),
+          onSubmitDraft: widget.isSalesOrder
+              ? () => _submitSalesOrder(submitForApproval: false)
+              : null,
+          onCustomerFocus: () {
+            _customerController.clear();
+            _customerFocusNode.requestFocus();
+          },
+          onSalesmanFocus: () {
+            _salesmanController.clear();
+            _salesmanFocusNode.requestFocus();
+          },
+          onProductSearchFocus: () => _productSearchFocusNode.requestFocus(),
+          onVendorFocus: () {
+            _vendorController.clear();
+            _vendorFocusNode.requestFocus();
+          },
+          onWalkInNameFocus: () => _walkInNameFocusNode.requestFocus(),
+          onWalkInPhoneFocus: () => _walkInPhoneFocusNode.requestFocus(),
+          onWalkInAddressFocus: () => _walkInAddressFocusNode.requestFocus(),
+          onCashReceivedFocus: () => _focusAndSelectAll(
+            _cashReceivedFocusNode,
+            cashReceivedController,
+          ),
+          onDiscountFocus: () => _focusAndSelectAll(
+            _discountFocusNode,
+            discountController,
+          ),
+          onTaxFocus: () => _focusAndSelectAll(
+            _taxFocusNode,
+            taxController,
+          ),
+          onShippingFocus: () => _focusAndSelectAll(
+            _shippingFocusNode,
+            shippingController,
+          ),
+        ),
           child: Focus(
             focusNode: _pageFocusNode,
             autofocus: true,
@@ -5327,7 +1828,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
                   // Non-modal post-sale task surface. It never requests focus,
                   // so barcode scanning/typing for the next invoice continues
                   // uninterrupted while WhatsApp attachments finish.
-                  if (_pendingWhatsAppTasks.isNotEmpty)
+                  if (_postTaskManager.tasks.isNotEmpty)
                     Positioned(
                       right: 12,
                       bottom: 76,
@@ -5408,8 +1909,10 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
             compact: true,
           ),
 
-          if ((widget.initialReturnInvoice ?? '').trim().isNotEmpty)
-            _buildReturnContextBanner(),
+          if ((widget.initialReturnInvoice ?? '').trim().isNotEmpty && !_isEditing)
+            SaleReturnContextBanner(
+              returnInvoice: widget.initialReturnInvoice!,
+            ),
 
           // 2. FIXED — walk-in/customer snapshot fields are immutable once the
           // invoice is posted. Customer identity is already shown above in the
@@ -5420,10 +1923,26 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
           const Divider(height: 1, thickness: 1, color: AppTheme.border),
 
           // 3. FIXED — product autocomplete + scanner + F2
-          _buildInputRow(),
+          SaleCartInputRow(
+            searchFocusNode: _productSearchFocusNode,
+            searchController: _productSearchController,
+            onQueryProducts: _queryProducts,
+            onProductSelected: (ref) {
+              final productMap = ref.raw ??
+                  <String, dynamic>{
+                    'id': ref.id,
+                    'name': ref.name,
+                    'price': ref.tp,
+                  };
+              setState(() => _addOrIncrementProduct(productMap));
+            },
+            onFocusScanner: _focusBarcodeScanner,
+            scannerEnabled: _scannerEnabled,
+            onAddItemsManual: _addItemManual,
+          ),
 
           // 4. FIXED — cart table column headers
-          _buildCartTableHeader(),
+          const SaleCartTableHeader(),
 
           // 5. INDEPENDENTLY SCROLLABLE — cart item rows
           Expanded(
@@ -5452,540 +1971,31 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     );
   }
 
-  Widget _buildReturnContextBanner() {
-    final invoice = (widget.initialReturnInvoice ?? '').trim();
-    if (_isEditing || invoice.isEmpty) return const SizedBox.shrink();
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: BoxDecoration(
-        color: AppTheme.warning.withOpacity(.08),
-        border: const Border(
-          bottom: BorderSide(color: AppTheme.border),
-        ),
-      ),
-      child: Row(
-        children: [
-          const Icon(
-            Icons.assignment_return_outlined,
-            size: 18,
-            color: AppTheme.warning,
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              'Return / Exchange for $invoice • Enter a negative quantity on the item being returned. Original delivery is non-refundable.',
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                fontSize: 11.5,
-                fontWeight: FontWeight.w700,
-                color: AppTheme.navy,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ── Fixed cart table column header row ─────────────────────────────────
-  Widget _buildCartTableHeader() {
-    const style = TextStyle(
-      fontSize: 11,
-      fontWeight: FontWeight.w700,
-      color: AppTheme.textMuted,
-    );
-    return Container(
-      height: 28,
-      padding: const EdgeInsets.symmetric(horizontal: 6),
-      decoration: const BoxDecoration(
-        color: AppTheme.surfaceSoft,
-        border: Border(bottom: BorderSide(color: AppTheme.border)),
-      ),
-      child: const Row(
-        children: [
-          Expanded(flex: 5, child: Text('Product', style: style)),
-          Expanded(
-            flex: 2,
-            child: Text('T.P', style: style, textAlign: TextAlign.right),
-          ),
-          SizedBox(width: 4),
-          Expanded(
-            flex: 2,
-            child: Text('Disc', style: style, textAlign: TextAlign.right),
-          ),
-          SizedBox(width: 4),
-          Expanded(
-            flex: 2,
-            child: Text('Extra Disc', style: style, textAlign: TextAlign.right),
-          ),
-          SizedBox(width: 4),
-          Expanded(
-            flex: 2,
-            child: Text('Qty', style: style, textAlign: TextAlign.center),
-          ),
-          SizedBox(width: 4),
-          Expanded(
-            flex: 2,
-            child: Text('Total', style: style, textAlign: TextAlign.right),
-          ),
-          SizedBox(width: 28),
-        ],
-      ),
-    );
-  }
-
-  // ── Compact walk-in section ────────────────────────────────────────────
-  // Town / Area intentionally remains a separate sale-level field. On wider
-  // POS workspaces the walk-in identity/contact inputs share one line; narrower
-  // or Windows-scaled screens fall back safely without horizontal overflow.
   Widget _buildWalkInCompact() {
-    final inputDecoration = InputDecoration(
-      isDense: true,
-      contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
-      border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(6),
-        borderSide: const BorderSide(color: AppTheme.border),
-      ),
-      enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(6),
-        borderSide: const BorderSide(color: AppTheme.border),
-      ),
-    );
-
-    Widget nameField() => Tooltip(
-          message: 'Focus: Ctrl+Shift+N',
-          child: SizedBox(
-            height: 40,
-            child: TextFormField(
-              controller: customerNameController,
-              focusNode: _walkInNameFocusNode,
-              decoration: inputDecoration.copyWith(hintText: 'Customer name'),
-              style: const TextStyle(fontSize: 12),
-            ),
-          ),
-        );
-
-    Widget phoneField() => Tooltip(
-          message: 'Focus: Ctrl+Shift+H',
-          child: SizedBox(
-            height: 40,
-            child: TextFormField(
-              controller: customerPhoneController,
-              focusNode: _walkInPhoneFocusNode,
-              keyboardType: TextInputType.phone,
-              decoration: inputDecoration.copyWith(hintText: 'Phone'),
-              style: const TextStyle(fontSize: 12),
-              onEditingComplete: () {
-                unawaited(_resolveWalkInCustomerByPhone());
-                _walkInAddressFocusNode.requestFocus();
-              },
-            ),
-          ),
-        );
-
-    Widget addressField() => Tooltip(
-          message: 'Focus: Ctrl+Shift+A',
-          child: SizedBox(
-            height: 40,
-            child: TextFormField(
-              controller: addressController,
-              focusNode: _walkInAddressFocusNode,
-              decoration: inputDecoration.copyWith(
-                hintText: 'Address (optional)',
-                prefixIcon: const Icon(
-                  Icons.location_on_outlined,
-                  size: 14,
-                  color: AppTheme.textMuted,
-                ),
-              ),
-              style: const TextStyle(fontSize: 12),
-            ),
-          ),
-        );
-
-    Widget clearCustomerButton() {
-      if (_selectedCustomerId == null) return const SizedBox.shrink();
-      return InkWell(
-        onTap: _clearCustomerSelection,
-        borderRadius: BorderRadius.circular(4),
-        child: const Padding(
-          padding: EdgeInsets.all(2),
-          child: Icon(
-            Icons.close_rounded,
-            size: 14,
-            color: AppTheme.danger,
-          ),
-        ),
-      );
-    }
-
-    Widget whatsAppToggle() {
-      if (!context.watch<AuthProvider>().hasAddon('whatsapp_invoice')) {
-        return const SizedBox.shrink();
-      }
-      return Tooltip(
-        message:
-            'Prepare this receipt for WhatsApp after the sale is saved. Registered customers always use their primary phone.',
-        child: InkWell(
-          onTap: _submitting
-              ? null
-              : () => setState(() {
-                    _sendInvoiceOnWhatsApp = !_sendInvoiceOnWhatsApp;
-                  }),
-          borderRadius: BorderRadius.circular(6),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Checkbox(
-                value: _sendInvoiceOnWhatsApp,
-                onChanged: _submitting
-                    ? null
-                    : (value) => setState(() {
-                          _sendInvoiceOnWhatsApp = value ?? false;
-                        }),
-                visualDensity: VisualDensity.compact,
-              ),
-              const Text(
-                'WhatsApp invoice',
-                style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-
-    Widget whatsAppDestination() {
-      if (!_sendInvoiceOnWhatsApp) return const SizedBox.shrink();
-      return Container(
-        constraints: const BoxConstraints(maxWidth: 230),
-        height: 34,
-        padding: const EdgeInsets.symmetric(horizontal: 10),
-        decoration: BoxDecoration(
-          border: Border.all(color: AppTheme.border),
-          borderRadius: BorderRadius.circular(6),
-          color: AppTheme.surfaceSoft,
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.chat_rounded, size: 14, color: Color(0xFF128C7E)),
-            const SizedBox(width: 6),
-            Flexible(
-              child: Text(
-                _whatsAppDestinationPhone().isEmpty
-                    ? 'Primary phone required'
-                    : 'To: ${_whatsAppDestinationPhone()}',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  color: AppTheme.textMuted,
-                ),
-              ),
-            ),
-          ],
-        ),
-      );
-    }
-
-    Widget areaRow() => Row(
-          children: [
-            Expanded(
-              child: SizedBox(
-                height: 40,
-                child: DropdownButtonFormField<int>(
-                  value: _areaById(_selectedAreaId) == null ? null : _selectedAreaId,
-                  isExpanded: true,
-                  decoration: inputDecoration.copyWith(
-                    labelText: 'Town / Area',
-                    hintText: 'Select sale area',
-                    prefixIcon: const Icon(
-                      Icons.location_city_outlined,
-                      size: 15,
-                      color: AppTheme.textMuted,
-                    ),
-                  ),
-                  items: _customerAreas
-                      .where(_areaActive)
-                      .map(
-                        (area) => DropdownMenuItem<int>(
-                          value: _metaInt(area['id']),
-                          child: Text(
-                            (area['name'] ?? '').toString(),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontSize: 12),
-                          ),
-                        ),
-                      )
-                      .where((item) => item.value != null)
-                      .toList(growable: false),
-                  onChanged: _submitting
-                      ? null
-                      : (value) => setState(() => _selectedAreaId = value),
-                ),
-              ),
-            ),
-            if (_selectedAreaId != null) ...[
-              const SizedBox(width: 6),
-              Tooltip(
-                message: 'Clear sale area',
-                child: SizedBox(
-                  width: 38,
-                  height: 40,
-                  child: OutlinedButton(
-                    onPressed: _submitting
-                        ? null
-                        : () => setState(() => _selectedAreaId = null),
-                    style: OutlinedButton.styleFrom(
-                      padding: EdgeInsets.zero,
-                      side: const BorderSide(color: AppTheme.border),
-                    ),
-                    child: const Icon(Icons.close_rounded, size: 16),
-                  ),
-                ),
-              ),
-            ],
-            if (context.read<AuthProvider>().hasPermission('manage-customers')) ...[
-              const SizedBox(width: 6),
-              Tooltip(
-                message: 'Create or rename Town / Area',
-                child: SizedBox(
-                  width: 38,
-                  height: 40,
-                  child: OutlinedButton(
-                    onPressed: _submitting ? null : _manageCustomerAreas,
-                    style: OutlinedButton.styleFrom(
-                      padding: EdgeInsets.zero,
-                      side: const BorderSide(color: AppTheme.border),
-                    ),
-                    child: const Icon(Icons.tune_rounded, size: 17),
-                  ),
-                ),
-              ),
-            ],
-            if (_selectedCustomerId != null &&
-                _metaInt(_selectedCustomer?['area_id']) != null &&
-                _selectedAreaId != _metaInt(_selectedCustomer?['area_id'])) ...[
-              const SizedBox(width: 8),
-              const Tooltip(
-                message:
-                    'This changes only this sale. The customer default area is not modified.',
-                child: Icon(
-                  Icons.info_outline_rounded,
-                  size: 16,
-                  color: AppTheme.textMuted,
-                ),
-              ),
-            ],
-          ],
-        );
-
-    return Container(
-      padding: const EdgeInsets.fromLTRB(8, 5, 8, 6),
-      decoration: const BoxDecoration(
-        border: Border(top: BorderSide(color: AppTheme.border)),
-      ),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final wide = constraints.maxWidth >= 720;
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (wide)
-                Row(
-                  children: [
-                    const SizedBox(
-                      width: 48,
-                      child: Text(
-                        'Walk-in',
-                        style: TextStyle(
-                          fontSize: 10,
-                          fontWeight: FontWeight.w700,
-                          color: AppTheme.textMuted,
-                        ),
-                      ),
-                    ),
-                    Expanded(flex: 3, child: nameField()),
-                    const SizedBox(width: 6),
-                    SizedBox(width: 126, child: phoneField()),
-                    if (_selectedCustomerId != null) ...[
-                      const SizedBox(width: 4),
-                      clearCustomerButton(),
-                    ],
-                    const SizedBox(width: 6),
-                    Expanded(flex: 4, child: addressField()),
-                    if (context.watch<AuthProvider>().hasAddon('whatsapp_invoice')) ...[
-                      const SizedBox(width: 6),
-                      whatsAppToggle(),
-                    ],
-                  ],
-                )
-              else ...[
-                Row(
-                  children: [
-                    const SizedBox(
-                      width: 48,
-                      child: Text(
-                        'Walk-in',
-                        style: TextStyle(
-                          fontSize: 10,
-                          fontWeight: FontWeight.w700,
-                          color: AppTheme.textMuted,
-                        ),
-                      ),
-                    ),
-                    Expanded(child: nameField()),
-                    const SizedBox(width: 6),
-                    SizedBox(width: 120, child: phoneField()),
-                    if (_selectedCustomerId != null) ...[
-                      const SizedBox(width: 4),
-                      clearCustomerButton(),
-                    ],
-                  ],
-                ),
-                const SizedBox(height: 4),
-                Row(
-                  children: [
-                    Expanded(child: addressField()),
-                    if (context.watch<AuthProvider>().hasAddon('whatsapp_invoice')) ...[
-                      const SizedBox(width: 6),
-                      whatsAppToggle(),
-                    ],
-                  ],
-                ),
-              ],
-              if (_sendInvoiceOnWhatsApp) ...[
-                const SizedBox(height: 4),
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: whatsAppDestination(),
-                ),
-              ],
-              const SizedBox(height: 4),
-              areaRow(),
-              if (_selectedCustomerId != null &&
-                  _selectedCustomerSecondaryPhones.isNotEmpty) ...[
-                const SizedBox(height: 4),
-                Row(
-                  children: [
-                    const Icon(
-                      Icons.print_outlined,
-                      size: 14,
-                      color: AppTheme.textMuted,
-                    ),
-                    const SizedBox(width: 6),
-                    const Text(
-                      'Invoice phones:',
-                      style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        _selectedCustomerSecondaryPhones.join(' • '),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 10,
-                          color: AppTheme.textMuted,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ],
-          );
-        },
-      ),
-    );
-  }
-
-  // ── Input row: product autocomplete + scanner + F2 ─────────────────────
-  Widget _buildInputRow() {
-    return Container(
-      height: 48,
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-      color: Colors.white,
-      child: Row(
-        children: [
-          // Product autocomplete — adds to cart on selection
-          Expanded(
-            child: _CartProductSearch(
-              focusNode: _productSearchFocusNode,
-              controller: _productSearchController,
-              onQuery: _queryProducts,
-              onSelected: (ref) {
-                // Route through the centralized merge/increment method for
-                // both raw-data-available and raw-data-missing cases so that
-                // selecting the same product twice always increments the
-                // existing row rather than appending a new one.
-                final productMap = ref.raw ??
-                    <String, dynamic>{
-                      'id': ref.id,
-                      'name': ref.name,
-                      'price': ref.tp,
-                    };
-                setState(() => _addOrIncrementProduct(productMap));
-              },
-            ),
-          ),
-          const SizedBox(width: 6),
-
-          // Scanner toggle (F9)
-          Tooltip(
-            message: 'Focus barcode scanner  (F9)',
-            child: InkWell(
-              onTap: _focusBarcodeScanner,
-              borderRadius: BorderRadius.circular(8),
-              child: Container(
-                height: 36,
-                width: 36,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: _scannerEnabled
-                      ? AppTheme.success.withOpacity(.10)
-                      : AppTheme.surfaceSoft,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(
-                    color: _scannerEnabled
-                        ? AppTheme.success.withOpacity(.40)
-                        : AppTheme.border,
-                  ),
-                ),
-                child: Icon(
-                  _scannerEnabled
-                      ? Icons.check_circle_rounded
-                      : Icons.qr_code_scanner_rounded,
-                  size: 16,
-                  color:
-                      _scannerEnabled ? AppTheme.success : AppTheme.textMuted,
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(width: 4),
-
-          // F2 / Add Items (opens full modal picker for multi-select)
-          Tooltip(
-            message: 'Add items  (F2)',
-            child: OutlinedButton.icon(
-              onPressed: _addItemManual,
-              icon: const Icon(Icons.add_rounded, size: 14),
-              label: const Text('F2', style: TextStyle(fontSize: 12)),
-              style: OutlinedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 10),
-                minimumSize: const Size(0, 36),
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              ),
-            ),
-          ),
-        ],
-      ),
+    return SaleWalkInSection(
+      nameController: customerNameController,
+      nameFocusNode: _walkInNameFocusNode,
+      phoneController: customerPhoneController,
+      phoneFocusNode: _walkInPhoneFocusNode,
+      onPhoneEditingComplete: () {
+        unawaited(_resolveWalkInCustomerByPhone());
+        _walkInAddressFocusNode.requestFocus();
+      },
+      addressController: addressController,
+      addressFocusNode: _walkInAddressFocusNode,
+      selectedCustomerId: _selectedCustomerId,
+      selectedCustomer: _selectedCustomer,
+      selectedCustomerSecondaryPhones: _selectedCustomerSecondaryPhones,
+      onClearCustomer: _clearCustomerSelection,
+      sendInvoiceOnWhatsApp: _sendInvoiceOnWhatsApp,
+      onWhatsAppChanged: (v) => setState(() => _sendInvoiceOnWhatsApp = v),
+      whatsAppDestinationPhone: _whatsAppDestinationPhone(),
+      customerAreas: _customerAreas,
+      selectedAreaId: _selectedAreaId,
+      onAreaChanged: (v) => setState(() => _selectedAreaId = v),
+      onClearArea: () => setState(() => _selectedAreaId = null),
+      onManageCustomerAreas: _manageCustomerAreas,
+      submitting: _submitting,
     );
   }
 
@@ -5994,232 +2004,23 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     required double subtotal,
     required bool canViewProfit,
   }) {
-    final profitSummary = _currentProfitSummary();
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-          decoration: BoxDecoration(
-            color: AppTheme.surfaceSoft,
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: AppTheme.border),
-          ),
-          child: Row(
-            children: [
-              // Item count + subtotal (read-only)
-              Text(
-                '${_items.length} item${_items.length == 1 ? '' : 's'}',
-                style: const TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700,
-                  color: AppTheme.textMuted,
-                ),
-              ),
-              const SizedBox(width: 10),
-              Text(
-                'Sub: ${AppCurrency.format(subtotal)}',
-                style: const TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w800,
-                  color: AppTheme.navy,
-                  fontFeatures: [FontFeature.tabularFigures()],
-                ),
-              ),
-              if (canViewProfit) ...[
-                const SizedBox(width: 5),
-                Tooltip(
-                  message: _showProfitInsight
-                      ? 'Hide profit insight'
-                      : 'Show profit insight',
-                  child: Material(
-                    color: _showProfitInsight
-                        ? AppTheme.primary.withOpacity(.08)
-                        : Colors.transparent,
-                    borderRadius: BorderRadius.circular(6),
-                    child: InkWell(
-                      onTap: () => setState(
-                        () => _showProfitInsight = !_showProfitInsight,
-                      ),
-                      borderRadius: BorderRadius.circular(6),
-                      child: SizedBox(
-                        width: 28,
-                        height: 28,
-                        child: Icon(
-                          _showProfitInsight
-                              ? Icons.visibility_off_outlined
-                              : Icons.visibility_outlined,
-                          size: 15,
-                          color: _showProfitInsight
-                              ? AppTheme.primary
-                              : AppTheme.textMuted,
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-              const Spacer(),
-
-              // Order Discount (editable inline)
-              const Text(
-                'Disc(-):',
-                style: TextStyle(
-                  fontSize: 11,
-                  color: AppTheme.textMuted,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              const SizedBox(width: 4),
-              Tooltip(
-                message: 'Focus: Ctrl+Shift+G',
-                child: SizedBox(
-                  width: 70,
-                  height: 36,
-                  child: TextField(
-                    controller: discountController,
-                    focusNode: _discountFocusNode,
-                    keyboardType:
-                        const TextInputType.numberWithOptions(decimal: true),
-                    textAlign: TextAlign.right,
-                    decoration: const InputDecoration(
-                      isDense: true,
-                      contentPadding:
-                          EdgeInsets.symmetric(horizontal: 6, vertical: 8),
-                      border: OutlineInputBorder(),
-                    ),
-                    style: const TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w800,
-                      fontFeatures: [FontFeature.tabularFigures()],
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 10),
-
-              // Order Tax (editable inline)
-              const Text(
-                'Tax(+):',
-                style: TextStyle(
-                  fontSize: 11,
-                  color: AppTheme.textMuted,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              const SizedBox(width: 4),
-              Tooltip(
-                message: 'Focus: Ctrl+Shift+T',
-                child: SizedBox(
-                  width: 70,
-                  height: 36,
-                  child: TextField(
-                    controller: taxController,
-                    focusNode: _taxFocusNode,
-                    keyboardType:
-                        const TextInputType.numberWithOptions(decimal: true),
-                    textAlign: TextAlign.right,
-                    decoration: const InputDecoration(
-                      isDense: true,
-                      contentPadding:
-                          EdgeInsets.symmetric(horizontal: 6, vertical: 8),
-                      border: OutlineInputBorder(),
-                    ),
-                    style: const TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w800,
-                      fontFeatures: [FontFeature.tabularFigures()],
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 10),
-
-              // Shipping Charges (editable inline)
-              const Text(
-                'Ship(+):',
-                style: TextStyle(
-                  fontSize: 11,
-                  color: AppTheme.textMuted,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              const SizedBox(width: 4),
-              Tooltip(
-                message: 'Shipping Charges — Focus: Ctrl+Shift+S',
-                child: SizedBox(
-                  width: 70,
-                  height: 36,
-                  child: TextField(
-                    controller: shippingController,
-                    focusNode: _shippingFocusNode,
-                    keyboardType:
-                        const TextInputType.numberWithOptions(decimal: true),
-                    textAlign: TextAlign.right,
-                    decoration: const InputDecoration(
-                      isDense: true,
-                      contentPadding:
-                          EdgeInsets.symmetric(horizontal: 6, vertical: 8),
-                      border: OutlineInputBorder(),
-                    ),
-                    style: const TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w800,
-                      fontFeatures: [FontFeature.tabularFigures()],
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-        if (_linkedReturnCredit > .004)
-          Container(
-            margin: const EdgeInsets.only(top: 5),
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-            decoration: BoxDecoration(
-              color: AppTheme.warning.withOpacity(.06),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: AppTheme.warning.withOpacity(.22)),
-            ),
-            child: Row(
-              children: [
-                const Icon(Icons.assignment_return_outlined, size: 15, color: AppTheme.warning),
-                const SizedBox(width: 6),
-                Text(
-                  'Return credit ${AppCurrency.format(_linkedReturnCredit)}',
-                  style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: AppTheme.navy),
-                ),
-                const SizedBox(width: 12),
-                Text(
-                  'Old invoice outstanding ${AppCurrency.format(_linkedReturnOriginalOutstanding)}',
-                  style: const TextStyle(fontSize: 10.5, color: AppTheme.textMuted, fontWeight: FontWeight.w600),
-                ),
-                const Spacer(),
-                const Text(
-                  'Original delivery refund: 0',
-                  style: TextStyle(fontSize: 10.5, color: AppTheme.textMuted, fontWeight: FontWeight.w700),
-                ),
-              ],
-            ),
-          ),
-        AnimatedSwitcher(
-          duration: const Duration(milliseconds: 160),
-          switchInCurve: Curves.easeOut,
-          switchOutCurve: Curves.easeIn,
-          child: canViewProfit && _showProfitInsight
-              ? SaleProfitStrip(
-                  key: const ValueKey('sale-profit-strip'),
-                  summary: profitSummary,
-                  onDetails: _showInvoiceProfitDetails,
-                )
-              : const SizedBox.shrink(
-                  key: ValueKey('sale-profit-strip-hidden'),
-                ),
-        ),
-      ],
+    return SaleSummaryRow(
+      itemCount: _items.length,
+      subtotal: subtotal,
+      canViewProfit: canViewProfit,
+      showProfitInsight: _showProfitInsight,
+      onToggleProfitInsight: () =>
+          setState(() => _showProfitInsight = !_showProfitInsight),
+      discountController: discountController,
+      discountFocusNode: _discountFocusNode,
+      taxController: taxController,
+      taxFocusNode: _taxFocusNode,
+      shippingController: shippingController,
+      shippingFocusNode: _shippingFocusNode,
+      linkedReturnCredit: _linkedReturnCredit,
+      linkedReturnOriginalOutstanding: _linkedReturnOriginalOutstanding,
+      profitSummary: _currentProfitSummary(),
+      onProfitDetails: _showInvoiceProfitDetails,
     );
   }
 
@@ -6228,595 +2029,61 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     final pm = context.read<PaymentMethodProvider>();
     final paid = _salePaid(total);
     final balance = total - paid;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      decoration: const BoxDecoration(
-        color: AppTheme.surfaceSoft,
-        border: Border(top: BorderSide(color: AppTheme.border)),
-      ),
-      child: Row(
-        children: [
-          const Icon(Icons.call_split_rounded, size: 16, color: AppTheme.textMuted),
-          const SizedBox(width: 8),
-          Expanded(
-            child: SizedBox(
-              height: 34,
-              child: ListView.separated(
-                scrollDirection: Axis.horizontal,
-                itemCount: _payments.length,
-                separatorBuilder: (_, __) => const SizedBox(width: 6),
-                itemBuilder: (_, i) {
-                  final p = _payments[i];
-                  final name = pm.displayNameFor(p['method']?.toString());
-                  final amt = AppCurrency.format(_pmAmt(p['amount']));
-                  final ref = (p['reference'] ?? '').toString().trim();
-                  return InputChip(
-                    label: Text(ref.isEmpty ? '$name  $amt' : '$name  $amt · $ref'),
-                    onDeleted: () => setState(() => _payments.removeAt(i)),
-                  );
-                },
-              ),
-            ),
-          ),
-          const SizedBox(width: 8),
-          Text('Paid ${AppCurrency.format(paid)}',
-              style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12)),
-          const SizedBox(width: 10),
-          Text(
-            'Balance ${AppCurrency.format(balance)}',
-            style: TextStyle(
-              fontWeight: FontWeight.w800,
-              fontSize: 12,
-              color: balance.abs() < 0.005 ? AppTheme.success : AppTheme.danger,
-            ),
-          ),
-        ],
-      ),
+    return SaleSplitTenderStrip(
+      payments: _payments,
+      paid: paid,
+      balance: balance,
+      displayNameFor: pm.displayNameFor,
+      onRemovePayment: (i) => setState(() => _payments.removeAt(i)),
     );
   }
 
   Widget _buildSalesOrderConversionHeader() {
     final order = widget.salesOrderPrefill?.order;
-    final orderNumber = order?.orderNumber ?? 'Order';
-    return Container(
-      height: 38,
-      padding: const EdgeInsets.symmetric(horizontal: 12),
-      decoration: BoxDecoration(
-        color: AppTheme.primary.withOpacity(0.06),
-        border: const Border(bottom: BorderSide(color: AppTheme.border)),
-      ),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-            decoration: BoxDecoration(
-              color: AppTheme.primary.withOpacity(.12),
-              borderRadius: BorderRadius.circular(6),
-              border: Border.all(color: AppTheme.primary.withOpacity(.24)),
-            ),
-            child: const Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.assignment_turned_in_outlined, size: 15, color: AppTheme.primary),
-                SizedBox(width: 4),
-                Text(
-                  'ORDER CONVERSION',
-                  style: TextStyle(
-                    color: AppTheme.primary,
-                    fontSize: 10,
-                    fontWeight: FontWeight.w900,
-                    letterSpacing: .5,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              'Creating sale from order $orderNumber · changes are recorded against the order',
-              style: const TextStyle(
-                color: AppTheme.navy,
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-              ),
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-        ],
-      ),
+    return SaleSalesOrderConversionHeader(
+      orderNumber: order?.orderNumber ?? 'Order',
     );
   }
 
   Widget _buildSalesOrderHeader() {
-    final isEdit = widget.editSalesOrder != null;
-    final orderNumber = widget.editSalesOrder?.orderNumber ?? '';
-    final status = widget.editSalesOrder?.status;
-    final dateFmt = DateFormat('yyyy-MM-dd');
-    return Container(
-      height: 42,
-      padding: const EdgeInsets.symmetric(horizontal: 12),
-      decoration: BoxDecoration(
-        color: AppTheme.primary.withOpacity(0.06),
-        border: const Border(bottom: BorderSide(color: AppTheme.border)),
-      ),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-            decoration: BoxDecoration(
-              color: AppTheme.primary.withOpacity(.12),
-              borderRadius: BorderRadius.circular(6),
-              border: Border.all(color: AppTheme.primary.withOpacity(.24)),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(Icons.assignment_outlined, size: 15, color: AppTheme.primary),
-                const SizedBox(width: 4),
-                Text(
-                  isEdit ? 'EDIT SALES ORDER' : 'NEW SALES ORDER',
-                  style: const TextStyle(
-                    color: AppTheme.primary,
-                    fontSize: 10,
-                    fontWeight: FontWeight.w900,
-                    letterSpacing: .5,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              isEdit
-                  ? 'Editing order $orderNumber · quotation lines & pricing'
-                  : 'Sales Order Quotation · select customer & add product lines',
-              style: const TextStyle(
-                color: AppTheme.navy,
-                fontSize: 12.5,
-                fontWeight: FontWeight.w600,
-              ),
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-          // Delivery Date Picker Button
-          InkWell(
-            onTap: () async {
-              final picked = await showDatePicker(
-                context: context,
-                initialDate: _salesOrderDeliveryDate ?? DateTime.now(),
-                firstDate: DateTime.now().subtract(const Duration(days: 30)),
-                lastDate: DateTime.now().add(const Duration(days: 365)),
-              );
-              if (picked != null) {
-                setState(() => _salesOrderDeliveryDate = picked);
-              }
-            },
-            borderRadius: BorderRadius.circular(6),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(6),
-                border: Border.all(color: AppTheme.border),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Icon(Icons.calendar_today_rounded, size: 13, color: AppTheme.primary),
-                  const SizedBox(width: 5),
-                  Text(
-                    _salesOrderDeliveryDate != null
-                        ? 'Delivery: ${dateFmt.format(_salesOrderDeliveryDate!)}'
-                        : 'Set Delivery Date',
-                    style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: AppTheme.navy),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          const SizedBox(width: 8),
-          // Order Notes Button
-          InkWell(
-            onTap: () async {
-              final textController = TextEditingController(text: _salesOrderNotesController.text);
-              final saved = await showDialog<String>(
-                context: context,
-                builder: (ctx) => AlertDialog(
-                  title: const Text('Order Notes'),
-                  content: TextField(
-                    controller: textController,
-                    maxLines: 3,
-                    decoration: const InputDecoration(
-                      hintText: 'Enter internal quotation or order instructions...',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.pop(ctx),
-                      child: const Text('Cancel'),
-                    ),
-                    FilledButton(
-                      onPressed: () => Navigator.pop(ctx, textController.text.trim()),
-                      child: const Text('Save Note'),
-                    ),
-                  ],
-                ),
-              );
-              if (saved != null) {
-                setState(() => _salesOrderNotesController.text = saved);
-              }
-            },
-            borderRadius: BorderRadius.circular(6),
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(6),
-                border: Border.all(color: AppTheme.border),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Icon(Icons.note_alt_outlined, size: 13, color: AppTheme.primary),
-                  const SizedBox(width: 5),
-                  ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 140),
-                    child: Text(
-                      _salesOrderNotesController.text.trim().isNotEmpty
-                          ? 'Note: ${_salesOrderNotesController.text.trim()}'
-                          : 'Add Note',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: AppTheme.navy),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          if (isEdit && status != null) ...[
-            const SizedBox(width: 8),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-              decoration: BoxDecoration(
-                color: SalesOrderStatus.color(status).withOpacity(.15),
-                borderRadius: BorderRadius.circular(6),
-                border: Border.all(color: SalesOrderStatus.color(status)),
-              ),
-              child: Text(
-                SalesOrderStatus.label(status),
-                style: TextStyle(
-                  color: SalesOrderStatus.color(status),
-                  fontSize: 11,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-            ),
-          ],
-        ],
-      ),
+    return SaleSalesOrderHeader(
+      editSalesOrder: widget.editSalesOrder,
+      deliveryDate: _salesOrderDeliveryDate,
+      onDeliveryDateChanged: (picked) =>
+          setState(() => _salesOrderDeliveryDate = picked),
+      notesController: _salesOrderNotesController,
     );
   }
 
   Widget _buildAmendmentHeader(double revisedTotal) {
     final sale = _editSale ?? const <String, dynamic>{};
-    final invoice = (sale['invoice_no'] ?? widget.editSaleId ?? '').toString();
-    final difference = revisedTotal - _originalTotal;
-    return Container(
-      height: 38,
-      padding: const EdgeInsets.symmetric(horizontal: 12),
-      decoration: const BoxDecoration(
-        color: Color(0xFFF8FAFC),
-        border: Border(bottom: BorderSide(color: AppTheme.border)),
-      ),
-      child: Row(
-        children: [
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-            decoration: BoxDecoration(
-              color: AppTheme.primary.withOpacity(.09),
-              borderRadius: BorderRadius.circular(6),
-              border: Border.all(color: AppTheme.primary.withOpacity(.18)),
-            ),
-            child: const Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.edit_note_rounded, size: 15, color: AppTheme.primary),
-                SizedBox(width: 4),
-                Text(
-                  'AUDITED EDIT',
-                  style: TextStyle(
-                    color: AppTheme.primary,
-                    fontSize: 10,
-                    fontWeight: FontWeight.w900,
-                    letterSpacing: .5,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 10),
-          Text(
-            invoice.isEmpty ? 'Posted sale' : invoice,
-            style: const TextStyle(
-              color: AppTheme.navy,
-              fontSize: 13,
-              fontWeight: FontWeight.w900,
-            ),
-          ),
-          const SizedBox(width: 7),
-          Text(
-            'Revision #$_editRevision',
-            style: const TextStyle(
-              color: AppTheme.textMuted,
-              fontSize: 11,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          const Spacer(),
-          _AmendmentHeaderMetric(
-            label: 'Original',
-            value: AppCurrency.format(_originalTotal),
-          ),
-          const SizedBox(width: 18),
-          _AmendmentHeaderMetric(
-            label: 'Revised',
-            value: AppCurrency.format(revisedTotal),
-          ),
-          const SizedBox(width: 18),
-          _AmendmentHeaderMetric(
-            label: 'Difference',
-            value:
-                '${difference > .004 ? '+' : ''}${AppCurrency.format(difference)}',
-            valueColor: difference.abs() <= .004
-                ? AppTheme.textMuted
-                : difference > 0
-                    ? AppTheme.warning
-                    : AppTheme.success,
-          ),
-          const SizedBox(width: 12),
-          const Tooltip(
-            message:
-                'Posted-sale amendments require the server and are committed atomically with stock, COGS, ledger and audit history.',
-            child: Icon(Icons.cloud_done_outlined, size: 16, color: AppTheme.textMuted),
-          ),
-        ],
-      ),
+    return SaleAmendmentHeader(
+      invoiceNo: (sale['invoice_no'] ?? widget.editSaleId ?? '').toString(),
+      revision: _editRevision,
+      originalTotal: _originalTotal,
+      revisedTotal: revisedTotal,
     );
   }
 
   Widget _buildAmendmentBottomBar(double total) {
-    final difference = total - _originalTotal;
-    return Container(
-      height: 62,
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        border: Border(top: BorderSide(color: AppTheme.border)),
-      ),
-      child: Row(
-        children: [
-          const Icon(Icons.history_edu_outlined, size: 18, color: AppTheme.primary),
-          const SizedBox(width: 8),
-          const Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Posted invoice amendment',
-                style: TextStyle(
-                  color: AppTheme.navy,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-              Text(
-                'Original financial documents stay preserved',
-                style: TextStyle(
-                  color: AppTheme.textMuted,
-                  fontSize: 10.5,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ],
-          ),
-          const Spacer(),
-          _AmendmentBottomMetric(
-            label: 'Original',
-            value: AppCurrency.format(_originalTotal),
-          ),
-          const SizedBox(width: 18),
-          _AmendmentBottomMetric(
-            label: 'Revised',
-            value: AppCurrency.format(total),
-          ),
-          const SizedBox(width: 18),
-          _AmendmentBottomMetric(
-            label: 'Difference',
-            value: '${difference > .004 ? '+' : ''}${AppCurrency.format(difference)}',
-            valueColor: difference.abs() <= .004
-                ? AppTheme.textMuted
-                : difference > 0
-                    ? AppTheme.warning
-                    : AppTheme.success,
-          ),
-          const SizedBox(width: 18),
-          OutlinedButton.icon(
-            onPressed: _submitting ? null : _resetAmendmentDraft,
-            icon: const Icon(Icons.restart_alt_rounded, size: 16),
-            label: const Text('Reset Changes'),
-            style: OutlinedButton.styleFrom(
-              minimumSize: const Size(0, 38),
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-            ),
-          ),
-          const SizedBox(width: 8),
-          FilledButton.icon(
-            onPressed: _submitting ? null : _submitAmendment,
-            icon: _submitting
-                ? const SizedBox(
-                    width: 14,
-                    height: 14,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: Colors.white,
-                    ),
-                  )
-                : const Icon(Icons.fact_check_outlined, size: 16),
-            label: Text(_submitting ? 'Saving…' : 'Review Changes  Ctrl+↵'),
-            style: FilledButton.styleFrom(
-              minimumSize: const Size(0, 38),
-              padding: const EdgeInsets.symmetric(horizontal: 14),
-            ),
-          ),
-        ],
-      ),
+    return SaleAmendmentBottomBar(
+      originalTotal: _originalTotal,
+      total: total,
+      submitting: _submitting,
+      onReset: _resetAmendmentDraft,
+      onSubmit: _submitAmendment,
     );
   }
 
   Widget _buildSalesOrderBottomBar(double total) {
-    return Container(
-      height: 62,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        border: Border(top: BorderSide(color: AppTheme.border)),
-      ),
-      child: Row(
-        children: [
-          // Order summary indicator
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-            decoration: BoxDecoration(
-              color: AppTheme.primarySoft,
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Row(
-              children: [
-                const Icon(Icons.assignment_outlined, size: 16, color: AppTheme.primary),
-                const SizedBox(width: 6),
-                Text(
-                  widget.editSalesOrder != null
-                      ? 'Order #${widget.editSalesOrder!.orderNumber}'
-                      : 'Sales Order Quotation',
-                  style: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w800,
-                    color: AppTheme.primary,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 12),
-          Text(
-            '${_items.length} ${_items.length == 1 ? 'item' : 'items'}',
-            style: const TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
-              color: AppTheme.textMuted,
-            ),
-          ),
-
-          const Spacer(),
-
-          // Quoted total display
-          Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              const Text(
-                'Quoted Total',
-                style: TextStyle(
-                  fontSize: 10,
-                  color: AppTheme.textMuted,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              Text(
-                AppCurrency.format(total.abs()),
-                style: const TextStyle(
-                  fontSize: 17,
-                  fontWeight: FontWeight.w900,
-                  color: AppTheme.navy,
-                  fontFeatures: [FontFeature.tabularFigures()],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(width: 16),
-
-          // Clear button
-          OutlinedButton(
-            onPressed: _submitting ? null : () => _resetForNextSale(),
-            style: OutlinedButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 14),
-              minimumSize: const Size(0, 38),
-              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              side: const BorderSide(color: AppTheme.danger),
-              foregroundColor: AppTheme.danger,
-              textStyle: const TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            child: const Text('Clear'),
-          ),
-          const SizedBox(width: 8),
-
-          // Save as Draft button
-          SizedBox(
-            height: 38,
-            child: OutlinedButton.icon(
-              onPressed: _submitting ? null : () => _submitSalesOrder(submitForApproval: false),
-              icon: const Icon(Icons.save_outlined, size: 15),
-              label: const Text(
-                'Save Draft',
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              style: OutlinedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-                minimumSize: const Size(0, 38),
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                side: BorderSide(color: AppTheme.primary.withOpacity(.5)),
-                foregroundColor: AppTheme.primary,
-              ),
-            ),
-          ),
-          const SizedBox(width: 8),
-
-          // Submit for Approval button
-          SizedBox(
-            height: 38,
-            child: FilledButton.icon(
-              onPressed: _submitting ? null : () => _submitSalesOrder(submitForApproval: true),
-              icon: _submitting
-                  ? const SizedBox(
-                      width: 14,
-                      height: 14,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: Colors.white,
-                      ),
-                    )
-                  : const Icon(Icons.send_rounded, size: 15),
-              label: Text(
-                _submitting ? 'Submitting…' : 'Submit for Approval  Ctrl+↵',
-                style: const TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
+    return SaleSalesOrderBottomBar(
+      editSalesOrder: widget.editSalesOrder,
+      itemCount: _items.length,
+      total: total,
+      submitting: _submitting,
+      onClear: _resetForNextSale,
+      onSaveDraft: () => _submitSalesOrder(submitForApproval: false),
+      onSubmitForApproval: () => _submitSalesOrder(submitForApproval: true),
     );
   }
 
@@ -6828,1813 +2095,26 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     if (_isEditing) return _buildAmendmentBottomBar(total);
     if (widget.isSalesOrder) return _buildSalesOrderBottomBar(total);
     final pm = context.watch<PaymentMethodProvider>();
-    final methods = pm.activeMethods;
-    final currentMethod = _saleMethod ?? pm.defaultMethod?.method;
-    final hasSplit = _payments.isNotEmpty;
-    // Show Cash Received/Change whenever a physical-cash portion exists.
-    final showCashFields = _saleCashDue(total) > 0;
-    return Container(
-      height: 62,
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        border: Border(top: BorderSide(color: AppTheme.border)),
-      ),
-      child: Row(
-        children: [
-          // Auto Cash toggle
-          const Text(
-            'Auto Cash',
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
-              color: AppTheme.navy,
-            ),
-          ),
-          const SizedBox(width: 4),
-          Transform.scale(
-            scale: 0.8,
-            alignment: Alignment.centerLeft,
-            child: Switch(
-              value: _autoCashIfEmpty,
-              onChanged: (v) => setState(() => _autoCashIfEmpty = v),
-            ),
-          ),
-          const SizedBox(width: 8),
-
-          // Payment method selector (single-tender only; hidden when splitting)
-          if (methods.isNotEmpty && !hasSplit)
-            SizedBox(
-              width: 128,
-              height: 44,
-              child: DropdownButtonFormField<String>(
-                value: currentMethod,
-                isExpanded: true,
-                decoration: const InputDecoration(
-                  labelText: 'Method',
-                  isDense: true,
-                  contentPadding:
-                      EdgeInsets.symmetric(horizontal: 8, vertical: 10),
-                  border: OutlineInputBorder(),
-                ),
-                style: const TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
-                  color: AppTheme.navy,
-                ),
-                items: methods
-                    .map((m) => DropdownMenuItem(
-                          value: m.method,
-                          child: Text(m.displayName, overflow: TextOverflow.ellipsis),
-                        ))
-                    .toList(),
-                onChanged: (v) => setState(() => _saleMethod = v),
-              ),
-            ),
-          const SizedBox(width: 8),
-
-          // Cash Received + Change apply only to physical drawer cash.
-          if (showCashFields) ...[
-            Tooltip(
-              message: 'Focus: Ctrl+Shift+R',
-              child: SizedBox(
-                width: 110,
-                height: 44,
-                child: TextField(
-                  controller: cashReceivedController,
-                  focusNode: _cashReceivedFocusNode,
-                  keyboardType:
-                      const TextInputType.numberWithOptions(decimal: true),
-                  textAlign: TextAlign.right,
-                  decoration: const InputDecoration(
-                    labelText: 'Cash Recv.',
-                    isDense: true,
-                    contentPadding:
-                        EdgeInsets.symmetric(horizontal: 8, vertical: 10),
-                    border: OutlineInputBorder(),
-                  ),
-                  style: const TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700,
-                    fontFeatures: [FontFeature.tabularFigures()],
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(width: 10),
-            Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Change',
-                  style: TextStyle(
-                    fontSize: 10,
-                    color: AppTheme.textMuted,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                Text(
-                  AppCurrency.format(changeAmount),
-                  style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w900,
-                    color: changeAmount > 0 ? AppTheme.success : AppTheme.navy,
-                    fontFeatures: const [FontFeature.tabularFigures()],
-                  ),
-                ),
-              ],
-            ),
-          ] else if (!hasSplit)
-            // Non-drawer tender (KNET/card/bank/cheque): optional reference.
-            SizedBox(
-              width: 150,
-              height: 44,
-              child: TextField(
-                controller: saleReferenceController,
-                textAlign: TextAlign.left,
-                decoration: const InputDecoration(
-                  labelText: 'Reference',
-                  hintText: 'Txn / approval',
-                  isDense: true,
-                  contentPadding:
-                      EdgeInsets.symmetric(horizontal: 8, vertical: 10),
-                  border: OutlineInputBorder(),
-                ),
-                style: const TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
-
-          const SizedBox(width: 8),
-          // Split tender — add another payment row (e.g. 1000 cash + 500 bank).
-          OutlinedButton.icon(
-            onPressed: total > .004 ? () => _addSalePaymentDialog(total) : null,
-            icon: const Icon(Icons.call_split_rounded, size: 16),
-            label: Text(hasSplit ? 'Add (${_payments.length})' : 'Split'),
-            style: OutlinedButton.styleFrom(
-              minimumSize: const Size(0, 38),
-              padding: const EdgeInsets.symmetric(horizontal: 10),
-              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-            ),
-          ),
-
-          const Spacer(),
-
-          // Total payable
-          Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Text(
-                total < -0.004 ? 'Refund / Credit Due' : 'Total Payable',
-                style: const TextStyle(
-                  fontSize: 10,
-                  color: AppTheme.textMuted,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              Text(
-                AppCurrency.format(total.abs()),
-                style: TextStyle(
-                  fontSize: 17,
-                  fontWeight: FontWeight.w900,
-                  color: total < -0.004 ? AppTheme.warning : AppTheme.navy,
-                  fontFeatures: const [FontFeature.tabularFigures()],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(width: 12),
-
-          // Clear cart
-          OutlinedButton(
-            onPressed: () => _resetForNextSale(),
-            style: OutlinedButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 14),
-              minimumSize: const Size(0, 38),
-              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-              side: const BorderSide(color: AppTheme.danger),
-              foregroundColor: AppTheme.danger,
-              textStyle: const TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            child: const Text('Clear'),
-          ),
-          const SizedBox(width: 8),
-
-          // Save without print
-          SizedBox(
-            height: 38,
-            child: OutlinedButton.icon(
-              onPressed: _submitting
-                  ? null
-                  : () => _submitSale(print: false),
-              icon: const Icon(Icons.save_outlined, size: 15),
-              label: const Text(
-                'Save',
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              style: OutlinedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 12),
-                minimumSize: const Size(0, 38),
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                side: BorderSide(color: AppTheme.primary.withOpacity(.5)),
-                foregroundColor: AppTheme.primary,
-              ),
-            ),
-          ),
-          const SizedBox(width: 6),
-
-          // Save + Print (Ctrl+↵)
-          SizedBox(
-            height: 38,
-            child: FilledButton.icon(
-              onPressed: _submitting
-                  ? null
-                  : () => _submitSale(print: true),
-              icon: _submitting
-                  ? const SizedBox(
-                      width: 14,
-                      height: 14,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: Colors.white,
-                      ),
-                    )
-                  : const Icon(Icons.print_rounded, size: 15),
-              label: Text(
-                _submitting ? 'Saving…' : 'Create & Print  Ctrl+↵',
-                style: const TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w800,
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
+    return SaleStandardBottomBar(
+      autoCashIfEmpty: _autoCashIfEmpty,
+      onAutoCashChanged: (v) => setState(() => _autoCashIfEmpty = v),
+      methods: pm.activeMethods,
+      currentMethod: _saleMethod ?? pm.defaultMethod?.method,
+      onMethodChanged: (v) => setState(() => _saleMethod = v),
+      hasSplit: _payments.isNotEmpty,
+      showCashFields: _saleCashDue(total) > 0,
+      cashReceivedController: cashReceivedController,
+      cashReceivedFocusNode: _cashReceivedFocusNode,
+      changeAmount: changeAmount,
+      saleReferenceController: saleReferenceController,
+      total: total,
+      splitPaymentsCount: _payments.length,
+      onAddSplitPayment: () => _addSalePaymentDialog(total),
+      onClear: () => _resetForNextSale(),
+      submitting: _submitting,
+      onSaveOnly: () => _submitSale(print: false),
+      onSaveAndPrint: () => _submitSale(print: true),
     );
   }
 
-}
-
-class _SaleWorkspaceHeader extends StatelessWidget {
-  final String customerLabel;
-  final int itemCount;
-  final String total;
-  final String balance;
-  final VoidCallback onAddItems;
-
-  const _SaleWorkspaceHeader({
-    required this.customerLabel,
-    required this.itemCount,
-    required this.total,
-    required this.balance,
-    required this.onAddItems,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppTheme.border),
-      ),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final compact = constraints.maxWidth < 760;
-          final title = Row(
-            children: [
-              Container(
-                height: 44,
-                width: 44,
-                decoration: BoxDecoration(
-                  color: AppTheme.primarySoft,
-                  borderRadius: BorderRadius.circular(13),
-                ),
-                child: const Icon(Icons.point_of_sale_rounded, color: AppTheme.primary),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text('New Sale', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
-                    const SizedBox(height: 2),
-                    Text(
-                      customerLabel,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(color: AppTheme.textMuted, fontWeight: FontWeight.w600),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          );
-          final stats = Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              _PlainStat(label: 'Items', value: itemCount.toString()),
-              _PlainStat(label: 'Total', value: total),
-              _PlainStat(label: 'Balance', value: balance),
-            ],
-          );
-          final button = FilledButton.icon(
-            onPressed: onAddItems,
-            icon: const Icon(Icons.add_rounded),
-            label: const Text('Add Items'),
-          );
-
-          if (compact) {
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                title,
-                const SizedBox(height: 12),
-                stats,
-                const SizedBox(height: 12),
-                button,
-              ],
-            );
-          }
-          return Row(
-            children: [
-              Expanded(child: title),
-              const SizedBox(width: 16),
-              stats,
-              const SizedBox(width: 12),
-              button,
-            ],
-          );
-        },
-      ),
-    );
-  }
-}
-
-class _PlainStat extends StatelessWidget {
-  final String label;
-  final String value;
-
-  const _PlainStat({required this.label, required this.value});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-      decoration: BoxDecoration(
-        color: AppTheme.surfaceSoft,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppTheme.border),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(label, style: const TextStyle(color: AppTheme.textMuted, fontSize: 11, fontWeight: FontWeight.w600)),
-          const SizedBox(height: 2),
-          Text(value, style: const TextStyle(fontWeight: FontWeight.w900)),
-        ],
-      ),
-    );
-  }
-}
-
-
-// ── Cart product autocomplete (Point 1) ────────────────────────────────────
-// Overlay-based dropdown; adds product to cart on selection.
-class _CartProductSearch extends StatefulWidget {
-  final FocusNode focusNode;
-  final TextEditingController controller;
-  final Future<List<ProductRef>> Function(String q) onQuery;
-  final void Function(ProductRef ref) onSelected;
-
-  const _CartProductSearch({
-    required this.focusNode,
-    required this.controller,
-    required this.onQuery,
-    required this.onSelected,
-  });
-
-  @override
-  State<_CartProductSearch> createState() => _CartProductSearchState();
-}
-
-class _CartProductSearchState extends State<_CartProductSearch> {
-  final LayerLink _layerLink = LayerLink();
-
-  /// Binds the field and its dropdown into one tap region so a click on the
-  /// dropdown is not treated as a tap outside this widget. See the
-  /// TextFieldTapRegion note in _buildDropdown for the other half of the fix.
-  final Object _tapGroup = Object();
-  Timer? _debounce;
-  OverlayEntry? _overlayEntry;
-  List<ProductRef> _suggestions = [];
-  int _highlightIndex = -1;
-  bool _loading = false;
-
-  @override
-  void initState() {
-    super.initState();
-    widget.focusNode.addListener(_onFocusChanged);
-    widget.controller.addListener(_onTextChanged);
-  }
-
-  @override
-  void dispose() {
-    _debounce?.cancel();
-    widget.focusNode.removeListener(_onFocusChanged);
-    widget.controller.removeListener(_onTextChanged);
-    _removeOverlay();
-    super.dispose();
-  }
-
-  void _onFocusChanged() {
-    if (!widget.focusNode.hasFocus) {
-      _removeOverlay();
-    }
-  }
-
-  void _onTextChanged() {
-    final q = widget.controller.text.trim();
-    if (q.isEmpty) {
-      _debounce?.cancel();
-      _removeOverlay();
-      if (mounted) {
-        setState(() {
-          _suggestions = [];
-          _highlightIndex = -1;
-          _loading = false;
-        });
-      }
-      return;
-    }
-    // Show loading immediately, debounce the actual fetch.
-    if (mounted) setState(() => _loading = true);
-    _debounce?.cancel();
-    _debounce = Timer(const Duration(milliseconds: 300), () => _fetch(q));
-  }
-
-  Future<void> _fetch(String q) async {
-    final results = await widget.onQuery(q);
-    if (!mounted) return;
-    setState(() {
-      _suggestions = results;
-      _highlightIndex = results.isNotEmpty ? 0 : -1;
-      _loading = false;
-    });
-    if (results.isEmpty) {
-      _removeOverlay();
-    } else {
-      _showOverlay();
-    }
-  }
-
-  void _showOverlay() {
-    // Refresh in place rather than tearing down and re-inserting: destroying
-    // the entry mid-gesture cancels a click that is already in progress.
-    if (_overlayEntry != null) {
-      _overlayEntry!.markNeedsBuild();
-      return;
-    }
-    final overlay = Overlay.of(context);
-    _overlayEntry = OverlayEntry(builder: (_) => _buildDropdown());
-    overlay.insert(_overlayEntry!);
-  }
-
-  void _removeOverlay() {
-    _overlayEntry?.remove();
-    _overlayEntry = null;
-  }
-
-  void _selectIndex(int i) {
-    if (i < 0 || i >= _suggestions.length) return;
-    final ref = _suggestions[i];
-    widget.controller.clear();
-    _removeOverlay();
-    setState(() {
-      _suggestions = [];
-      _highlightIndex = -1;
-    });
-    widget.onSelected(ref);
-  }
-
-  void _moveHighlight(int delta) {
-    if (_suggestions.isEmpty) return;
-    setState(() {
-      _highlightIndex =
-          (_highlightIndex + delta).clamp(0, _suggestions.length - 1);
-    });
-    _overlayEntry?.markNeedsBuild();
-  }
-
-  Widget _buildDropdown() {
-    // TextFieldTapRegion == TapRegion(groupId: EditableText). On desktop,
-    // EditableText's default onTapOutside unfocuses the field on pointer-DOWN
-    // for any tap outside its own group. This dropdown lives in the root
-    // Overlay, so it counted as "outside": the field blurred, _onFocusChanged
-    // tore the overlay down, and the tap died before pointer-UP reached the
-    // row — which is why only Enter could select. Joining the EditableText
-    // group is the only thing that prevents that blur. The inner TapRegion
-    // keeps our own outside-tap dismissal working.
-    return TextFieldTapRegion(
-      child: TapRegion(
-      groupId: _tapGroup,
-      child: CompositedTransformFollower(
-      link: _layerLink,
-      showWhenUnlinked: false,
-      offset: const Offset(0, 38),
-      child: Align(
-        alignment: Alignment.topLeft,
-        child: SizedBox(
-          width: 420,
-          child: Material(
-          elevation: 8,
-          borderRadius: BorderRadius.circular(8),
-          color: Colors.white,
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxHeight: 320),
-            child: ListView.builder(
-              padding: EdgeInsets.zero,
-              shrinkWrap: true,
-              itemCount: _suggestions.length,
-              itemBuilder: (ctx, i) {
-                final ref = _suggestions[i];
-                final highlighted = i == _highlightIndex;
-                final sub = [
-                  if (ref.sku != null && ref.sku!.isNotEmpty)
-                    'SKU: ${ref.sku}',
-                  if (ref.barcode != null && ref.barcode!.isNotEmpty)
-                    ref.barcode!,
-                ].join('  ');
-                return GestureDetector(
-                  onTap: () => _selectIndex(i),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 8,
-                    ),
-                    decoration: BoxDecoration(
-                      color: highlighted
-                          ? AppTheme.primarySoft
-                          : Colors.transparent,
-                      border: const Border(
-                        bottom: BorderSide(color: AppTheme.border),
-                      ),
-                    ),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                ref.name,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w600,
-                                  color: highlighted
-                                      ? AppTheme.primary
-                                      : AppTheme.navy,
-                                ),
-                              ),
-                              if (sub.isNotEmpty)
-                                Text(
-                                  sub,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    fontSize: 11,
-                                    color: AppTheme.textMuted,
-                                  ),
-                                ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.end,
-                          children: [
-                            Text(
-                              AppCurrency.format(ref.tp),
-                              style: const TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w700,
-                                color: AppTheme.success,
-                              ),
-                            ),
-                            if (ref.stock != null)
-                              Text(
-                                'Stock: ${ref.stock!.toStringAsFixed(0)}',
-                                style: const TextStyle(
-                                  fontSize: 11,
-                                  color: AppTheme.textMuted,
-                                ),
-                              ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                );
-              },
-            ),
-          ),
-        ),
-      ),
-    ),
-    ),
-    ),
-  );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return TapRegion(
-      groupId: _tapGroup,
-      onTapOutside: (_) => _removeOverlay(),
-      child: CompositedTransformTarget(
-      link: _layerLink,
-      // Focus wraps the TextField so onKeyEvent fires while the TextField has focus.
-      child: Focus(
-        onKeyEvent: (node, event) {
-          if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
-            return KeyEventResult.ignored;
-          }
-          if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
-            _moveHighlight(1);
-            return KeyEventResult.handled;
-          } else if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
-            _moveHighlight(-1);
-            return KeyEventResult.handled;
-          } else if (event.logicalKey == LogicalKeyboardKey.enter ||
-              event.logicalKey == LogicalKeyboardKey.numpadEnter) {
-            if (_highlightIndex >= 0) {
-              _selectIndex(_highlightIndex);
-              return KeyEventResult.handled;
-            }
-          } else if (event.logicalKey == LogicalKeyboardKey.escape) {
-            _removeOverlay();
-            setState(() {
-              _suggestions = [];
-              _highlightIndex = -1;
-            });
-            return KeyEventResult.handled;
-          }
-          return KeyEventResult.ignored;
-        },
-        child: SizedBox(
-          height: 36,
-          child: TextField(
-            controller: widget.controller,
-            focusNode: widget.focusNode,
-            decoration: InputDecoration(
-              hintText: 'Search product… (name / SKU / barcode)',
-              prefixIcon: _loading
-                  ? const Padding(
-                      padding: EdgeInsets.all(10),
-                      child: SizedBox(
-                        width: 14,
-                        height: 14,
-                        child: CircularProgressIndicator(strokeWidth: 1.5),
-                      ),
-                    )
-                  : const Icon(Icons.search, size: 16),
-              suffixIcon: widget.controller.text.isNotEmpty
-                  ? IconButton(
-                      icon: const Icon(Icons.close, size: 14),
-                      padding: EdgeInsets.zero,
-                      onPressed: () {
-                        widget.controller.clear();
-                        _removeOverlay();
-                        setState(() {
-                          _suggestions = [];
-                          _highlightIndex = -1;
-                        });
-                      },
-                    )
-                  : null,
-              isDense: true,
-              contentPadding: const EdgeInsets.symmetric(
-                horizontal: 8,
-                vertical: 8,
-              ),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(8),
-                borderSide: const BorderSide(color: AppTheme.border),
-              ),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(8),
-                borderSide: const BorderSide(color: AppTheme.border),
-              ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(8),
-                borderSide:
-                    const BorderSide(color: AppTheme.primary, width: 1.5),
-              ),
-              filled: true,
-              fillColor: AppTheme.surfaceSoft,
-            ),
-            style: const TextStyle(fontSize: 13),
-          ),
-        ),
-      ),
-      ),
-    );
-  }
-}
-
-class _CreateSaleBottomBar extends StatelessWidget {
-  final int itemCount;
-  final String total;
-  final String paid;
-  final String balance;
-  final bool submitting;
-  final VoidCallback onSubmit;
-
-  const _CreateSaleBottomBar({
-    required this.itemCount,
-    required this.total,
-    required this.paid,
-    required this.balance,
-    required this.submitting,
-    required this.onSubmit,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: EdgeInsets.fromLTRB(16, 10, 16, 10 + MediaQuery.of(context).padding.bottom),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        border: const Border(top: BorderSide(color: AppTheme.border)),
-        boxShadow: [
-          BoxShadow(
-            color: AppTheme.navy.withOpacity(.05),
-            blurRadius: 18,
-            offset: const Offset(0, -8),
-          ),
-        ],
-      ),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final info = Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              EnterpriseStatPill(label: 'Items', value: itemCount.toString(), icon: Icons.inventory_2_outlined, color: AppTheme.primary),
-              EnterpriseStatPill(label: 'Total', value: total, icon: Icons.payments_outlined, color: AppTheme.success),
-              EnterpriseStatPill(label: 'Balance', value: balance, icon: Icons.account_balance_wallet_outlined, color: AppTheme.warning),
-            ],
-          );
-          final button = SizedBox(
-            height: 52,
-            child: FilledButton.icon(
-              onPressed: submitting ? null : onSubmit,
-              icon: submitting
-                  ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
-                  : const Icon(Icons.check_circle_rounded),
-              label: Text(submitting ? 'Saving...' : 'Save Sale  Ctrl+Enter'),
-            ),
-          );
-
-          if (constraints.maxWidth < 760) {
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                info,
-                const SizedBox(height: 10),
-                button,
-              ],
-            );
-          }
-          return Row(
-            children: [
-              Expanded(child: info),
-              const SizedBox(width: 12),
-              button,
-            ],
-          );
-        },
-      ),
-    );
-  }
-}
-
-class _AmendmentDiff {
-  final int added;
-  final int removed;
-  final int quantityChanged;
-  final int priceChanged;
-  final int discountChanged;
-  final int packagingChanged;
-  final bool sourceChanged;
-
-  const _AmendmentDiff({
-    required this.added,
-    required this.removed,
-    required this.quantityChanged,
-    required this.priceChanged,
-    required this.discountChanged,
-    required this.packagingChanged,
-    required this.sourceChanged,
-  });
-
-  bool get hasChanges =>
-      added > 0 ||
-      removed > 0 ||
-      quantityChanged > 0 ||
-      priceChanged > 0 ||
-      discountChanged > 0 ||
-      packagingChanged > 0 ||
-      sourceChanged;
-}
-
-class _AmendmentPaymentMethod {
-  final String code;
-  final String label;
-
-  const _AmendmentPaymentMethod(this.code, this.label);
-}
-
-class _AmendmentReviewDecision {
-  final String reason;
-  final String settlementAction;
-  final String settlementMethod;
-  final double settlementAmount;
-  final String reference;
-
-  const _AmendmentReviewDecision({
-    required this.reason,
-    required this.settlementAction,
-    required this.settlementMethod,
-    required this.settlementAmount,
-    required this.reference,
-  });
-}
-
-class _SaleAmendmentReviewDialog extends StatefulWidget {
-  final String invoiceNo;
-  final int revision;
-  final double originalTotal;
-  final double revisedTotal;
-  final double netPaid;
-  final bool customerAttached;
-  final bool deliverySale;
-  final _AmendmentDiff diff;
-  final SaleProfitSummary? profit;
-  final List<_AmendmentPaymentMethod> paymentMethods;
-
-  const _SaleAmendmentReviewDialog({
-    required this.invoiceNo,
-    required this.revision,
-    required this.originalTotal,
-    required this.revisedTotal,
-    required this.netPaid,
-    required this.customerAttached,
-    required this.deliverySale,
-    required this.diff,
-    required this.profit,
-    required this.paymentMethods,
-  });
-
-  @override
-  State<_SaleAmendmentReviewDialog> createState() =>
-      _SaleAmendmentReviewDialogState();
-}
-
-class _SaleAmendmentReviewDialogState
-    extends State<_SaleAmendmentReviewDialog> {
-  final _reasonController = TextEditingController();
-  final _amountController = TextEditingController();
-  final _referenceController = TextEditingController();
-  String _action = 'none';
-  late String _method;
-  String? _error;
-
-  double get _balance => widget.revisedTotal - widget.netPaid;
-  double get _requiredAmount => _balance.abs();
-
-  @override
-  void initState() {
-    super.initState();
-    _method = widget.paymentMethods.isNotEmpty
-        ? widget.paymentMethods.first.code
-        : 'cash';
-    if (!widget.customerAttached && _requiredAmount > .004) {
-      _action = _balance > 0 ? 'collect' : 'refund';
-    }
-    _amountController.text = _requiredAmount.toStringAsFixed(2);
-  }
-
-  @override
-  void dispose() {
-    _reasonController.dispose();
-    _amountController.dispose();
-    _referenceController.dispose();
-    super.dispose();
-  }
-
-  String _settlementLabel(String action) {
-    if (_balance > .004) {
-      return action == 'collect'
-          ? 'Collect now'
-          : widget.customerAttached
-              ? 'Leave as customer balance'
-              : 'Must collect now';
-    }
-    if (_balance < -.004) {
-      return action == 'refund'
-          ? 'Refund now'
-          : widget.customerAttached
-              ? 'Keep as customer credit'
-              : 'Must refund now';
-    }
-    return 'No settlement required';
-  }
-
-  void _submit() {
-    final reason = _reasonController.text.trim();
-    if (reason.length < 5) {
-      setState(() => _error = 'Enter a clear amendment reason (at least 5 characters).');
-      return;
-    }
-    var amount = 0.0;
-    if (_action != 'none') {
-      amount = double.tryParse(_amountController.text.trim()) ?? 0;
-      if (amount < .01) {
-        setState(() => _error = 'Enter a valid settlement amount.');
-        return;
-      }
-      if (!widget.customerAttached && (amount - _requiredAmount).abs() > .004) {
-        setState(() => _error =
-            'A walk-in invoice must be settled exactly (${AppCurrency.format(_requiredAmount)}).');
-        return;
-      }
-      if (amount > _requiredAmount + .004) {
-        setState(() => _error =
-            'Settlement cannot exceed ${AppCurrency.format(_requiredAmount)}.');
-        return;
-      }
-    }
-    Navigator.of(context).pop(
-      _AmendmentReviewDecision(
-        reason: reason,
-        settlementAction: _action,
-        settlementMethod: _method,
-        settlementAmount: amount,
-        reference: _referenceController.text.trim(),
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final difference = widget.revisedTotal - widget.originalTotal;
-    final hasBalance = _requiredAmount > .004;
-    final settlementOptions = <DropdownMenuItem<String>>[
-      if (widget.customerAttached || !hasBalance)
-        DropdownMenuItem(
-          value: 'none',
-          child: Text(_settlementLabel('none')),
-        ),
-      if (_balance > .004)
-        DropdownMenuItem(
-          value: 'collect',
-          child: Text(_settlementLabel('collect')),
-        ),
-      if (_balance < -.004)
-        DropdownMenuItem(
-          value: 'refund',
-          child: Text(_settlementLabel('refund')),
-        ),
-    ];
-
-    return Dialog(
-      insetPadding: const EdgeInsets.symmetric(horizontal: 40, vertical: 28),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 760, maxHeight: 720),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              padding: const EdgeInsets.fromLTRB(20, 16, 16, 14),
-              decoration: const BoxDecoration(
-                color: Color(0xFFF8FAFC),
-                borderRadius: BorderRadius.vertical(top: Radius.circular(14)),
-                border: Border(bottom: BorderSide(color: AppTheme.border)),
-              ),
-              child: Row(
-                children: [
-                  Container(
-                    width: 36,
-                    height: 36,
-                    decoration: BoxDecoration(
-                      color: AppTheme.primary.withOpacity(.10),
-                      borderRadius: BorderRadius.circular(9),
-                    ),
-                    child: const Icon(
-                      Icons.fact_check_outlined,
-                      color: AppTheme.primary,
-                      size: 20,
-                    ),
-                  ),
-                  const SizedBox(width: 11),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Review Sale Amendment',
-                          style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                                color: AppTheme.navy,
-                                fontWeight: FontWeight.w900,
-                              ),
-                        ),
-                        Text(
-                          '${widget.invoiceNo}  •  Revision ${widget.revision} → ${widget.revision + 1}',
-                          style: const TextStyle(
-                            fontSize: 11,
-                            color: AppTheme.textMuted,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  IconButton(
-                    tooltip: 'Cancel',
-                    onPressed: () => Navigator.of(context).pop(),
-                    icon: const Icon(Icons.close_rounded),
-                  ),
-                ],
-              ),
-            ),
-            Flexible(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.all(20),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Wrap(
-                      spacing: 10,
-                      runSpacing: 10,
-                      children: [
-                        _ReviewMetric(
-                          label: 'Original Total',
-                          value: AppCurrency.format(widget.originalTotal),
-                        ),
-                        _ReviewMetric(
-                          label: 'Revised Total',
-                          value: AppCurrency.format(widget.revisedTotal),
-                        ),
-                        _ReviewMetric(
-                          label: 'Difference',
-                          value:
-                              '${difference > .004 ? '+' : ''}${AppCurrency.format(difference)}',
-                          valueColor: difference.abs() <= .004
-                              ? AppTheme.textMuted
-                              : difference > 0
-                                  ? AppTheme.warning
-                                  : AppTheme.success,
-                        ),
-                        _ReviewMetric(
-                          label: 'Already Settled',
-                          value: AppCurrency.format(widget.netPaid),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 18),
-                    const _ReviewSectionTitle(
-                      icon: Icons.compare_arrows_rounded,
-                      title: 'Changes in this revision',
-                    ),
-                    const SizedBox(height: 9),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        _ChangeChip(
-                          icon: Icons.add_circle_outline,
-                          label: '${widget.diff.added} added',
-                          active: widget.diff.added > 0,
-                        ),
-                        _ChangeChip(
-                          icon: Icons.remove_circle_outline,
-                          label: '${widget.diff.removed} removed',
-                          active: widget.diff.removed > 0,
-                        ),
-                        _ChangeChip(
-                          icon: Icons.exposure_outlined,
-                          label: '${widget.diff.quantityChanged} quantity',
-                          active: widget.diff.quantityChanged > 0,
-                        ),
-                        _ChangeChip(
-                          icon: Icons.price_change_outlined,
-                          label: '${widget.diff.priceChanged} price',
-                          active: widget.diff.priceChanged > 0,
-                        ),
-                        _ChangeChip(
-                          icon: Icons.percent_rounded,
-                          label: '${widget.diff.discountChanged} discount',
-                          active: widget.diff.discountChanged > 0,
-                        ),
-                        _ChangeChip(
-                          icon: Icons.inventory_2_outlined,
-                          label: '${widget.diff.packagingChanged} packaging',
-                          active: widget.diff.packagingChanged > 0,
-                        ),
-                        _ChangeChip(
-                          icon: Icons.hub_outlined,
-                          label: 'Sale From changed',
-                          active: widget.diff.sourceChanged,
-                        ),
-                      ],
-                    ),
-                    if (widget.profit != null) ...[
-                      const SizedBox(height: 18),
-                      const _ReviewSectionTitle(
-                        icon: Icons.insights_outlined,
-                        title: 'Revised profit insight',
-                      ),
-                      const SizedBox(height: 9),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 14,
-                          vertical: 11,
-                        ),
-                        decoration: BoxDecoration(
-                          color: AppTheme.surfaceSoft,
-                          borderRadius: BorderRadius.circular(9),
-                          border: Border.all(color: AppTheme.border),
-                        ),
-                        child: Row(
-                          children: [
-                            Expanded(
-                              child: _InlineReviewValue(
-                                label: 'Net Sales',
-                                value: AppCurrency.format(
-                                  widget.profit!.netSalesBeforeTax,
-                                ),
-                              ),
-                            ),
-                            Expanded(
-                              child: _InlineReviewValue(
-                                label: 'COGS',
-                                value: AppCurrency.format(
-                                  widget.profit!.costOfGoods,
-                                ),
-                              ),
-                            ),
-                            Expanded(
-                              child: _InlineReviewValue(
-                                label: widget.profit!.grossProfit < 0
-                                    ? 'Loss'
-                                    : 'Gross Profit',
-                                value: AppCurrency.format(
-                                  widget.profit!.grossProfit,
-                                ),
-                                valueColor: widget.profit!.grossProfit < 0
-                                    ? AppTheme.danger
-                                    : AppTheme.success,
-                              ),
-                            ),
-                            Expanded(
-                              child: _InlineReviewValue(
-                                label: 'Margin',
-                                value: widget.profit!.marginPercent == null
-                                    ? '—'
-                                    : '${widget.profit!.marginPercent!.toStringAsFixed(1)}%',
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                    const SizedBox(height: 18),
-                    const _ReviewSectionTitle(
-                      icon: Icons.account_balance_wallet_outlined,
-                      title: 'Settlement after amendment',
-                    ),
-                    const SizedBox(height: 9),
-                    if (widget.deliverySale) ...[
-                      Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: AppTheme.primary.withOpacity(.06),
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(
-                            color: AppTheme.primary.withOpacity(.18),
-                          ),
-                        ),
-                        child: Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Icon(
-                              Icons.delivery_dining_outlined,
-                              color: AppTheme.primary,
-                              size: 18,
-                            ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Text(
-                                _action == 'collect'
-                                    ? 'This delivery collection will be assigned to the selected rider’s custody (1210), exactly like a normal paid delivery sale. It will not be added to the cashier drawer.'
-                                    : _action == 'refund'
-                                        ? 'This refund is paid from the selected payment account. Existing rider custody is preserved because already-collected rider money is a separate historical financial movement.'
-                                        : 'Changing the invoice does not rewrite historical rider custody. Only actual new collections or refunds move money.',
-                                style: const TextStyle(
-                                  color: AppTheme.navy,
-                                  fontSize: 11.5,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                    ],
-                    DropdownButtonFormField<String>(
-                        value: _action,
-                        decoration: InputDecoration(
-                          labelText: _balance > .004
-                              ? 'Revised balance due: ${AppCurrency.format(_balance)}'
-                              : _balance < -.004
-                                  ? 'Customer credit: ${AppCurrency.format(-_balance)}'
-                                  : 'Invoice is exactly settled',
-                          border: const OutlineInputBorder(),
-                          isDense: true,
-                        ),
-                        items: settlementOptions,
-                        onChanged: hasBalance && widget.customerAttached
-                            ? (value) {
-                                if (value == null) return;
-                                setState(() {
-                                  _action = value;
-                                  _amountController.text =
-                                      _requiredAmount.toStringAsFixed(2);
-                                });
-                              }
-                            : null,
-                      ),
-                      if (_action != 'none') ...[
-                        const SizedBox(height: 10),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: TextFormField(
-                                controller: _amountController,
-                                readOnly: !widget.customerAttached,
-                                keyboardType: const TextInputType.numberWithOptions(
-                                  decimal: true,
-                                ),
-                                decoration: InputDecoration(
-                                  labelText: _action == 'refund'
-                                      ? 'Refund Amount'
-                                      : 'Collection Amount',
-                                  border: const OutlineInputBorder(),
-                                  isDense: true,
-                                ),
-                              ),
-                            ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: DropdownButtonFormField<String>(
-                                value: _method,
-                                isExpanded: true,
-                                decoration: const InputDecoration(
-                                  labelText: 'Method',
-                                  border: OutlineInputBorder(),
-                                  isDense: true,
-                                ),
-                                items: widget.paymentMethods.isEmpty
-                                    ? const [
-                                        DropdownMenuItem(
-                                          value: 'cash',
-                                          child: Text('Cash'),
-                                        ),
-                                      ]
-                                    : widget.paymentMethods
-                                        .map(
-                                          (m) => DropdownMenuItem(
-                                            value: m.code,
-                                            child: Text(
-                                              m.label,
-                                              overflow: TextOverflow.ellipsis,
-                                            ),
-                                          ),
-                                        )
-                                        .toList(),
-                                onChanged: (value) {
-                                  if (value != null) {
-                                    setState(() => _method = value);
-                                  }
-                                },
-                              ),
-                            ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: TextField(
-                                controller: _referenceController,
-                                decoration: const InputDecoration(
-                                  labelText: 'Reference (optional)',
-                                  border: OutlineInputBorder(),
-                                  isDense: true,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                    const SizedBox(height: 18),
-                    const _ReviewSectionTitle(
-                      icon: Icons.description_outlined,
-                      title: 'Amendment reason',
-                    ),
-                    const SizedBox(height: 9),
-                    TextField(
-                      controller: _reasonController,
-                      autofocus: true,
-                      minLines: 2,
-                      maxLines: 3,
-                      maxLength: 500,
-                      decoration: const InputDecoration(
-                        hintText:
-                            'Required — e.g. Customer changed size before delivery',
-                        border: OutlineInputBorder(),
-                        helperText:
-                            'This reason becomes part of the permanent invoice audit trail.',
-                      ),
-                    ),
-                    if (_error != null) ...[
-                      const SizedBox(height: 5),
-                      Text(
-                        _error!,
-                        style: const TextStyle(
-                          color: AppTheme.danger,
-                          fontSize: 11.5,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-            ),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              decoration: const BoxDecoration(
-                border: Border(top: BorderSide(color: AppTheme.border)),
-              ),
-              child: Row(
-                children: [
-                  const Expanded(
-                    child: Text(
-                      'Stock, COGS, AR, tax and ledger deltas commit together. If any validation fails, nothing is changed.',
-                      style: TextStyle(
-                        color: AppTheme.textMuted,
-                        fontSize: 10.5,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ),
-                  TextButton(
-                    onPressed: () => Navigator.of(context).pop(),
-                    child: const Text('Cancel'),
-                  ),
-                  const SizedBox(width: 6),
-                  FilledButton.icon(
-                    onPressed: _submit,
-                    icon: const Icon(Icons.check_circle_outline_rounded, size: 17),
-                    label: const Text('Save Amendment'),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _ReviewMetric extends StatelessWidget {
-  final String label;
-  final String value;
-  final Color? valueColor;
-
-  const _ReviewMetric({
-    required this.label,
-    required this.value,
-    this.valueColor,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: 166,
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: BoxDecoration(
-        color: AppTheme.surfaceSoft,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: AppTheme.border),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            label,
-            style: const TextStyle(
-              color: AppTheme.textMuted,
-              fontSize: 10,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          const SizedBox(height: 3),
-          Text(
-            value,
-            style: TextStyle(
-              color: valueColor ?? AppTheme.navy,
-              fontSize: 15,
-              fontWeight: FontWeight.w900,
-              fontFeatures: const [FontFeature.tabularFigures()],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _ReviewSectionTitle extends StatelessWidget {
-  final IconData icon;
-  final String title;
-
-  const _ReviewSectionTitle({required this.icon, required this.title});
-
-  @override
-  Widget build(BuildContext context) => Row(
-        children: [
-          Icon(icon, size: 16, color: AppTheme.primary),
-          const SizedBox(width: 6),
-          Text(
-            title,
-            style: const TextStyle(
-              color: AppTheme.navy,
-              fontSize: 12.5,
-              fontWeight: FontWeight.w900,
-            ),
-          ),
-        ],
-      );
-}
-
-class _ChangeChip extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final bool active;
-
-  const _ChangeChip({
-    required this.icon,
-    required this.label,
-    required this.active,
-  });
-
-  @override
-  Widget build(BuildContext context) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
-        decoration: BoxDecoration(
-          color: active ? AppTheme.primary.withOpacity(.08) : AppTheme.surfaceSoft,
-          borderRadius: BorderRadius.circular(7),
-          border: Border.all(
-            color: active ? AppTheme.primary.withOpacity(.20) : AppTheme.border,
-          ),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              icon,
-              size: 14,
-              color: active ? AppTheme.primary : AppTheme.textMuted,
-            ),
-            const SizedBox(width: 5),
-            Text(
-              label,
-              style: TextStyle(
-                color: active ? AppTheme.navy : AppTheme.textMuted,
-                fontSize: 10.5,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ],
-        ),
-      );
-}
-
-class _InlineReviewValue extends StatelessWidget {
-  final String label;
-  final String value;
-  final Color? valueColor;
-
-  const _InlineReviewValue({
-    required this.label,
-    required this.value,
-    this.valueColor,
-  });
-
-  @override
-  Widget build(BuildContext context) => Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            label,
-            style: const TextStyle(
-              color: AppTheme.textMuted,
-              fontSize: 9.5,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          Text(
-            value,
-            style: TextStyle(
-              color: valueColor ?? AppTheme.navy,
-              fontSize: 13,
-              fontWeight: FontWeight.w900,
-              fontFeatures: const [FontFeature.tabularFigures()],
-            ),
-          ),
-        ],
-      );
-}
-
-class _AmendmentHeaderMetric extends StatelessWidget {
-  final String label;
-  final String value;
-  final Color? valueColor;
-
-  const _AmendmentHeaderMetric({
-    required this.label,
-    required this.value,
-    this.valueColor,
-  });
-
-  @override
-  Widget build(BuildContext context) => Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            '$label ',
-            style: const TextStyle(
-              color: AppTheme.textMuted,
-              fontSize: 10.5,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          Text(
-            value,
-            style: TextStyle(
-              color: valueColor ?? AppTheme.navy,
-              fontSize: 11.5,
-              fontWeight: FontWeight.w900,
-              fontFeatures: const [FontFeature.tabularFigures()],
-            ),
-          ),
-        ],
-      );
-}
-
-class _AmendmentBottomMetric extends StatelessWidget {
-  final String label;
-  final String value;
-  final Color? valueColor;
-
-  const _AmendmentBottomMetric({
-    required this.label,
-    required this.value,
-    this.valueColor,
-  });
-
-  @override
-  Widget build(BuildContext context) => Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: [
-          Text(
-            label,
-            style: const TextStyle(
-              color: AppTheme.textMuted,
-              fontSize: 9.5,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-          Text(
-            value,
-            style: TextStyle(
-              color: valueColor ?? AppTheme.navy,
-              fontSize: 13.5,
-              fontWeight: FontWeight.w900,
-              fontFeatures: const [FontFeature.tabularFigures()],
-            ),
-          ),
-        ],
-      );
-}
-
-class _ReturnSourceDialog extends StatefulWidget {
-  final String initialInvoice;
-  final String initialReason;
-
-  const _ReturnSourceDialog({
-    required this.initialInvoice,
-    required this.initialReason,
-  });
-
-  @override
-  State<_ReturnSourceDialog> createState() => _ReturnSourceDialogState();
-}
-
-class _ReturnSourceDialogState extends State<_ReturnSourceDialog> {
-  static const _reasons = <String>[
-    'Customer changed mind',
-    'Wrong item',
-    'Wrong size / variant',
-    'Damaged / defective',
-    'Quality issue',
-    'Duplicate purchase',
-    'Other',
-  ];
-
-  late final TextEditingController _invoiceController;
-  late final TextEditingController _otherController;
-  late String _reason;
-
-  @override
-  void initState() {
-    super.initState();
-    _invoiceController = TextEditingController(text: widget.initialInvoice);
-    _otherController = TextEditingController();
-    _reason = _reasons.contains(widget.initialReason)
-        ? widget.initialReason
-        : (widget.initialReason.trim().isNotEmpty ? 'Other' : _reasons.first);
-    if (_reason == 'Other' &&
-        widget.initialReason.trim().isNotEmpty &&
-        widget.initialReason != 'Other') {
-      _otherController.text = widget.initialReason;
-    }
-  }
-
-  @override
-  void dispose() {
-    _invoiceController.dispose();
-    _otherController.dispose();
-    super.dispose();
-  }
-
-  void _submit() {
-    final invoice = _invoiceController.text.trim();
-    final reason = _reason == 'Other'
-        ? _otherController.text.trim()
-        : _reason;
-    if (invoice.isEmpty || reason.isEmpty) {
-      AppFeedback.warning(
-        context,
-        'Original invoice and return reason are required.',
-      );
-      return;
-    }
-    Navigator.of(context).pop(<String, String>{
-      'invoice': invoice,
-      'reason': reason,
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Dialog(
-      insetPadding: const EdgeInsets.symmetric(horizontal: 32, vertical: 24),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 520, maxHeight: 620),
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.fromLTRB(20, 18, 20, 16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const Row(
-                children: [
-                  Icon(Icons.assignment_return_outlined),
-                  SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'Link return to original invoice',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: _invoiceController,
-                autofocus: widget.initialInvoice.trim().isEmpty,
-                textInputAction: TextInputAction.next,
-                decoration: const InputDecoration(
-                  labelText: 'Original invoice *',
-                  hintText: 'Invoice no. / offline receipt no.',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.receipt_long_outlined),
-                ),
-              ),
-              const SizedBox(height: 12),
-              DropdownButtonFormField<String>(
-                value: _reason,
-                isExpanded: true,
-                decoration: const InputDecoration(
-                  labelText: 'Return reason *',
-                  border: OutlineInputBorder(),
-                ),
-                items: _reasons
-                    .map(
-                      (reason) => DropdownMenuItem<String>(
-                        value: reason,
-                        child: Text(reason),
-                      ),
-                    )
-                    .toList(growable: false),
-                onChanged: (value) => setState(
-                  () => _reason = value ?? _reasons.first,
-                ),
-              ),
-              if (_reason == 'Other') ...[
-                const SizedBox(height: 12),
-                TextField(
-                  controller: _otherController,
-                  textInputAction: TextInputAction.done,
-                  onSubmitted: (_) => _submit(),
-                  decoration: const InputDecoration(
-                    labelText: 'Reason details *',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-              ],
-              const SizedBox(height: 12),
-              Container(
-                padding: const EdgeInsets.all(11),
-                decoration: BoxDecoration(
-                  color: AppTheme.surfaceSoft,
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: AppTheme.border),
-                ),
-                child: const Text(
-                  'Stock is restored automatically. CounterIQ calculates the refundable merchandise, original invoice discount and tax from the original invoice. Original delivery is never refunded.',
-                  style: TextStyle(
-                    fontSize: 11.5,
-                    color: AppTheme.textMuted,
-                    height: 1.35,
-                  ),
-                ),
-              ),
-              const SizedBox(height: 16),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  TextButton(
-                    onPressed: () => Navigator.of(context).pop(),
-                    child: const Text('Cancel'),
-                  ),
-                  const SizedBox(width: 8),
-                  FilledButton.icon(
-                    onPressed: _submit,
-                    icon: const Icon(Icons.search_rounded, size: 17),
-                    label: const Text('Find original item'),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
 }
