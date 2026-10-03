@@ -17,6 +17,8 @@ import 'package:enterprise_pos/screens/sales/sale_create.dart';
 // because returns are now handled as -ve sales.
 // import 'package:enterprise_pos/screens/sales/sale_returns_screen.dart';
 import 'package:enterprise_pos/screens/sales/sale_screen.dart';
+import 'package:enterprise_pos/screens/sales_orders/sales_order_form_screen.dart';
+import 'package:enterprise_pos/screens/sales_orders/sales_orders_screen.dart';
 import 'package:enterprise_pos/screens/stock_screen.dart';
 import 'package:enterprise_pos/screens/users_screen.dart';
 import 'package:enterprise_pos/screens/vendors/vendors_screen.dart';
@@ -53,6 +55,8 @@ class PosShortcutCatalog {
     PosShortcutInfo(keys: 'Ctrl + H', title: 'Go to Home', section: 'Navigation', icon: Icons.home_rounded),
     PosShortcutInfo(keys: 'Ctrl + N / F2', title: 'Create Sale', section: 'Sales', icon: Icons.point_of_sale_rounded, permission: 'create-sales'),
     PosShortcutInfo(keys: 'Ctrl + L', title: 'Sales List', section: 'Sales', icon: Icons.receipt_long_rounded, permission: 'view-sales'),
+    PosShortcutInfo(keys: 'Ctrl + Shift + F', title: 'Sales Orders', section: 'Sales', icon: Icons.assignment_outlined, permission: 'view-sales-orders'),
+    PosShortcutInfo(keys: 'Ctrl + Alt + F', title: 'New Sales Order', section: 'Sales', icon: Icons.assignment_add, permission: 'create-sales-orders'),
     PosShortcutInfo(keys: 'Ctrl + O', title: 'New Purchase', section: 'Purchases', icon: Icons.shopping_cart_checkout_rounded, permission: 'manage-purchases'),
     PosShortcutInfo(keys: 'Ctrl + Shift + O', title: 'Purchase List', section: 'Purchases', icon: Icons.shopping_cart_rounded, permission: 'view-purchases'),
     PosShortcutInfo(keys: 'Ctrl + P', title: 'Products', section: 'Inventory', icon: Icons.inventory_2_rounded, permission: 'view-products'),
@@ -118,6 +122,18 @@ class PosShortcutCatalog {
     PosShortcutInfo(keys: 'Ctrl + Enter', title: 'Save return', section: 'Create Sale Return', icon: Icons.check_circle_rounded),
   ];
 
+  static const salesOrderCreate = <PosShortcutInfo>[
+    PosShortcutInfo(keys: 'F2 / Ctrl + I', title: 'Add item (open picker)', section: 'Items & Products', icon: Icons.add_shopping_cart_rounded),
+    PosShortcutInfo(keys: 'F3 / Ctrl + Shift + C', title: 'Pick customer', section: 'Parties', icon: Icons.person_search_rounded),
+    PosShortcutInfo(keys: 'F9', title: 'Focus barcode scanner', section: 'Input Fields', icon: Icons.qr_code_scanner_rounded),
+    PosShortcutInfo(keys: 'Ctrl + Shift + S', title: 'Focus salesman', section: 'Input Fields', icon: Icons.badge_rounded),
+    PosShortcutInfo(keys: 'Ctrl + Shift + P', title: 'Focus product search', section: 'Input Fields', icon: Icons.search_rounded),
+    PosShortcutInfo(keys: 'Ctrl + Enter', title: 'Submit for approval', section: 'Order Actions', icon: Icons.send_rounded),
+    PosShortcutInfo(keys: 'Ctrl + S', title: 'Save draft', section: 'Order Actions', icon: Icons.save_rounded),
+    PosShortcutInfo(keys: 'Ctrl + /', title: 'Shortcut guide', section: 'Order Actions', icon: Icons.keyboard_rounded),
+    PosShortcutInfo(keys: 'Esc', title: 'Back / Cancel', section: 'Navigation', icon: Icons.arrow_back_rounded),
+  ];
+
   static const quickSave = <PosShortcutInfo>[
     PosShortcutInfo(keys: 'Ctrl + Enter', title: 'Save', section: 'Forms', icon: Icons.check_circle_rounded),
     PosShortcutInfo(keys: 'Esc', title: 'Cancel / close', section: 'Forms', icon: Icons.close_rounded),
@@ -170,6 +186,11 @@ class AppKeyboardShortcuts extends StatelessWidget {
 
       _ctrl(LogicalKeyboardKey.keyL): () => open(PosRouteIds.sales, (_) => const SalesScreen(), permission: 'view-sales'),
       _cmd(LogicalKeyboardKey.keyL): () => open(PosRouteIds.sales, (_) => const SalesScreen(), permission: 'view-sales'),
+
+      _ctrlShift(LogicalKeyboardKey.keyF): () => open(PosRouteIds.salesOrders, (_) => const SalesOrdersScreen(), permission: 'view-sales-orders'),
+      _cmdShift(LogicalKeyboardKey.keyF): () => open(PosRouteIds.salesOrders, (_) => const SalesOrdersScreen(), permission: 'view-sales-orders'),
+      _ctrlAlt(LogicalKeyboardKey.keyF): () => open(PosRouteIds.salesOrderCreate, (_) => const SalesOrderFormScreen(), permission: 'create-sales-orders'),
+      _cmdAlt(LogicalKeyboardKey.keyF): () => open(PosRouteIds.salesOrderCreate, (_) => const SalesOrderFormScreen(), permission: 'create-sales-orders'),
 
       _ctrl(LogicalKeyboardKey.keyO): () => open(PosRouteIds.createPurchase, (_) => const CreatePurchaseScreen(), permission: 'manage-purchases'),
       _cmd(LogicalKeyboardKey.keyO): () => open(PosRouteIds.createPurchase, (_) => const CreatePurchaseScreen(), permission: 'manage-purchases'),
@@ -317,16 +338,24 @@ class AppKeyboardShortcuts extends StatelessWidget {
 void showAppShortcutGuide(
   BuildContext context, {
   bool includeSaleCreate = false,
+  bool includeSalesOrder = false,
   List<PosShortcutInfo> extra = const [],
 }) {
   final auth = context.read<AuthProvider>();
-  _showShortcutGuide(context, auth, includeSaleCreate: includeSaleCreate, extra: extra);
+  _showShortcutGuide(
+    context,
+    auth,
+    includeSaleCreate: includeSaleCreate,
+    includeSalesOrder: includeSalesOrder,
+    extra: extra,
+  );
 }
 
 void _showShortcutGuide(
   BuildContext context,
   AuthProvider auth, {
   bool includeSaleCreate = false,
+  bool includeSalesOrder = false,
   List<PosShortcutInfo> extra = const [],
 }) {
   final globalRows =
@@ -400,6 +429,17 @@ void _showShortcutGuide(
                         const SizedBox(height: 12),
                         ..._buildSaleCreateSections(),
                       ],
+                      if (includeSalesOrder) ...[
+                        const SizedBox(height: 20),
+                        const Divider(height: 1),
+                        const SizedBox(height: 16),
+                        const Text(
+                          'Sales Order Form',
+                          style: TextStyle(fontSize: 15, fontWeight: FontWeight.w900, color: AppTheme.navy),
+                        ),
+                        const SizedBox(height: 12),
+                        ..._buildSalesOrderSections(),
+                      ],
                     ],
                   ),
                 ),
@@ -424,6 +464,48 @@ List<Widget> _buildSaleCreateSections() {
   final grouped = <String, List<PosShortcutInfo>>{};
 
   for (final info in PosShortcutCatalog.saleCreate) {
+    if (!grouped.containsKey(info.section)) {
+      ordered.add(info.section);
+      grouped[info.section] = [];
+    }
+    grouped[info.section]!.add(info);
+  }
+
+  final widgets = <Widget>[];
+  for (final section in ordered) {
+    widgets.add(
+      Padding(
+        padding: const EdgeInsets.only(bottom: 8),
+        child: Text(
+          section,
+          style: const TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w800,
+            color: AppTheme.textMuted,
+            letterSpacing: 0.5,
+          ),
+        ),
+      ),
+    );
+    widgets.add(
+      Wrap(
+        spacing: 10,
+        runSpacing: 10,
+        children: grouped[section]!.map((item) => _ShortcutCard(info: item)).toList(),
+      ),
+    );
+    widgets.add(const SizedBox(height: 14));
+  }
+  return widgets;
+}
+
+/// Groups [PosShortcutCatalog.salesOrderCreate] by [section] and returns a list of
+/// section-header + card-wrap widgets in insertion order.
+List<Widget> _buildSalesOrderSections() {
+  final ordered = <String>[];
+  final grouped = <String, List<PosShortcutInfo>>{};
+
+  for (final info in PosShortcutCatalog.salesOrderCreate) {
     if (!grouped.containsKey(info.section)) {
       ordered.add(info.section);
       grouped[info.section] = [];

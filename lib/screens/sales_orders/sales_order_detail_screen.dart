@@ -9,11 +9,13 @@ import 'package:enterprise_pos/screens/sales_orders/parts/reason_dialog.dart';
 import 'package:enterprise_pos/screens/sales_orders/parts/revalidation_panel.dart';
 import 'package:enterprise_pos/screens/sales_orders/parts/sales_order_items_table.dart';
 import 'package:enterprise_pos/screens/sales_orders/parts/sales_order_timeline.dart';
+import 'package:enterprise_pos/screens/sales_orders/sales_order_form_screen.dart';
 import 'package:enterprise_pos/services/app_currency.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/app_feedback.dart';
 import 'package:enterprise_pos/widgets/enterprise/enterprise_ui.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 class SalesOrderDetailScreen extends StatefulWidget {
@@ -261,6 +263,22 @@ class _SalesOrderDetailScreenState extends State<SalesOrderDetailScreen> {
     }
   }
 
+  Future<void> _handleEdit() async {
+    final order = _order;
+    if (order == null || _mutating) return;
+
+    final updated = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => SalesOrderFormScreen(editOrder: order),
+      ),
+    );
+
+    if (updated == true && mounted) {
+      _loadData();
+    }
+  }
+
   void _handleMutationError(Object e, String actionName) {
     if (!mounted) return;
     setState(() => _mutating = false);
@@ -397,75 +415,110 @@ class _SalesOrderDetailScreenState extends State<SalesOrderDetailScreen> {
     final canApprove = auth.hasPermission('approve-sales-orders');
     final canManage = auth.hasPermission('manage-sales-orders');
     final canCreate = auth.hasPermission('create-sales-orders');
+    final hasBlocking = _revalidationReport?.hasBlockingIssues == true;
 
-    return Scaffold(
-      backgroundColor: AppTheme.bg,
-      appBar: AppBar(
-        title: Text('Sales Order #${order.orderNumber}'),
-        actions: [
-          IconButton(
-            tooltip: 'Refresh Order',
-            onPressed: _mutating ? null : _loadData,
-            icon: const Icon(Icons.refresh_rounded),
-          ),
-        ],
-      ),
-      body: SafeArea(
-        child: Column(
-          children: [
-            Expanded(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    // 1. Order Summary Header Card
-                    _buildOverviewCard(order),
-                    const SizedBox(height: 14),
+    final canApproveNow = order.isSubmitted && canApprove && !_mutating && !hasBlocking;
+    final canRejectNow = (order.isSubmitted || order.isApproved) && canApprove && !_mutating;
+    final canConvertNow = order.isApproved && canConvert && !_mutating;
+    final canEditNow = (order.isDraft || order.isSubmitted || order.isApproved) &&
+        (canCreate || canManage) &&
+        !_mutating;
 
-                    // 2. Revalidation Panel (Problems first, line items second!)
-                    RevalidationPanel(
-                      report: _revalidationReport,
-                      loading: _revalidating,
-                      canConvert: canConvert,
-                      onRefresh: _revalidateOnly,
-                      onCreditOverrideApproved: (reason) {
-                        setState(() => _creditOverrideReason = reason);
-                        AppFeedback.success(
-                          context,
-                          'Credit limit override recorded. Proceed with conversion.',
-                        );
-                      },
-                    ),
-                    const SizedBox(height: 14),
+    final bindings = <ShortcutActivator, VoidCallback>{
+      if (canApproveNow) ...{
+        const SingleActivator(LogicalKeyboardKey.enter, control: true): _handleApprove,
+        const SingleActivator(LogicalKeyboardKey.enter, meta: true): _handleApprove,
+        const SingleActivator(LogicalKeyboardKey.numpadEnter, control: true): _handleApprove,
+        const SingleActivator(LogicalKeyboardKey.numpadEnter, meta: true): _handleApprove,
+      },
+      if (canRejectNow) ...{
+        const SingleActivator(LogicalKeyboardKey.keyR, control: true, shift: true): _handleReject,
+        const SingleActivator(LogicalKeyboardKey.keyR, meta: true, shift: true): _handleReject,
+      },
+      if (canConvertNow) ...{
+        const SingleActivator(LogicalKeyboardKey.keyV, control: true, shift: true): _handleConvertToSale,
+        const SingleActivator(LogicalKeyboardKey.keyV, meta: true, shift: true): _handleConvertToSale,
+      },
+      if (canEditNow) ...{
+        const SingleActivator(LogicalKeyboardKey.keyE, control: true): _handleEdit,
+        const SingleActivator(LogicalKeyboardKey.keyE, meta: true): _handleEdit,
+      },
+    };
 
-                    // 3. Line Items Table
-                    SalesOrderItemsTable(
-                      items: order.items,
-                      subtotal: order.subtotal,
-                      discount: order.discount,
-                      tax: order.tax,
-                      total: order.total,
-                      canViewProfit: canViewProfit,
-                    ),
-                    const SizedBox(height: 14),
-
-                    // 4. Activity & Events Timeline
-                    SalesOrderTimeline(events: order.events),
-                  ],
-                ),
+    return CallbackShortcuts(
+      bindings: bindings,
+      child: Focus(
+        autofocus: true,
+        child: Scaffold(
+          backgroundColor: AppTheme.bg,
+          appBar: AppBar(
+            title: Text('Sales Order #${order.orderNumber}'),
+            actions: [
+              IconButton(
+                tooltip: 'Refresh Order',
+                onPressed: _mutating ? null : _loadData,
+                icon: const Icon(Icons.refresh_rounded),
               ),
-            ),
+            ],
+          ),
+          body: SafeArea(
+            child: Column(
+              children: [
+                Expanded(
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        // 1. Order Summary Header Card
+                        _buildOverviewCard(order),
+                        const SizedBox(height: 14),
 
-            // 5. Sticky Action Bar
-            _buildBottomActionBar(
-              order: order,
-              canApprove: canApprove,
-              canConvert: canConvert,
-              canManage: canManage,
-              canCreate: canCreate,
+                        // 2. Revalidation Panel (Problems first, line items second!)
+                        RevalidationPanel(
+                          report: _revalidationReport,
+                          loading: _revalidating,
+                          canConvert: canConvert,
+                          onRefresh: _revalidateOnly,
+                          onCreditOverrideApproved: (reason) {
+                            setState(() => _creditOverrideReason = reason);
+                            AppFeedback.success(
+                              context,
+                              'Credit limit override recorded. Proceed with conversion.',
+                            );
+                          },
+                        ),
+                        const SizedBox(height: 14),
+
+                        // 3. Line Items Table
+                        SalesOrderItemsTable(
+                          items: order.items,
+                          subtotal: order.subtotal,
+                          discount: order.discount,
+                          tax: order.tax,
+                          total: order.total,
+                          canViewProfit: canViewProfit,
+                        ),
+                        const SizedBox(height: 14),
+
+                        // 4. Activity & Events Timeline
+                        SalesOrderTimeline(events: order.events),
+                      ],
+                    ),
+                  ),
+                ),
+
+                // 5. Sticky Action Bar
+                _buildBottomActionBar(
+                  order: order,
+                  canApprove: canApprove,
+                  canConvert: canConvert,
+                  canManage: canManage,
+                  canCreate: canCreate,
+                ),
+              ],
             ),
-          ],
+          ),
         ),
       ),
     );
@@ -724,6 +777,16 @@ class _SalesOrderDetailScreenState extends State<SalesOrderDetailScreen> {
             ),
           ),
           const Spacer(),
+
+          // 0. Edit Order
+          if ((order.isDraft || order.isSubmitted || order.isApproved) &&
+              (canCreate || canManage))
+            OutlinedButton.icon(
+              onPressed: _mutating ? null : _handleEdit,
+              icon: const Icon(Icons.edit_outlined, size: 16),
+              label: const Text('Edit Order'),
+            ),
+          const SizedBox(width: 8),
 
           // 1. Return to Draft
           if ((order.isSubmitted || order.isRejected) &&

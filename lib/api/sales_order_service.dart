@@ -97,6 +97,22 @@ class SalesOrderService {
     throw Exception(res['message'] ?? 'Failed to revalidate sales order #$id');
   }
 
+  Future<SalesOrder> createOrder(Map<String, dynamic> body) async {
+    final res = await _client.post('/sales-orders', body: body);
+    if (res['success'] == true && res['data'] is Map<String, dynamic>) {
+      return SalesOrder.fromJson(res['data'] as Map<String, dynamic>);
+    }
+    throw Exception(res['message'] ?? 'Failed to create sales order');
+  }
+
+  Future<SalesOrder> updateOrder(int id, Map<String, dynamic> body) async {
+    final res = await _client.put('/sales-orders/$id', body: body);
+    if (res['success'] == true && res['data'] is Map<String, dynamic>) {
+      return SalesOrder.fromJson(res['data'] as Map<String, dynamic>);
+    }
+    throw Exception(res['message'] ?? 'Failed to update sales order #$id');
+  }
+
   Future<SalesOrder> submit(int id, {int? version}) async {
     final res = await _client.post(
       '/sales-orders/$id/submit',

@@ -4,6 +4,7 @@ import 'package:enterprise_pos/api/sales_order_service.dart';
 import 'package:enterprise_pos/models/sales_order.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/screens/sales_orders/sales_order_detail_screen.dart';
+import 'package:enterprise_pos/screens/sales_orders/sales_order_form_screen.dart';
 import 'package:enterprise_pos/screens/subscription/subscription_management_screen.dart';
 import 'package:enterprise_pos/services/app_currency.dart';
 import 'package:enterprise_pos/services/app_navigator.dart';
@@ -216,6 +217,24 @@ class _SalesOrdersScreenState extends State<SalesOrdersScreen> {
       subtitle: 'Field bookings awaiting review and conversion',
       icon: Icons.assignment_outlined,
       actions: [
+        if (auth.hasPermission('create-sales-orders'))
+          FilledButton.icon(
+            onPressed: () async {
+              final created = await Navigator.push<bool>(
+                context,
+                MaterialPageRoute(builder: (_) => const SalesOrderFormScreen()),
+              );
+              if (created == true && mounted) {
+                _loadInitialData();
+              }
+            },
+            icon: const Icon(Icons.add_rounded, size: 18),
+            label: const Text('New Sales Order'),
+            style: FilledButton.styleFrom(
+              backgroundColor: AppTheme.primary,
+              foregroundColor: Colors.white,
+            ),
+          ),
         OutlinedButton.icon(
           onPressed: _loading ? null : () => _loadInitialData(),
           icon: const Icon(Icons.refresh_rounded, size: 18),

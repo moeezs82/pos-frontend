@@ -120,6 +120,12 @@ class SalesOrderItem {
   final String productSku;
   final int? productVariationId;
   final int? productPackagingId;
+  final String? packagingNameSnapshot;
+  final String? packagingShortNameSnapshot;
+  final double? packagingFactorSnapshot;
+  final double? packagingQuantity;
+  final double? packagingUnitPrice;
+  final double? packagingDiscountSnapshot;
   final double quantity;
   final double unitPrice;
   final double unitCost;
@@ -139,6 +145,12 @@ class SalesOrderItem {
     this.productSku = '',
     this.productVariationId,
     this.productPackagingId,
+    this.packagingNameSnapshot,
+    this.packagingShortNameSnapshot,
+    this.packagingFactorSnapshot,
+    this.packagingQuantity,
+    this.packagingUnitPrice,
+    this.packagingDiscountSnapshot,
     required this.quantity,
     required this.unitPrice,
     this.unitCost = 0.0,
@@ -160,6 +172,12 @@ class SalesOrderItem {
       productSku: json['product_sku']?.toString() ?? '',
       productVariationId: _toInt(json['product_variation_id']),
       productPackagingId: _toInt(json['product_packaging_id']),
+      packagingNameSnapshot: json['packaging_name_snapshot']?.toString(),
+      packagingShortNameSnapshot: json['packaging_short_name_snapshot']?.toString(),
+      packagingFactorSnapshot: _toDoubleNullable(json['packaging_factor_snapshot']),
+      packagingQuantity: _toDoubleNullable(json['packaging_quantity']),
+      packagingUnitPrice: _toDoubleNullable(json['packaging_unit_price']),
+      packagingDiscountSnapshot: _toDoubleNullable(json['packaging_discount_snapshot']),
       quantity: _toDouble(json['quantity']),
       unitPrice: _toDouble(json['unit_price']),
       unitCost: _toDouble(json['unit_cost']),
@@ -183,6 +201,18 @@ class SalesOrderItem {
           'product_variation_id': productVariationId,
         if (productPackagingId != null)
           'product_packaging_id': productPackagingId,
+        if (packagingNameSnapshot != null)
+          'packaging_name_snapshot': packagingNameSnapshot,
+        if (packagingShortNameSnapshot != null)
+          'packaging_short_name_snapshot': packagingShortNameSnapshot,
+        if (packagingFactorSnapshot != null)
+          'packaging_factor_snapshot': packagingFactorSnapshot,
+        if (packagingQuantity != null)
+          'packaging_quantity': packagingQuantity,
+        if (packagingUnitPrice != null)
+          'packaging_unit_price': packagingUnitPrice,
+        if (packagingDiscountSnapshot != null)
+          'packaging_discount_snapshot': packagingDiscountSnapshot,
         'quantity': quantity,
         'unit_price': unitPrice,
         'unit_cost': unitCost,
@@ -585,6 +615,12 @@ int? _toInt(dynamic value) {
 double _toDouble(dynamic value) {
   if (value is num) return value.toDouble();
   return double.tryParse(value?.toString() ?? '') ?? 0.0;
+}
+
+double? _toDoubleNullable(dynamic value) {
+  if (value == null) return null;
+  if (value is num) return value.toDouble();
+  return double.tryParse(value.toString());
 }
 
 bool _toBool(dynamic value) {

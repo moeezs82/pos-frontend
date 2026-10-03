@@ -50,6 +50,7 @@ abstract final class PosRouteIds {
   static const saleReturns = '/sale-returns';
   /// Field sales orders queue and approval workflow (Phase 4).
   static const salesOrders = '/sales-orders';
+  static const salesOrderCreate = '/sales-orders/create';
   static const branchControl = '/branch-control';
   static const accounts = '/accounts';
   static const paymentMethods = '/settings/payment-methods';
