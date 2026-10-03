@@ -617,7 +617,9 @@ class _SalesOrderDetailScreenState extends State<SalesOrderDetailScreen> {
               Expanded(
                 child: _infoBlock(
                   icon: Icons.badge_outlined,
-                  label: 'Salesman (Field Booking)',
+                  label: _salesmanIsBookingFallback(order)
+                      ? 'Booked by'
+                      : 'Salesman (Field Booking)',
                   title: order.salesman?.name ?? 'Salesman #${order.salesmanId}',
                   subtitle: order.salesman?.email ?? 'Field representative',
                 ),
@@ -684,6 +686,17 @@ class _SalesOrderDetailScreenState extends State<SalesOrderDetailScreen> {
         ],
       ),
     );
+  }
+
+  /// A self-attributed booker without a salesman role (the backend raises
+  /// SALESMAN_FALLBACK for it) is a clerk/admin, not a field salesman.
+  bool _salesmanIsBookingFallback(SalesOrder order) {
+    if (order.salesmanId <= 0 || order.salesmanId != order.createdBy) {
+      return false;
+    }
+    return _revalidationReport?.warnings
+            .any((w) => w.code == 'SALESMAN_FALLBACK') ??
+        false;
   }
 
   Widget _infoBlock({

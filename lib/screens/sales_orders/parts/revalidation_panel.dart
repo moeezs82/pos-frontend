@@ -399,13 +399,13 @@ class RevalidationPanel extends StatelessWidget {
                   _inlineMetric(
                     'Quoted',
                     AppCurrency.format(
-                        _toDouble(issue.data['quoted_price'])),
+                        _toDouble(issue.data['quoted'])),
                     color,
                   ),
                   _inlineMetric(
                     'Reference',
                     AppCurrency.format(
-                        _toDouble(issue.data['current_price'])),
+                        _toDouble(issue.data['reference'])),
                     color,
                   ),
                   _inlineMetric(

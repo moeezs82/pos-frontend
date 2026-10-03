@@ -196,7 +196,49 @@ class SalesOrderSubmitter {
     return confirmed == true;
   }
 
-  /// Converts cart items into sales order items payload with package conversion.
+  static double _roundTo(double value, int scale) {
+    var factor = 1.0;
+    for (var i = 0; i < scale; i++) {
+      factor *= 10;
+    }
+    return (value * factor).roundToDouble() / factor;
+  }
+
+  /// Collapses the POS cart's discount model (percentage / per-unit fixed /
+  /// per-pack fixed / extra) into the single whole-line money figure the
+  /// Sales Order API expects (`CreateOrderItemInput.Discount`).
+  ///
+  /// Mirrors SaleCartMutator.cartLineTotal() — keep the two in step.
+  static double lineDiscountMoney(Map<String, dynamic> it) {
+    final discountType =
+        (it['discount_type'] ?? 'percentage').toString().toLowerCase();
+    final extra = _rowNum(it['extra_discount']);
+    final pct = _rowNum(it['discount_pct']).clamp(0.0, 100.0) / 100.0;
+    double lineDisc;
+
+    if (it['packaging_id'] != null) {
+      final packQty = _rowNum(it['packaging_quantity']);
+      final packPrice = _rowNum(it['packaging_unit_price']);
+      final gross = _roundTo(packQty * packPrice, 2);
+      lineDisc = discountType == 'fixed'
+          ? _roundTo(packQty * _rowNum(it['packaging_discount_snapshot']), 2)
+          : _roundTo(gross * pct, 2);
+    } else {
+      final qty = _rowNum(it['quantity']);
+      final gross = _roundTo(qty * _rowNum(it['price']), 2);
+      lineDisc = discountType == 'fixed'
+          ? _roundTo(_rowNum(it['discount_pct']) * qty, 2)
+          : _roundTo(gross * pct, 2);
+    }
+
+    final total = lineDisc + extra;
+    return total.isFinite && total > 0 ? _roundTo(total, 2) : 0.0;
+  }
+
+  /// Translates cart rows into the Sales Order items contract.
+  ///
+  /// Packaged cart rows are already canonical (base-unit `quantity`/`price`
+  /// plus pack-level fields), so they pass through untouched — no arithmetic.
   static List<Map<String, dynamic>> buildItemsPayload(
     List<Map<String, dynamic>> items,
   ) {
@@ -205,23 +247,24 @@ class SalesOrderSubmitter {
       final packagingId = _metaInt(it['packaging_id']);
       final qty = _rowNum(it['quantity']);
       final price = _rowNum(it['price']);
-      final extraDisc = _rowNum(it['extra_discount']);
+      final discount = lineDiscountMoney(it);
       final taxRate = _rowNum(it['tax_rate']);
       final notes = it['notes']?.toString();
 
-      if (packagingId != null && packagingId > 0) {
-        final factor = _rowNum(it['packaging_factor_snapshot']);
-        final effectiveFactor = factor > 0 ? factor : 1.0;
-        final baseUnits = qty * effectiveFactor;
-        final basePrice = price / effectiveFactor;
+      final packQty = _rowNum(it['packaging_quantity']);
+      final packPrice = _rowNum(it['packaging_unit_price']);
+      if (packagingId != null &&
+          packagingId > 0 &&
+          packQty > 0 &&
+          packPrice > 0) {
         return <String, dynamic>{
           'product_id': prodId,
           'product_packaging_id': packagingId,
-          'packaging_quantity': qty,
-          'packaging_unit_price': price,
-          'quantity': baseUnits,
-          'unit_price': basePrice,
-          'discount': extraDisc,
+          'packaging_quantity': packQty,
+          'packaging_unit_price': packPrice,
+          'quantity': qty,
+          'unit_price': price,
+          'discount': discount,
           'tax_rate': taxRate,
           if (notes != null && notes.trim().isNotEmpty) 'notes': notes.trim(),
         };
@@ -230,7 +273,7 @@ class SalesOrderSubmitter {
         'product_id': prodId,
         'quantity': qty,
         'unit_price': price,
-        'discount': extraDisc,
+        'discount': discount,
         'tax_rate': taxRate,
         if (notes != null && notes.trim().isNotEmpty) 'notes': notes.trim(),
       };
@@ -243,8 +286,6 @@ class SalesOrderSubmitter {
     required int salesmanId,
     required DateTime? deliveryDate,
     required String notes,
-    required double discount,
-    required double tax,
     required List<Map<String, dynamic>> itemsPayload,
     required bool submitForApproval,
     required int? editOrderVersion,
@@ -259,10 +300,8 @@ class SalesOrderSubmitter {
       'order_date': dateFmt.format(DateTime.now()),
       if (deliveryDateStr != null) 'delivery_date': deliveryDateStr,
       if (notes.trim().isNotEmpty) 'notes': notes.trim(),
-      if (discount > 0.0001) 'discount': discount,
-      if (tax > 0.0001) 'tax': tax,
       'items': itemsPayload,
-      'submit_for_approval': submitForApproval,
+      'status': submitForApproval ? 'SUBMITTED' : 'DRAFT',
       if (editOrderVersion != null) 'version': editOrderVersion,
     };
   }
@@ -279,8 +318,6 @@ class SalesOrderSubmitter {
     required void Function(bool submitting) onSubmittingChanged,
     required AuthProvider auth,
     required int? selectedUserId,
-    required double discount,
-    required double tax,
     required DateTime? deliveryDate,
     required String notes,
     required bool submitForApproval,
@@ -324,8 +361,6 @@ class SalesOrderSubmitter {
       salesmanId: salesmanId,
       deliveryDate: deliveryDate,
       notes: notes,
-      discount: discount,
-      tax: tax,
       itemsPayload: itemsPayload,
       submitForApproval: submitForApproval,
       editOrderVersion: editSalesOrder?.version,
@@ -333,23 +368,20 @@ class SalesOrderSubmitter {
 
     try {
       final service = SalesOrderService(token: auth.token!);
+      final SalesOrder saved;
       if (editSalesOrder != null) {
-        await service.updateOrder(editSalesOrder.id, body);
-        AppFeedback.success(
-          context,
-          submitForApproval
-              ? 'Sales order #${editSalesOrder.orderNumber} submitted for approval.'
-              : 'Sales order #${editSalesOrder.orderNumber} saved as draft.',
-        );
+        saved = await service.updateOrder(editSalesOrder.id, body);
       } else {
-        final created = await service.createOrder(body);
-        AppFeedback.success(
-          context,
-          submitForApproval
-              ? 'Sales order #${created.orderNumber} submitted for approval.'
-              : 'Sales order #${created.orderNumber} saved as draft.',
-        );
+        saved = await service.createOrder(body);
       }
+      // Report what the server actually stored, not what was requested.
+      final isSubmitted = saved.status == SalesOrderStatus.submitted;
+      AppFeedback.success(
+        context,
+        isSubmitted
+            ? 'Sales order #${saved.orderNumber} submitted for approval.'
+            : 'Sales order #${saved.orderNumber} saved as draft.',
+      );
       return true;
     } catch (e) {
       onSubmittingChanged(false);

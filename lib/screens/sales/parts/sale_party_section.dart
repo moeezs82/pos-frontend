@@ -23,6 +23,10 @@ class PartySectionCard extends StatelessWidget {
   final VoidCallback? onManageSaleSources;
   final bool canManageSaleSources;
 
+  /// Sales orders do not carry a sale source (conversion resolves it), so the
+  /// selector is hidden in that mode rather than accepting discarded input.
+  final bool showSaleSource;
+
   /// Needed to call the live, full-database search endpoints
   /// (customers/vendors/users) as the user types past whatever's in the
   /// local cache — a 10,000-row customer table can never live entirely in
@@ -103,6 +107,7 @@ class PartySectionCard extends StatelessWidget {
     required this.onSaleSourceChanged,
     this.onManageSaleSources,
     this.canManageSaleSources = false,
+    this.showSaleSource = true,
     required this.token,
     required this.onPickCustomer,
     required this.onPickUser,
@@ -266,12 +271,14 @@ class PartySectionCard extends StatelessWidget {
             if (showVendor) allFields[3],
           ];
 
-          final source = _SaleSourceField(
-            items: saleSources,
-            selectedId: selectedSaleSourceId,
-            onChanged: onSaleSourceChanged,
-            onManage: canManageSaleSources ? onManageSaleSources : null,
-          );
+          final Widget? source = showSaleSource
+              ? _SaleSourceField(
+                  items: saleSources,
+                  selectedId: selectedSaleSourceId,
+                  onChanged: onSaleSourceChanged,
+                  onManage: canManageSaleSources ? onManageSaleSources : null,
+                )
+              : null;
 
           if (compact) {
             return _buildCompactLayout(
@@ -294,7 +301,7 @@ class PartySectionCard extends StatelessWidget {
   Widget _buildCompactLayout(
     double width,
     List<Widget> fields,
-    Widget source,
+    Widget? source,
   ) {
     // At normal desktop widths, the most-used controls stay on one line.
     // The 560px breakpoint is intentionally lower than the previous 760px
@@ -307,8 +314,10 @@ class PartySectionCard extends StatelessWidget {
           Expanded(child: fields[0]),
           const SizedBox(width: 8),
           Expanded(child: fields[1]),
-          const SizedBox(width: 8),
-          Expanded(child: source),
+          if (source != null) ...[
+            const SizedBox(width: 8),
+            Expanded(child: source),
+          ],
         ],
       );
     }
@@ -333,8 +342,8 @@ class PartySectionCard extends StatelessWidget {
                 if (i > 2) const SizedBox(width: 8),
                 Expanded(child: fields[i]),
               ],
-              if (fields.length > 2) const SizedBox(width: 8),
-              Expanded(child: source),
+              if (fields.length > 2 && source != null) const SizedBox(width: 8),
+              if (source != null) Expanded(child: source),
             ],
           ),
         ],
@@ -350,7 +359,7 @@ class PartySectionCard extends StatelessWidget {
           fields[i],
           const SizedBox(height: 8),
         ],
-        source,
+        if (source != null) source,
       ],
     );
   }
@@ -358,7 +367,7 @@ class PartySectionCard extends StatelessWidget {
   Widget _buildStandardLayout(
     double width,
     List<Widget> fields,
-    Widget source,
+    Widget? source,
   ) {
     final info = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -375,12 +384,17 @@ class PartySectionCard extends StatelessWidget {
       ],
     );
 
-    final sourceBox = SizedBox(
-      width: onManageSaleSources != null && canManageSaleSources ? 270 : 230,
-      child: source,
-    );
+    final sourceBox = source == null
+        ? null
+        : SizedBox(
+            width:
+                onManageSaleSources != null && canManageSaleSources ? 270 : 230,
+            child: source,
+          );
 
-    final header = width < 610
+    final header = sourceBox == null
+        ? info
+        : width < 610
         ? Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [

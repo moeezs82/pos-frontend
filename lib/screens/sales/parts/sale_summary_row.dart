@@ -17,6 +17,10 @@ class SaleSummaryRow extends StatelessWidget {
   final TextEditingController taxController;
   final FocusNode taxFocusNode;
   final TextEditingController shippingController;
+
+  /// Header Disc/Tax/Ship inputs. Hidden for sales orders, whose totals are
+  /// derived purely from line items.
+  final bool showHeaderAdjustments;
   final FocusNode shippingFocusNode;
   final double linkedReturnCredit;
   final double linkedReturnOriginalOutstanding;
@@ -36,6 +40,7 @@ class SaleSummaryRow extends StatelessWidget {
     required this.taxFocusNode,
     required this.shippingController,
     required this.shippingFocusNode,
+    this.showHeaderAdjustments = true,
     required this.linkedReturnCredit,
     required this.linkedReturnOriginalOutstanding,
     required this.profitSummary,
@@ -109,115 +114,126 @@ class SaleSummaryRow extends StatelessWidget {
               ],
               const Spacer(),
 
-              // Order Discount (editable inline)
-              const Text(
-                'Disc(-):',
-                style: TextStyle(
-                  fontSize: 11,
-                  color: AppTheme.textMuted,
-                  fontWeight: FontWeight.w600,
+              if (showHeaderAdjustments) ...[
+                // Order Discount (editable inline)
+                const Text(
+                  'Disc(-):',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: AppTheme.textMuted,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
-              ),
-              const SizedBox(width: 4),
-              Tooltip(
-                message: 'Focus: Ctrl+Shift+G',
-                child: SizedBox(
-                  width: 70,
-                  height: 36,
-                  child: TextField(
-                    controller: discountController,
-                    focusNode: discountFocusNode,
-                    keyboardType:
-                        const TextInputType.numberWithOptions(decimal: true),
-                    textAlign: TextAlign.right,
-                    decoration: const InputDecoration(
-                      isDense: true,
-                      contentPadding:
-                          EdgeInsets.symmetric(horizontal: 6, vertical: 8),
-                      border: OutlineInputBorder(),
-                    ),
-                    style: const TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w800,
-                      fontFeatures: [FontFeature.tabularFigures()],
+                const SizedBox(width: 4),
+                Tooltip(
+                  message: 'Focus: Ctrl+Shift+G',
+                  child: SizedBox(
+                    width: 70,
+                    height: 36,
+                    child: TextField(
+                      controller: discountController,
+                      focusNode: discountFocusNode,
+                      keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true,
+                      ),
+                      textAlign: TextAlign.right,
+                      decoration: const InputDecoration(
+                        isDense: true,
+                        contentPadding: EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 8,
+                        ),
+                        border: OutlineInputBorder(),
+                      ),
+                      style: const TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                        fontFeatures: [FontFeature.tabularFigures()],
+                      ),
                     ),
                   ),
                 ),
-              ),
-              const SizedBox(width: 10),
+                const SizedBox(width: 10),
 
-              // Order Tax (editable inline)
-              const Text(
-                'Tax(+):',
-                style: TextStyle(
-                  fontSize: 11,
-                  color: AppTheme.textMuted,
-                  fontWeight: FontWeight.w600,
+                // Order Tax (editable inline)
+                const Text(
+                  'Tax(+):',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: AppTheme.textMuted,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
-              ),
-              const SizedBox(width: 4),
-              Tooltip(
-                message: 'Focus: Ctrl+Shift+T',
-                child: SizedBox(
-                  width: 70,
-                  height: 36,
-                  child: TextField(
-                    controller: taxController,
-                    focusNode: taxFocusNode,
-                    keyboardType:
-                        const TextInputType.numberWithOptions(decimal: true),
-                    textAlign: TextAlign.right,
-                    decoration: const InputDecoration(
-                      isDense: true,
-                      contentPadding:
-                          EdgeInsets.symmetric(horizontal: 6, vertical: 8),
-                      border: OutlineInputBorder(),
-                    ),
-                    style: const TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w800,
-                      fontFeatures: [FontFeature.tabularFigures()],
+                const SizedBox(width: 4),
+                Tooltip(
+                  message: 'Focus: Ctrl+Shift+T',
+                  child: SizedBox(
+                    width: 70,
+                    height: 36,
+                    child: TextField(
+                      controller: taxController,
+                      focusNode: taxFocusNode,
+                      keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true,
+                      ),
+                      textAlign: TextAlign.right,
+                      decoration: const InputDecoration(
+                        isDense: true,
+                        contentPadding: EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 8,
+                        ),
+                        border: OutlineInputBorder(),
+                      ),
+                      style: const TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                        fontFeatures: [FontFeature.tabularFigures()],
+                      ),
                     ),
                   ),
                 ),
-              ),
-              const SizedBox(width: 10),
+                const SizedBox(width: 10),
 
-              // Shipping Charges (editable inline)
-              const Text(
-                'Ship(+):',
-                style: TextStyle(
-                  fontSize: 11,
-                  color: AppTheme.textMuted,
-                  fontWeight: FontWeight.w600,
+                // Shipping Charges (editable inline)
+                const Text(
+                  'Ship(+):',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: AppTheme.textMuted,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
-              ),
-              const SizedBox(width: 4),
-              Tooltip(
-                message: 'Shipping Charges — Focus: Ctrl+Shift+S',
-                child: SizedBox(
-                  width: 70,
-                  height: 36,
-                  child: TextField(
-                    controller: shippingController,
-                    focusNode: shippingFocusNode,
-                    keyboardType:
-                        const TextInputType.numberWithOptions(decimal: true),
-                    textAlign: TextAlign.right,
-                    decoration: const InputDecoration(
-                      isDense: true,
-                      contentPadding:
-                          EdgeInsets.symmetric(horizontal: 6, vertical: 8),
-                      border: OutlineInputBorder(),
-                    ),
-                    style: const TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w800,
-                      fontFeatures: [FontFeature.tabularFigures()],
+                const SizedBox(width: 4),
+                Tooltip(
+                  message: 'Shipping Charges — Focus: Ctrl+Shift+S',
+                  child: SizedBox(
+                    width: 70,
+                    height: 36,
+                    child: TextField(
+                      controller: shippingController,
+                      focusNode: shippingFocusNode,
+                      keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true,
+                      ),
+                      textAlign: TextAlign.right,
+                      decoration: const InputDecoration(
+                        isDense: true,
+                        contentPadding: EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 8,
+                        ),
+                        border: OutlineInputBorder(),
+                      ),
+                      style: const TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                        fontFeatures: [FontFeature.tabularFigures()],
+                      ),
                     ),
                   ),
                 ),
-              ),
+              ],
             ],
           ),
         ),
@@ -232,21 +248,37 @@ class SaleSummaryRow extends StatelessWidget {
             ),
             child: Row(
               children: [
-                const Icon(Icons.assignment_return_outlined, size: 15, color: AppTheme.warning),
+                const Icon(
+                  Icons.assignment_return_outlined,
+                  size: 15,
+                  color: AppTheme.warning,
+                ),
                 const SizedBox(width: 6),
                 Text(
                   'Return credit ${AppCurrency.format(linkedReturnCredit)}',
-                  style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: AppTheme.navy),
+                  style: const TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                    color: AppTheme.navy,
+                  ),
                 ),
                 const SizedBox(width: 12),
                 Text(
                   'Old invoice outstanding ${AppCurrency.format(linkedReturnOriginalOutstanding)}',
-                  style: const TextStyle(fontSize: 10.5, color: AppTheme.textMuted, fontWeight: FontWeight.w600),
+                  style: const TextStyle(
+                    fontSize: 10.5,
+                    color: AppTheme.textMuted,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
                 const Spacer(),
                 const Text(
                   'Original delivery refund: 0',
-                  style: TextStyle(fontSize: 10.5, color: AppTheme.textMuted, fontWeight: FontWeight.w700),
+                  style: TextStyle(
+                    fontSize: 10.5,
+                    color: AppTheme.textMuted,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
               ],
             ),

@@ -315,12 +315,8 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
           _selectedUser = prefill.salesman;
         }
         _items = prefill.items;
-        if (prefill.discount != null) {
-          discountController.text = prefill.discount!;
-        }
-        if (prefill.tax != null) {
-          taxController.text = prefill.tax!;
-        }
+        // Order discount/tax are derived from the lines (already carried as
+        // per-line discount), so they are not loaded into the header inputs.
         if (prefill.notes != null) {
           _salesOrderNotesController.text = prefill.notes!;
         }
@@ -1180,8 +1176,6 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       },
       auth: context.read<AuthProvider>(),
       selectedUserId: _selectedUserId,
-      discount: double.tryParse(discountController.text.trim()) ?? 0.0,
-      tax: double.tryParse(taxController.text.trim()) ?? 0.0,
       deliveryDate: _salesOrderDeliveryDate,
       notes: _salesOrderNotesController.text,
       submitForApproval: submitForApproval,
@@ -1871,6 +1865,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
                 setState(() => _selectedSaleSourceId = value),
             canManageSaleSources:
                 context.watch<AuthProvider>().hasPermission('manage-sale-sources'),
+            showSaleSource: !widget.isSalesOrder,
             onManageSaleSources: _manageSaleSources,
             branchId: _effectiveBranchIdStr(),
             token: token,
@@ -2017,6 +2012,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       taxFocusNode: _taxFocusNode,
       shippingController: shippingController,
       shippingFocusNode: _shippingFocusNode,
+      showHeaderAdjustments: !widget.isSalesOrder,
       linkedReturnCredit: _linkedReturnCredit,
       linkedReturnOriginalOutstanding: _linkedReturnOriginalOutstanding,
       profitSummary: _currentProfitSummary(),
