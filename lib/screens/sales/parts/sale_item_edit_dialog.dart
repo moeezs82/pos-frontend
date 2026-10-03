@@ -139,18 +139,14 @@ class _SaleItemEditDialogState extends State<SaleItemEditDialog> {
     final id = _metaInt(item['packaging_id']);
     final factor = _metaNullableNum(item['packaging_factor_snapshot']);
     if (id == null || factor == null || factor <= 0) return null;
-    final productId = _metaInt(item['product_id']) ?? 0;
     return ProductPackaging(
       id: id,
-      productId: productId,
       name: (item['packaging_name_snapshot'] ?? 'Pack').toString(),
       shortName: item['packaging_short_name_snapshot']?.toString(),
       baseQuantity: factor,
-      sellingPrice: _metaNullableNum(item['packaging_unit_price']),
-      costPrice: _metaNullableNum(item['cost_price']),
+      retailPrice: _metaNullableNum(item['packaging_unit_price']),
       wholesalePrice: _metaNullableNum(item['wholesale_price']),
       isActive: true,
-      isDefault: false,
     );
   }
 

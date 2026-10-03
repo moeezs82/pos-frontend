@@ -26,6 +26,11 @@ class SaleSubmissionService {
   static double _rowNum(dynamic v) =>
       double.tryParse(v?.toString() ?? '') ?? 0.0;
 
+  static double _metaNum(dynamic value) {
+    if (value is num) return value.toDouble();
+    return double.tryParse(value?.toString() ?? '') ?? 0.0;
+  }
+
   static int? _metaInt(dynamic value) {
     if (value is int) return value;
     if (value is num) return value.toInt();

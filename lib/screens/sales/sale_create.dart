@@ -992,7 +992,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         builder: (_) => SaleItemEditDialog(
           item: _items[index],
           isEditing: _isEditing,
-          customerType: _customerType,
+          customerType: _selectedCustomerType,
         ),
       );
       if (updatedRow != null && mounted) {

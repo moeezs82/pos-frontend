@@ -1,3 +1,4 @@
+import 'package:enterprise_pos/screens/sales/parts/create_sale_items_section.dart';
 import 'package:enterprise_pos/models/payment_method.dart';
 import 'package:enterprise_pos/providers/payment_method_provider.dart';
 import 'package:enterprise_pos/screens/sales/parts/cart_product_search.dart';
@@ -108,8 +109,8 @@ class SaleReturnContextBanner extends StatelessWidget {
 class SaleCartInputRow extends StatelessWidget {
   final FocusNode searchFocusNode;
   final TextEditingController searchController;
-  final Future<List<ProductSearchResult>> Function(String) onQueryProducts;
-  final ValueChanged<ProductSearchResult> onProductSelected;
+  final Future<List<ProductRef>> Function(String) onQueryProducts;
+  final ValueChanged<ProductRef> onProductSelected;
   final VoidCallback onFocusScanner;
   final bool scannerEnabled;
   final VoidCallback onAddItemsManual;
