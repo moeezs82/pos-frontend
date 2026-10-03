@@ -130,9 +130,11 @@ class _SalesOrdersScreenState extends State<SalesOrdersScreen> {
         perPage: _perPage,
         status: _statusFilter,
         salesmanId: _selectedSalesmanId,
+        customerId: _selectedCustomerId,
         fromDate: _fromDate != null ? _fmtDate(_fromDate!) : null,
         toDate: _toDate != null ? _fmtDate(_toDate!) : null,
         search: _searchQuery.isNotEmpty ? _searchQuery : null,
+        sortBy: _sortBy,
       );
       if (!mounted) return;
       setState(() {
@@ -811,7 +813,7 @@ class _SalesOrdersScreenState extends State<SalesOrdersScreen> {
           )),
           const SizedBox(width: 14),
           // Items
-          SizedBox(width: widths[3], child: Text('${order.items.length}',
+          SizedBox(width: widths[3], child: Text('${order.itemsCount > 0 ? order.itemsCount : order.items.length}',
               textAlign: TextAlign.center,
               style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppTheme.navy))),
           const SizedBox(width: 14),

@@ -17,6 +17,7 @@ class SalesOrderService {
     String? fromDate,
     String? toDate,
     String? search,
+    String? sortBy,
   }) async {
     final query = _query({
       'page': page,
@@ -27,6 +28,7 @@ class SalesOrderService {
       'from_date': fromDate,
       'to_date': toDate,
       'search': search,
+      'sort_by': sortBy,
     });
 
     final res = await _client.get('/sales-orders', query: query);

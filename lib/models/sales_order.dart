@@ -316,6 +316,7 @@ class SalesOrder {
   final int version;
   final int createdBy;
   final String? deviceUuid;
+  final int itemsCount;
   final List<SalesOrderItem> items;
   final List<SalesOrderEvent> events;
   final String? createdAt;
@@ -350,6 +351,7 @@ class SalesOrder {
     this.version = 1,
     this.createdBy = 0,
     this.deviceUuid,
+    this.itemsCount = 0,
     this.items = const [],
     this.events = const [],
     this.createdAt,
@@ -410,6 +412,9 @@ class SalesOrder {
       version: _toInt(json['version']) ?? 1,
       createdBy: _toInt(json['created_by']) ?? 0,
       deviceUuid: json['device_uuid']?.toString(),
+      itemsCount: _toInt(json['items_count']) ??
+          (json['items'] as List<dynamic>?)?.length ??
+          0,
       items: (json['items'] as List<dynamic>? ?? const [])
           .whereType<Map<String, dynamic>>()
           .map((e) => SalesOrderItem.fromJson(e))
