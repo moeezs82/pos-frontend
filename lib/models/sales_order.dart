@@ -222,6 +222,11 @@ class SalesOrderItem {
         'total': total,
         if (notes != null) 'notes': notes,
       };
+
+  bool get isPackaged =>
+      productPackagingId != null && productPackagingId! > 0;
+  String? get packagingName => packagingNameSnapshot;
+  double? get packagingFactor => packagingFactorSnapshot;
 }
 
 class SalesOrderEvent {

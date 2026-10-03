@@ -55,6 +55,7 @@ import 'package:enterprise_pos/services/receipt_preview_service.dart';
 import 'package:enterprise_pos/models/whatsapp_invoice_format.dart';
 import 'package:enterprise_pos/services/whatsapp_invoice_service.dart';
 import 'package:enterprise_pos/services/whatsapp_message_template_service.dart';
+import 'package:intl/intl.dart';
 import 'package:enterprise_pos/models/sales_order.dart';
 import 'package:enterprise_pos/api/sales_order_service.dart';
 
@@ -110,12 +111,21 @@ class CreateSaleScreen extends StatefulWidget {
   /// links the sale and flips the order status in one guarded operation.
   final SalesOrderPrefill? salesOrderPrefill;
 
+  /// When true, this screen operates as a Sales Order quotation and booking form.
+  /// Submissions create or update a sales order instead of posting to /sales.
+  final bool isSalesOrder;
+
+  /// When editing an existing Sales Order.
+  final SalesOrder? editSalesOrder;
+
   const CreateSaleScreen({
     super.key,
     this.initialCustomer,
     this.initialReturnInvoice,
     this.editSaleId,
     this.salesOrderPrefill,
+    this.isSalesOrder = false,
+    this.editSalesOrder,
   });
 
   @override
@@ -168,6 +178,8 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
   // branch's default drawer method resolved from PaymentMethodProvider.
   String? _saleMethod;
   final saleReferenceController = TextEditingController();
+  DateTime? _salesOrderDeliveryDate;
+  final TextEditingController _salesOrderNotesController = TextEditingController();
 
   // discount/tax/shipping live controllers (edited inline in totals)
   final discountController = TextEditingController(text: "0");
@@ -291,7 +303,94 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     });
     _walkInPhoneFocusNode.addListener(_handleWalkInPhoneFocusChange);
 
-    if (!_isEditing && widget.salesOrderPrefill != null) {
+    if (widget.isSalesOrder) {
+      if (widget.editSalesOrder != null) {
+        final order = widget.editSalesOrder!;
+        final customer = order.customer;
+        if (customer != null) {
+          _selectedCustomerId = customer.id.toString();
+          _selectedCustomer = {
+            'id': customer.id,
+            'name': customer.name,
+            'phone': customer.phone,
+            if (customer.address != null) 'address': customer.address,
+          };
+          customerNameController.text = customer.name;
+          customerPhoneController.text = customer.phone;
+          addressController.text = customer.address ?? '';
+          _customerLocked = true;
+        }
+        if (order.salesmanId > 0) {
+          _selectedUserId = order.salesmanId;
+        }
+        if (order.salesman != null) {
+          _selectedUser = {
+            'id': order.salesman!.id,
+            'name': order.salesman!.name,
+            'email': order.salesman!.email,
+          };
+        }
+        _items = order.items.map((it) {
+          final hasPkg = it.isPackaged;
+          return <String, dynamic>{
+            'product_id': it.productId,
+            'name': it.productName.isNotEmpty ? it.productName : 'Product #${it.productId}',
+            'sku': it.productSku,
+            'quantity': hasPkg ? (it.packagingQuantity ?? it.quantity) : it.quantity,
+            'price': hasPkg ? (it.packagingUnitPrice ?? it.unitPrice) : it.unitPrice,
+            'discount_pct': 0.0,
+            'extra_discount': it.discount,
+            'discount_type': 'fixed',
+            'total': it.total,
+            if (hasPkg) ...{
+              'packaging_id': it.productPackagingId,
+              'packaging_name_snapshot': it.packagingNameSnapshot,
+              'packaging_factor_snapshot': it.packagingFactorSnapshot,
+              'packaging_quantity': it.packagingQuantity,
+              'packaging_unit_price': it.packagingUnitPrice,
+            },
+            SaleProfitCalculator.unitCostKey: it.unitCost,
+            SaleProfitCalculator.estimatedKey: false,
+            SaleProfitCalculator.sourceKey: 'Sales order snapshot',
+          };
+        }).toList();
+
+        if (order.discount > 0) {
+          discountController.text = order.discount.toStringAsFixed(2);
+        }
+        if (order.tax > 0) {
+          taxController.text = order.tax.toStringAsFixed(2);
+        }
+        if (order.notes != null && order.notes!.isNotEmpty) {
+          _salesOrderNotesController.text = order.notes!;
+        }
+        if (order.deliveryDate != null) {
+          _salesOrderDeliveryDate = DateTime.tryParse(order.deliveryDate!);
+        }
+      } else {
+        // New Sales Order: Default salesman to current logged in user
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          final auth = context.read<AuthProvider>();
+          final currentUserId = int.tryParse(auth.user?['id']?.toString() ?? '');
+          if (currentUserId != null && currentUserId > 0) {
+            setState(() {
+              _selectedUserId = currentUserId;
+              _selectedUser = auth.user;
+            });
+          }
+        });
+        if (widget.initialCustomer != null) {
+          final customer = widget.initialCustomer!;
+          _selectedCustomer = customer;
+          _selectedCustomerId = customer['id']?.toString();
+          customerNameController.text = (customer['first_name'] ?? customer['name'] ?? '').toString();
+          customerPhoneController.text = (customer['phone'] ?? '').toString();
+          addressController.text = (customer['address'] ?? '').toString();
+          _customerLocked = _selectedCustomerId != null;
+        }
+      }
+    } else if (!_isEditing && widget.salesOrderPrefill != null) {
       final prefill = widget.salesOrderPrefill!;
       final order = prefill.order;
       final customer = order.customer;
@@ -1108,6 +1207,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
 
   @override
   void dispose() {
+    _salesOrderNotesController.dispose();
     discountController.dispose();
     taxController.dispose();
     shippingController.dispose();
@@ -3182,7 +3282,178 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     return 'Sale not saved — please correct and try again.\n${lines.join('\n')}';
   }
 
+  Future<void> _submitSalesOrder({required bool submitForApproval}) async {
+    if (_selectedCustomerId == null && customerPhoneController.text.trim().isNotEmpty) {
+      final canContinue = await _resolveWalkInCustomerByPhone(force: true);
+      if (!canContinue || !mounted) return;
+    }
+    if (_selectedCustomerId == null) {
+      AppFeedback.warning(context, "Please select a customer for this sales order.");
+      _customerFocusNode.requestFocus();
+      return;
+    }
+    if (_items.isEmpty) {
+      AppFeedback.warning(context, "Add at least 1 item before saving sales order.");
+      return;
+    }
+
+    final quantityViolation = _firstQuantityViolation();
+    if (quantityViolation != null) {
+      AppFeedback.warning(context, quantityViolation);
+      return;
+    }
+
+    // Demotion guard when editing an APPROVED order (§5)
+    if (widget.editSalesOrder != null &&
+        widget.editSalesOrder!.status == SalesOrderStatus.approved) {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Row(
+            children: [
+              Icon(Icons.warning_amber_rounded, color: AppTheme.warning),
+              SizedBox(width: 10),
+              Text('Demote Approved Order?'),
+            ],
+          ),
+          content: const Text(
+            'This order is approved. Saving changes returns it to Submitted and it will need approval again.',
+            style: TextStyle(height: 1.45),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              style: FilledButton.styleFrom(backgroundColor: AppTheme.warning),
+              child: const Text('Proceed & Return to Submitted'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true) return;
+    }
+
+    setState(() => _submitting = true);
+
+    final auth = context.read<AuthProvider>();
+    final currentUserId = int.tryParse(auth.user?['id']?.toString() ?? '0') ?? 0;
+    // When salesman is not selected the one who is creating sale order is salesman
+    final salesmanId = _selectedUserId ?? currentUserId;
+    final customerId = int.tryParse(_selectedCustomerId ?? '') ?? 0;
+
+    double _rowNum(v) => double.tryParse(v?.toString() ?? '') ?? 0.0;
+    double discount = double.tryParse(discountController.text.trim()) ?? 0.0;
+    double tax = double.tryParse(taxController.text.trim()) ?? 0.0;
+
+    final dateFmt = DateFormat('yyyy-MM-dd');
+    final deliveryDateStr = _salesOrderDeliveryDate != null
+        ? dateFmt.format(_salesOrderDeliveryDate!)
+        : null;
+
+    final itemsPayload = _items.map((it) {
+      final prodId = _metaInt(it['product_id']) ?? 0;
+      final packagingId = _metaInt(it['packaging_id']);
+      final qty = _rowNum(it['quantity']);
+      final price = _rowNum(it['price']);
+      final extraDisc = _rowNum(it['extra_discount']);
+      final taxRate = _rowNum(it['tax_rate']);
+      final notes = it['notes']?.toString();
+
+      if (packagingId != null && packagingId > 0) {
+        final factor = _rowNum(it['packaging_factor_snapshot']);
+        final effectiveFactor = factor > 0 ? factor : 1.0;
+        final baseUnits = qty * effectiveFactor;
+        final basePrice = price / effectiveFactor;
+        return <String, dynamic>{
+          'product_id': prodId,
+          'product_packaging_id': packagingId,
+          'packaging_quantity': qty,
+          'packaging_unit_price': price,
+          'quantity': baseUnits,
+          'unit_price': basePrice,
+          'discount': extraDisc,
+          'tax_rate': taxRate,
+          if (notes != null && notes.trim().isNotEmpty) 'notes': notes.trim(),
+        };
+      }
+      return <String, dynamic>{
+        'product_id': prodId,
+        'quantity': qty,
+        'unit_price': price,
+        'discount': extraDisc,
+        'tax_rate': taxRate,
+        if (notes != null && notes.trim().isNotEmpty) 'notes': notes.trim(),
+      };
+    }).toList();
+
+    final body = <String, dynamic>{
+      'customer_id': customerId,
+      if (salesmanId > 0) 'salesman_id': salesmanId,
+      'order_date': dateFmt.format(DateTime.now()),
+      if (deliveryDateStr != null) 'delivery_date': deliveryDateStr,
+      if (_salesOrderNotesController.text.trim().isNotEmpty)
+        'notes': _salesOrderNotesController.text.trim(),
+      if (discountController.text.trim().isNotEmpty) 'discount': discount,
+      if (taxController.text.trim().isNotEmpty) 'tax': tax,
+      'items': itemsPayload,
+      'submit_for_approval': submitForApproval,
+      if (widget.editSalesOrder != null) 'version': widget.editSalesOrder!.version,
+    };
+
+    try {
+      final service = SalesOrderService(token: auth.token!);
+      if (widget.editSalesOrder != null) {
+        await service.updateOrder(widget.editSalesOrder!.id, body);
+        if (!mounted) return;
+        AppFeedback.success(
+          context,
+          submitForApproval
+              ? 'Sales order #${widget.editSalesOrder!.orderNumber} submitted for approval.'
+              : 'Sales order #${widget.editSalesOrder!.orderNumber} saved as draft.',
+        );
+      } else {
+        final created = await service.createOrder(body);
+        if (!mounted) return;
+        AppFeedback.success(
+          context,
+          submitForApproval
+              ? 'Sales order #${created.orderNumber} submitted for approval.'
+              : 'Sales order #${created.orderNumber} saved as draft.',
+        );
+      }
+      if (Navigator.of(context).canPop()) {
+        Navigator.pop(context, true);
+      } else {
+        _resetForNextSale();
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _submitting = false);
+      if (e is ApiException) {
+        if (e.statusCode == 409) {
+          AppFeedback.error(context, 'Version conflict: this sales order was modified by another user.');
+          return;
+        }
+        if (e.statusCode == 422) {
+          _applyServerLineErrors(e);
+          AppFeedback.error(context, _describeRejection(e));
+          return;
+        }
+        AppFeedback.error(context, e.message);
+        return;
+      }
+      AppFeedback.error(context, e.toString().replaceFirst('Exception: ', ''));
+    }
+  }
+
   Future<void> _submitSale({bool print = true}) async {
+    if (widget.isSalesOrder) {
+      await _submitSalesOrder(submitForApproval: true);
+      return;
+    }
     if (_isEditing) {
       await _submitAmendment();
       return;
@@ -4375,6 +4646,17 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         customerPhoneController.clear();
         addressController.clear();
       }
+
+      if (widget.isSalesOrder) {
+        _salesOrderNotesController.clear();
+        _salesOrderDeliveryDate = null;
+        final auth = context.read<AuthProvider>();
+        final currentUserId = int.tryParse(auth.user?['id']?.toString() ?? '');
+        if (currentUserId != null && currentUserId > 0) {
+          _selectedUserId = currentUserId;
+          _selectedUser = auth.user;
+        }
+      }
     });
   }
 
@@ -4879,14 +5161,36 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
               },
             },
             const SingleActivator(LogicalKeyboardKey.f9): _focusBarcodeScanner,
-            _ctrl(LogicalKeyboardKey.enter): () => _submitSale(),
-            _cmd(LogicalKeyboardKey.enter): () => _submitSale(),
-            _ctrl(LogicalKeyboardKey.numpadEnter): () => _submitSale(),
-            _cmd(LogicalKeyboardKey.numpadEnter): () => _submitSale(),
+            _ctrl(LogicalKeyboardKey.enter): () => widget.isSalesOrder
+                ? _submitSalesOrder(submitForApproval: true)
+                : _submitSale(),
+            _cmd(LogicalKeyboardKey.enter): () => widget.isSalesOrder
+                ? _submitSalesOrder(submitForApproval: true)
+                : _submitSale(),
+            _ctrl(LogicalKeyboardKey.numpadEnter): () => widget.isSalesOrder
+                ? _submitSalesOrder(submitForApproval: true)
+                : _submitSale(),
+            _cmd(LogicalKeyboardKey.numpadEnter): () => widget.isSalesOrder
+                ? _submitSalesOrder(submitForApproval: true)
+                : _submitSale(),
+            if (widget.isSalesOrder) ...{
+              _ctrl(LogicalKeyboardKey.keyS): () =>
+                  _submitSalesOrder(submitForApproval: false),
+              _cmd(LogicalKeyboardKey.keyS): () =>
+                  _submitSalesOrder(submitForApproval: false),
+            },
             _ctrl(LogicalKeyboardKey.slash): () =>
-                showAppShortcutGuide(context, includeSaleCreate: true),
+                showAppShortcutGuide(
+                  context,
+                  includeSaleCreate: !widget.isSalesOrder,
+                  includeSalesOrder: widget.isSalesOrder,
+                ),
             _cmd(LogicalKeyboardKey.slash): () =>
-                showAppShortcutGuide(context, includeSaleCreate: true),
+                showAppShortcutGuide(
+                  context,
+                  includeSaleCreate: !widget.isSalesOrder,
+                  includeSalesOrder: widget.isSalesOrder,
+                ),
             if (!_isEditing)
               _ctrlShift(LogicalKeyboardKey.keyU): () {
                 _customerController.clear();
@@ -4952,6 +5256,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
                       const SaleStatusBar(light: true, showBackButton: true),
                       if (_isEditing) _buildAmendmentHeader(total),
                       if (widget.salesOrderPrefill != null) _buildSalesOrderConversionHeader(),
+                      if (widget.isSalesOrder) _buildSalesOrderHeader(),
 
                       // ── 2-panel workspace ─────────────────────────────
                       Expanded(
@@ -5069,10 +5374,10 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
             branchId: _effectiveBranchIdStr(),
             token: token,
             showDeliveryBoy:
-                deliveryEnabled || (_isEditing && _selectedDeliveryBoyId != null),
+                !widget.isSalesOrder && (deliveryEnabled || (_isEditing && _selectedDeliveryBoyId != null)),
             showVendor:
-                saleVendorEnabled || (_isEditing && _selectedVendorId != null),
-            customerLocked: _isEditing,
+                !widget.isSalesOrder && (saleVendorEnabled || (_isEditing && _selectedVendorId != null)),
+            customerLocked: _isEditing || (widget.isSalesOrder && widget.editSalesOrder != null),
             customerLockMessage:
                 'Customer identity is locked on posted invoices. Use the dedicated customer-transfer workflow when an AR party genuinely needs correction.',
             onPickCustomer: _pickCustomer,
@@ -6023,6 +6328,179 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     );
   }
 
+  Widget _buildSalesOrderHeader() {
+    final isEdit = widget.editSalesOrder != null;
+    final orderNumber = widget.editSalesOrder?.orderNumber ?? '';
+    final status = widget.editSalesOrder?.status;
+    final dateFmt = DateFormat('yyyy-MM-dd');
+    return Container(
+      height: 42,
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      decoration: BoxDecoration(
+        color: AppTheme.primary.withOpacity(0.06),
+        border: const Border(bottom: BorderSide(color: AppTheme.border)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(
+              color: AppTheme.primary.withOpacity(.12),
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(color: AppTheme.primary.withOpacity(.24)),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(Icons.assignment_outlined, size: 15, color: AppTheme.primary),
+                const SizedBox(width: 4),
+                Text(
+                  isEdit ? 'EDIT SALES ORDER' : 'NEW SALES ORDER',
+                  style: const TextStyle(
+                    color: AppTheme.primary,
+                    fontSize: 10,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: .5,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              isEdit
+                  ? 'Editing order $orderNumber · quotation lines & pricing'
+                  : 'Sales Order Quotation · select customer & add product lines',
+              style: const TextStyle(
+                color: AppTheme.navy,
+                fontSize: 12.5,
+                fontWeight: FontWeight.w600,
+              ),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          // Delivery Date Picker Button
+          InkWell(
+            onTap: () async {
+              final picked = await showDatePicker(
+                context: context,
+                initialDate: _salesOrderDeliveryDate ?? DateTime.now(),
+                firstDate: DateTime.now().subtract(const Duration(days: 30)),
+                lastDate: DateTime.now().add(const Duration(days: 365)),
+              );
+              if (picked != null) {
+                setState(() => _salesOrderDeliveryDate = picked);
+              }
+            },
+            borderRadius: BorderRadius.circular(6),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(color: AppTheme.border),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.calendar_today_rounded, size: 13, color: AppTheme.primary),
+                  const SizedBox(width: 5),
+                  Text(
+                    _salesOrderDeliveryDate != null
+                        ? 'Delivery: ${dateFmt.format(_salesOrderDeliveryDate!)}'
+                        : 'Set Delivery Date',
+                    style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: AppTheme.navy),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          // Order Notes Button
+          InkWell(
+            onTap: () async {
+              final textController = TextEditingController(text: _salesOrderNotesController.text);
+              final saved = await showDialog<String>(
+                context: context,
+                builder: (ctx) => AlertDialog(
+                  title: const Text('Order Notes'),
+                  content: TextField(
+                    controller: textController,
+                    maxLines: 3,
+                    decoration: const InputDecoration(
+                      hintText: 'Enter internal quotation or order instructions...',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(ctx),
+                      child: const Text('Cancel'),
+                    ),
+                    FilledButton(
+                      onPressed: () => Navigator.pop(ctx, textController.text.trim()),
+                      child: const Text('Save Note'),
+                    ),
+                  ],
+                ),
+              );
+              if (saved != null) {
+                setState(() => _salesOrderNotesController.text = saved);
+              }
+            },
+            borderRadius: BorderRadius.circular(6),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(color: AppTheme.border),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.note_alt_outlined, size: 13, color: AppTheme.primary),
+                  const SizedBox(width: 5),
+                  ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 140),
+                    child: Text(
+                      _salesOrderNotesController.text.trim().isNotEmpty
+                          ? 'Note: ${_salesOrderNotesController.text.trim()}'
+                          : 'Add Note',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: AppTheme.navy),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (isEdit && status != null) ...[
+            const SizedBox(width: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: SalesOrderStatus.color(status).withOpacity(.15),
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(color: SalesOrderStatus.color(status)),
+              ),
+              child: Text(
+                SalesOrderStatus.label(status),
+                style: TextStyle(
+                  color: SalesOrderStatus.color(status),
+                  fontSize: 11,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
   Widget _buildAmendmentHeader(double revisedTotal) {
     final sale = _editSale ?? const <String, dynamic>{};
     final invoice = (sale['invoice_no'] ?? widget.editSaleId ?? '').toString();
@@ -6199,12 +6677,156 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     );
   }
 
+  Widget _buildSalesOrderBottomBar(double total) {
+    return Container(
+      height: 62,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        border: Border(top: BorderSide(color: AppTheme.border)),
+      ),
+      child: Row(
+        children: [
+          // Order summary indicator
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+              color: AppTheme.primarySoft,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.assignment_outlined, size: 16, color: AppTheme.primary),
+                const SizedBox(width: 6),
+                Text(
+                  widget.editSalesOrder != null
+                      ? 'Order #${widget.editSalesOrder!.orderNumber}'
+                      : 'Sales Order Quotation',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w800,
+                    color: AppTheme.primary,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          Text(
+            '${_items.length} ${_items.length == 1 ? 'item' : 'items'}',
+            style: const TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              color: AppTheme.textMuted,
+            ),
+          ),
+
+          const Spacer(),
+
+          // Quoted total display
+          Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              const Text(
+                'Quoted Total',
+                style: TextStyle(
+                  fontSize: 10,
+                  color: AppTheme.textMuted,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              Text(
+                AppCurrency.format(total.abs()),
+                style: const TextStyle(
+                  fontSize: 17,
+                  fontWeight: FontWeight.w900,
+                  color: AppTheme.navy,
+                  fontFeatures: [FontFeature.tabularFigures()],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(width: 16),
+
+          // Clear button
+          OutlinedButton(
+            onPressed: _submitting ? null : () => _resetForNextSale(),
+            style: OutlinedButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 14),
+              minimumSize: const Size(0, 38),
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              side: const BorderSide(color: AppTheme.danger),
+              foregroundColor: AppTheme.danger,
+              textStyle: const TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            child: const Text('Clear'),
+          ),
+          const SizedBox(width: 8),
+
+          // Save as Draft button
+          SizedBox(
+            height: 38,
+            child: OutlinedButton.icon(
+              onPressed: _submitting ? null : () => _submitSalesOrder(submitForApproval: false),
+              icon: const Icon(Icons.save_outlined, size: 15),
+              label: const Text(
+                'Save Draft',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              style: OutlinedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                minimumSize: const Size(0, 38),
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                side: BorderSide(color: AppTheme.primary.withOpacity(.5)),
+                foregroundColor: AppTheme.primary,
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+
+          // Submit for Approval button
+          SizedBox(
+            height: 38,
+            child: FilledButton.icon(
+              onPressed: _submitting ? null : () => _submitSalesOrder(submitForApproval: true),
+              icon: _submitting
+                  ? const SizedBox(
+                      width: 14,
+                      height: 14,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
+                  : const Icon(Icons.send_rounded, size: 15),
+              label: Text(
+                _submitting ? 'Submitting…' : 'Submit for Approval  Ctrl+↵',
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   // ── Fixed bottom action bar ──────────────────────────────────────────────
   Widget _buildBottomBar({
     required double total,
     required double changeAmount,
   }) {
     if (_isEditing) return _buildAmendmentBottomBar(total);
+    if (widget.isSalesOrder) return _buildSalesOrderBottomBar(total);
     final pm = context.watch<PaymentMethodProvider>();
     final methods = pm.activeMethods;
     final currentMethod = _saleMethod ?? pm.defaultMethod?.method;
