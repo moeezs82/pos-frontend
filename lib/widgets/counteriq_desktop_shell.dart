@@ -37,7 +37,9 @@ import 'package:enterprise_pos/screens/vendors/vendors_screen.dart';
 import 'package:enterprise_pos/services/app_navigator.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/app_keyboard_shortcuts.dart';
+import 'package:enterprise_pos/services/batch_print_job_service.dart';
 import 'package:enterprise_pos/widgets/backup_reminder_gate.dart';
+import 'package:enterprise_pos/widgets/batch_print_progress_panel.dart';
 import 'package:enterprise_pos/widgets/subscription_warning_banner.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -154,7 +156,39 @@ class _CounterIQDesktopShellState extends State<CounterIQDesktopShell> {
                           ? _BranchRequiredView(
                               onOpenBranchControl: _openBranchControl,
                             )
-                          : _CounterIQDesktopShellScope(child: widget.child),
+                          : _CounterIQDesktopShellScope(
+                              child: Stack(
+                                children: [
+                                  widget.child,
+                                  Positioned(
+                                    right: 20,
+                                    bottom: 20,
+                                    child: ListenableBuilder(
+                                      listenable: BatchPrintJobService.instance,
+                                      builder: (context, _) {
+                                        final job =
+                                            BatchPrintJobService.instance.currentJob;
+                                        if (job == null) {
+                                          return const SizedBox.shrink();
+                                        }
+                                        return BatchPrintProgressPanel(
+                                          job: job,
+                                          onCancel: () => job.cancel(),
+                                          onDismiss: () =>
+                                              BatchPrintJobService.instance.clearJob(),
+                                          onOpenFolder: BatchPrintJobService
+                                                      .instance.pdfFolderPath !=
+                                                  null
+                                              ? (path) =>
+                                                  openFolderInExplorer(path)
+                                              : null,
+                                        );
+                                      },
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
                     ),
                   ],
                 ),
@@ -1123,6 +1157,25 @@ class _DesktopTopBar extends StatelessWidget {
                   ),
                 ),
               ],
+              ListenableBuilder(
+                listenable: BatchPrintJobService.instance,
+                builder: (context, _) {
+                  final job = BatchPrintJobService.instance.currentJob;
+                  if (job == null || (job.isDone && job.errors.isEmpty)) {
+                    return const SizedBox.shrink();
+                  }
+                  return Padding(
+                    padding: const EdgeInsets.only(right: 7),
+                    child: BatchPrintStatusChip(
+                      job: job,
+                      onTap: () => PosNavigation.openSingleton(
+                        routeId: PosRouteIds.sales,
+                        builder: (_) => const SalesScreen(),
+                      ),
+                    ),
+                  );
+                },
+              ),
               const SizedBox(width: 7),
               _SyncButton(pendingCount: offlinePending),
               const SizedBox(width: 5),

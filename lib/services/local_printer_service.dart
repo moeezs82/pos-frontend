@@ -19,6 +19,11 @@ class LocalPrinterService {
 
   Future<List<Printer>> listInstalledPrinters() => Printing.listPrinters();
 
+  /// Resolves an installed [Printer] by exact name.
+  ///
+  /// Callers that print many documents in sequence (e.g. [BatchPrintJobService])
+  /// should call this once and reuse the returned [Printer] object, because
+  /// [Printing.listPrinters] takes ~400 ms on Windows.
   Future<Printer> requirePrinter(String printerName) async {
     final sw = Stopwatch()..start();
     print('[LOCAL-PRINT-TIMING] requirePrinter start printer=$printerName');

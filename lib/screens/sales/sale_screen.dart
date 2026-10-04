@@ -3,9 +3,12 @@ import 'dart:convert';
 import 'dart:math' as math;
 import 'package:enterprise_pos/api/core/api_client.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
+import 'package:enterprise_pos/providers/printer_config_provider.dart';
 import 'package:enterprise_pos/screens/sales/sale_create.dart';
+import 'package:enterprise_pos/screens/sales/parts/sale_select_range_dialog.dart';
 import 'package:enterprise_pos/screens/sales/picking_list_screen.dart';
 import 'package:enterprise_pos/screens/sales/sale_detail.dart';
+import 'package:enterprise_pos/services/batch_print_job_service.dart';
 import 'package:enterprise_pos/widgets/customer_picker_sheet.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -69,6 +72,10 @@ class _SalesScreenState extends State<SalesScreen> {
   final _currency = const AppMoneyFormatter();
   Timer? _searchDebounce;
 
+  // ── Batch print ──────────────────────────────────────────────────────────
+  bool _selectionMode = false;
+  final Set<int> _selectedSaleIds = {};
+
   @override
   void initState() {
     super.initState();
@@ -81,6 +88,219 @@ class _SalesScreenState extends State<SalesScreen> {
     _searchDebounce?.cancel();
     _searchController.dispose();
     super.dispose();
+  }
+
+  // ── Batch print helpers ───────────────────────────────────────────────────
+
+  void _toggleSelectionMode() {
+    setState(() {
+      _selectionMode = !_selectionMode;
+      if (!_selectionMode) _selectedSaleIds.clear();
+    });
+  }
+
+  void _toggleSaleSelection(int saleId) {
+    setState(() {
+      if (_selectedSaleIds.contains(saleId)) {
+        _selectedSaleIds.remove(saleId);
+      } else {
+        _selectedSaleIds.add(saleId);
+      }
+    });
+  }
+
+  /// Collect all sale IDs in the given row range from cached pages.
+  /// Pages not yet loaded are fetched on-demand (sequentially so we don't
+  /// hammer the API). Returns null if cancelled mid-fetch.
+  Future<List<int>?> _collectSaleIdsForRange(BatchRangeSelection range) async {
+    final ids = <int>[];
+
+    if (range.mode == BatchRangeMode.rows) {
+      final from = (range.fromRow ?? 1) - 1; // 0-indexed
+      final to = (range.toRow ?? _total) - 1;
+      for (int i = from; i <= math.min(to, _total - 1); i++) {
+        if (!mounted) return null;
+        var sale = _saleAt(i);
+        // If the page isn't cached yet, wait for it.
+        if (sale == null) {
+          final page = (i ~/ _pageSize) + 1;
+          await _loadSalesPage(page: page);
+          sale = _saleAt(i);
+        }
+        if (sale == null) continue;
+        final id = _toInt(sale['id']);
+        if (id != null) ids.add(id);
+      }
+    } else {
+      // Invoice-number range: iterate all cached + yet-to-load pages
+      final from = range.fromInvoice ?? '';
+      final to = range.toInvoice ?? '';
+      for (int i = 0; i < _total; i++) {
+        if (!mounted) return null;
+        var sale = _saleAt(i);
+        if (sale == null) {
+          final page = (i ~/ _pageSize) + 1;
+          await _loadSalesPage(page: page);
+          sale = _saleAt(i);
+        }
+        if (sale == null) continue;
+        final inv = (sale['invoice_no'] ?? '').toString();
+        if (inv.compareTo(from) >= 0 && inv.compareTo(to) <= 0) {
+          final id = _toInt(sale['id']);
+          if (id != null) ids.add(id);
+        }
+      }
+    }
+    return ids;
+  }
+
+  Future<void> _startBatchPrint(List<int> saleIds) async {
+    if (saleIds.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No invoices selected for printing.')),
+      );
+      return;
+    }
+
+    final auth = context.read<AuthProvider>();
+    final printerCfg = context.read<PrinterConfigProvider>();
+    final token = auth.token ?? '';
+
+    // Confirm secondary printer if configured
+    bool printSecondary = false;
+    if (printerCfg.secondaryPrintEnabled && mounted) {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (_) => AlertDialog(
+          title: const Text('Secondary Printer'),
+          content: Text(
+            'A secondary printer (${printerCfg.secondaryLocalPrinterName ?? printerCfg.secondaryNetworkIp ?? 'configured'}) '
+            'is set up. Also print on secondary for each invoice?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Main only'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Both printers'),
+            ),
+          ],
+        ),
+      );
+      printSecondary = confirmed ?? false;
+    }
+
+    final config = BatchPrintConfig(
+      activeConnection: printerCfg.activeConnection,
+      networkIp: printerCfg.networkIp,
+      networkPort: printerCfg.networkPort,
+      localPrinterName: printerCfg.localPrinterName,
+      secondaryEnabled: printerCfg.secondaryPrintEnabled,
+      secondaryNetworkIp: printerCfg.secondaryNetworkIp,
+      secondaryNetworkPort: printerCfg.secondaryNetworkPort,
+      secondaryLocalPrinterName: printerCfg.secondaryLocalPrinterName,
+      shopName: printerCfg.shopName,
+      shopAddress: printerCfg.shopAddress,
+      shopPhone: printerCfg.shopPhone,
+      mainTemplate: printerCfg.mainInvoiceTemplate,
+      secondaryTemplate: printerCfg.secondaryInvoiceTemplate,
+      secondaryHeader: printerCfg.secondaryReceiptHeader,
+      mainPaperCode: printerCfg.mainPaperCode,
+      footerLines: printerCfg.footerLines,
+      footerLineStyles: printerCfg.footerLineStyles,
+      invoiceHeading: printerCfg.invoiceHeading,
+      printLogo: printerCfg.printLogoEnabled,
+      logoData: printerCfg.printLogoData,
+      printQr: printerCfg.qrCodeEnabled,
+      qrUrl: printerCfg.qrCodeUrl,
+      qrCaption: printerCfg.qrCodeCaption,
+      itemDiscountDisplay: printerCfg.itemDiscountDisplay,
+      devCreditEnabled: printerCfg.devCreditEnabled,
+      devCreditText: printerCfg.devCreditText,
+      printSecondary: printSecondary,
+    );
+
+    BatchPrintJobService.instance.startJob(
+      saleIds: saleIds,
+      token: token,
+      config: config,
+    );
+
+    setState(() {
+      _selectionMode = false;
+      _selectedSaleIds.clear();
+    });
+  }
+
+  Future<void> _onBatchPrintFromRange() async {
+    final result = await showBatchRangeDialog(
+      context,
+      totalRows: _total,
+      confirmLabel: 'Print Invoices',
+    );
+    if (result == null || !mounted) return;
+
+    // Show a loading dialog while we collect IDs
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const AlertDialog(
+        content: Row(children: [
+          CircularProgressIndicator(),
+          SizedBox(width: 16),
+          Text('Collecting invoices…'),
+        ]),
+      ),
+    );
+    final ids = await _collectSaleIdsForRange(result);
+    if (mounted) Navigator.pop(context); // close loading dialog
+    if (ids == null || !mounted) return;
+    await _startBatchPrint(ids);
+  }
+
+  Future<void> _onSelectRangeForSelection() async {
+    final result = await showBatchRangeDialog(
+      context,
+      totalRows: _total,
+      confirmLabel: 'Select Invoices',
+    );
+    if (result == null || !mounted) return;
+
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const AlertDialog(
+        content: Row(children: [
+          CircularProgressIndicator(),
+          SizedBox(width: 16),
+          Text('Selecting invoices…'),
+        ]),
+      ),
+    );
+    final ids = await _collectSaleIdsForRange(result);
+    if (mounted) Navigator.pop(context); // close loading dialog
+    if (ids == null || !mounted) return;
+    setState(() {
+      _selectedSaleIds.addAll(ids);
+    });
+  }
+
+  void _selectAllLoaded() {
+    final ids = <int>{};
+    for (final list in _pageCache.values) {
+      for (final s in list) {
+        final id = _toInt(s['id']);
+        if (id != null) ids.add(id);
+      }
+    }
+    setState(() => _selectedSaleIds.addAll(ids));
+  }
+
+  Future<void> _onBatchPrintSelected() async {
+    final ids = _selectedSaleIds.toList();
+    await _startBatchPrint(ids);
   }
 
   String _fmtDate(DateTime d) => DateFormat('yyyy-MM-dd').format(d);
@@ -527,23 +747,24 @@ class _SalesScreenState extends State<SalesScreen> {
       activeRouteId: PosRouteIds.sales,
       onOpenProducts: () {},
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(18, 16, 18, 14),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          _buildWorkspaceHeader(canCreate),
-          const SizedBox(height: 12),
-          _buildFilterBar(),
-          if (_activeFilterCount > 0) ...[const SizedBox(height: 8), _buildActiveFilters()],
-          const SizedBox(height: 10),
-          if (_refreshing) const LinearProgressIndicator(minHeight: 2),
-          if (_refreshing) const SizedBox(height: 8),
-          Expanded(child: _initialLoading
-              ? const Center(child: CircularProgressIndicator())
-              : _total == 0
-                  ? ListView(children: const [SizedBox(height: 70), EnterpriseEmptyState(icon: Icons.receipt_long_outlined, title: 'No sales found', subtitle: 'Try changing the search or filters.')])
-                  : _buildSalesTable()),
-          if (_total > 0) ...[const SizedBox(height: 8), _buildStatusBar()],
-        ]),
-      ),
+            padding: const EdgeInsets.fromLTRB(18, 16, 18, 14),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+              _buildWorkspaceHeader(canCreate),
+              const SizedBox(height: 12),
+              _buildFilterBar(),
+              if (_activeFilterCount > 0) ...[const SizedBox(height: 8), _buildActiveFilters()],
+              if (_selectionMode) ...[const SizedBox(height: 8), _buildSelectionToolbar()],
+              const SizedBox(height: 10),
+              if (_refreshing) const LinearProgressIndicator(minHeight: 2),
+              if (_refreshing) const SizedBox(height: 8),
+              Expanded(child: _initialLoading
+                  ? const Center(child: CircularProgressIndicator())
+                  : _total == 0
+                      ? ListView(children: const [SizedBox(height: 70), EnterpriseEmptyState(icon: Icons.receipt_long_outlined, title: 'No sales found', subtitle: 'Try changing the search or filters.')])
+                      : _buildSalesTable()),
+              if (_total > 0) ...[const SizedBox(height: 8), _buildStatusBar()],
+            ]),
+          ),
     );
   }
 
@@ -555,12 +776,88 @@ class _SalesScreenState extends State<SalesScreen> {
       SizedBox(height: 4),
       Text('Review invoices, customers, payment status and sale activity.', style: TextStyle(color: AppTheme.textMuted, fontSize: 12, fontWeight: FontWeight.w600)),
     ])),
-    Wrap(spacing: 8, children: [
+    Wrap(spacing: 8, crossAxisAlignment: WrapCrossAlignment.center, children: [
       OutlinedButton.icon(onPressed: _openPickingList, icon: const Icon(Icons.inventory_2_outlined, size: 18), label: const Text('Picking List')),
+      // Toggle selection mode
+      if (_total > 0)
+        _selectionMode
+            ? OutlinedButton.icon(
+                onPressed: _toggleSelectionMode,
+                icon: const Icon(Icons.close_rounded, size: 18),
+                label: const Text('Cancel Selection'),
+                style: OutlinedButton.styleFrom(foregroundColor: AppTheme.danger, side: const BorderSide(color: AppTheme.danger)),
+              )
+            : OutlinedButton.icon(
+                onPressed: _toggleSelectionMode,
+                icon: const Icon(Icons.checklist_rounded, size: 18),
+                label: const Text('Select'),
+              ),
+      // Batch print by range (always available when there are sales)
+      if (_total > 0 && !_selectionMode)
+        OutlinedButton.icon(
+          onPressed: _onBatchPrintFromRange,
+          icon: const Icon(Icons.print_rounded, size: 18),
+          label: const Text('Batch Print'),
+        ),
       IconButton(tooltip: 'Refresh sales', onPressed: _onRefresh, icon: const Icon(Icons.refresh_rounded)),
       if (canCreate) FilledButton.icon(onPressed: () async { final created = await Navigator.push(context, MaterialPageRoute(builder: (_) => const CreateSaleScreen())); if (created == true && mounted) _fetchInitial(); }, icon: const Icon(Icons.add_rounded, size: 18), label: const Text('New Sale')),
     ])
   ]);
+
+  Widget _buildSelectionToolbar() {
+    final count = _selectedSaleIds.length;
+    return Container(
+      height: 48,
+      padding: const EdgeInsets.symmetric(horizontal: 14),
+      decoration: BoxDecoration(
+        color: AppTheme.primarySoft,
+        border: Border.all(color: AppTheme.primary.withValues(alpha: 0.3)),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.check_box_rounded, size: 18, color: AppTheme.primary),
+          const SizedBox(width: 8),
+          Text(
+            count == 0 ? 'Tap rows to select invoices' : '$count invoice${count == 1 ? '' : 's'} selected',
+            style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 12.5, color: AppTheme.navy),
+          ),
+          const Spacer(),
+          OutlinedButton.icon(
+            onPressed: _onSelectRangeForSelection,
+            icon: const Icon(Icons.date_range_outlined, size: 16),
+            label: const Text('Select Range'),
+            style: OutlinedButton.styleFrom(
+              visualDensity: VisualDensity.compact,
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            ),
+          ),
+          const SizedBox(width: 8),
+          OutlinedButton(
+            onPressed: _selectAllLoaded,
+            style: OutlinedButton.styleFrom(
+              visualDensity: VisualDensity.compact,
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            ),
+            child: const Text('Select Loaded'),
+          ),
+          if (count > 0) ...[
+            const SizedBox(width: 8),
+            TextButton(
+              onPressed: () => setState(() => _selectedSaleIds.clear()),
+              child: const Text('Clear'),
+            ),
+            const SizedBox(width: 4),
+            FilledButton.icon(
+              onPressed: _onBatchPrintSelected,
+              icon: const Icon(Icons.print_rounded, size: 17),
+              label: Text('Print $count'),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
 
   Widget _buildFilterBar() => Container(
     padding: const EdgeInsets.all(10),
@@ -598,7 +895,10 @@ class _SalesScreenState extends State<SalesScreen> {
   ]);
 
   Widget _buildSalesTable() {
-    const widths = <double>[170, 132, 230, 150, 130, 125, 125, 105, 70];
+    // In selection mode we add an extra 42 px checkbox column at the start.
+    final widths = _selectionMode
+        ? const <double>[42, 170, 132, 230, 150, 130, 125, 125, 105, 70]
+        : const <double>[170, 132, 230, 150, 130, 125, 125, 105, 70];
     final minWidth = widths.fold<double>(0, (a, b) => a + b) + 24;
 
     return Container(
@@ -612,6 +912,10 @@ class _SalesScreenState extends State<SalesScreen> {
         builder: (context, constraints) {
           final width = math.max(minWidth, constraints.maxWidth).toDouble();
 
+          final headerCells = _selectionMode
+              ? const ['', 'Invoice', 'Date', 'Customer', 'Source', 'Total', 'Paid', 'Balance', 'Status', '']
+              : const ['Invoice', 'Date', 'Customer', 'Source', 'Total', 'Paid', 'Balance', 'Status', ''];
+
           return SingleChildScrollView(
             scrollDirection: Axis.horizontal,
             child: SizedBox(
@@ -619,20 +923,7 @@ class _SalesScreenState extends State<SalesScreen> {
               height: constraints.maxHeight,
               child: Column(
                 children: [
-                  _tableRow(
-                    const [
-                      'Invoice',
-                      'Date',
-                      'Customer',
-                      'Source',
-                      'Total',
-                      'Paid',
-                      'Balance',
-                      'Status',
-                      '',
-                    ],
-                    header: true,
-                  ),
+                  _tableRow(headerCells, header: true),
                   Expanded(
                     child: RefreshIndicator(
                       onRefresh: _onRefresh,
@@ -664,17 +955,42 @@ class _SalesScreenState extends State<SalesScreen> {
     );
   }
 
-  Widget _tableRow(List<String> cells, {bool header = false}) {
-    const widths = <double>[170, 132, 230, 150, 130, 125, 125, 105, 70];
+  Widget _tableRow(List<String> cells, {bool header = false, int? saleId}) {
+    final widths = _selectionMode
+        ? const <double>[42, 170, 132, 230, 150, 130, 125, 125, 105, 70]
+        : const <double>[170, 132, 230, 150, 130, 125, 125, 105, 70];
+    // In selection mode the first column is the checkbox; offset the numeric-align indices.
+    final numericOffset = _selectionMode ? 1 : 0;
+    final isSelected = saleId != null && _selectedSaleIds.contains(saleId);
     return Container(
       height: header ? 42 : _rowExtent,
       padding: const EdgeInsets.symmetric(horizontal: 12),
       decoration: BoxDecoration(
-        color: header ? AppTheme.surfaceSoft : Colors.white,
+        color: header
+            ? AppTheme.surfaceSoft
+            : isSelected
+                ? AppTheme.primarySoft
+                : Colors.white,
         border: const Border(bottom: BorderSide(color: AppTheme.border)),
       ),
       child: Row(
         children: List.generate(cells.length, (i) {
+          // First cell in selection mode: checkbox
+          if (_selectionMode && i == 0) {
+            if (header) return const SizedBox(width: 42);
+            return SizedBox(
+              width: 42,
+              child: Checkbox(
+                value: isSelected,
+                onChanged: saleId == null ? null : (_) => _toggleSaleSelection(saleId),
+                activeColor: AppTheme.primary,
+                materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                visualDensity: VisualDensity.compact,
+              ),
+            );
+          }
+          final dataIndex = i;
+          final isNumeric = dataIndex >= (4 + numericOffset) && dataIndex <= (6 + numericOffset);
           return SizedBox(
             width: widths[i],
             child: Padding(
@@ -683,7 +999,7 @@ class _SalesScreenState extends State<SalesScreen> {
                 cells[i],
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                textAlign: i >= 4 && i <= 6 ? TextAlign.right : TextAlign.left,
+                textAlign: isNumeric ? TextAlign.right : TextAlign.left,
                 style: TextStyle(
                   color: header ? AppTheme.textMuted : AppTheme.navy,
                   fontSize: header ? 11 : 12,
@@ -698,10 +1014,26 @@ class _SalesScreenState extends State<SalesScreen> {
   }
 
   Widget _saleRow(dynamic s) {
+    final saleId = _toInt(s['id']) ?? 0;
     final total = _toDouble(s['total']); final paid = _toDouble(s['paid_amount']); final balance = s['balance_amount'] != null ? _toDouble(s['balance_amount']) : math.max(0, total - paid).toDouble(); final st = _paymentStatus(s);
     final dt = _tryParseDate(s['created_at'] ?? s['date']); final customer = (s['customer']?['first_name'] ?? 'Walk-in').toString();
-    final cells = [(s['invoice_no'] ?? '').toString(), dt == null ? (s['invoice_date'] ?? '').toString() : DateFormat('dd MMM yyyy • HH:mm').format(dt), customer, (s['sale_source_name'] ?? 'Counter').toString(), _currency.format(total), _currency.format(paid), _currency.format(balance), st.label, ''];
-    return InkWell(onTap: () async { final changed = await Navigator.push(context, MaterialPageRoute(builder: (_) => SaleDetailScreen(saleId: _toInt(s['id']) ?? 0))); if (changed == true && mounted) _fetchInitial(); }, child: Stack(children: [_tableRow(cells), Positioned(right: 15, top: 10, child: IconButton(tooltip: 'Copy invoice', icon: const Icon(Icons.copy_rounded, size: 17), onPressed: () async { await Clipboard.setData(ClipboardData(text: cells[0])); if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Copied: ${cells[0]}'))); }))]));
+    final invoiceNo = (s['invoice_no'] ?? '').toString();
+    // In selection mode the checkbox column is prepended via _tableRow.
+    final dataCells = [invoiceNo, dt == null ? (s['invoice_date'] ?? '').toString() : DateFormat('dd MMM yyyy • HH:mm').format(dt), customer, (s['sale_source_name'] ?? 'Counter').toString(), _currency.format(total), _currency.format(paid), _currency.format(balance), st.label, ''];
+    final cells = _selectionMode ? ['', ...dataCells] : dataCells;
+    return InkWell(
+      onTap: _selectionMode
+          ? () => _toggleSaleSelection(saleId)
+          : () async {
+              final changed = await Navigator.push(context, MaterialPageRoute(builder: (_) => SaleDetailScreen(saleId: saleId)));
+              if (changed == true && mounted) _fetchInitial();
+            },
+      child: Stack(children: [
+        _tableRow(cells, saleId: saleId),
+        if (!_selectionMode)
+          Positioned(right: 15, top: 10, child: IconButton(tooltip: 'Copy invoice', icon: const Icon(Icons.copy_rounded, size: 17), onPressed: () async { await Clipboard.setData(ClipboardData(text: invoiceNo)); if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Copied: $invoiceNo'))); })),
+      ]),
+    );
   }
 
   Widget _loadingRow(int index) => Container(height: _rowExtent, padding: const EdgeInsets.symmetric(horizontal: 12), decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: AppTheme.border))), child: Row(children: [Container(width: 130, height: 10, decoration: BoxDecoration(color: AppTheme.surfaceSoft, borderRadius: BorderRadius.circular(5))), const Spacer(), if (_loadingPages.contains((index ~/ _pageSize) + 1)) const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 1.8))]));
