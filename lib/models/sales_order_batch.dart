@@ -1,15 +1,38 @@
 // Models for the Sales Orders batch endpoints (`/sales-orders/batch/*`).
 
-enum BatchAction { submit, approve, reject, cancel, convert }
+enum BatchAction { process, submit, approve, reject, cancel, convert }
 
 extension BatchActionX on BatchAction {
   String get path => name;
 
   /// Server-side cap per request; the client chunks to this size.
-  int get cap => this == BatchAction.convert ? 25 : 50;
+  // process can run up to three transitions per order, so it shares convert's cap.
+  int get cap =>
+      (this == BatchAction.convert || this == BatchAction.process) ? 25 : 50;
+
+  /// Past tense for messages ("converted", "cancelled"). Never derive it by
+  /// appending to [verb]: that is how "convertd" happens.
+  String get pastTense {
+    switch (this) {
+      case BatchAction.process:
+        return 'processed';
+      case BatchAction.submit:
+        return 'submitted';
+      case BatchAction.approve:
+        return 'approved';
+      case BatchAction.reject:
+        return 'rejected';
+      case BatchAction.cancel:
+        return 'cancelled';
+      case BatchAction.convert:
+        return 'converted';
+    }
+  }
 
   String get verb {
     switch (this) {
+      case BatchAction.process:
+        return 'Process';
       case BatchAction.submit:
         return 'Submit';
       case BatchAction.approve:
@@ -102,6 +125,13 @@ class BatchSuccess {
   final String? invoiceNo;
   final String? note;
 
+  /// batch/process only: where the order started, the transitions it made, and
+  /// why it stopped short of the requested stage (null on a full run).
+  final String? fromStatus;
+  final List<String> steps;
+  final String? stoppedBecause;
+  final String? firstBlocking;
+
   const BatchSuccess({
     required this.id,
     required this.orderNumber,
@@ -109,6 +139,10 @@ class BatchSuccess {
     this.saleId,
     this.invoiceNo,
     this.note,
+    this.fromStatus,
+    this.steps = const [],
+    this.stoppedBecause,
+    this.firstBlocking,
   });
 
   bool get alreadyDone => note == 'already converted';
@@ -120,6 +154,10 @@ class BatchSuccess {
         saleId: j['sale_id'] == null ? null : _int(j['sale_id']),
         invoiceNo: j['invoice_no']?.toString(),
         note: j['note']?.toString(),
+        fromStatus: j['from_status']?.toString(),
+        steps: (j['steps'] as List? ?? const []).map((e) => e.toString()).toList(),
+        stoppedBecause: j['stopped_because']?.toString(),
+        firstBlocking: j['first_blocking']?.toString(),
       );
 }
 

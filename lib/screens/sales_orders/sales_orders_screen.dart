@@ -211,6 +211,8 @@ class _SalesOrdersScreenState extends State<SalesOrdersScreen> {
         service: _service(),
         action: action,
         selected: _selectedOrders,
+        canApprove: context.read<AuthProvider>().hasPermission('approve-sales-orders'),
+        canConvert: context.read<AuthProvider>().hasPermission('convert-sales-orders'),
       );
       if (!mounted || result == null) return;
       setState(() {
@@ -553,6 +555,10 @@ class _SalesOrdersScreenState extends State<SalesOrdersScreen> {
     return SalesOrderBulkBar(
       selectedCount: _selected.length,
       selectedTotal: total,
+      canProcess: auth.hasPermission('create-sales-orders') ||
+          auth.hasPermission('manage-sales-orders') ||
+          auth.hasPermission('approve-sales-orders') ||
+          auth.hasPermission('convert-sales-orders'),
       canSubmit: auth.hasPermission('manage-sales-orders') || auth.hasPermission('create-sales-orders'),
       canApprove: auth.hasPermission('approve-sales-orders'),
       canConvert: auth.hasPermission('convert-sales-orders'),

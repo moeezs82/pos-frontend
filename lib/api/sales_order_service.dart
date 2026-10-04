@@ -178,6 +178,7 @@ class SalesOrderService {
     String? reason,
     String? paymentMode,
     String? paymentMethod,
+    String? stopAt,
     void Function(int doneChunks, int totalChunks)? onProgress,
   }) {
     return runBatchChunks(
@@ -189,6 +190,7 @@ class SalesOrderService {
         if (reason != null) 'reason': reason,
         if (paymentMode != null) 'payment_mode': paymentMode,
         if (paymentMethod != null) 'payment_method': paymentMethod,
+        if (stopAt != null) 'stop_at': stopAt,
       }),
     );
   }

@@ -16,11 +16,13 @@ class BulkRunResult {
 
   const BulkRunResult({required this.action, this.held = const {}, this.outcome});
 
-  /// Ids that should remain selected: held, failed and unknown.
+  /// Ids that should remain selected: held, failed, unknown — and orders that
+  /// advanced but are not finished, so the next stage needs no re-selection.
   Set<int> get remaining => {
         ...held.keys,
         ...?outcome?.failed.map((f) => f.id),
         ...?outcome?.unknown,
+        ...?outcome?.succeeded.where((s) => !_isFinished(s.status)).map((s) => s.id),
       };
 
   String get summaryLine {
@@ -38,6 +40,7 @@ class BulkRunResult {
 class SalesOrderBulkBar extends StatelessWidget {
   final int selectedCount;
   final double selectedTotal;
+  final bool canProcess;
   final bool canSubmit;
   final bool canApprove;
   final bool canConvert;
@@ -50,6 +53,7 @@ class SalesOrderBulkBar extends StatelessWidget {
     super.key,
     required this.selectedCount,
     required this.selectedTotal,
+    this.canProcess = true,
     required this.canSubmit,
     required this.canApprove,
     required this.canConvert,
@@ -76,6 +80,13 @@ class SalesOrderBulkBar extends StatelessWidget {
             style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12, color: AppTheme.textMuted)),
         const Spacer(),
         Wrap(spacing: 8, runSpacing: 6, crossAxisAlignment: WrapCrossAlignment.center, children: [
+          // Primary: walks each order as far as the user's permissions allow.
+          if (canProcess)
+            FilledButton.icon(
+              onPressed: busy ? null : () => onAction(BatchAction.process),
+              icon: const Icon(Icons.bolt_rounded, size: 16),
+              label: const Text('Process to Invoice'),
+            ),
           if (canSubmit)
             OutlinedButton.icon(
               onPressed: busy ? null : () => onAction(BatchAction.submit),
@@ -119,8 +130,17 @@ class SalesOrderBulkBar extends StatelessWidget {
   }
 }
 
-bool _eligible(BatchAction a, SalesOrder o) {
+bool _isFinished(String status) =>
+    status == SalesOrderStatus.converted ||
+    status == SalesOrderStatus.cancelled ||
+    status == SalesOrderStatus.rejected;
+
+/// Whether [o] can take part in [a] at all. `process` accepts anything that can
+/// still move forward; the per-stage actions are strict single-status gates.
+bool isBatchEligible(BatchAction a, SalesOrder o) {
   switch (a) {
+    case BatchAction.process:
+      return o.isDraft || o.isSubmitted || o.isApproved;
     case BatchAction.submit:
       return o.isDraft;
     case BatchAction.approve:
@@ -134,12 +154,74 @@ bool _eligible(BatchAction a, SalesOrder o) {
   }
 }
 
+/// "1 draft, 2 pending approval" — what the operator actually selected.
+String statusBreakdown(List<SalesOrder> orders) {
+  final counts = <String, int>{};
+  for (final o in orders) {
+    final label = SalesOrderStatus.label(o.status).toLowerCase();
+    counts[label] = (counts[label] ?? 0) + 1;
+  }
+  return counts.entries.map((e) => '${e.value} ${e.key}').join(', ');
+}
+
+/// Which statuses a per-stage action works on, in plain words.
+String requiredStatusLabel(BatchAction a) {
+  switch (a) {
+    case BatchAction.process:
+      return 'draft, pending approval or approved';
+    case BatchAction.submit:
+      return 'draft';
+    case BatchAction.approve:
+      return 'pending approval';
+    case BatchAction.convert:
+      return 'approved';
+    case BatchAction.reject:
+      return 'pending approval or approved';
+    case BatchAction.cancel:
+      return 'open (not converted or cancelled)';
+  }
+}
+
+/// The plain-language plan for a process run: what will happen to how many.
+/// [blockedIds] are orders whose pre-flight found blocking issues; those still
+/// get submitted (if drafts) but stop before approval.
+String processPreview({
+  required List<SalesOrder> orders,
+  required Set<int> blockedIds,
+  required bool toInvoice,
+  required bool canApprove,
+  required bool canConvert,
+  required String paymentMode,
+}) {
+  final submitN = orders.where((o) => o.isDraft).length;
+  final needApproval = orders.where((o) => o.isDraft || o.isSubmitted);
+  final approveN = canApprove ? needApproval.where((o) => !blockedIds.contains(o.id)).length : 0;
+  final stopped = canApprove ? needApproval.where((o) => blockedIds.contains(o.id)).length : 0;
+  final invoiceN = (toInvoice && canConvert)
+      ? orders.where((o) => o.isApproved).length + approveN
+      : 0;
+  final parts = <String>[
+    if (submitN > 0) 'submit $submitN',
+    if (approveN > 0) 'approve $approveN',
+    if (invoiceN > 0) 'invoice $invoiceN as ${paymentMode == 'credit' ? 'credit' : 'paid in full'}',
+  ];
+  if (parts.isEmpty) return 'Nothing to advance with your permissions.';
+  final joined = parts.length == 1
+      ? parts.first
+      : '${parts.sublist(0, parts.length - 1).join(', ')} and ${parts.last}';
+  final text = 'This will $joined.';
+  return stopped > 0
+      ? '$text $stopped order${stopped == 1 ? ' has' : 's have'} blocking issues and will stop before approval.'
+      : text;
+}
+
 class _Choice {
   final List<SalesOrder> orders;
   final String? paymentMode;
   final String? paymentMethod;
   final String? reason;
-  const _Choice(this.orders, {this.paymentMode, this.paymentMethod, this.reason});
+  final String? stopAt;
+  const _Choice(this.orders, {this.paymentMode, this.paymentMethod, this.reason, this.stopAt});
 }
 
 /// Runs one bulk action end to end: eligibility → pre-flight → confirm →
@@ -149,15 +231,22 @@ Future<BulkRunResult?> runBulkAction({
   required SalesOrderService service,
   required BatchAction action,
   required List<SalesOrder> selected,
+  bool canApprove = true,
+  bool canConvert = true,
 }) async {
-  final eligible = selected.where((o) => _eligible(action, o)).toList();
+  final eligible = selected.where((o) => isBatchEligible(action, o)).toList();
   final skipped = <int, String>{
     for (final o in selected)
-      if (!_eligible(action, o))
+      if (!isBatchEligible(action, o))
         o.id: 'Cannot ${action.verb.toLowerCase()} an order that is ${SalesOrderStatus.label(o.status)}.',
   };
   if (eligible.isEmpty) {
-    AppFeedback.warning(context, 'None of the selected orders can be ${action.verb.toLowerCase()}d.');
+    // A signpost, not a dead end: say what was selected and what would work.
+    AppFeedback.warning(
+      context,
+      '${action.verb} needs ${requiredStatusLabel(action)} orders — you selected ${statusBreakdown(selected)}.'
+      '${action == BatchAction.process ? '' : ' Use "Process to Invoice" to take them all the way.'}',
+    );
     return null;
   }
 
@@ -167,7 +256,7 @@ Future<BulkRunResult?> runBulkAction({
   final held = <int, String>{...skipped};
   List<BatchVerdict> verdicts = const [];
   var hasOpenShift = true;
-  if (action == BatchAction.approve || action == BatchAction.convert) {
+  if (action == BatchAction.approve || action == BatchAction.convert || action == BatchAction.process) {
     try {
       verdicts = await _withSpinner(context, 'Checking ${eligible.length} orders…',
           service.batchRevalidate(eligible.map((o) => o.id).toList()));
@@ -184,9 +273,11 @@ Future<BulkRunResult?> runBulkAction({
       final v = byId[o.id];
       if (v == null) {
         held[o.id] = 'Order not found.';
-      } else if (v.blockingCount > 0) {
+      } else if (v.blockingCount > 0 && action != BatchAction.process) {
         held[o.id] = v.firstBlocking ?? 'Blocking issue.';
       } else {
+        // process sends blocked orders too: the server stops each one before
+        // approval and reports why, after submitting it if it was a draft.
         ready.add(o);
       }
     }
@@ -194,6 +285,9 @@ Future<BulkRunResult?> runBulkAction({
   }
 
   final warnings = verdicts.where((v) => v.warningCount > 0 && ready.any((o) => o.id == v.id)).length;
+  final blockedIds = action == BatchAction.process
+      ? verdicts.where((v) => v.blockingCount > 0).map((v) => v.id).toSet()
+      : <int>{};
   final choice = await showDialog<_Choice>(
     context: context,
     builder: (_) => _PreflightDialog(
@@ -202,6 +296,9 @@ Future<BulkRunResult?> runBulkAction({
       heldCount: held.length,
       warningCount: warnings,
       hasOpenShift: hasOpenShift,
+      blockedIds: blockedIds,
+      canApprove: canApprove,
+      canConvert: canConvert,
     ),
   );
   if (choice == null || !context.mounted) {
@@ -220,6 +317,7 @@ Future<BulkRunResult?> runBulkAction({
     reason: choice.reason,
     paymentMode: choice.paymentMode,
     paymentMethod: choice.paymentMethod,
+    stopAt: choice.stopAt,
     onProgress: (done, total) => progress.value = (done, total),
   );
   if (context.mounted) Navigator.of(context, rootNavigator: true).pop();
@@ -261,6 +359,9 @@ class _PreflightDialog extends StatefulWidget {
   final int heldCount;
   final int warningCount;
   final bool hasOpenShift;
+  final Set<int> blockedIds;
+  final bool canApprove;
+  final bool canConvert;
 
   const _PreflightDialog({
     required this.action,
@@ -268,6 +369,9 @@ class _PreflightDialog extends StatefulWidget {
     required this.heldCount,
     required this.warningCount,
     required this.hasOpenShift,
+    this.blockedIds = const {},
+    this.canApprove = true,
+    this.canConvert = true,
   });
 
   @override
@@ -278,6 +382,8 @@ class _PreflightDialogState extends State<_PreflightDialog> {
   // Credit is the safe default for field bookings: it books no cash receipt.
   String _mode = PaymentModeValues.credit;
   String _method = 'cash';
+  // process: stop after approval, or carry on to the invoice.
+  bool _toInvoice = true;
   final _reason = TextEditingController();
 
   @override
@@ -294,9 +400,12 @@ class _PreflightDialogState extends State<_PreflightDialog> {
     final a = widget.action;
     final total = widget.ready.fold<double>(0, (s, o) => s + o.total);
     final n = widget.ready.length;
-    final convert = a == BatchAction.convert;
+    final process = a == BatchAction.process;
+    // Payment applies to a run that ends in an invoice and can actually convert.
+    final convert = a == BatchAction.convert || (process && _toInvoice);
+    final needsShift = a == BatchAction.convert || (process && _toInvoice && widget.canConvert);
     final canRun = n > 0 &&
-        (!convert || widget.hasOpenShift) &&
+        (!needsShift || widget.hasOpenShift) &&
         (!_needsReason || _reason.text.trim().isNotEmpty);
 
     return AlertDialog(
@@ -307,6 +416,33 @@ class _PreflightDialogState extends State<_PreflightDialog> {
         child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text('${a.verb} $n orders · ${AppCurrency.format(total)}',
               style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14)),
+          if (process) ...[
+            const SizedBox(height: 4),
+            Text(statusBreakdown(widget.ready),
+                style: const TextStyle(color: AppTheme.textMuted, fontSize: 12.5)),
+            const SizedBox(height: 10),
+            SegmentedButton<bool>(
+              showSelectedIcon: false,
+              segments: const [
+                ButtonSegment(value: false, label: Text('Approve only')),
+                ButtonSegment(value: true, label: Text('All the way to invoice')),
+              ],
+              selected: {_toInvoice},
+              onSelectionChanged: (v) => setState(() => _toInvoice = v.first),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              processPreview(
+                orders: widget.ready,
+                blockedIds: widget.blockedIds,
+                toInvoice: _toInvoice,
+                canApprove: widget.canApprove,
+                canConvert: widget.canConvert,
+                paymentMode: _mode,
+              ),
+              style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600),
+            ),
+          ],
           if (widget.warningCount > 0) ...[
             const SizedBox(height: 6),
             Text('${widget.warningCount} of these carry warnings (stock, price drift or age). '
@@ -350,7 +486,7 @@ class _PreflightDialogState extends State<_PreflightDialog> {
                 ],
                 onChanged: (v) => setState(() => _method = v ?? 'cash'),
               ),
-            if (!widget.hasOpenShift)
+            if (needsShift && !widget.hasOpenShift)
               const Padding(
                 padding: EdgeInsets.only(top: 8),
                 child: Text('Open a register shift before converting orders.',
@@ -381,6 +517,7 @@ class _PreflightDialogState extends State<_PreflightDialog> {
                       paymentMode: convert ? _mode : null,
                       paymentMethod: convert && _mode == PaymentModeValues.full ? _method : null,
                       reason: _needsReason ? _reason.text.trim() : null,
+                      stopAt: process ? (_toInvoice ? 'CONVERTED' : 'APPROVED') : null,
                     ),
                   )
               : null,
@@ -447,6 +584,16 @@ class _ResultDialog extends StatelessWidget {
                     style: const TextStyle(color: AppTheme.textMuted, fontSize: 12.5)),
               const SizedBox(height: 10),
             ],
+            for (final entry in stoppedShort(o.succeeded).entries) ...[
+              Text('${entry.value.length} · ${entry.key}',
+                  style: const TextStyle(color: AppTheme.warning, fontWeight: FontWeight.w800)),
+              for (final s in entry.value.take(6))
+                Text('${s.orderNumber}${s.firstBlocking != null ? ': ${s.firstBlocking}' : ''}',
+                    style: const TextStyle(fontSize: 12.5)),
+              if (entry.value.length > 6)
+                Text('…and ${entry.value.length - 6} more', style: const TextStyle(fontSize: 12.5)),
+              const SizedBox(height: 8),
+            ],
             for (final entry in byCode.entries) ...[
               Text('${entry.value.length} failed · ${entry.key}',
                   style: const TextStyle(color: AppTheme.danger, fontWeight: FontWeight.w800)),
@@ -482,4 +629,23 @@ class _ResultDialog extends StatelessWidget {
       ],
     );
   }
+}
+
+/// Process successes that advanced but stopped short, grouped by what the
+/// operator should do next. An order that moved is a success; this is what
+/// stops it being mistaken for a finished one.
+Map<String, List<BatchSuccess>> stoppedShort(List<BatchSuccess> succeeded) {
+  const labels = {
+    'no_submit_permission': 'need submitting by someone with access',
+    'no_approve_permission': 'need approval',
+    'no_convert_permission': 'awaiting conversion',
+    'blocking_issues': 'stopped before approval — blocking issues',
+  };
+  final out = <String, List<BatchSuccess>>{};
+  for (final s in succeeded) {
+    final why = s.stoppedBecause;
+    if (why == null || why == 'stop_at_reached') continue;
+    out.putIfAbsent(labels[why] ?? why, () => []).add(s);
+  }
+  return out;
 }
