@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
@@ -284,61 +285,45 @@ class BatchPrintJobService extends ChangeNotifier {
     }
 
     String? effectivePdfFolder = pdfOutputFolder;
+    const chunkSize = 25;
 
-    for (final saleId in saleIds) {
+    for (int i = 0; i < saleIds.length; i += chunkSize) {
       if (job.status == BatchPrintJobStatus.cancelled) break;
 
-      String invoiceNo = '#$saleId';
-      try {
-        // 1. Fetch full sale data
-        final saleData = await _fetchSale(saleId, token);
-        invoiceNo =
-            (saleData['invoice_no'] ?? saleData['id'] ?? '#$saleId')
-                .toString();
+      final end = math.min(i + chunkSize, saleIds.length);
+      final chunkIds = saleIds.sublist(i, end);
 
-        // 2. Build receipt items
-        final items = _buildReceiptItems(saleData);
+      // 1. Fetch entire chunk in 1 bulk request
+      final salesMap = await _fetchSalesChunk(chunkIds, token);
 
-        // 3. Compute amounts
-        final amounts = _extractAmounts(saleData);
+      // 2. Sequentially print each invoice in the chunk
+      for (final saleId in chunkIds) {
+        if (job.status == BatchPrintJobStatus.cancelled) break;
 
-        // 4. Build print meta
-        final printMeta = _buildPrintMeta(saleData, config, amounts);
-
-        final dateTime = DateTime.tryParse(
-                saleData['created_at']?.toString() ?? '') ??
-            DateTime.now();
-
-        // 5. Dispatch to appropriate print path
-        final printed = await _printOne(
-          job: job,
-          config: config,
-          resolvedPrinter: resolvedPrinter,
-          receiptNo: invoiceNo,
-          dateTime: dateTime,
-          items: items,
-          amounts: amounts,
-          printMeta: printMeta,
-        );
-
-        if (!printed) {
-          // PDF fallback – save to folder
-          effectivePdfFolder ??= await _ensurePdfFolder();
-          await _savePdfToFolder(
-            folder: effectivePdfFolder,
-            config: config,
-            receiptNo: invoiceNo,
-            dateTime: dateTime,
-            items: items,
-            amounts: amounts,
-            printMeta: printMeta,
-          );
+        final saleData = salesMap[saleId];
+        if (saleData == null) {
+          job._recordError(saleId, '#$saleId', 'Sale data could not be retrieved');
+          continue;
         }
 
-        job._recordSuccess(invoiceNo);
-      } catch (e) {
-        debugPrint('[BATCH-PRINT] Error on $invoiceNo: $e');
-        job._recordError(saleId, invoiceNo, e.toString());
+        try {
+          final updatedFolder = await _processAndPrintSale(
+            job: job,
+            config: config,
+            resolvedPrinter: resolvedPrinter,
+            saleData: saleData,
+            saleId: saleId,
+            effectivePdfFolder: effectivePdfFolder,
+          );
+          if (updatedFolder != null) {
+            effectivePdfFolder = updatedFolder;
+          }
+        } catch (e) {
+          final invoiceNo =
+              (saleData['invoice_no'] ?? saleData['id'] ?? '#$saleId').toString();
+          debugPrint('[BATCH-PRINT] Error on $invoiceNo: $e');
+          job._recordError(saleId, invoiceNo, e.toString());
+        }
       }
     }
 
@@ -509,6 +494,109 @@ class BatchPrintJobService extends ChangeNotifier {
   // ---------------------------------------------------------------------------
   // Helpers
   // ---------------------------------------------------------------------------
+
+  Future<Map<int, Map<String, dynamic>>> _fetchSalesChunk(
+    List<int> chunkIds,
+    String token,
+  ) async {
+    if (chunkIds.isEmpty) return const {};
+
+    try {
+      final uri = Uri.parse('${ApiClient.baseUrl}/sales/bulk-details');
+      final res = await http.post(
+        uri,
+        headers: {
+          'Authorization': 'Bearer $token',
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode({
+          'sale_ids': chunkIds,
+          'include_balance': true,
+        }),
+      );
+
+      if (res.statusCode == 200) {
+        final decoded = jsonDecode(res.body);
+        final list = decoded['data'] as List?;
+        final resultMap = <int, Map<String, dynamic>>{};
+        if (list != null) {
+          for (final item in list) {
+            if (item is Map) {
+              final map = Map<String, dynamic>.from(item);
+              final id = int.tryParse(map['id']?.toString() ?? '');
+              if (id != null) {
+                resultMap[id] = map;
+              }
+            }
+          }
+        }
+        return resultMap;
+      }
+    } catch (e) {
+      debugPrint(
+          '[BATCH-PRINT] bulk-details endpoint failed, falling back to individual: $e');
+    }
+
+    // Fallback: individual fetches if bulk endpoint is unavailable
+    final resultMap = <int, Map<String, dynamic>>{};
+    for (final id in chunkIds) {
+      try {
+        final single = await _fetchSale(id, token);
+        resultMap[id] = single;
+      } catch (e) {
+        debugPrint('[BATCH-PRINT] Fallback fetch failed for #$id: $e');
+      }
+    }
+    return resultMap;
+  }
+
+  Future<String?> _processAndPrintSale({
+    required BatchPrintJob job,
+    required BatchPrintConfig config,
+    required Printer? resolvedPrinter,
+    required Map<String, dynamic> saleData,
+    required int saleId,
+    required String? effectivePdfFolder,
+  }) async {
+    final invoiceNo =
+        (saleData['invoice_no'] ?? saleData['id'] ?? '#$saleId').toString();
+
+    final items = _buildReceiptItems(saleData);
+    final amounts = _extractAmounts(saleData);
+    final printMeta = _buildPrintMeta(saleData, config, amounts);
+    final dateTime = DateTime.tryParse(
+            saleData['created_at']?.toString() ?? '') ??
+        DateTime.now();
+
+    final printed = await _printOne(
+      job: job,
+      config: config,
+      resolvedPrinter: resolvedPrinter,
+      receiptNo: invoiceNo,
+      dateTime: dateTime,
+      items: items,
+      amounts: amounts,
+      printMeta: printMeta,
+    );
+
+    String? pdfFolder = effectivePdfFolder;
+    if (!printed) {
+      pdfFolder ??= await _ensurePdfFolder();
+      await _savePdfToFolder(
+        folder: pdfFolder,
+        config: config,
+        receiptNo: invoiceNo,
+        dateTime: dateTime,
+        items: items,
+        amounts: amounts,
+        printMeta: printMeta,
+      );
+    }
+
+    job._recordSuccess(invoiceNo);
+    return pdfFolder;
+  }
 
   Future<Map<String, dynamic>> _fetchSale(int saleId, String token) async {
     final uri = Uri.parse(
