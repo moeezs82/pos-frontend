@@ -12,7 +12,14 @@ import '../providers/auth_provider.dart';
 import 'home_screen.dart';
 
 class LoginScreen extends StatefulWidget {
-  const LoginScreen({super.key});
+  final String? initialNotice;
+  final String? initialError;
+
+  const LoginScreen({
+    super.key,
+    this.initialNotice,
+    this.initialError,
+  });
 
   @override
   State<LoginScreen> createState() => _LoginScreenState();
@@ -31,6 +38,16 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   void initState() {
     super.initState();
+    final auth = context.read<AuthProvider>();
+    if (widget.initialNotice != null) {
+      _notice = widget.initialNotice;
+    } else if (auth.sessionNotice != null) {
+      _notice = auth.sessionNotice;
+      auth.clearSessionNotice();
+    }
+    if (widget.initialError != null) {
+      _error = widget.initialError;
+    }
     _checkRecoveryAvailability();
   }
 
@@ -216,13 +233,30 @@ class _LoginScreenState extends State<LoginScreen> {
                     if (_notice != null) ...[
                       const SizedBox(height: 18),
                       Container(
-                        padding: const EdgeInsets.all(12),
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
                         decoration: BoxDecoration(
-                          color: AppTheme.success.withOpacity(.08),
+                          color: AppTheme.primary.withValues(alpha: 0.08),
                           borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: AppTheme.success.withOpacity(.16)),
+                          border: Border.all(color: AppTheme.primary.withValues(alpha: 0.2)),
                         ),
-                        child: Text(_notice!, style: const TextStyle(color: AppTheme.success, fontWeight: FontWeight.w700)),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Icon(Icons.info_outline_rounded, color: AppTheme.primary, size: 20),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Text(
+                                _notice!,
+                                style: const TextStyle(
+                                  color: AppTheme.navy,
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 13,
+                                  height: 1.35,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ],
                     if (_error != null) ...[

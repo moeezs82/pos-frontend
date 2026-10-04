@@ -327,11 +327,47 @@ class _AuthOrchestratorState extends State<_AuthOrchestrator> {
       context.read<SubscriptionProvider>().markExpiredFromResponse(branchId, body);
     };
 
+    // Wire up global 401/419 interceptor so that token expiry or rejection
+    // cleanly clears the session and takes the user back to LoginScreen with a
+    // clear, helpful message instead of failing closed to a subscription lock.
+    ApiClient.onUnauthorized = (message) async {
+      if (!mounted) return;
+      final auth = context.read<AuthProvider>();
+      if (!auth.isAuthenticated) return;
+
+      const notice = 'Your session has expired. Please sign in again to continue.';
+      await auth.forceLogout(notice: notice);
+
+      final nav = appNavigatorKey.currentState;
+      if (nav != null) {
+        nav.pushAndRemoveUntil(
+          MaterialPageRoute(
+            builder: (_) => const LoginScreen(
+              initialNotice: notice,
+            ),
+          ),
+          (route) => false,
+        );
+      }
+    };
+
     ApiClient.onForbidden = (body) async {
       if (!mounted) return;
       final auth = context.read<AuthProvider>();
       if (body['code']?.toString() == 'ACCOUNT_INACTIVE') {
-        await auth.forceLogout();
+        const notice = 'Your account has been deactivated. Please contact your administrator.';
+        await auth.forceLogout(notice: notice);
+        final nav = appNavigatorKey.currentState;
+        if (nav != null) {
+          nav.pushAndRemoveUntil(
+            MaterialPageRoute(
+              builder: (_) => const LoginScreen(
+                initialNotice: notice,
+              ),
+            ),
+            (route) => false,
+          );
+        }
         return;
       }
       await auth.refreshPermissionsIfStale(force: true);
@@ -349,6 +385,7 @@ class _AuthOrchestratorState extends State<_AuthOrchestrator> {
   void dispose() {
     _auth.removeListener(_onAuthChanged);
     ApiClient.onSubscriptionExpired = null;
+    ApiClient.onUnauthorized = null;
     ApiClient.onForbidden = null;
     super.dispose();
   }
