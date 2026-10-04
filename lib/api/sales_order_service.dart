@@ -1,6 +1,55 @@
 import 'package:enterprise_pos/api/core/api_client.dart';
 import 'package:enterprise_pos/models/sales_order.dart';
+import 'package:enterprise_pos/models/sales_order_batch.dart';
 import 'package:enterprise_pos/models/sales_order_revalidation.dart';
+
+/// Sends [items] in chunks of at most [cap], aggregating per-order outcomes.
+///
+/// A chunk the server rejects as malformed (422, e.g. no open register shift)
+/// fails every order in it with the server's message. A chunk that errors for
+/// any other reason (network, 5xx) is recorded as `unknown`, never `failed`:
+/// the server may have processed part of it.
+Future<BatchOutcome> runBatchChunks({
+  required List<BatchRef> items,
+  required int cap,
+  required Future<Map<String, dynamic>> Function(List<BatchRef> chunk) send,
+  void Function(int doneChunks, int totalChunks)? onProgress,
+}) async {
+  final outcome = BatchOutcome();
+  final chunks = chunkList(items, cap);
+  for (var i = 0; i < chunks.length; i++) {
+    final chunk = chunks[i];
+    try {
+      final res = await send(chunk);
+      final data = res['data'];
+      if (res['success'] == true && data is Map<String, dynamic>) {
+        outcome.addResponse(data);
+      } else {
+        outcome.unknown.addAll(chunk.map((r) => r.id));
+        outcome.unknownReason = res['message']?.toString();
+      }
+    } on ApiException catch (e) {
+      if (e.statusCode == 422) {
+        for (final r in chunk) {
+          outcome.failed.add(BatchFailure(
+            id: r.id,
+            orderNumber: '',
+            code: 'VALIDATION_FAILED',
+            message: e.message,
+          ));
+        }
+      } else {
+        outcome.unknown.addAll(chunk.map((r) => r.id));
+        outcome.unknownReason = e.message;
+      }
+    } catch (e) {
+      outcome.unknown.addAll(chunk.map((r) => r.id));
+      outcome.unknownReason = e.toString().replaceFirst('Exception: ', '');
+    }
+    onProgress?.call(i + 1, chunks.length);
+  }
+  return outcome;
+}
 
 class SalesOrderService {
   final ApiClient _client;
@@ -97,6 +146,51 @@ class SalesOrderService {
       return RevalidationReport.fromJson(res['data'] as Map<String, dynamic>);
     }
     throw Exception(res['message'] ?? 'Failed to revalidate sales order #$id');
+  }
+
+  // ── Batch operations ──────────────────────────────────────────────────────
+
+  /// Pre-flight triage verdicts, chunked to the server cap.
+  Future<List<BatchVerdict>> batchRevalidate(List<int> ids) async {
+    final out = <BatchVerdict>[];
+    for (final chunk in chunkList(ids, kBatchRevalidateCap)) {
+      final res = await _client.post('/sales-orders/batch/revalidate', body: {
+        'items': chunk.map((id) => {'id': id}).toList(),
+      });
+      final data = res['data'];
+      if (res['success'] != true || data is! Map<String, dynamic>) {
+        throw Exception(res['message'] ?? 'Failed to pre-check sales orders');
+      }
+      out.addAll((data['results'] as List? ?? const [])
+          .whereType<Map<String, dynamic>>()
+          .map(BatchVerdict.fromJson));
+    }
+    return out;
+  }
+
+  /// Runs one bulk [action] over [items], chunked to the server cap.
+  ///
+  /// [paymentMode] (`credit` | `full`) is required for [BatchAction.convert]
+  /// and has no default: the server refuses to guess how money changed hands.
+  Future<BatchOutcome> batchAction(
+    BatchAction action,
+    List<BatchRef> items, {
+    String? reason,
+    String? paymentMode,
+    String? paymentMethod,
+    void Function(int doneChunks, int totalChunks)? onProgress,
+  }) {
+    return runBatchChunks(
+      items: items,
+      cap: action.cap,
+      onProgress: onProgress,
+      send: (chunk) => _client.post('/sales-orders/batch/${action.path}', body: {
+        'items': chunk.map((r) => r.toJson()).toList(),
+        if (reason != null) 'reason': reason,
+        if (paymentMode != null) 'payment_mode': paymentMode,
+        if (paymentMethod != null) 'payment_method': paymentMethod,
+      }),
+    );
   }
 
   Future<SalesOrder> createOrder(Map<String, dynamic> body) async {

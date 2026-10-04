@@ -4,7 +4,9 @@ import 'dart:math' as math;
 import 'package:enterprise_pos/api/core/api_client.dart';
 import 'package:enterprise_pos/api/sales_order_service.dart';
 import 'package:enterprise_pos/models/sales_order.dart';
+import 'package:enterprise_pos/models/sales_order_batch.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
+import 'package:enterprise_pos/screens/sales_orders/parts/sales_order_bulk_actions.dart';
 import 'package:enterprise_pos/screens/sales_orders/sales_order_detail_screen.dart';
 import 'package:enterprise_pos/screens/sales_orders/sales_order_form_screen.dart';
 import 'package:enterprise_pos/screens/subscription/subscription_management_screen.dart';
@@ -14,6 +16,7 @@ import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/counteriq_desktop_shell.dart';
 import 'package:enterprise_pos/widgets/enterprise/enterprise_ui.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
@@ -25,7 +28,8 @@ class SalesOrdersScreen extends StatefulWidget {
 }
 
 class _SalesOrdersScreenState extends State<SalesOrdersScreen> {
-  static const int _perPage = 20;
+  static const List<int> _pageSizes = [20, 50, 100];
+  int _perPage = 20;
   static const double _rowExtent = 56;
 
   // ── Filters ──────────────────────────────────────────────────────────────
@@ -47,6 +51,18 @@ class _SalesOrdersScreenState extends State<SalesOrdersScreen> {
   String? _loadError;
   bool _isAddonInactive = false;
   List<SalesOrder> _orders = [];
+
+  // ── Bulk selection (ids on the current page) ─────────────────────────────
+  final Set<int> _selected = {};
+  final Map<int, String> _heldReasons = {};
+  bool _bulkBusy = false;
+  String? _selectionNote;
+  String? _lastBulkSummary;
+
+  // ── Split review pane ────────────────────────────────────────────────────
+  bool _reviewOpen = false;
+  int? _activeOrderId;
+  static const double _splitMinWidth = 1200;
 
   // ── Summary / filter options ─────────────────────────────────────────────
   OrderFilterOptions? _filterOptions;
@@ -139,6 +155,15 @@ class _SalesOrdersScreenState extends State<SalesOrdersScreen> {
       if (!mounted) return;
       setState(() {
         _orders = response.orders;
+        final visible = response.orders.map((o) => o.id).toSet();
+        final before = _selected.length;
+        _selected.retainAll(visible);
+        _heldReasons.removeWhere((id, _) => !visible.contains(id));
+        if (_selected.length < before) {
+          _selectionNote =
+              '${before - _selected.length} selected order(s) are no longer in view and were deselected.';
+        }
+        if (_activeOrderId != null && !visible.contains(_activeOrderId)) _activeOrderId = null;
         _currentPage = response.page;
         _lastPage = response.lastPage;
         _total = response.total;
@@ -153,6 +178,103 @@ class _SalesOrdersScreenState extends State<SalesOrdersScreen> {
       }
       setState(() { _loading = false; _loadError = e.toString().replaceFirst('Exception: ', ''); });
     }
+  }
+
+  // ── Bulk actions ─────────────────────────────────────────────────────────
+  List<SalesOrder> get _selectedOrders =>
+      _orders.where((o) => _selected.contains(o.id)).toList();
+
+  bool get _allOnPage => _orders.isNotEmpty && _orders.every((o) => _selected.contains(o.id));
+
+  void _toggleAll(bool? on) => setState(() {
+        _selectionNote = null;
+        if (on == true) {
+          _selected.addAll(_orders.map((o) => o.id));
+        } else {
+          _selected.clear();
+          _heldReasons.clear();
+        }
+      });
+
+  void _toggleOne(int id) => setState(() {
+        _selectionNote = null;
+        if (!_selected.remove(id)) _selected.add(id);
+        _heldReasons.remove(id);
+      });
+
+  Future<void> _runBulk(BatchAction action) async {
+    if (_bulkBusy) return;
+    setState(() => _bulkBusy = true);
+    try {
+      final result = await runBulkAction(
+        context: context,
+        service: _service(),
+        action: action,
+        selected: _selectedOrders,
+      );
+      if (!mounted || result == null) return;
+      setState(() {
+        _selected
+          ..clear()
+          ..addAll(result.remaining);
+        _heldReasons
+          ..clear()
+          ..addAll(result.held);
+        if (result.summaryLine.isNotEmpty) _lastBulkSummary = result.summaryLine;
+      });
+      await Future.wait([_fetchSummary(), _fetchOrders(page: _currentPage, skipLoadingState: true)]);
+    } finally {
+      if (mounted) setState(() => _bulkBusy = false);
+    }
+  }
+
+  // ── Review pane ──────────────────────────────────────────────────────────
+  bool get _splitActive =>
+      _reviewOpen && MediaQuery.sizeOf(context).width >= _splitMinWidth;
+
+  void _moveActive(int delta) {
+    if (_orders.isEmpty) return;
+    final i = _orders.indexWhere((o) => o.id == _activeOrderId);
+    final next = (i < 0 ? (delta > 0 ? 0 : _orders.length - 1) : i + delta)
+        .clamp(0, _orders.length - 1);
+    setState(() => _activeOrderId = _orders[next].id);
+  }
+
+  Future<void> _openOrder(SalesOrder order) async {
+    if (_splitActive) {
+      setState(() => _activeOrderId = order.id);
+      return;
+    }
+    await Navigator.push(context,
+        MaterialPageRoute(builder: (_) => SalesOrderDetailScreen(orderId: order.id)));
+    if (mounted) { _fetchSummary(); _fetchOrders(page: _currentPage); }
+  }
+
+  Widget _buildReviewPane() {
+    final id = _activeOrderId;
+    return Container(
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+          color: Colors.white,
+          border: Border.all(color: AppTheme.border),
+          borderRadius: BorderRadius.circular(12)),
+      child: id == null
+          ? const EnterpriseEmptyState(
+              icon: Icons.touch_app_outlined,
+              title: 'Select an order to review',
+              subtitle: 'Use ↑ / ↓ to move through the list.',
+            )
+          : SalesOrderDetailScreen(
+              key: ValueKey('review-$id'),
+              orderId: id,
+              embedded: true,
+              onChanged: () {
+                if (!mounted) return;
+                _fetchSummary();
+                _fetchOrders(page: _currentPage, skipLoadingState: true);
+              },
+            ),
+    );
   }
 
   // ── Search ───────────────────────────────────────────────────────────────
@@ -381,7 +503,14 @@ class _SalesOrdersScreenState extends State<SalesOrdersScreen> {
     return CounterIQDesktopShell(
       activeRouteId: PosRouteIds.salesOrders,
       onOpenProducts: () {},
-      child: Padding(
+      child: CallbackShortcuts(
+        bindings: {
+          if (_splitActive) ...{
+            const SingleActivator(LogicalKeyboardKey.arrowDown): () => _moveActive(1),
+            const SingleActivator(LogicalKeyboardKey.arrowUp): () => _moveActive(-1),
+          },
+        },
+        child: Padding(
         padding: const EdgeInsets.fromLTRB(18, 16, 18, 14),
         child: _isAddonInactive
             ? _buildAddonExplainer()
@@ -395,10 +524,42 @@ class _SalesOrdersScreenState extends State<SalesOrdersScreen> {
                 const SizedBox(height: 10),
                 if (_refreshing) const LinearProgressIndicator(minHeight: 2),
                 if (_refreshing) const SizedBox(height: 8),
-                Expanded(child: _buildListContainer()),
+                if (_selected.isNotEmpty) ...[_buildBulkBar(auth), const SizedBox(height: 8)],
+                if (_selectionNote != null && _selected.isEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 6),
+                    child: Text(_selectionNote!,
+                        style: const TextStyle(color: AppTheme.textMuted, fontSize: 12)),
+                  ),
+                Expanded(
+                  child: _splitActive
+                      ? Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                          Expanded(flex: 5, child: _buildListContainer()),
+                          const SizedBox(width: 12),
+                          Expanded(flex: 6, child: _buildReviewPane()),
+                        ])
+                      : _buildListContainer(),
+                ),
                 if (_total > 0) ...[const SizedBox(height: 8), _buildStatusBar()],
               ]),
       ),
+      ),
+    );
+  }
+
+  Widget _buildBulkBar(AuthProvider auth) {
+    final selected = _selectedOrders;
+    final total = selected.fold<double>(0, (s, o) => s + o.total);
+    return SalesOrderBulkBar(
+      selectedCount: _selected.length,
+      selectedTotal: total,
+      canSubmit: auth.hasPermission('manage-sales-orders') || auth.hasPermission('create-sales-orders'),
+      canApprove: auth.hasPermission('approve-sales-orders'),
+      canConvert: auth.hasPermission('convert-sales-orders'),
+      canCancel: auth.hasPermission('manage-sales-orders') || auth.hasPermission('approve-sales-orders'),
+      busy: _bulkBusy,
+      onAction: _runBulk,
+      onClear: () => setState(() { _selected.clear(); _heldReasons.clear(); }),
     );
   }
 
@@ -416,6 +577,12 @@ class _SalesOrdersScreenState extends State<SalesOrdersScreen> {
         ]),
       ),
       Wrap(spacing: 8, children: [
+        if (MediaQuery.sizeOf(context).width >= _splitMinWidth)
+          IconButton(
+            tooltip: _reviewOpen ? 'Close review pane' : 'Open review pane',
+            onPressed: () => setState(() { _reviewOpen = !_reviewOpen; }),
+            icon: Icon(_reviewOpen ? Icons.view_sidebar_rounded : Icons.view_sidebar_outlined),
+          ),
         IconButton(tooltip: 'Refresh', onPressed: _onRefresh, icon: const Icon(Icons.refresh_rounded)),
         if (canCreate)
           FilledButton.icon(
@@ -718,7 +885,11 @@ class _SalesOrdersScreenState extends State<SalesOrdersScreen> {
   }
 
   Widget _buildTable() {
-    const widths = <double>[160, 220, 170, 70, 130, 140, 120, 20];
+    final compact = _splitActive;
+    // checkbox | order | customer | [salesman | items] | total | status | [date | chevron]
+    final widths = compact
+        ? const <double>[36, 130, 150, 110, 110]
+        : const <double>[36, 160, 220, 170, 70, 130, 140, 120, 20];
     final minWidth = widths.fold<double>(0, (a, b) => a + b) + 24 + (widths.length - 1) * 14.0;
 
     return LayoutBuilder(builder: (context, constraints) {
@@ -729,7 +900,7 @@ class _SalesOrdersScreenState extends State<SalesOrdersScreen> {
           width: width,
           height: constraints.maxHeight,
           child: Column(children: [
-            _buildTableHeader(widths),
+            _buildTableHeader(widths, compact),
             Expanded(
               child: Scrollbar(
                 thumbVisibility: true,
@@ -737,7 +908,7 @@ class _SalesOrdersScreenState extends State<SalesOrdersScreen> {
                   physics: const AlwaysScrollableScrollPhysics(),
                   itemCount: _orders.length,
                   separatorBuilder: (_, __) => const Divider(height: 1, color: AppTheme.border),
-                  itemBuilder: (_, i) => _buildOrderRow(_orders[i], widths),
+                  itemBuilder: (_, i) => _buildOrderRow(_orders[i], widths, compact),
                 ),
               ),
             ),
@@ -749,92 +920,119 @@ class _SalesOrdersScreenState extends State<SalesOrdersScreen> {
 
   static const _headerStyle = TextStyle(fontWeight: FontWeight.w800, fontSize: 11, color: AppTheme.textMuted);
 
-  Widget _buildTableHeader(List<double> widths) {
-    const labels = ['Order #', 'Customer', 'Salesman', 'Items', 'Booked Total', 'Status', 'Date', ''];
-    const aligns = [
-      TextAlign.left, TextAlign.left, TextAlign.left, TextAlign.center,
-      TextAlign.right, TextAlign.center, TextAlign.right, TextAlign.center,
-    ];
+  Widget _buildTableHeader(List<double> widths, bool compact) {
+    final labels = compact
+        ? const ['Order #', 'Customer', 'Booked Total', 'Status']
+        : const ['Order #', 'Customer', 'Salesman', 'Items', 'Booked Total', 'Status', 'Date', ''];
+    final aligns = compact
+        ? const [TextAlign.left, TextAlign.left, TextAlign.right, TextAlign.center]
+        : const [
+            TextAlign.left, TextAlign.left, TextAlign.left, TextAlign.center,
+            TextAlign.right, TextAlign.center, TextAlign.right, TextAlign.center,
+          ];
+    final bool? tri = _selected.isEmpty ? false : (_allOnPage ? true : null);
     return Container(
       height: 42,
       padding: const EdgeInsets.symmetric(horizontal: 12),
       decoration: const BoxDecoration(
           color: AppTheme.surfaceSoft,
           border: Border(bottom: BorderSide(color: AppTheme.border))),
-      child: Row(children: List.generate(labels.length, (i) => Padding(
-        padding: EdgeInsets.only(right: i < labels.length - 1 ? 14 : 0),
-        child: SizedBox(
-          width: widths[i],
-          child: Text(labels[i], textAlign: aligns[i], style: _headerStyle),
+      child: Row(children: [
+        SizedBox(
+          width: widths[0],
+          child: Checkbox(
+            tristate: true,
+            value: tri,
+            onChanged: _bulkBusy ? null : (_) => _toggleAll(tri == true ? false : true),
+            visualDensity: VisualDensity.compact,
+          ),
         ),
-      ))),
+        for (var i = 0; i < labels.length; i++)
+          Padding(
+            padding: const EdgeInsets.only(left: 14),
+            child: SizedBox(
+              width: widths[i + 1],
+              child: Text(labels[i], textAlign: aligns[i], style: _headerStyle),
+            ),
+          ),
+      ]),
     );
   }
 
-  Widget _buildOrderRow(SalesOrder order, List<double> widths) {
+  Widget _buildOrderRow(SalesOrder order, List<double> widths, bool compact) {
     final statusColor = SalesOrderStatus.color(order.status);
     final statusLabel = SalesOrderStatus.label(order.status);
     final isOverdue = order.isStale &&
         (order.status == SalesOrderStatus.draft || order.status == SalesOrderStatus.submitted);
+    final isActive = compact && order.id == _activeOrderId;
+    final held = _heldReasons[order.id];
+
+    Widget cell(int i, Widget child) => Padding(
+        padding: const EdgeInsets.only(left: 14), child: SizedBox(width: widths[i], child: child));
+
+    final orderNo = Row(children: [
+      if (isOverdue) ...[
+        const Tooltip(message: 'Order sitting > 48h',
+            child: Icon(Icons.warning_amber_rounded, size: 14, color: AppTheme.warning)),
+        const SizedBox(width: 4),
+      ],
+      Expanded(child: Text(order.orderNumber, overflow: TextOverflow.ellipsis,
+          style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13, color: AppTheme.primary))),
+    ]);
+
+    final customer = Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+      Text(order.customer?.name ?? 'Customer #${order.customerId}',
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13, color: AppTheme.navy)),
+      if (held != null)
+        Tooltip(message: held, child: Text(held, overflow: TextOverflow.ellipsis, maxLines: 1,
+            style: const TextStyle(fontSize: 10.5, color: AppTheme.danger, fontWeight: FontWeight.w700))),
+    ]);
+
+    final total = Text(AppCurrency.format(order.total), textAlign: TextAlign.right,
+        style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13, color: AppTheme.navy));
+    final status = Center(child: EnterpriseStatusBadge(label: statusLabel, color: statusColor));
 
     return InkWell(
-      onTap: () async {
-        await Navigator.push(context,
-            MaterialPageRoute(builder: (_) => SalesOrderDetailScreen(orderId: order.id)));
-        if (mounted) { _fetchSummary(); _fetchOrders(page: _currentPage); }
-      },
+      onTap: () => _openOrder(order),
       child: Container(
         height: _rowExtent,
+        color: isActive ? AppTheme.primary.withValues(alpha: 0.07) : null,
         padding: const EdgeInsets.symmetric(horizontal: 12),
         child: Row(children: [
-          // Order #
-          SizedBox(width: widths[0], child: Row(children: [
-            if (isOverdue) ...[
-              const Tooltip(message: 'Order sitting > 48h',
-                  child: Icon(Icons.warning_amber_rounded, size: 14, color: AppTheme.warning)),
-              const SizedBox(width: 4),
-            ],
-            Expanded(child: Text(order.orderNumber, overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13, color: AppTheme.primary))),
-          ])),
-          const SizedBox(width: 14),
-          // Customer
-          SizedBox(width: widths[1], child: Text(
-            order.customer?.name ?? 'Customer #${order.customerId}',
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13, color: AppTheme.navy),
-          )),
-          const SizedBox(width: 14),
-          // Salesman
-          SizedBox(width: widths[2], child: Text(
-            order.salesman?.name ?? 'Salesman #${order.salesmanId}',
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(color: AppTheme.textMuted, fontSize: 12, fontWeight: FontWeight.w600),
-          )),
-          const SizedBox(width: 14),
-          // Items
-          SizedBox(width: widths[3], child: Text('${order.itemsCount > 0 ? order.itemsCount : order.items.length}',
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppTheme.navy))),
-          const SizedBox(width: 14),
-          // Total
-          SizedBox(width: widths[4], child: Text(AppCurrency.format(order.total),
-              textAlign: TextAlign.right,
-              style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 13, color: AppTheme.navy))),
-          const SizedBox(width: 14),
-          // Status badge
-          SizedBox(width: widths[5], child: Center(
-              child: EnterpriseStatusBadge(label: statusLabel, color: statusColor))),
-          const SizedBox(width: 14),
-          // Date
-          SizedBox(width: widths[6], child: Text(order.orderDate,
-              textAlign: TextAlign.right,
-              style: TextStyle(fontSize: 12,
-                  color: isOverdue ? AppTheme.warning : AppTheme.textMuted,
-                  fontWeight: isOverdue ? FontWeight.w800 : FontWeight.w500))),
-          const SizedBox(width: 14),
-          // Chevron
-          SizedBox(width: widths[7], child: const Icon(Icons.chevron_right_rounded, size: 18, color: AppTheme.textMuted)),
+          SizedBox(
+            width: widths[0],
+            child: Checkbox(
+              value: _selected.contains(order.id),
+              onChanged: _bulkBusy ? null : (_) => _toggleOne(order.id),
+              visualDensity: VisualDensity.compact,
+            ),
+          ),
+          if (compact) ...[
+            cell(1, orderNo),
+            cell(2, customer),
+            cell(3, total),
+            cell(4, status),
+          ] else ...[
+            cell(1, orderNo),
+            cell(2, customer),
+            cell(3, Text(order.salesman?.name ?? 'Salesman #${order.salesmanId}',
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(color: AppTheme.textMuted, fontSize: 12, fontWeight: FontWeight.w600))),
+            cell(4, Text('${order.itemsCount > 0 ? order.itemsCount : order.items.length}',
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: AppTheme.navy))),
+            cell(5, total),
+            cell(6, status),
+            cell(7, Text(order.orderDate, textAlign: TextAlign.right,
+                style: TextStyle(fontSize: 12,
+                    color: isOverdue ? AppTheme.warning : AppTheme.textMuted,
+                    fontWeight: isOverdue ? FontWeight.w800 : FontWeight.w500))),
+            cell(8, const Icon(Icons.chevron_right_rounded, size: 18, color: AppTheme.textMuted)),
+          ],
         ]),
       ),
     );
@@ -854,6 +1052,29 @@ class _SalesOrdersScreenState extends State<SalesOrdersScreen> {
       const SizedBox(width: 8),
       Text('Page $_currentPage of $_lastPage',
           style: const TextStyle(color: AppTheme.textMuted, fontSize: 12, fontWeight: FontWeight.w600)),
+      const SizedBox(width: 12),
+      const Text('Per page', style: TextStyle(color: AppTheme.textMuted, fontSize: 12)),
+      const SizedBox(width: 6),
+      DropdownButton<int>(
+        value: _perPage,
+        isDense: true,
+        underline: const SizedBox.shrink(),
+        items: [for (final n in _pageSizes) DropdownMenuItem(value: n, child: Text('$n'))],
+        onChanged: _loading
+            ? null
+            : (n) {
+                if (n == null || n == _perPage) return;
+                setState(() => _perPage = n);
+                _fetchOrders(page: 1);
+              },
+      ),
+      if (_lastBulkSummary != null) ...[
+        const SizedBox(width: 14),
+        Flexible(
+          child: Text(_lastBulkSummary!, overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: AppTheme.navy, fontSize: 12, fontWeight: FontWeight.w700)),
+        ),
+      ],
       const Spacer(),
       if (_loading)
         const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 1.8))

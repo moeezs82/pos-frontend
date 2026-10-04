@@ -21,7 +21,18 @@ import 'package:provider/provider.dart';
 class SalesOrderDetailScreen extends StatefulWidget {
   final int orderId;
 
-  const SalesOrderDetailScreen({super.key, required this.orderId});
+  /// Rendered inside a split review pane: no route chrome (AppBar / back).
+  final bool embedded;
+
+  /// Called after any successful mutation so a host list can refresh.
+  final VoidCallback? onChanged;
+
+  const SalesOrderDetailScreen({
+    super.key,
+    required this.orderId,
+    this.embedded = false,
+    this.onChanged,
+  });
 
   @override
   State<SalesOrderDetailScreen> createState() => _SalesOrderDetailScreenState();
@@ -99,6 +110,8 @@ class _SalesOrderDetailScreenState extends State<SalesOrderDetailScreen> {
         _revalidationReport = report;
         _revalidating = false;
       });
+      // Runs after every mutation, so a host list can refresh its row.
+      widget.onChanged?.call();
     } catch (_) {
       if (!mounted) return;
       setState(() => _revalidating = false);
@@ -119,13 +132,19 @@ class _SalesOrderDetailScreenState extends State<SalesOrderDetailScreen> {
 
     setState(() => _mutating = true);
     try {
-      final updated = await _service().approve(order.id, version: order.version);
+      final updated = await _service().approve(
+        order.id,
+        version: order.version,
+      );
       if (!mounted) return;
       setState(() {
         _order = updated;
         _mutating = false;
       });
-      AppFeedback.success(context, 'Sales order #${order.orderNumber} approved.');
+      AppFeedback.success(
+        context,
+        'Sales order #${order.orderNumber} approved.',
+      );
       _revalidateOnly();
     } catch (e) {
       _handleMutationError(e, 'approve');
@@ -161,7 +180,10 @@ class _SalesOrderDetailScreenState extends State<SalesOrderDetailScreen> {
         _order = updated;
         _mutating = false;
       });
-      AppFeedback.success(context, 'Sales order #${order.orderNumber} rejected.');
+      AppFeedback.success(
+        context,
+        'Sales order #${order.orderNumber} rejected.',
+      );
       _revalidateOnly();
     } catch (e) {
       _handleMutationError(e, 'reject');
@@ -197,10 +219,37 @@ class _SalesOrderDetailScreenState extends State<SalesOrderDetailScreen> {
         _order = updated;
         _mutating = false;
       });
-      AppFeedback.success(context, 'Sales order #${order.orderNumber} cancelled.');
+      AppFeedback.success(
+        context,
+        'Sales order #${order.orderNumber} cancelled.',
+      );
       _revalidateOnly();
     } catch (e) {
       _handleMutationError(e, 'cancel');
+    }
+  }
+
+  /// Submits a draft in one request — no form mount, no line rewrite.
+  Future<void> _handleSubmit() async {
+    final order = _order;
+    if (order == null || _mutating) return;
+
+    setState(() => _mutating = true);
+    try {
+      final updated = await _service().submit(order.id, version: order.version);
+      if (!mounted) return;
+      setState(() {
+        _order = updated;
+        _mutating = false;
+      });
+      widget.onChanged?.call();
+      AppFeedback.success(
+        context,
+        'Sales order #${order.orderNumber} submitted for approval.',
+      );
+      _revalidateOnly();
+    } catch (e) {
+      _handleMutationError(e, 'submit');
     }
   }
 
@@ -210,13 +259,19 @@ class _SalesOrderDetailScreenState extends State<SalesOrderDetailScreen> {
 
     setState(() => _mutating = true);
     try {
-      final updated = await _service().returnToDraft(order.id, version: order.version);
+      final updated = await _service().returnToDraft(
+        order.id,
+        version: order.version,
+      );
       if (!mounted) return;
       setState(() {
         _order = updated;
         _mutating = false;
       });
-      AppFeedback.success(context, 'Sales order #${order.orderNumber} returned to draft.');
+      AppFeedback.success(
+        context,
+        'Sales order #${order.orderNumber} returned to draft.',
+      );
       _revalidateOnly();
     } catch (e) {
       _handleMutationError(e, 'return to draft');
@@ -259,7 +314,8 @@ class _SalesOrderDetailScreenState extends State<SalesOrderDetailScreen> {
     );
 
     if (mounted) {
-      _loadData();
+      await _loadData();
+      widget.onChanged?.call();
     }
   }
 
@@ -269,13 +325,12 @@ class _SalesOrderDetailScreenState extends State<SalesOrderDetailScreen> {
 
     final updated = await Navigator.push<bool>(
       context,
-      MaterialPageRoute(
-        builder: (_) => SalesOrderFormScreen(editOrder: order),
-      ),
+      MaterialPageRoute(builder: (_) => SalesOrderFormScreen(editOrder: order)),
     );
 
     if (updated == true && mounted) {
-      _loadData();
+      await _loadData();
+      widget.onChanged?.call();
     }
   }
 
@@ -290,7 +345,8 @@ class _SalesOrderDetailScreenState extends State<SalesOrderDetailScreen> {
       if (e.statusCode == 409 && code == 'SALES_ORDER_ALREADY_CONVERTED') {
         final data = e.body?['data'] as Map<String, dynamic>?;
         final saleId = (data?['sale_id'] as num?)?.toInt();
-        final invoiceNo = data?['invoice_no']?.toString() ?? 'an existing invoice';
+        final invoiceNo =
+            data?['invoice_no']?.toString() ?? 'an existing invoice';
 
         showDialog(
           context: context,
@@ -345,7 +401,10 @@ class _SalesOrderDetailScreenState extends State<SalesOrderDetailScreen> {
       return;
     }
 
-    AppFeedback.error(context, 'Failed to $actionName order: ${e.toString().replaceFirst('Exception: ', '')}');
+    AppFeedback.error(
+      context,
+      'Failed to $actionName order: ${e.toString().replaceFirst('Exception: ', '')}',
+    );
   }
 
   @override
@@ -364,7 +423,8 @@ class _SalesOrderDetailScreenState extends State<SalesOrderDetailScreen> {
           child: EnterpriseEmptyState(
             icon: Icons.search_off_rounded,
             title: 'Sales Order Not Found',
-            subtitle: 'The requested order does not exist or you do not have permission to view it.',
+            subtitle:
+                'The requested order does not exist or you do not have permission to view it.',
             action: FilledButton.icon(
               onPressed: () => Navigator.pop(context),
               icon: const Icon(Icons.arrow_back_rounded),
@@ -384,8 +444,11 @@ class _SalesOrderDetailScreenState extends State<SalesOrderDetailScreen> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Icon(Icons.error_outline_rounded,
-                    color: AppTheme.danger, size: 48),
+                const Icon(
+                  Icons.error_outline_rounded,
+                  color: AppTheme.danger,
+                  size: 48,
+                ),
                 const SizedBox(height: 12),
                 Text(
                   _loadError!,
@@ -417,30 +480,48 @@ class _SalesOrderDetailScreenState extends State<SalesOrderDetailScreen> {
     final canCreate = auth.hasPermission('create-sales-orders');
     final hasBlocking = _revalidationReport?.hasBlockingIssues == true;
 
-    final canApproveNow = order.isSubmitted && canApprove && !_mutating && !hasBlocking;
-    final canRejectNow = (order.isSubmitted || order.isApproved) && canApprove && !_mutating;
+    final canApproveNow =
+        order.isSubmitted && canApprove && !_mutating && !hasBlocking;
+    final canRejectNow =
+        (order.isSubmitted || order.isApproved) && canApprove && !_mutating;
     final canConvertNow = order.isApproved && canConvert && !_mutating;
-    final canEditNow = (order.isDraft || order.isSubmitted || order.isApproved) &&
+    final canEditNow =
+        (order.isDraft || order.isSubmitted || order.isApproved) &&
         (canCreate || canManage) &&
         !_mutating;
 
     final bindings = <ShortcutActivator, VoidCallback>{
       if (canApproveNow) ...{
-        const SingleActivator(LogicalKeyboardKey.enter, control: true): _handleApprove,
-        const SingleActivator(LogicalKeyboardKey.enter, meta: true): _handleApprove,
-        const SingleActivator(LogicalKeyboardKey.numpadEnter, control: true): _handleApprove,
-        const SingleActivator(LogicalKeyboardKey.numpadEnter, meta: true): _handleApprove,
+        const SingleActivator(LogicalKeyboardKey.enter, control: true):
+            _handleApprove,
+        const SingleActivator(LogicalKeyboardKey.enter, meta: true):
+            _handleApprove,
+        const SingleActivator(LogicalKeyboardKey.numpadEnter, control: true):
+            _handleApprove,
+        const SingleActivator(LogicalKeyboardKey.numpadEnter, meta: true):
+            _handleApprove,
       },
       if (canRejectNow) ...{
-        const SingleActivator(LogicalKeyboardKey.keyR, control: true, shift: true): _handleReject,
-        const SingleActivator(LogicalKeyboardKey.keyR, meta: true, shift: true): _handleReject,
+        const SingleActivator(
+          LogicalKeyboardKey.keyR,
+          control: true,
+          shift: true,
+        ): _handleReject,
+        const SingleActivator(LogicalKeyboardKey.keyR, meta: true, shift: true):
+            _handleReject,
       },
       if (canConvertNow) ...{
-        const SingleActivator(LogicalKeyboardKey.keyV, control: true, shift: true): _handleConvertToSale,
-        const SingleActivator(LogicalKeyboardKey.keyV, meta: true, shift: true): _handleConvertToSale,
+        const SingleActivator(
+          LogicalKeyboardKey.keyV,
+          control: true,
+          shift: true,
+        ): _handleConvertToSale,
+        const SingleActivator(LogicalKeyboardKey.keyV, meta: true, shift: true):
+            _handleConvertToSale,
       },
       if (canEditNow) ...{
-        const SingleActivator(LogicalKeyboardKey.keyE, control: true): _handleEdit,
+        const SingleActivator(LogicalKeyboardKey.keyE, control: true):
+            _handleEdit,
         const SingleActivator(LogicalKeyboardKey.keyE, meta: true): _handleEdit,
       },
     };
@@ -451,16 +532,18 @@ class _SalesOrderDetailScreenState extends State<SalesOrderDetailScreen> {
         autofocus: true,
         child: Scaffold(
           backgroundColor: AppTheme.bg,
-          appBar: AppBar(
-            title: Text('Sales Order #${order.orderNumber}'),
-            actions: [
-              IconButton(
-                tooltip: 'Refresh Order',
-                onPressed: _mutating ? null : _loadData,
-                icon: const Icon(Icons.refresh_rounded),
-              ),
-            ],
-          ),
+          appBar: widget.embedded
+              ? null
+              : AppBar(
+                  title: Text('Sales Order #${order.orderNumber}'),
+                  actions: [
+                    IconButton(
+                      tooltip: 'Refresh Order',
+                      onPressed: _mutating ? null : _loadData,
+                      icon: const Icon(Icons.refresh_rounded),
+                    ),
+                  ],
+                ),
           body: SafeArea(
             child: Column(
               children: [
@@ -606,7 +689,8 @@ class _SalesOrderDetailScreenState extends State<SalesOrderDetailScreen> {
                 child: _infoBlock(
                   icon: Icons.person_outline_rounded,
                   label: 'Customer',
-                  title: order.customer?.name ?? 'Customer #${order.customerId}',
+                  title:
+                      order.customer?.name ?? 'Customer #${order.customerId}',
                   subtitle: order.customer?.phone.isNotEmpty == true
                       ? order.customer!.phone
                       : (order.customer?.address ?? 'No contact information'),
@@ -620,7 +704,8 @@ class _SalesOrderDetailScreenState extends State<SalesOrderDetailScreen> {
                   label: _salesmanIsBookingFallback(order)
                       ? 'Booked by'
                       : 'Salesman (Field Booking)',
-                  title: order.salesman?.name ?? 'Salesman #${order.salesmanId}',
+                  title:
+                      order.salesman?.name ?? 'Salesman #${order.salesmanId}',
                   subtitle: order.salesman?.email ?? 'Field representative',
                 ),
               ),
@@ -637,8 +722,11 @@ class _SalesOrderDetailScreenState extends State<SalesOrderDetailScreen> {
               ),
               child: Row(
                 children: [
-                  const Icon(Icons.sticky_note_2_outlined,
-                      size: 16, color: AppTheme.textMuted),
+                  const Icon(
+                    Icons.sticky_note_2_outlined,
+                    size: 16,
+                    color: AppTheme.textMuted,
+                  ),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
@@ -666,8 +754,11 @@ class _SalesOrderDetailScreenState extends State<SalesOrderDetailScreen> {
               ),
               child: Row(
                 children: [
-                  const Icon(Icons.error_outline_rounded,
-                      size: 16, color: AppTheme.danger),
+                  const Icon(
+                    Icons.error_outline_rounded,
+                    size: 16,
+                    color: AppTheme.danger,
+                  ),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
@@ -694,8 +785,9 @@ class _SalesOrderDetailScreenState extends State<SalesOrderDetailScreen> {
     if (order.salesmanId <= 0 || order.salesmanId != order.createdBy) {
       return false;
     }
-    return _revalidationReport?.warnings
-            .any((w) => w.code == 'SALESMAN_FALLBACK') ??
+    return _revalidationReport?.warnings.any(
+          (w) => w.code == 'SALESMAN_FALLBACK',
+        ) ??
         false;
   }
 
@@ -789,110 +881,132 @@ class _SalesOrderDetailScreenState extends State<SalesOrderDetailScreen> {
               color: AppTheme.textMuted,
             ),
           ),
-          const Spacer(),
-
-          // 0. Edit Order
-          if ((order.isDraft || order.isSubmitted || order.isApproved) &&
-              (canCreate || canManage))
-            OutlinedButton.icon(
-              onPressed: _mutating ? null : _handleEdit,
-              icon: const Icon(Icons.edit_outlined, size: 16),
-              label: const Text('Edit Order'),
-            ),
-          const SizedBox(width: 8),
-
-          // 1. Return to Draft
-          if ((order.isSubmitted || order.isRejected) &&
-              (canManage || canApprove || canCreate))
-            OutlinedButton.icon(
-              onPressed: _mutating ? null : _handleReturnToDraft,
-              icon: const Icon(Icons.undo_rounded, size: 16),
-              label: const Text('Return to Draft'),
-            ),
-          const SizedBox(width: 8),
-
-          // 2. Reject
-          if ((order.isSubmitted || order.isApproved) && canApprove)
-            OutlinedButton.icon(
-              onPressed: _mutating ? null : _handleReject,
-              icon: const Icon(Icons.thumb_down_alt_outlined, size: 16),
-              label: const Text('Reject'),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: AppTheme.danger,
-                side: const BorderSide(color: AppTheme.danger),
-              ),
-            ),
-          const SizedBox(width: 8),
-
-          // 3. Cancel
-          if (!order.isTerminal && (canManage || canApprove))
-            OutlinedButton.icon(
-              onPressed: _mutating ? null : _handleCancel,
-              icon: const Icon(Icons.cancel_outlined, size: 16),
-              label: const Text('Cancel Order'),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: AppTheme.danger,
-              ),
-            ),
-          const SizedBox(width: 8),
-
-          // 4. Reconcile (crashed conversion recovery)
-          if (order.isConverted &&
-              order.convertedSaleId == null &&
-              canConvert)
-            FilledButton.icon(
-              onPressed: _mutating ? null : _handleReconcile,
-              icon: const Icon(Icons.build_circle_outlined, size: 16),
-              label: const Text('Reconcile Conversion'),
-              style: FilledButton.styleFrom(
-                backgroundColor: AppTheme.warning,
-              ),
-            ),
-
-          // 5. Open Invoice (when converted)
-          if (order.convertedSaleId != null)
-            FilledButton.icon(
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => SaleDetailScreen(saleId: order.convertedSaleId!),
+          const SizedBox(width: 12),
+          // Wrap, not a bare Row: up to nine actions must not overflow a
+          // narrow split pane.
+          Expanded(
+            child: Wrap(
+              alignment: WrapAlignment.end,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                // Submit a draft for approval (one request)
+                if (order.isDraft && (canManage || canCreate))
+                  FilledButton.icon(
+                    onPressed: _mutating ? null : _handleSubmit,
+                    icon: const Icon(Icons.send_rounded, size: 16),
+                    label: const Text('Submit for Approval'),
                   ),
-                );
-              },
-              icon: const Icon(Icons.receipt_long_outlined, size: 16),
-              label: const Text('Open Converted Invoice'),
-            ),
 
-          // 6. Approve (when submitted)
-          if (order.isSubmitted && canApprove)
-            Tooltip(
-              message: hasBlocking
-                  ? '$blockingCount problem(s) must be resolved before approval'
-                  : 'Approve order for invoice conversion',
-              child: FilledButton.icon(
-                onPressed: (_mutating || hasBlocking) ? null : _handleApprove,
-                icon: const Icon(Icons.check_circle_outline_rounded, size: 16),
-                label: Text(hasBlocking
-                    ? 'Approve ($blockingCount issues)'
-                    : 'Approve Order'),
-                style: FilledButton.styleFrom(
-                  backgroundColor: AppTheme.success,
-                ),
-              ),
-            ),
-          const SizedBox(width: 8),
+                // 0. Edit Order
+                if ((order.isDraft || order.isSubmitted || order.isApproved) &&
+                    (canCreate || canManage))
+                  OutlinedButton.icon(
+                    onPressed: _mutating ? null : _handleEdit,
+                    icon: const Icon(Icons.edit_outlined, size: 16),
+                    label: const Text('Edit Order'),
+                  ),
 
-          // 7. Create Sale from Order (when approved)
-          if (order.isApproved && canConvert)
-            FilledButton.icon(
-              onPressed: _mutating ? null : _handleConvertToSale,
-              icon: const Icon(Icons.point_of_sale_rounded, size: 16),
-              label: const Text('Create Sale from Order'),
-              style: FilledButton.styleFrom(
-                backgroundColor: AppTheme.primary,
-              ),
+                // 1. Return to Draft
+                if ((order.isSubmitted || order.isRejected) &&
+                    (canManage || canApprove || canCreate))
+                  OutlinedButton.icon(
+                    onPressed: _mutating ? null : _handleReturnToDraft,
+                    icon: const Icon(Icons.undo_rounded, size: 16),
+                    label: const Text('Return to Draft'),
+                  ),
+
+                // 2. Reject
+                if ((order.isSubmitted || order.isApproved) && canApprove)
+                  OutlinedButton.icon(
+                    onPressed: _mutating ? null : _handleReject,
+                    icon: const Icon(Icons.thumb_down_alt_outlined, size: 16),
+                    label: const Text('Reject'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppTheme.danger,
+                      side: const BorderSide(color: AppTheme.danger),
+                    ),
+                  ),
+
+                // 3. Cancel
+                if (!order.isTerminal && (canManage || canApprove))
+                  OutlinedButton.icon(
+                    onPressed: _mutating ? null : _handleCancel,
+                    icon: const Icon(Icons.cancel_outlined, size: 16),
+                    label: const Text('Cancel Order'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppTheme.danger,
+                    ),
+                  ),
+
+                // 4. Reconcile (crashed conversion recovery)
+                if (order.isConverted &&
+                    order.convertedSaleId == null &&
+                    canConvert)
+                  FilledButton.icon(
+                    onPressed: _mutating ? null : _handleReconcile,
+                    icon: const Icon(Icons.build_circle_outlined, size: 16),
+                    label: const Text('Reconcile Conversion'),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: AppTheme.warning,
+                    ),
+                  ),
+
+                // 5. Open Invoice (when converted)
+                if (order.convertedSaleId != null)
+                  FilledButton.icon(
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) =>
+                              SaleDetailScreen(saleId: order.convertedSaleId!),
+                        ),
+                      );
+                    },
+                    icon: const Icon(Icons.receipt_long_outlined, size: 16),
+                    label: const Text('Open Converted Invoice'),
+                  ),
+
+                // 6. Approve (when submitted)
+                if (order.isSubmitted && canApprove)
+                  Tooltip(
+                    message: hasBlocking
+                        ? '$blockingCount problem(s) must be resolved before approval'
+                        : 'Approve order for invoice conversion',
+                    child: FilledButton.icon(
+                      onPressed: (_mutating || hasBlocking)
+                          ? null
+                          : _handleApprove,
+                      icon: const Icon(
+                        Icons.check_circle_outline_rounded,
+                        size: 16,
+                      ),
+                      label: Text(
+                        hasBlocking
+                            ? 'Approve ($blockingCount issues)'
+                            : 'Approve Order',
+                      ),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: AppTheme.success,
+                      ),
+                    ),
+                  ),
+
+                // 7. Create Sale from Order (when approved)
+                if (order.isApproved && canConvert)
+                  FilledButton.icon(
+                    onPressed: _mutating ? null : _handleConvertToSale,
+                    icon: const Icon(Icons.point_of_sale_rounded, size: 16),
+                    label: const Text('Create Sale from Order'),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: AppTheme.primary,
+                    ),
+                  ),
+              ],
             ),
+          ),
         ],
       ),
     );
