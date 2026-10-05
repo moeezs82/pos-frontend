@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:enterprise_pos/api/auth_service.dart';
+import 'package:enterprise_pos/api/core/api_client.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -9,6 +10,7 @@ class AuthProvider with ChangeNotifier, WidgetsBindingObserver {
   String? _token;
   Map<String, dynamic>? _user;
   bool _rememberMe = false;
+  String? _sessionNotice;
   final auth = AuthService();
   Timer? _permissionVersionTimer;
   bool _refreshingPermissions = false;
@@ -21,6 +23,11 @@ class AuthProvider with ChangeNotifier, WidgetsBindingObserver {
   Map<String, dynamic>? get user => _user;
   bool get isAuthenticated => _token != null;
   bool get rememberMe => _rememberMe;
+  String? get sessionNotice => _sessionNotice;
+
+  void clearSessionNotice() {
+    _sessionNotice = null;
+  }
 
   bool get isMasterAdmin => _readBool(_user?['is_master_admin']);
   int? get activeBranchId => _readInt(_user?['branch_id']) ?? _readInt(_asMap(_user?['branch'])?['id']);
@@ -93,10 +100,13 @@ class AuthProvider with ChangeNotifier, WidgetsBindingObserver {
   }
 
   /// Local-only, no server call. Use this for 401 auto sign-out.
-  Future<void> forceLogout() async {
+  Future<void> forceLogout({String? notice}) async {
     _stopPermissionMonitoring();
     _token = null;
     _user = null;
+    if (notice != null && notice.isNotEmpty) {
+      _sessionNotice = notice;
+    }
 
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('token');
@@ -139,6 +149,14 @@ class AuthProvider with ChangeNotifier, WidgetsBindingObserver {
       await refreshMe();
       _startPermissionMonitoring();
       return;
+    } on ApiException catch (e) {
+      if (e.isAuthFailure) {
+        await forceLogout(
+          notice: 'Your session has expired. Please sign in again to continue.',
+        );
+        return;
+      }
+      _user = _normalizeUser({...?_user, 'is_master_admin': false});
     } catch (_) {
       _user = _normalizeUser({...?_user, 'is_master_admin': false});
     }

@@ -78,6 +78,12 @@ class ApiClient {
   /// regardless of which service created it — fires the same interceptor.
   static void Function(Map<String, dynamic> body)? onSubscriptionExpired;
 
+  /// Notifies the auth layer when an endpoint rejects the request as
+  /// unauthenticated (401 or session timeout 419). This allows the application
+  /// to perform a clean auto sign-out and redirect to the login screen with a
+  /// user-friendly message rather than showing a subscription expired error.
+  static Future<void> Function(String message)? onUnauthorized;
+
   /// Notifies the auth layer when server-side authorization rejects a request.
   /// This lets the app refresh permissions immediately after another admin
   /// changes the current user's role instead of trusting stale local flags.
@@ -154,6 +160,9 @@ class ApiClient {
       }
     } catch (_) {
       // Response is probably binary or plain text. Use generic error below.
+    }
+    if ((res.statusCode == 401 || res.statusCode == 419) && ApiClient.onUnauthorized != null) {
+      unawaited(ApiClient.onUnauthorized!.call(apiMessage ?? 'Your session has expired. Please sign in again to continue.'));
     }
     throw Exception(apiMessage ?? "Download failed: ${res.statusCode}");
   }
@@ -270,6 +279,12 @@ class ApiClient {
           code == 'BRANCH_SUBSCRIPTION_NOT_CONFIGURED') {
         ApiClient.onSubscriptionExpired?.call(decoded);
       }
+    }
+
+    if ((res.statusCode == 401 || res.statusCode == 419) && ApiClient.onUnauthorized != null) {
+      final authMessage = decoded?['message']?.toString() ??
+          'Your session has expired. Please sign in again to continue.';
+      unawaited(ApiClient.onUnauthorized!.call(authMessage));
     }
 
     if (res.statusCode == 403 && decoded != null && ApiClient.onForbidden != null) {

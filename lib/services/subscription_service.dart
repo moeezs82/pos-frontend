@@ -56,6 +56,12 @@ class SubscriptionService {
       await _cacheStatus(status);
       return status;
     } on ApiException catch (e) {
+      // If authentication failed (401/419), do not treat it as a subscription
+      // issue or cache an expired/locked state. The ApiClient.onUnauthorized
+      // interceptor handles the session expiry and login redirect.
+      if (e.isAuthFailure) {
+        rethrow;
+      }
       // 402 — the server confirmed the branch is locked.  Build a typed locked
       // status from the response body so the lock screen shows the right message
       // without a separate status call.  Both error codes are handled the same way.
@@ -65,7 +71,7 @@ class SubscriptionService {
         await _cacheStatus(locked);
         return locked;
       }
-      // For other errors (network, 401, etc.) fall back to cache.
+      // For other errors (transient network, timeout, etc.) fall back to cache.
       return getCachedStatus(branchId);
     } catch (_) {
       return getCachedStatus(branchId);
