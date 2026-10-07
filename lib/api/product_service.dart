@@ -58,8 +58,13 @@ class ProductService {
     int page = 1,
     String? search,
     int? vendorId,
+    bool strictVendor = false,
     int? categoryId,
     int? brandId,
+    String? stockStatus,
+    bool mostSale = false,
+    String? sortBy,
+    String? sortOrder,
     int per_page = 20,
   }) async {
     final queryParams = {
@@ -67,8 +72,13 @@ class ProductService {
       "per_page": per_page.toString(),
       if (search != null && search.isNotEmpty) "search": search,
       if (vendorId != null) "vendor_id": vendorId.toString(),
+      if (vendorId != null && strictVendor) "strict_vendor": "1",
       if (categoryId != null) "category_id": categoryId.toString(),
       if (brandId != null) "brand_id": brandId.toString(),
+      if (stockStatus != null && stockStatus.isNotEmpty) "stock_status": stockStatus,
+      if (mostSale) "most_sale": "1",
+      if (sortBy != null && sortBy.isNotEmpty) "sort_by": sortBy,
+      if (sortOrder != null && sortOrder.isNotEmpty) "sort_order": sortOrder,
     };
     return await _client.get("/products", query: queryParams);
   }

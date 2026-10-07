@@ -1074,8 +1074,10 @@ class CatalogCacheService {
     String query, {
     int? branchId,
     int? vendorId,
+    bool strictVendor = false,
     int? categoryId,
     int? brandId,
+    String? stockStatus,
     int limit = 50,
   }) async {
     final db = await _database;
@@ -1088,8 +1090,13 @@ class CatalogCacheService {
       args.add(branchId);
     }
     if (vendorId != null) {
-      where.add('(vendor_id = ? OR vendor_id IS NULL)');
-      args.add(vendorId);
+      if (strictVendor) {
+        where.add('vendor_id = ?');
+        args.add(vendorId);
+      } else {
+        where.add('(vendor_id = ? OR vendor_id IS NULL)');
+        args.add(vendorId);
+      }
     }
     if (categoryId != null) {
       where.add('category_id = ?');

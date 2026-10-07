@@ -23,6 +23,9 @@ class ProductStock {
     if (product.containsKey('_transaction_stock_qty')) {
       return _asDouble(product['_transaction_stock_qty']);
     }
+    if (product.containsKey('_group_stock')) {
+      return _asDouble(product['_group_stock']);
+    }
 
     final branchStock = product['branch_stock'];
     final fromBranch = _quantityFrom(branchStock);
