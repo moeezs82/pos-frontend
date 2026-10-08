@@ -5,6 +5,7 @@ import 'package:enterprise_pos/api/core/api_client.dart';
 import 'package:enterprise_pos/api/sale_service.dart';
 import 'package:enterprise_pos/models/sale_receipt_item.dart';
 import 'package:enterprise_pos/models/item_discount_display.dart';
+import 'package:enterprise_pos/models/whatsapp_invoice_format.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/providers/printer_config_provider.dart';
 import 'package:enterprise_pos/providers/payment_method_provider.dart';
@@ -16,6 +17,9 @@ import 'package:provider/provider.dart';
 import 'package:enterprise_pos/services/thermal_printer_service.dart';
 import 'package:enterprise_pos/services/local_printer_service.dart';
 import 'package:enterprise_pos/services/receipt_preview_service.dart';
+import 'package:enterprise_pos/services/whatsapp_invoice_service.dart';
+import 'package:enterprise_pos/services/whatsapp_message_template_service.dart';
+import 'package:enterprise_pos/utils/customer_phone_utils.dart';
 
 // parts
 import 'package:enterprise_pos/screens/sales/parts/sale_items_section.dart';
@@ -234,10 +238,10 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
     }
   }
 
-  /* ====================== Print ====================== */
+  /* ====================== WhatsApp & Print ====================== */
 
-  Future<void> _printInvoice() async {
-    if (_sale == null) return;
+  _SaleReceiptData? _extractReceiptData() {
+    if (_sale == null) return null;
 
     double _d(v) => double.tryParse(v?.toString() ?? '') ?? 0.0;
 
@@ -419,6 +423,48 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
       );
     }).toList();
 
+    var defaultPhone = (customerSnap['phone'] ?? '').toString().trim();
+    if (defaultPhone.isEmpty) {
+      final c = sale['customer'];
+      if (c is Map) {
+        defaultPhone = (c['phone'] ?? c['mobile'] ?? c['mobile_no'] ?? '').toString().trim();
+      }
+    }
+    if (defaultPhone.isEmpty) {
+      defaultPhone = (sale['phone'] ?? '').toString().trim();
+    }
+
+    final c = sale['customer'];
+    final secondaryPhones = c is Map
+        ? CustomerPhoneUtils.secondaryPhones(c['phone_numbers'])
+        : <String>[];
+
+    final balance = _d(sale['balance'] ?? (total - paid));
+
+    return _SaleReceiptData(
+      receiptNo: receiptNo,
+      dateTime: dateTime,
+      items: receiptItems,
+      subtotal: subtotal,
+      discount: discount,
+      tax: tax,
+      delivery: effectiveDelivery,
+      total: total,
+      paid: paid,
+      balance: balance,
+      cashReceived: cashReceived,
+      changeAmount: changeAmount,
+      printMeta: printMeta,
+      customerSnapshot: customerSnap,
+      defaultPhone: defaultPhone,
+      secondaryPhones: secondaryPhones,
+    );
+  }
+
+  Future<void> _printInvoice() async {
+    final data = _extractReceiptData();
+    if (data == null) return;
+
     final printerConfig = context.read<PrinterConfigProvider>();
 
     if (!printerConfig.isConfigured) {
@@ -441,7 +487,11 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
         : printerConfig.secondaryReceiptHeader.trim();
     final footerLines = printerConfig.footerLines;
     final footerLineStyles = printerConfig.footerLineStyles;
-    printMeta['item_discount_display'] = printerConfig.itemDiscountDisplay.value;
+
+    final printMeta = <String, dynamic>{
+      ...data.printMeta,
+      'item_discount_display': printerConfig.itemDiscountDisplay.value,
+    };
 
     debugPrint('Active printer connection: ${printerConfig.activeConnection}, template: ${mainTemplate.value}');
 
@@ -454,15 +504,15 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
           shopName: effectiveShopName,
           shopAddress: effectiveShopAddress,
           shopPhone: effectiveShopPhone,
-          receiptNo: receiptNo,
-          dateTime: dateTime,
-          items: receiptItems,
-          subtotal: subtotal,
-          discount: discount,
-          tax: tax,
-          grandTotal: total,
-          cashReceived: cashReceived,
-          changeAmount: changeAmount,
+          receiptNo: data.receiptNo,
+          dateTime: data.dateTime,
+          items: data.items,
+          subtotal: data.subtotal,
+          discount: data.discount,
+          tax: data.tax,
+          grandTotal: data.total,
+          cashReceived: data.cashReceived,
+          changeAmount: data.changeAmount,
           meta: printMeta,
           sections: mainTemplate.sections,
           paperWidth: printerConfig.mainPaperCode,
@@ -487,15 +537,15 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
             shopName: effectiveShopName,
             shopAddress: effectiveShopAddress,
             shopPhone: effectiveShopPhone,
-            receiptNo: receiptNo,
-            dateTime: dateTime,
-            items: receiptItems,
-            subtotal: subtotal,
-            discount: discount,
-            tax: tax,
-            grandTotal: total,
-            cashReceived: cashReceived,
-            changeAmount: changeAmount,
+            receiptNo: data.receiptNo,
+            dateTime: data.dateTime,
+            items: data.items,
+            subtotal: data.subtotal,
+            discount: data.discount,
+            tax: data.tax,
+            grandTotal: data.total,
+            cashReceived: data.cashReceived,
+            changeAmount: data.changeAmount,
             meta: printMeta,
             sections: secondaryTemplate.sections,
             paperWidth: secondaryTemplate.paperWidthCode,
@@ -524,15 +574,15 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
           shopName: effectiveShopName,
           shopAddress: effectiveShopAddress,
           shopPhone: effectiveShopPhone,
-          receiptNo: receiptNo,
-          dateTime: dateTime,
-          items: receiptItems,
-          subtotal: subtotal,
-          discount: discount,
-          tax: tax,
-          grandTotal: total,
-          cashReceived: cashReceived,
-          changeAmount: changeAmount,
+          receiptNo: data.receiptNo,
+          dateTime: data.dateTime,
+          items: data.items,
+          subtotal: data.subtotal,
+          discount: data.discount,
+          tax: data.tax,
+          grandTotal: data.total,
+          cashReceived: data.cashReceived,
+          changeAmount: data.changeAmount,
           meta: printMeta,
           sections: mainTemplate.sections,
           paperWidth: printerConfig.mainPaperCode,
@@ -557,15 +607,15 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
             shopName: effectiveShopName,
             shopAddress: effectiveShopAddress,
             shopPhone: effectiveShopPhone,
-            receiptNo: receiptNo,
-            dateTime: dateTime,
-            items: receiptItems,
-            subtotal: subtotal,
-            discount: discount,
-            tax: tax,
-            grandTotal: total,
-            cashReceived: cashReceived,
-            changeAmount: changeAmount,
+            receiptNo: data.receiptNo,
+            dateTime: data.dateTime,
+            items: data.items,
+            subtotal: data.subtotal,
+            discount: data.discount,
+            tax: data.tax,
+            grandTotal: data.total,
+            cashReceived: data.cashReceived,
+            changeAmount: data.changeAmount,
             meta: printMeta,
             sections: secondaryTemplate.sections,
             paperWidth: secondaryTemplate.paperWidthCode,
@@ -573,7 +623,7 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
             footerLineStyles: footerLineStyles,
             receiptHeader: secondaryHeader,
             template: secondaryTemplate,
-            jobName: 'Secondary Copy $receiptNo',
+            jobName: 'Secondary Copy ${data.receiptNo}',
             devCreditEnabled: printerConfig.devCreditEnabled,
             devCreditText: printerConfig.devCreditText,
           );
@@ -594,13 +644,13 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
         shopName: effectiveShopName,
         shopAddress: effectiveShopAddress,
         shopPhone: effectiveShopPhone,
-        receiptNo: receiptNo,
-        dateTime: dateTime,
-        items: receiptItems,
-        subtotal: subtotal,
-        discount: discount,
-        tax: tax,
-        grandTotal: total,
+        receiptNo: data.receiptNo,
+        dateTime: data.dateTime,
+        items: data.items,
+        subtotal: data.subtotal,
+        discount: data.discount,
+        tax: data.tax,
+        grandTotal: data.total,
         meta: printMeta,
         sections: mainTemplate.sections,
         paperWidth: printerConfig.mainPaperCode,
@@ -617,6 +667,156 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
         devCreditText: printerConfig.devCreditText,
       );
     }
+  }
+
+  Future<void> _openSendWhatsAppInvoiceDialog() async {
+    final data = _extractReceiptData();
+    if (data == null) return;
+
+    final printerConfig = context.read<PrinterConfigProvider>();
+    if (!printerConfig.isConfigured) {
+      try {
+        final token = context.read<AuthProvider>().token;
+        if (token != null) await printerConfig.refresh(token);
+      } catch (e, s) {
+        debugPrint('Printer config refresh failed: $e');
+        debugPrintStack(stackTrace: s);
+      }
+    }
+
+    final effectiveShopName = printerConfig.shopName.isNotEmpty
+        ? printerConfig.shopName
+        : 'My Shop';
+    final effectiveShopAddress = printerConfig.shopAddress.isNotEmpty
+        ? printerConfig.shopAddress
+        : null;
+    final effectiveShopPhone = printerConfig.shopPhone.isNotEmpty
+        ? printerConfig.shopPhone
+        : null;
+    final footerLines = printerConfig.footerLines;
+    final footerLineStyles = printerConfig.footerLineStyles;
+
+    final rawCustomerBalance = _sale?['customer_balance'] ??
+        _sale?['customer']?['current_balance'] ??
+        _sale?['customer']?['balance'];
+
+    String renderMessageForFormat(WhatsAppInvoiceFormat format) {
+      return WhatsAppMessageTemplateService.render(
+        template: printerConfig.whatsappMessageTemplate,
+        showCustomerBalance: printerConfig.whatsappShowCustomerBalance,
+        values: {
+          'customer_name': (data.customerSnapshot['name'] ?? '').toString().trim(),
+          'customer_code': (data.customerSnapshot['customer_code'] ?? '').toString().trim(),
+          'invoice_no': data.receiptNo,
+          'invoice_amount': data.total.toStringAsFixed(2),
+          'amount_paid': data.paid.toStringAsFixed(2),
+          'invoice_balance': data.balance.toStringAsFixed(2),
+          'customer_balance': rawCustomerBalance == null
+              ? ''
+              : (double.tryParse(rawCustomerBalance.toString()) ?? 0.0)
+                  .toStringAsFixed(2),
+          'business_name': effectiveShopName,
+          'date': '${data.dateTime.day.toString().padLeft(2, '0')}/'
+              '${data.dateTime.month.toString().padLeft(2, '0')}/'
+              '${data.dateTime.year}',
+          'currency': AppCurrency.currency,
+          'attachment_format': format.label,
+        },
+      );
+    }
+
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => _SendWhatsAppInvoiceDialog(
+        receiptData: data,
+        initialFormat: printerConfig.whatsappInvoiceFormat,
+        initialPhone: data.defaultPhone,
+        secondaryPhones: data.secondaryPhones,
+        initialMessageBuilder: renderMessageForFormat,
+        onSend: ({
+          required String phone,
+          required WhatsAppInvoiceFormat format,
+          required String message,
+        }) async {
+          final whatsappTemplate = printerConfig.whatsappInvoiceTemplate;
+          final whatsappPaperCode = printerConfig.whatsappPaperCode;
+
+          final printMeta = <String, dynamic>{
+            ...data.printMeta,
+            'item_discount_display': printerConfig.itemDiscountDisplay.value,
+          };
+
+          final pdfBytes = await ReceiptPreviewService.instance.buildReceiptPdf(
+            shopName: effectiveShopName,
+            shopAddress: effectiveShopAddress,
+            shopPhone: effectiveShopPhone,
+            receiptNo: data.receiptNo,
+            dateTime: data.dateTime,
+            items: data.items,
+            subtotal: data.subtotal,
+            discount: data.discount,
+            tax: data.tax,
+            grandTotal: data.total,
+            meta: printMeta,
+            sections: whatsappTemplate.sections,
+            paperWidth: whatsappPaperCode,
+            footerLines: footerLines,
+            footerLineStyles: footerLineStyles,
+            invoiceHeading: printerConfig.invoiceHeading,
+            showLogo: printerConfig.printLogoEnabled &&
+                whatsappTemplate.isCustomerFacing,
+            logoData: printerConfig.printLogoData,
+            showQr: printerConfig.qrCodeEnabled &&
+                whatsappTemplate.isCustomerFacing,
+            qrUrl: printerConfig.qrCodeUrl,
+            qrCaption: printerConfig.qrCodeCaption,
+            template: whatsappTemplate,
+            devCreditEnabled: printerConfig.devCreditEnabled,
+            devCreditText: printerConfig.devCreditText,
+          );
+
+          final prepared =
+              await WhatsAppInvoiceService.instance.prepareAttachment(
+            pdfBytes: pdfBytes,
+            receiptNo: data.receiptNo,
+            phone: phone,
+            format: format,
+          );
+
+          final copied = await WhatsAppInvoiceService.instance
+              .copyFilesToClipboard(prepared.attachmentPaths);
+
+          await WhatsAppInvoiceService.instance.openChat(
+            phone: prepared.normalizedPhone,
+            message: message,
+          );
+
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              duration: const Duration(seconds: 5),
+              content: Text(
+                copied
+                    ? '${data.receiptNo}: WhatsApp opened. Press Ctrl+V, then Send.'
+                    : '${data.receiptNo}: WhatsApp opened. Clipboard copy failed; folder opened for ${prepared.attachmentDescription}.',
+              ),
+              action: SnackBarAction(
+                label: 'Open Folder',
+                onPressed: () => WhatsAppInvoiceService.instance
+                    .openInvoiceFolder(prepared.primaryPath),
+              ),
+            ),
+          );
+
+          if (!copied) {
+            await WhatsAppInvoiceService.instance
+                .openInvoiceFolder(prepared.primaryPath);
+          }
+        },
+      ),
+    );
   }
 
   /* ====================== Build ====================== */
@@ -643,6 +843,17 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
         appBar: AppBar(
           title: const Text("Sale Detail"),
           actions: [
+            if (!_loading &&
+                _sale != null &&
+                context.watch<AuthProvider>().hasAddon('whatsapp_invoice'))
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+                child: OutlinedButton.icon(
+                  onPressed: _openSendWhatsAppInvoiceDialog,
+                  icon: const Icon(Icons.chat_rounded, size: 17, color: Color(0xFF25D366)),
+                  label: const Text('WhatsApp'),
+                ),
+              ),
             if (!_loading &&
                 _sale != null &&
                 context.watch<AuthProvider>().hasPermission('refund-sale'))
@@ -774,6 +985,12 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
                                         .onSecondaryContainer,
                                   ),
                                 ),
+                              ),
+                            if (context.watch<AuthProvider>().hasAddon('whatsapp_invoice'))
+                              IconButton(
+                                tooltip: 'Send invoice via WhatsApp',
+                                icon: const Icon(Icons.chat_rounded, color: Color(0xFF25D366)),
+                                onPressed: _openSendWhatsAppInvoiceDialog,
                               ),
                             IconButton(
                               tooltip: 'Print current invoice revision',
@@ -1755,4 +1972,441 @@ class _HistoryMetric extends StatelessWidget {
     );
   }
 }
+
+class _SaleReceiptData {
+  final String receiptNo;
+  final DateTime dateTime;
+  final List<SaleReceiptItem> items;
+  final double subtotal;
+  final double discount;
+  final double tax;
+  final double delivery;
+  final double total;
+  final double paid;
+  final double balance;
+  final double cashReceived;
+  final double changeAmount;
+  final Map<String, dynamic> printMeta;
+  final Map<String, dynamic> customerSnapshot;
+  final String defaultPhone;
+  final List<String> secondaryPhones;
+
+  const _SaleReceiptData({
+    required this.receiptNo,
+    required this.dateTime,
+    required this.items,
+    required this.subtotal,
+    required this.discount,
+    required this.tax,
+    required this.delivery,
+    required this.total,
+    required this.paid,
+    required this.balance,
+    required this.cashReceived,
+    required this.changeAmount,
+    required this.printMeta,
+    required this.customerSnapshot,
+    required this.defaultPhone,
+    required this.secondaryPhones,
+  });
+}
+
+class _SendWhatsAppInvoiceDialog extends StatefulWidget {
+  final _SaleReceiptData receiptData;
+  final WhatsAppInvoiceFormat initialFormat;
+  final String initialPhone;
+  final List<String> secondaryPhones;
+  final String Function(WhatsAppInvoiceFormat format) initialMessageBuilder;
+  final Future<void> Function({
+    required String phone,
+    required WhatsAppInvoiceFormat format,
+    required String message,
+  }) onSend;
+
+  const _SendWhatsAppInvoiceDialog({
+    required this.receiptData,
+    required this.initialFormat,
+    required this.initialPhone,
+    required this.secondaryPhones,
+    required this.initialMessageBuilder,
+    required this.onSend,
+  });
+
+  @override
+  State<_SendWhatsAppInvoiceDialog> createState() =>
+      _SendWhatsAppInvoiceDialogState();
+}
+
+class _SendWhatsAppInvoiceDialogState extends State<_SendWhatsAppInvoiceDialog> {
+  late final TextEditingController _phoneController;
+  late final TextEditingController _messageController;
+  late WhatsAppInvoiceFormat _format;
+  bool _submitting = false;
+  String? _errorMessage;
+  bool _userEditedMessage = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _format = widget.initialFormat;
+    _phoneController = TextEditingController(text: widget.initialPhone);
+    _messageController = TextEditingController(
+      text: widget.initialMessageBuilder(widget.initialFormat),
+    );
+  }
+
+  @override
+  void dispose() {
+    _phoneController.dispose();
+    _messageController.dispose();
+    super.dispose();
+  }
+
+  void _onFormatChanged(WhatsAppInvoiceFormat newFormat) {
+    setState(() {
+      _format = newFormat;
+      if (!_userEditedMessage) {
+        _messageController.text = widget.initialMessageBuilder(newFormat);
+      }
+    });
+  }
+
+  Future<void> _handleSend() async {
+    setState(() {
+      _errorMessage = null;
+    });
+
+    final rawPhone = _phoneController.text.trim();
+    if (rawPhone.isEmpty) {
+      setState(() {
+        _errorMessage = 'Please enter a WhatsApp phone number.';
+      });
+      return;
+    }
+
+    String normalizedPhone;
+    try {
+      normalizedPhone =
+          WhatsAppInvoiceService.instance.normalizePhone(rawPhone);
+    } on FormatException catch (e) {
+      setState(() {
+        _errorMessage = e.message;
+      });
+      return;
+    } catch (e) {
+      setState(() {
+        _errorMessage = 'Invalid phone number format.';
+      });
+      return;
+    }
+
+    setState(() => _submitting = true);
+
+    try {
+      await widget.onSend(
+        phone: normalizedPhone,
+        format: _format,
+        message: _messageController.text.trim(),
+      );
+      if (mounted) {
+        Navigator.of(context).pop();
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _submitting = false;
+          _errorMessage = 'Failed to send WhatsApp invoice: $e';
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final customerName = (widget.receiptData.customerSnapshot['name'] ?? '')
+        .toString()
+        .trim();
+
+    return Dialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 520),
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Header
+              Row(
+                children: [
+                  Container(
+                    width: 42,
+                    height: 42,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF25D366).withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Icon(
+                      Icons.chat_rounded,
+                      color: Color(0xFF25D366),
+                      size: 24,
+                    ),
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Send WhatsApp Invoice',
+                          style: TextStyle(
+                            fontSize: 17,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          'Invoice: ${widget.receiptData.receiptNo}${customerName.isNotEmpty ? ' • $customerName' : ''}',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: _submitting ? null : () => Navigator.of(context).pop(),
+                    icon: const Icon(Icons.close_rounded),
+                    tooltip: 'Close',
+                  ),
+                ],
+              ),
+              const SizedBox(height: 18),
+
+              // Error display if any
+              if (_errorMessage != null) ...[
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.errorContainer.withValues(alpha: 0.4),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: theme.colorScheme.error.withValues(alpha: 0.5),
+                    ),
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(
+                        Icons.error_outline_rounded,
+                        color: theme.colorScheme.error,
+                        size: 18,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          _errorMessage!,
+                          style: TextStyle(
+                            fontSize: 12.5,
+                            color: theme.colorScheme.onErrorContainer,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+              ],
+
+              // Phone number
+              Text(
+                'Customer Phone (WhatsApp)',
+                style: theme.textTheme.labelMedium?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 6),
+              TextField(
+                controller: _phoneController,
+                enabled: !_submitting,
+                keyboardType: TextInputType.phone,
+                decoration: InputDecoration(
+                  prefixIcon: const Icon(Icons.phone_outlined, size: 20),
+                  hintText: '03001234567 or 923001234567',
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 12,
+                  ),
+                  helperText: 'Local 03xx numbers are automatically formatted to Pakistan +92.',
+                  helperMaxLines: 2,
+                ),
+              ),
+
+              // Secondary phones chips if available
+              if (widget.secondaryPhones.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 4,
+                  children: [
+                    Text(
+                      'Other numbers: ',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: theme.colorScheme.onSurfaceVariant,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    ...widget.secondaryPhones.map(
+                      (phone) => ActionChip(
+                        label: Text(phone, style: const TextStyle(fontSize: 11)),
+                        avatar: const Icon(Icons.phone, size: 12),
+                        padding: EdgeInsets.zero,
+                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        onPressed: _submitting
+                            ? null
+                            : () {
+                                _phoneController.text = phone;
+                                setState(() => _errorMessage = null);
+                              },
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+              const SizedBox(height: 16),
+
+              // Attachment format
+              Text(
+                'Attachment Format',
+                style: theme.textTheme.labelMedium?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 6),
+              SegmentedButton<WhatsAppInvoiceFormat>(
+                segments: const [
+                  ButtonSegment(
+                    value: WhatsAppInvoiceFormat.pdf,
+                    label: Text('PDF Document'),
+                    icon: Icon(Icons.picture_as_pdf_outlined, size: 16),
+                  ),
+                  ButtonSegment(
+                    value: WhatsAppInvoiceFormat.jpg,
+                    label: Text('JPG Image'),
+                    icon: Icon(Icons.image_outlined, size: 16),
+                  ),
+                ],
+                selected: {_format},
+                onSelectionChanged: _submitting
+                    ? null
+                    : (selection) => _onFormatChanged(selection.first),
+              ),
+              const SizedBox(height: 16),
+
+              // Message
+              Text(
+                'Message',
+                style: theme.textTheme.labelMedium?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 6),
+              TextField(
+                controller: _messageController,
+                enabled: !_submitting,
+                maxLines: 4,
+                minLines: 3,
+                onChanged: (_) => _userEditedMessage = true,
+                decoration: InputDecoration(
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  contentPadding: const EdgeInsets.all(12),
+                  hintText: 'WhatsApp message text...',
+                ),
+              ),
+              const SizedBox(height: 14),
+
+              // Clipboard Info Box
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                decoration: BoxDecoration(
+                  color: Colors.blue.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.blue.withValues(alpha: 0.2)),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.info_outline, size: 17, color: Colors.blue),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        'The invoice file will be copied to your clipboard. When WhatsApp opens, press Ctrl+V to attach it, then Send.',
+                        style: TextStyle(
+                          fontSize: 11.5,
+                          color: Colors.blue.shade900,
+                          height: 1.3,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 22),
+
+              // Actions
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  TextButton(
+                    onPressed: _submitting ? null : () => Navigator.of(context).pop(),
+                    child: const Text('Cancel'),
+                  ),
+                  const SizedBox(width: 8),
+                  FilledButton.icon(
+                    style: FilledButton.styleFrom(
+                      backgroundColor: const Color(0xFF25D366),
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 18,
+                        vertical: 11,
+                      ),
+                    ),
+                    onPressed: _submitting ? null : _handleSend,
+                    icon: _submitting
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : const Icon(Icons.chat_rounded, size: 18),
+                    label: Text(
+                      _submitting ? 'Preparing...' : 'Open WhatsApp & Send',
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 

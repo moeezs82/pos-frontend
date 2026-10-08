@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:enterprise_pos/api/common_service.dart';
 import 'package:enterprise_pos/api/product_group_service.dart';
 import 'package:enterprise_pos/api/product_service.dart';
+import 'package:enterprise_pos/api/vendor_service.dart';
 import 'package:enterprise_pos/forms/product_form_screen.dart';
 import 'package:enterprise_pos/services/catalog_cache_service.dart';
 import 'package:enterprise_pos/services/party_pick_caches.dart';
@@ -103,8 +104,12 @@ class _PurchaseProductPanelState extends State<PurchaseProductPanel> {
   final List<Map<String, dynamic>> _products = [];
   List<Map<String, dynamic>> _categories = [];
   List<Map<String, dynamic>> _brands = [];
+  List<Map<String, dynamic>> _vendors = [];
   int? _selectedCategoryId;
   int? _selectedBrandId;
+  int? _selectedVendorId;
+  String? _selectedStockStatus;
+  bool _mostSale = false;
   int _page = 1;
   int _lastPage = 1;
   bool _loading = false;
@@ -115,6 +120,7 @@ class _PurchaseProductPanelState extends State<PurchaseProductPanel> {
   late final ProductService _productService;
   late final ProductGroupService _groupService;
   late final CommonService _commonService;
+  late final VendorService _vendorService;
 
   String get _cacheKey => ProductPickCache.keyFor(vendorId: widget.vendorId);
 
@@ -125,6 +131,10 @@ class _PurchaseProductPanelState extends State<PurchaseProductPanel> {
     _productService = ProductService(token: widget.token);
     _groupService = ProductGroupService(token: widget.token);
     _commonService = CommonService(token: widget.token);
+    _vendorService = VendorService(token: widget.token);
+    if (widget.vendorId != null) {
+      _selectedVendorId = widget.vendorId;
+    }
 
     // Cache-first: show whatever was warmed by PartyPrefetch instantly.
     final cached = ProductPickCache.cache.peek(_cacheKey);
@@ -135,7 +145,7 @@ class _PurchaseProductPanelState extends State<PurchaseProductPanel> {
     }
 
     _fetchProducts(page: 1, silent: cached != null);
-    _fetchCategoriesAndBrands();
+    _fetchFilterData();
 
     // When the parent supplies a search controller (the search bar lives in
     // the left panel), listen to its changes so typing there filters the grid.
@@ -153,6 +163,9 @@ class _PurchaseProductPanelState extends State<PurchaseProductPanel> {
     if (oldWidget.vendorId != widget.vendorId) {
       _selectedCategoryId = null;
       _selectedBrandId = null;
+      _selectedVendorId = widget.vendorId;
+      _selectedStockStatus = null;
+      _mostSale = false;
       _searchCtrl.clear();
       _search = '';
       _fetchProducts(page: 1, replace: true);
@@ -183,8 +196,14 @@ class _PurchaseProductPanelState extends State<PurchaseProductPanel> {
     }
 
     try {
-      final hasServerFilters =
-          _selectedCategoryId != null || _selectedBrandId != null;
+      final effectiveVendorId = _selectedVendorId ?? widget.vendorId;
+      final strictVendor = _selectedVendorId != null;
+      final hasServerFilters = _selectedCategoryId != null ||
+          _selectedBrandId != null ||
+          _selectedVendorId != null ||
+          _selectedStockStatus != null ||
+          _mostSale;
+
       final entry = _search.isEmpty && !hasServerFilters
           ? await ProductPickCache.cache.refresh(
               _cacheKey,
@@ -201,9 +220,12 @@ class _PurchaseProductPanelState extends State<PurchaseProductPanel> {
               _productService,
               page: page,
               search: _search,
-              vendorId: widget.vendorId,
+              vendorId: effectiveVendorId,
+              strictVendor: strictVendor,
               categoryId: _selectedCategoryId,
               brandId: _selectedBrandId,
+              stockStatus: _selectedStockStatus,
+              mostSale: _mostSale,
               perPage: 60,
             );
 
@@ -215,19 +237,17 @@ class _PurchaseProductPanelState extends State<PurchaseProductPanel> {
         _lastPage = entry.lastPage;
       });
     } catch (_) {
-      // Offline / server-unreachable fallback: query the local SQLite catalog
-      // so the grid stays usable when the server is down.  All matching
-      // products are loaded into a single virtual page (pagination bar hides
-      // automatically when _lastPage ≤ 1) so the user can search to filter
-      // rather than paginating.  The server-side pagination resumes the next
-      // time connectivity is restored and _fetchProducts succeeds.
       try {
+        final effectiveVendorId = _selectedVendorId ?? widget.vendorId;
+        final strictVendor = _selectedVendorId != null;
         final offlineItems = await CatalogCacheService.instance.searchProducts(
           _search,
           branchId: widget.branchId,
-          vendorId: widget.vendorId,
+          vendorId: effectiveVendorId,
+          strictVendor: strictVendor,
           categoryId: _selectedCategoryId,
           brandId: _selectedBrandId,
+          stockStatus: _selectedStockStatus,
           limit: 500,
         );
         if (mounted && requestId == _fetchRequestId) {
@@ -251,6 +271,11 @@ class _PurchaseProductPanelState extends State<PurchaseProductPanel> {
     }
   }
 
+  Future<void> _fetchFilterData() async {
+    _fetchCategoriesAndBrands();
+    _fetchVendors();
+  }
+
   Future<void> _fetchCategoriesAndBrands() async {
     try {
       final cats = await _commonService.getCategories();
@@ -259,6 +284,26 @@ class _PurchaseProductPanelState extends State<PurchaseProductPanel> {
     try {
       final brands = await _commonService.getBrands();
       if (mounted) setState(() => _brands = brands);
+    } catch (_) {}
+  }
+
+  Future<void> _fetchVendors() async {
+    try {
+      final res = await _vendorService.getVendors(
+        perPage: 200,
+        branchId: widget.branchId,
+      );
+      final list = (res['data']?['vendors'] ??
+          res['data']?['data'] ??
+          res['data']) as List?;
+      if (list != null && mounted) {
+        setState(() {
+          _vendors = list
+              .whereType<Map>()
+              .map((e) => Map<String, dynamic>.from(e))
+              .toList();
+        });
+      }
     } catch (_) {}
   }
 
@@ -297,15 +342,47 @@ class _PurchaseProductPanelState extends State<PurchaseProductPanel> {
   void _onCategoryFilterChanged(int? value) {
     if (_selectedCategoryId == value) return;
     setState(() => _selectedCategoryId = value);
-    // Filters are authoritative server queries online and equivalent local-SQL
-    // queries offline. silent=true keeps the current grid visible while the
-    // new result replaces it and also allows a filter change during startup.
     _fetchProducts(page: 1, replace: true, silent: true);
   }
 
   void _onBrandFilterChanged(int? value) {
     if (_selectedBrandId == value) return;
     setState(() => _selectedBrandId = value);
+    _fetchProducts(page: 1, replace: true, silent: true);
+  }
+
+  void _onVendorFilterChanged(int? value) {
+    if (_selectedVendorId == value) return;
+    setState(() => _selectedVendorId = value);
+    _fetchProducts(page: 1, replace: true, silent: true);
+  }
+
+  void _onStockStatusFilterChanged(String? value) {
+    if (_selectedStockStatus == value) return;
+    setState(() => _selectedStockStatus = value);
+    _fetchProducts(page: 1, replace: true, silent: true);
+  }
+
+  void _onToggleMostSale() {
+    setState(() => _mostSale = !_mostSale);
+    _fetchProducts(page: 1, replace: true, silent: true);
+  }
+
+  void _onClearAllFilters() {
+    if (_selectedCategoryId == null &&
+        _selectedBrandId == null &&
+        _selectedVendorId == null &&
+        _selectedStockStatus == null &&
+        !_mostSale) {
+      return;
+    }
+    setState(() {
+      _selectedCategoryId = null;
+      _selectedBrandId = null;
+      _selectedVendorId = null;
+      _selectedStockStatus = null;
+      _mostSale = false;
+    });
     _fetchProducts(page: 1, replace: true, silent: true);
   }
 
@@ -329,6 +406,31 @@ class _PurchaseProductPanelState extends State<PurchaseProductPanel> {
         final bid = _asInt(p['brand_id'] ?? p['brand']?['id']);
         return bid == _selectedBrandId;
       }).toList();
+    }
+    if (_selectedVendorId != null) {
+      list = list.where((p) {
+        final vid = _asInt(p['vendor_id'] ?? p['vendor']?['id']);
+        return vid == _selectedVendorId;
+      }).toList();
+    }
+    if (_selectedStockStatus != null) {
+      if (_selectedStockStatus == 'in_stock') {
+        list = list.where((p) {
+          final qty = ProductStock.quantity(p);
+          return qty != null && qty > 0;
+        }).toList();
+      } else if (_selectedStockStatus == 'out_of_stock') {
+        list = list.where((p) {
+          final qty = ProductStock.quantity(p);
+          return qty != null && qty <= 0;
+        }).toList();
+      } else if (_selectedStockStatus == 'low_stock') {
+        list = list.where((p) {
+          final qty = ProductStock.quantity(p);
+          final reorder = _asDouble(p['reorder_level']) ?? 0;
+          return qty != null && qty <= reorder;
+        }).toList();
+      }
     }
     return _collapseVariantFamilies(list);
   }
@@ -382,6 +484,8 @@ class _PurchaseProductPanelState extends State<PurchaseProductPanel> {
         'image_url': _imageUrl(first),
         'category_id': first['category_id'] ?? first['category']?['id'],
         'brand_id': first['brand_id'] ?? first['brand']?['id'],
+        'vendor_id': first['vendor_id'] ?? first['vendor']?['id'],
+        'reorder_level': first['reorder_level'],
         '_offline': siblings.every((p) => p['_offline'] == true),
       });
     }
@@ -645,52 +749,160 @@ class _PurchaseProductPanelState extends State<PurchaseProductPanel> {
     );
   }
 
-  // ── Filter row: Category + Brand dropdowns ───────────────────────────────
+  // ── Filter row: Category, Brand, Vendor, Stock Status, Most Sale ─────────
   Widget _buildFilterRow() {
-    // Always show the row so the dropdowns are always reachable.
-    // Items will just say "All Categories / All Brands" when data isn't loaded.
+    final hasActiveFilters = _selectedCategoryId != null ||
+        _selectedBrandId != null ||
+        _selectedVendorId != null ||
+        _selectedStockStatus != null ||
+        _mostSale;
+
     return Container(
-      padding: const EdgeInsets.fromLTRB(10, 5, 10, 5),
+      padding: const EdgeInsets.fromLTRB(10, 6, 10, 6),
       decoration: const BoxDecoration(
         color: Color(0xFFF5F5F5),
         border: Border(bottom: BorderSide(color: AppTheme.border)),
       ),
-      child: Row(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          // ── Category dropdown ──────────────────────────────────────────
-          Expanded(
-            child: _StyledDropdown<int?>(
-              value: _selectedCategoryId,
-              hint: 'All Categories',
-              items: [
-                const _DropdownOption(value: null, label: 'All Categories'),
-                ..._categories.map(
-                  (cat) => _DropdownOption(
-                    value: _asInt(cat['id']),
-                    label: (cat['name'] ?? '').toString(),
-                  ),
+          // Row 1: Category + Brand
+          Row(
+            children: [
+              Expanded(
+                child: _StyledDropdown<int?>(
+                  value: _selectedCategoryId,
+                  hint: 'All Categories',
+                  items: [
+                    const _DropdownOption(value: null, label: 'All Categories'),
+                    ..._categories.map(
+                      (cat) => _DropdownOption(
+                        value: _asInt(cat['id']),
+                        label: (cat['name'] ?? '').toString(),
+                      ),
+                    ),
+                  ],
+                  onChanged: _onCategoryFilterChanged,
                 ),
-              ],
-              onChanged: _onCategoryFilterChanged,
-            ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _StyledDropdown<int?>(
+                  value: _selectedBrandId,
+                  hint: 'All Brands',
+                  items: [
+                    const _DropdownOption(value: null, label: 'All Brands'),
+                    ..._brands.map(
+                      (brand) => _DropdownOption(
+                        value: _asInt(brand['id']),
+                        label: (brand['name'] ?? '').toString(),
+                      ),
+                    ),
+                  ],
+                  onChanged: _onBrandFilterChanged,
+                ),
+              ),
+            ],
           ),
-          const SizedBox(width: 8),
-          // ── Brand dropdown ─────────────────────────────────────────────
-          Expanded(
-            child: _StyledDropdown<int?>(
-              value: _selectedBrandId,
-              hint: 'All Brands',
-              items: [
-                const _DropdownOption(value: null, label: 'All Brands'),
-                ..._brands.map(
-                  (brand) => _DropdownOption(
-                    value: _asInt(brand['id']),
-                    label: (brand['name'] ?? '').toString(),
+          const SizedBox(height: 6),
+          // Row 2: Vendor + Stock Status + Most Sale + Clear Filters
+          Row(
+            children: [
+              Expanded(
+                flex: 3,
+                child: _StyledDropdown<int?>(
+                  value: _selectedVendorId,
+                  hint: 'All Vendors',
+                  items: [
+                    const _DropdownOption(value: null, label: 'All Vendors'),
+                    ..._vendors.map(
+                      (v) => _DropdownOption(
+                        value: _asInt(v['id']),
+                        label: (v['name'] ?? '').toString(),
+                      ),
+                    ),
+                  ],
+                  onChanged: _onVendorFilterChanged,
+                ),
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                flex: 3,
+                child: _StyledDropdown<String?>(
+                  value: _selectedStockStatus,
+                  hint: 'All Stock',
+                  items: const [
+                    _DropdownOption(value: null, label: 'All Stock'),
+                    _DropdownOption(value: 'in_stock', label: 'In Stock'),
+                    _DropdownOption(value: 'low_stock', label: 'Low Stock'),
+                    _DropdownOption(value: 'out_of_stock', label: 'Out of Stock'),
+                  ],
+                  onChanged: _onStockStatusFilterChanged,
+                ),
+              ),
+              const SizedBox(width: 6),
+              Tooltip(
+                message: _mostSale ? 'Sorted by Most Sold' : 'Sort by Most Sold',
+                child: InkWell(
+                  onTap: _onToggleMostSale,
+                  borderRadius: BorderRadius.circular(4),
+                  child: Container(
+                    height: 34,
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    decoration: BoxDecoration(
+                      color: _mostSale ? AppTheme.primary : Colors.white,
+                      border: Border.all(
+                        color: _mostSale ? AppTheme.primary : const Color(0xFFCCCCCC),
+                      ),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.trending_up_rounded,
+                          size: 15,
+                          color: _mostSale ? Colors.white : const Color(0xFF555555),
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          'Most Sold',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                            color: _mostSale ? Colors.white : const Color(0xFF333333),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              if (hasActiveFilters) ...[
+                const SizedBox(width: 6),
+                Tooltip(
+                  message: 'Clear all filters',
+                  child: InkWell(
+                    onTap: _onClearAllFilters,
+                    borderRadius: BorderRadius.circular(4),
+                    child: Container(
+                      height: 34,
+                      width: 32,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFFEBEE),
+                        border: Border.all(color: const Color(0xFFFFCDD2)),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: const Icon(
+                        Icons.filter_alt_off_rounded,
+                        size: 16,
+                        color: Color(0xFFD32F2F),
+                      ),
+                    ),
                   ),
                 ),
               ],
-              onChanged: _onBrandFilterChanged,
-            ),
+            ],
           ),
         ],
       ),
