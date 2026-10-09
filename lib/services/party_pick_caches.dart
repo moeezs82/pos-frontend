@@ -242,16 +242,26 @@ class ProductPickCache {
     required int page,
     String search = '',
     int? vendorId,
+    bool strictVendor = false,
     int? categoryId,
     int? brandId,
+    String? stockStatus,
+    bool mostSale = false,
+    String? sortBy,
+    String? sortOrder,
     int perPage = 100,
   }) async {
     final data = await service.getProducts(
       page: page,
       search: search,
       vendorId: vendorId,
+      strictVendor: strictVendor,
       categoryId: categoryId,
       brandId: brandId,
+      stockStatus: stockStatus,
+      mostSale: mostSale,
+      sortBy: sortBy,
+      sortOrder: sortOrder,
       per_page: perPage,
     );
 
@@ -307,8 +317,11 @@ class ProductPickCache {
     ProductService service,
     String query, {
     int? vendorId,
+    bool strictVendor = false,
     int? categoryId,
     int? brandId,
+    String? stockStatus,
+    bool mostSale = false,
     int perPage = 25,
     int? branchId,
   }) async {
@@ -318,8 +331,11 @@ class ProductPickCache {
         page: 1,
         search: query,
         vendorId: vendorId,
+        strictVendor: strictVendor,
         categoryId: categoryId,
         brandId: brandId,
+        stockStatus: stockStatus,
+        mostSale: mostSale,
         perPage: perPage,
       );
       return entry.items;
@@ -329,8 +345,10 @@ class ProductPickCache {
             query,
             branchId: branchId,
             vendorId: vendorId,
+            strictVendor: strictVendor,
             categoryId: categoryId,
             brandId: brandId,
+            stockStatus: stockStatus,
             limit: perPage,
           );
     }

@@ -194,6 +194,7 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
     final unitCost = _purchaseUnitCost(product);
     final row = <String, dynamic>{
       'product_id': productId,
+      'product_vendor_id': int.tryParse(product['vendor_id']?.toString() ?? ''),
       'name': product['name'] ?? product['title'] ?? 'Unnamed product',
       'cost_price': product['cost_price'],
       'wholesale_price': product['wholesale_price'],
@@ -301,8 +302,27 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
       _selectedVendorId = vendor?['id'] is int
           ? vendor!['id'] as int
           : int.tryParse(vendor?['id']?.toString() ?? '');
-      _items = [];
     });
+    _pruneItemsForVendor();
+  }
+
+  /// Keeps cart rows that can be bought from the selected vendor: products
+  /// with no vendor (any vendor may supply them) or whose vendor matches.
+  /// Only rows tied to a different vendor are removed.
+  void _pruneItemsForVendor() {
+    final vendorId = _selectedVendorId;
+    if (vendorId == null) return;
+    final kept = _items.where((item) {
+      final pv = int.tryParse(item['product_vendor_id']?.toString() ?? '');
+      return pv == null || pv == vendorId;
+    }).toList();
+    final removed = _items.length - kept.length;
+    if (removed == 0) return;
+    setState(() => _items = kept);
+    AppFeedback.warning(
+      context,
+      '$removed item${removed == 1 ? '' : 's'} removed because ${removed == 1 ? 'it belongs' : 'they belong'} to a different vendor.',
+    );
   }
 
   Future<void> _pickVendor() async {
@@ -314,7 +334,6 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
     setState(() {
       _selectedVendor = null;
       _selectedVendorId = null;
-      _items = [];
     });
   }
 
@@ -426,6 +445,7 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
             : _toNum(existing['discount_pct'] ?? existing['discount']);
         nextBase.add({
           'product_id': productId,
+          'product_vendor_id': int.tryParse(product['vendor_id']?.toString() ?? ''),
           'name': product['name'] ?? product['title'] ?? 'Unnamed product',
           'cost_price': product['cost_price'],
           'wholesale_price': product['wholesale_price'],
@@ -477,6 +497,7 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
           : qty;
       _items.add({
         'product_id': productId,
+        'product_vendor_id': int.tryParse(product['vendor_id']?.toString() ?? ''),
         'name': product['name'] ?? product['title'] ?? 'Unnamed product',
         'cost_price': product['cost_price'],
         'wholesale_price': product['wholesale_price'],
@@ -745,15 +766,42 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
     final safeCode = code.trim();
     if (safeCode.isEmpty) return;
 
-    final product = await _productService.getProductByBarcode(safeCode, vendorId: _selectedVendorId);
+    final added = await _addProductByCode(safeCode);
     if (!mounted) return;
 
-    if (product == null) {
+    if (!added) {
       AppFeedback.warning(context, 'Product not found: $safeCode');
-      _barcodeController.clear();
-      _refocusScanner();
-      return;
     }
+    _barcodeController.clear();
+    _refocusScanner();
+  }
+
+  /// Enter pressed in the "Add product" search field on a code-like token
+  /// (what a barcode scanner types): add it to the purchase exactly as the
+  /// scan button does. Returns false when it is not a known barcode so the
+  /// field can behave as an ordinary text search.
+  Future<bool> _addProductFromSearchText(String code) async {
+    final safeCode = code.trim();
+    var added = false;
+    try {
+      added = await _addProductByCode(safeCode);
+    } catch (_) {
+      added = false;
+    }
+    if (!mounted) return true;
+    if (!added && RegExp(r'^\d{8,}$').hasMatch(safeCode)) {
+      // A long all-digit code is certainly a scan, not a name search.
+      AppFeedback.warning(context, 'Product not found: $safeCode');
+      return true;
+    }
+    return added;
+  }
+
+  /// Looks the barcode up and adds the product to the purchase (or increments
+  /// its existing row). Returns false when no product has that barcode.
+  Future<bool> _addProductByCode(String safeCode) async {
+    final product = await _productService.getProductByBarcode(safeCode, vendorId: _selectedVendorId);
+    if (!mounted || product == null) return false;
 
     final productId = int.tryParse(product['id']?.toString() ?? '') ?? 0;
     final unitCost = _purchaseUnitCost(product);
@@ -775,6 +823,7 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
       } else {
         _items.add({
           'product_id': productId,
+          'product_vendor_id': int.tryParse(product['vendor_id']?.toString() ?? ''),
           'name': product['name'] ?? 'Unnamed product',
           'cost_price': product['cost_price'],
           'wholesale_price': product['wholesale_price'],
@@ -788,9 +837,7 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
         });
       }
     });
-
-    _barcodeController.clear();
-    _refocusScanner();
+    return true;
   }
 
   void _refocusScanner() {
@@ -1169,6 +1216,7 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
               subtitleOf: (product) =>
                   (product['sku'] ?? product['barcode'] ?? '').toString(),
               idOf: (product) => (product['id'] ?? '').toString(),
+              onSubmitText: _addProductFromSearchText,
               onSelected: (product) {
                 setState(() => _applyPickedProduct(product));
                 _productSearchController.clear();
@@ -1386,6 +1434,7 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
           Expanded(
             child: ItemsTable(
               compact: true,
+              showExtraDiscount: false,
               items: _items,
               onAddItem: _addItemManual,
               onQueryProducts: _queryProducts,

@@ -1,6 +1,7 @@
 import 'dart:async' show unawaited;
 import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
+import 'package:enterprise_pos/widgets/whatsapp_icon.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -202,7 +203,7 @@ class SaleWalkInSection extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(Icons.chat_rounded, size: 14, color: Color(0xFF128C7E)),
+            const WhatsAppIcon(size: 15),
             const SizedBox(width: 6),
             Flexible(
               child: Text(

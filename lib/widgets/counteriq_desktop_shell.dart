@@ -635,6 +635,7 @@ class _CounterIQDesktopShellState extends State<CounterIQDesktopShell> {
             _NavEntry(
               icon: Icons.backup_outlined,
               title: 'Backup & Restore',
+              shortcut: 'F10',
               active: _isActive(PosRouteIds.backupRestore),
               onTap: () => PosNavigation.openSingleton(
                 routeId: PosRouteIds.backupRestore,

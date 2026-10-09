@@ -17,10 +17,18 @@ import 'package:enterprise_pos/services/whatsapp_invoice_service.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/utils/network_failure.dart';
 import 'package:enterprise_pos/widgets/app_feedback.dart';
+import 'package:enterprise_pos/screens/sales/parts/sale_post_task_panel.dart'
+    show PendingWhatsAppTask;
 import 'package:enterprise_pos/widgets/credit_limit_override_dialog.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
+
+typedef SaleOutputRunner = Future<void> Function({
+  required bool print,
+  required bool whatsApp,
+  void Function(PendingWhatsAppTask task)? onWhatsAppTask,
+});
 
 class SaleSubmissionService {
   static double _rowNum(dynamic v) =>
@@ -170,11 +178,12 @@ class SaleSubmissionService {
     required String effectiveMethod,
     required SalesOrderPrefill? salesOrderPrefill,
     required double Function(Map<String, dynamic>) lineTotalFallback,
-    required void Function({
+    required PendingWhatsAppTask? Function({
       required String receiptNo,
       required WhatsAppInvoicePreparation prepared,
       required String message,
     }) onAddPendingWhatsAppTask,
+    void Function(String receiptNo, SaleOutputRunner runOutputs)? onSaved,
     required void Function({required bool keepInitialCustomer}) onResetSale,
     required bool keepInitialCustomer,
     required VoidCallback onFocusProductSearch,
@@ -482,18 +491,23 @@ class SaleSubmissionService {
                 'N/A')
             .toString();
 
-    final prepareWhatsAppInvoice = sendInvoiceOnWhatsApp && !queuedOffline;
+    final receiptSubtotal = totals.subtotal - totals.returnCredit;
+    final receiptItems = SaleReceiptDispatcher.mapCartToReceiptItems(
+      items,
+      lineTotalFallback: lineTotalFallback,
+    );
 
-    if (printReceipt || prepareWhatsAppInvoice) {
-      final receiptSubtotal = totals.subtotal - totals.returnCredit;
-      final receiptItems = SaleReceiptDispatcher.mapCartToReceiptItems(
-        items,
-        lineTotalFallback: lineTotalFallback,
-      );
+    Future<void> runOutputs({
+      required bool print,
+      required bool whatsApp,
+      void Function(PendingWhatsAppTask task)? onWhatsAppTask,
+    }) async {
+      final prepareWhatsApp = whatsApp && !queuedOffline;
+      if (!print && !prepareWhatsApp) return;
       await SaleReceiptDispatcher.dispatch(
         context: context,
-        print: printReceipt,
-        prepareWhatsAppInvoice: prepareWhatsAppInvoice,
+        print: print,
+        prepareWhatsAppInvoice: prepareWhatsApp,
         receiptNo: receiptNo,
         occurredAt: occurredAt,
         receiptItems: receiptItems,
@@ -508,9 +522,23 @@ class SaleSubmissionService {
         meta: meta,
         whatsappPhone: whatsAppPhone,
         rawCustomerBalance: res?['data']?['customer_balance'],
-        onWhatsAppTaskPrepared: onAddPendingWhatsAppTask,
+        onWhatsAppTaskPrepared: ({
+          required String receiptNo,
+          required WhatsAppInvoicePreparation prepared,
+          required String message,
+        }) {
+          final task = onAddPendingWhatsAppTask(
+            receiptNo: receiptNo,
+            prepared: prepared,
+            message: message,
+          );
+          if (task != null) onWhatsAppTask?.call(task);
+        },
       );
     }
+
+    onSaved?.call(receiptNo, runOutputs);
+    await runOutputs(print: printReceipt, whatsApp: sendInvoiceOnWhatsApp);
 
     if (!context.mounted) return;
     onResetSale(keepInitialCustomer: keepInitialCustomer);

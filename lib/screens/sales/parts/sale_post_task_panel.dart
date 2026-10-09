@@ -1,5 +1,6 @@
 import 'package:enterprise_pos/services/whatsapp_invoice_service.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
+import 'package:enterprise_pos/widgets/whatsapp_icon.dart';
 import 'package:flutter/material.dart';
 
 class PendingWhatsAppTask {
@@ -54,7 +55,7 @@ class SalePostTaskPanel extends StatelessWidget {
               padding: const EdgeInsets.fromLTRB(12, 9, 8, 7),
               child: Row(
                 children: [
-                  const Icon(Icons.chat_rounded, size: 17, color: Color(0xFF128C7E)),
+                  const WhatsAppIcon(size: 18),
                   const SizedBox(width: 7),
                   Expanded(
                     child: Text(
@@ -161,23 +162,22 @@ class SalePostTaskManager {
   final List<PendingWhatsAppTask> tasks = [];
   int _sequence = 0;
 
-  void addTask({
+  PendingWhatsAppTask addTask({
     required String receiptNo,
     required WhatsAppInvoicePreparation prepared,
     required String message,
   }) {
-    tasks.insert(
-      0,
-      PendingWhatsAppTask(
-        id: '${DateTime.now().microsecondsSinceEpoch}-${_sequence++}',
-        receiptNo: receiptNo,
-        prepared: prepared,
-        message: message,
-      ),
+    final task = PendingWhatsAppTask(
+      id: '${DateTime.now().microsecondsSinceEpoch}-${_sequence++}',
+      receiptNo: receiptNo,
+      prepared: prepared,
+      message: message,
     );
+    tasks.insert(0, task);
     if (tasks.length > 8) {
       tasks.removeRange(8, tasks.length);
     }
+    return task;
   }
 
   Future<void> openTask(

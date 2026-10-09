@@ -515,7 +515,7 @@ class ReceiptPreviewService {
     // is then the printer/driver's own feed area rather than template padding.
     final receiptMargin = is58mm
         ? const pw.EdgeInsets.fromLTRB(1, 0, 12, 6)
-        : const pw.EdgeInsets.fromLTRB(1, 0, 14, 8);
+        : const pw.EdgeInsets.fromLTRB(1, 0, 24, 8);
 
     doc.addPage(
       pw.Page(

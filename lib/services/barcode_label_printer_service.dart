@@ -6,6 +6,7 @@ import 'package:enterprise_pos/models/barcode_label_line.dart';
 import 'package:enterprise_pos/models/printer_config.dart';
 import 'package:enterprise_pos/services/local_printer_service.dart';
 import 'package:enterprise_pos/services/pdf_arabic_font_loader.dart';
+import 'package:enterprise_pos/services/windows_raw_printer.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
@@ -248,6 +249,8 @@ class BarcodeLabelPrinterService {
   ) {
     final currency = _sanitize(config.barcodeCurrency, maxLength: 20);
     final out = <ResolvedLabelLine>[];
+    final hasPriceLine = config.effectiveLabelLines
+        .any((l) => l.enabled && l.field == BarcodeLabelField.price);
 
     for (final line in config.effectiveLabelLines) {
       if (!line.enabled) continue;
@@ -272,7 +275,17 @@ class BarcodeLabelPrinterService {
           value = item.hasDiscount ? _discountText(item, currency) : null;
           break;
         case BarcodeLabelField.salePrice:
-          value = item.hasDiscount ? _priceText(item.salePrice, currency) : null;
+          // The sale price is the discounted price when the product has a
+          // discount, otherwise simply its actual price, so a label designed
+          // around "Price: <sale price>" never prints blank for undiscounted
+          // stock. When the design also prints the plain price line, an
+          // undiscounted product would show the same number twice, so the
+          // sale-price line is skipped in that case.
+          if (item.hasDiscount) {
+            value = _priceText(item.salePrice, currency);
+          } else if (item.price > 0 && !hasPriceLine) {
+            value = _priceText(item.price, currency);
+          }
           break;
         case BarcodeLabelField.barcode:
           // The symbol itself carries no text; the digits are their own line.
@@ -699,6 +712,10 @@ class BarcodeLabelPrinterService {
       if (name.isEmpty) {
         throw Exception('Select a local printer first.');
       }
+      if (_usesRawQueue(config, layout)) {
+        await _printRawToQueue(config: config, items: items, printerName: name);
+        return;
+      }
       await _directPrintPdf(
         printerName: name,
         bytes: bytes,
@@ -715,6 +732,10 @@ class BarcodeLabelPrinterService {
         final name = (config.barcodeLocalPrinterName ?? '').trim();
         if (name.isEmpty) {
           throw Exception('Select an installed barcode printer first.');
+        }
+        if (_usesRawQueue(config, layout)) {
+          await _printRawToQueue(config: config, items: items, printerName: name);
+          return;
         }
         await _directPrintPdf(
           printerName: name,
@@ -814,14 +835,7 @@ class BarcodeLabelPrinterService {
       );
     }
 
-    // A ZPL/TSPL printer draws text with its own resident fonts, which are
-    // Latin-only. When the design contains Urdu, Arabic or any other non-ASCII
-    // text, the label is rendered here instead and sent as a bitmap, so the
-    // printer reproduces exactly what the on-screen preview showed.
-    final unicode = _needsUnicode(config, items);
-    final payload = unicode
-        ? await _rasterCommands(config: config, items: items, language: language)
-        : _textCommands(config: config, items: items, language: language);
+    final payload = await _rawPayload(config: config, items: items);
 
     final socket = await Socket.connect(
       ip,
@@ -836,6 +850,62 @@ class BarcodeLabelPrinterService {
     }
   }
 
+  /// True when an installed (Windows queue) printer should receive native
+  /// ZPL/TSPL instead of a driver-rendered PDF. Driven by the "Printer command
+  /// language" chosen in Printer Settings; `driver` keeps the PDF path.
+  bool _usesRawQueue(PrinterConfig config, BarcodeOutputLayout layout) {
+    if (layout != BarcodeOutputLayout.labels) return false;
+    if (!WindowsRawPrinter.isSupported) return false;
+    final language = config.barcodePrinterLanguage.toLowerCase();
+    return language == 'zpl' || language == 'tspl';
+  }
+
+  /// Builds the ZPL/TSPL bytes for [items].
+  ///
+  /// A ZPL/TSPL printer draws text with its own resident fonts, which are
+  /// Latin-only. When the design contains Urdu, Arabic or any other non-ASCII
+  /// text, the label is rendered here instead and sent as a bitmap, so the
+  /// printer reproduces exactly what the on-screen preview showed.
+  Future<List<int>> _rawPayload({
+    required PrinterConfig config,
+    required List<BarcodeLabelItem> items,
+  }) async {
+    final language = config.barcodePrinterLanguage.toLowerCase();
+    final unicode = _needsUnicode(config, items);
+    // Diagnostic trace for "a line is missing on some labels": shows, per
+    // product, the price the label received and exactly which lines survived.
+    for (final item in items) {
+      final lines = resolveLines(config, item).map((l) => l.text).join(' | ');
+      print(
+        '[BARCODE-RAW] ${language.toUpperCase()} ${unicode ? "bitmap" : "text"} '
+        'name="${item.productName}" variant="${item.variantDetails}" '
+        'price=${item.price} discount=${item.discount} barcode="${item.barcode}" '
+        'copies=${item.copies} lines=[$lines]',
+      );
+    }
+    return unicode
+        ? await _rasterCommands(config: config, items: items, language: language)
+        : _textCommands(config: config, items: items, language: language);
+  }
+
+  /// Sends native ZPL/TSPL to a USB/installed Windows printer as a RAW
+  /// spooler job. No driver page layout is involved, so paper size and
+  /// offsets configured in the driver cannot blank or shift the label.
+  Future<void> _printRawToQueue({
+    required PrinterConfig config,
+    required List<BarcodeLabelItem> items,
+    required String printerName,
+  }) async {
+    final selected = await LocalPrinterService.instance.requirePrinter(printerName);
+    final payload = await _rawPayload(config: config, items: items);
+    final total = items.fold<int>(0, (sum, item) => sum + item.copies);
+    WindowsRawPrinter.send(
+      printerName: selected.name,
+      data: Uint8List.fromList(payload),
+      jobName: 'Barcode labels ($total)',
+    );
+  }
+
   /// Native printer-font commands. Fast and compact, ASCII only.
   List<int> _textCommands({
     required PrinterConfig config,
@@ -844,15 +914,88 @@ class BarcodeLabelPrinterService {
   }) {
     final buffer = StringBuffer();
     final contentHeightMm = _labelHeightMm(config) - (_labelPaddingMm * 2);
-    for (final item in items) {
-      final lines = resolveLines(config, item);
-      final layout = _layoutFor(lines, contentHeightMm);
+    for (final row in _rowsFor(config, items)) {
       buffer.write(language == 'zpl'
-          ? _zpl(config, item, lines, layout, contentHeightMm)
-          : _tspl(config, item, lines, layout, contentHeightMm));
+          ? _zplRow(config, row, contentHeightMm)
+          : _tsplRow(config, row, contentHeightMm));
       buffer.writeln();
     }
-    return _latin1(buffer.toString());
+    final text = buffer.toString();
+    // TSC/TSPL firmwares terminate commands with CR+LF; ZPL ignores it.
+    return _latin1(
+      language == 'tspl'
+          ? text.replaceAll('\r\n', '\n').replaceAll('\n', '\r\n')
+          : text,
+    );
+  }
+
+  // ── roll geometry (multi-across rolls) ─────────────────────────────────────
+
+  /// Groups the batch into printed rows.
+  ///
+  /// A single-column roll keeps the printer's own repeat count (one command
+  /// block per product, `quantity` copies). A multi-across roll expands every
+  /// copy and fills the columns left to right, so ten copies on a two-across
+  /// roll are five rows; the last row may be partly empty.
+  List<_LabelRow> _rowsFor(PrinterConfig config, List<BarcodeLabelItem> items) {
+    final across = config.barcodeLabelsAcross.clamp(1, 4).toInt();
+    if (across == 1) {
+      return [
+        for (final item in items) _LabelRow([item.copyWith(copies: 1)], item.copies),
+      ];
+    }
+    final flat = <BarcodeLabelItem>[];
+    for (final item in items) {
+      final single = item.copyWith(copies: 1);
+      for (var i = 0; i < item.copies; i++) {
+        flat.add(single);
+      }
+    }
+    final rows = <_LabelRow>[];
+    for (var i = 0; i < flat.length; i += across) {
+      rows.add(_LabelRow(flat.sublist(i, math.min(i + across, flat.length)), 1));
+    }
+    return rows;
+  }
+
+  /// Total media width the printer is told about: every label plus the gaps
+  /// between them.
+  double _rowWidthMm(PrinterConfig c) {
+    final across = c.barcodeLabelsAcross.clamp(1, 4).toInt();
+    return (across * _labelWidthMm(c)) + ((across - 1) * c.barcodeColumnGapMm);
+  }
+
+  int _rowWidthDots(PrinterConfig c) => _mmToDots(_rowWidthMm(c), c.barcodeDpi);
+
+  /// Left edge of the label in [column], in dots, including the user's
+  /// horizontal shift.
+  int _labelOriginX(PrinterConfig c, int column) => math.max(
+        0,
+        _mmToDots(
+          c.barcodeOffsetXMm + (column * (_labelWidthMm(c) + c.barcodeColumnGapMm)),
+          c.barcodeDpi,
+        ),
+      );
+
+  int _originY(PrinterConfig c) => _mmToDots(c.barcodeOffsetYMm, c.barcodeDpi);
+
+  /// Narrow-bar width in dots. Wide enough to scan on cheap handhelds, but it
+  /// steps down a dot when the symbol would not fit the label.
+  int _barModule(PrinterConfig c, String value, int contentWidth) {
+    var module = c.barcodeDpi >= 300 ? 3 : 2;
+    while (module > 1 && _code128Modules(value) * module > contentWidth) {
+      module--;
+    }
+    return module;
+  }
+
+  /// Code 128 symbol width in modules. Digit-only values pack two digits per
+  /// symbol (subset C); anything else is one symbol per character.
+  int _code128Modules(String value) {
+    final text = value.trim();
+    final numeric = text.isNotEmpty && RegExp(r'^\d+$').hasMatch(text);
+    final symbols = numeric ? (text.length ~/ 2) + (text.length.isOdd ? 2 : 0) : text.length;
+    return (11 * (symbols + 2)) + 13;
   }
 
   /// Walks the resolved lines top to bottom and hands back the vertical
@@ -889,30 +1032,44 @@ class BarcodeLabelPrinterService {
     return offsets;
   }
 
-  String _zpl(
+  String _zplRow(PrinterConfig c, _LabelRow row, double contentHeightMm) {
+    final rowWidth = _rowWidthDots(c);
+    final height = _mmToDots(_labelHeightMm(c), c.barcodeDpi);
+    final b = StringBuffer('^XA\n^PW$rowWidth\n^LL$height\n^LH0,0\n');
+    for (var column = 0; column < row.labels.length; column++) {
+      b.write(_zplLabelBody(c, row.labels[column], column, contentHeightMm));
+    }
+    b.writeln('^PQ${row.quantity},0,1,N\n^XZ');
+    return b.toString();
+  }
+
+  String _zplLabelBody(
     PrinterConfig c,
     BarcodeLabelItem item,
-    List<ResolvedLabelLine> lines,
-    _LabelLayout layout,
+    int column,
     double contentHeightMm,
   ) {
-    final size = _dotSize(c);
-    final width = size.$1;
-    final height = size.$2;
+    final labelWidth = _mmToDots(_labelWidthMm(c), c.barcodeDpi);
     final margin = _mmToDots(_labelPaddingMm, c.barcodeDpi);
-    final contentWidth = math.max(1, width - (margin * 2));
+    final contentWidth = math.max(1, labelWidth - (margin * 2));
+    final x0 = _labelOriginX(c, column);
+    final y0 = _originY(c);
+    final lines = resolveLines(c, item);
+    final layout = _layoutFor(lines, contentHeightMm);
     final offsets = _lineOffsetsMm(lines, layout, contentHeightMm);
-    final module = (c.barcodeDpi / 203).round().clamp(1, 3);
 
-    final b = StringBuffer('^XA\n^PW$width\n^LL$height\n^LH0,0\n');
+    final b = StringBuffer();
     for (var i = 0; i < lines.length; i++) {
       final line = lines[i];
-      final y = _mmToDots(offsets[i], c.barcodeDpi).clamp(0, height).toInt();
+      final y = math.max(0, _mmToDots(offsets[i], c.barcodeDpi) + y0);
 
       if (line.isGraphic) {
         final barHeight = _mmToDots(layout.barcodeHeightMm, c.barcodeDpi);
+        final module = _barModule(c, line.text, contentWidth);
+        final symbolWidth = _code128Modules(line.text) * module;
+        final x = x0 + math.max(margin, ((labelWidth - symbolWidth) / 2).round());
         b.writeln(
-          '^FO$margin,$y^BY$module,2,$barHeight^BCN,$barHeight,N,N,N^FD${_zplText(line.text)}^FS',
+          '^FO$x,$y^BY$module,2,$barHeight^BCN,$barHeight,N,N,N,A^FD${_zplText(line.text)}^FS',
         );
         continue;
       }
@@ -920,64 +1077,122 @@ class BarcodeLabelPrinterService {
       final lineHeight = (_lineHeightsMm[line.size] ?? 4.2) * layout.textScale;
       // ZPL character height is the cell height; ~78% of the line box keeps a
       // little leading between rows, matching the PDF's FittedBox result.
-      final glyph = _mmToDots(lineHeight * 0.78, c.barcodeDpi).clamp(6, 400).toInt();
+      final byHeight = _mmToDots(lineHeight * 0.78, c.barcodeDpi);
+      // Scalable font 0 averages ~0.55 of its height per character, so shrink
+      // a long line until it fits the label instead of letting it clip.
+      final chars = math.max(1, line.text.length);
+      final byWidth = (contentWidth / (chars * 0.55)).floor();
+      final glyph = math.min(byHeight, byWidth).clamp(8, 400).toInt();
       b.writeln(
-        '^FO$margin,$y^A0N,$glyph,$glyph^FB$contentWidth,1,0,C,0^FD${_zplText(line.text)}^FS',
+        '^FO${x0 + margin},$y^A0N,$glyph,$glyph^FB$contentWidth,1,0,C,0^FD${_zplText(line.text)}^FS',
       );
     }
-    b.writeln('^PQ${item.copies},0,1,N\n^XZ');
     return b.toString();
   }
 
-  String _tspl(
-    PrinterConfig c,
-    BarcodeLabelItem item,
-    List<ResolvedLabelLine> lines,
-    _LabelLayout layout,
-    double contentHeightMm,
-  ) {
-    final widthMm = _labelWidthMm(c);
-    final heightMm = _labelHeightMm(c);
-    final size = _dotSize(c);
-    final width = size.$1;
-    final margin = _mmToDots(_labelPaddingMm, c.barcodeDpi);
-    final offsets = _lineOffsetsMm(lines, layout, contentHeightMm);
-
+  String _tsplRow(PrinterConfig c, _LabelRow row, double contentHeightMm) {
     final b = StringBuffer()
-      ..writeln('SIZE ${widthMm.toStringAsFixed(2)} mm,${heightMm.toStringAsFixed(2)} mm')
+      ..writeln('SIZE ${_rowWidthMm(c).toStringAsFixed(2)} mm,${_labelHeightMm(c).toStringAsFixed(2)} mm')
       ..writeln('GAP ${c.barcodeLabelGapMm.toStringAsFixed(2)} mm,0 mm')
       ..writeln('DIRECTION 1')
       ..writeln('CLS');
+    for (var column = 0; column < row.labels.length; column++) {
+      b.write(_tsplLabelBody(c, row.labels[column], column, contentHeightMm));
+    }
+    b.writeln('PRINT 1,${row.quantity}');
+    return b.toString();
+  }
 
+  /// Real printers render TSPL resident fonts a little wider than the nominal
+  /// cell (and cheaper clones more so). Fitting and centring against nominal
+  /// widths made long lines run past the label edge, so every width check uses
+  /// this allowance. It only ever makes text slightly smaller, never wider.
+  static const double _tsplWidthAllowance = 1.25;
+
+  /// TSPL resident fonts: id, glyph width, glyph height in dots at 1x.
+  static const List<(String, int, int)> _tsplFonts = [
+    ('1', 8, 12),
+    ('2', 12, 20),
+    ('3', 16, 24),
+    ('4', 24, 32),
+    ('5', 32, 48),
+  ];
+
+  /// Picks the biggest resident font (and 1x/2x multiplier) whose glyph height
+  /// fits the line box and whose full line fits the label width. When even the
+  /// smallest font cannot hold the text it is truncated rather than printed
+  /// across the gap into the neighbouring label.
+  ({String font, int mul, int w, int h, String text}) _tsplFit(
+    String raw,
+    int lineDots,
+    int maxWidth,
+  ) {
+    var text = _tsplText(raw);
+    if (text.isEmpty) text = ' ';
+
+    ({String font, int mul, int w, int h})? best;
+    for (final mul in const [2, 1]) {
+      for (final f in _tsplFonts) {
+        final w = f.$2 * mul;
+        final h = f.$3 * mul;
+        if (h > lineDots) continue;
+        if (text.length * w * _tsplWidthAllowance > maxWidth) continue;
+        if (best == null || h > best.h) {
+          best = (font: f.$1, mul: mul, w: w, h: h);
+        }
+      }
+    }
+    if (best != null) {
+      return (font: best.font, mul: best.mul, w: best.w, h: best.h, text: text);
+    }
+
+    final f = _tsplFonts.first;
+    final maxChars = math.max(1, (maxWidth / (f.$2 * _tsplWidthAllowance)).floor());
+    if (text.length > maxChars) text = text.substring(0, maxChars);
+    return (font: f.$1, mul: 1, w: f.$2, h: f.$3, text: text);
+  }
+
+  String _tsplLabelBody(
+    PrinterConfig c,
+    BarcodeLabelItem item,
+    int column,
+    double contentHeightMm,
+  ) {
+    final labelWidth = _mmToDots(_labelWidthMm(c), c.barcodeDpi);
+    final margin = _mmToDots(_labelPaddingMm, c.barcodeDpi);
+    final contentWidth = math.max(1, labelWidth - (margin * 2));
+    final x0 = _labelOriginX(c, column);
+    final y0 = _originY(c);
+    final lines = resolveLines(c, item);
+    final layout = _layoutFor(lines, contentHeightMm);
+    final offsets = _lineOffsetsMm(lines, layout, contentHeightMm);
+
+    final b = StringBuffer();
     for (var i = 0; i < lines.length; i++) {
       final line = lines[i];
-      final y = _mmToDots(offsets[i], c.barcodeDpi);
+      final y = math.max(0, _mmToDots(offsets[i], c.barcodeDpi) + y0);
 
       if (line.isGraphic) {
         final barHeight = _mmToDots(layout.barcodeHeightMm, c.barcodeDpi);
+        final module = _barModule(c, line.text, contentWidth);
+        final symbolWidth = _code128Modules(line.text) * module;
+        final x = x0 + math.max(margin, ((labelWidth - symbolWidth) / 2).round());
         b.writeln(
-          'BARCODE $margin,$y,"128",$barHeight,0,0,2,2,"${_tsplText(line.text)}"',
+          'BARCODE $x,$y,"128",$barHeight,0,0,$module,$module,"${_tsplText(line.text)}"',
         );
         continue;
       }
 
-      // TSPL resident fonts are fixed sizes, so the nearest one is chosen and
-      // then multiplied. Font "2" ≈ 12 dots tall, "3" ≈ 16, "4" ≈ 24 at 203 dpi.
-      final lineHeightDots =
-          _mmToDots((_lineHeightsMm[line.size] ?? 4.2) * layout.textScale, c.barcodeDpi);
-      final (font, baseDots) = lineHeightDots >= 22
-          ? ('4', 24)
-          : lineHeightDots >= 15
-              ? ('3', 16)
-              : ('2', 12);
-      final mul = (lineHeightDots / baseDots).floor().clamp(1, 4);
-      final charWidth = (baseDots * mul * 0.55).round();
+      final lineHeightDots = _mmToDots(
+        (_lineHeightsMm[line.size] ?? 4.2) * layout.textScale,
+        c.barcodeDpi,
+      );
+      final fit = _tsplFit(line.text, lineHeightDots, contentWidth);
+      final x = x0 + margin + math.max(0, ((contentWidth - (fit.text.length * fit.w * _tsplWidthAllowance)) / 2).round());
       b.writeln(
-        'TEXT ${_centerX(width, line.text, charWidth)},$y,"$font",0,$mul,$mul,"${_tsplText(line.text)}"',
+        'TEXT $x,$y,"${fit.font}",0,${fit.mul},${fit.mul},"${fit.text}"',
       );
     }
-
-    b.writeln('PRINT 1,${item.copies}');
     return b.toString();
   }
 
@@ -985,7 +1200,8 @@ class BarcodeLabelPrinterService {
   ///
   /// This is the Urdu/Arabic path: the printer never sees text, only dots, so
   /// script shaping, right-to-left ordering and font choice are all settled
-  /// here by the same PDF renderer that drew the preview.
+  /// here by the same PDF renderer that drew the preview. On a multi-across
+  /// roll the label bitmaps of one row are composed side by side.
   Future<List<int>> _rasterCommands({
     required PrinterConfig config,
     required List<BarcodeLabelItem> items,
@@ -994,7 +1210,7 @@ class BarcodeLabelPrinterService {
     final info = await Printing.info();
     if (!info.canRaster) {
       throw Exception(
-        'This device cannot render Urdu/Arabic labels for a direct-network ZPL/TSPL printer. '
+        'This device cannot render Urdu/Arabic labels for a direct ZPL/TSPL printer. '
         'Print through the installed printer driver instead, or use Latin text only on the label.',
       );
     }
@@ -1002,44 +1218,48 @@ class BarcodeLabelPrinterService {
     final dpi = config.barcodeDpi.toDouble();
     final out = <int>[];
 
-    for (final item in items) {
-      // One page per item; copies are handled by the printer's own quantity
-      // command so the bitmap crosses the wire once.
-      final single = item.copyWith(copies: 1);
-      final pdf = await buildBatchLabelsPdf(config: config, items: [single]);
-      final raster = await Printing.raster(pdf, dpi: dpi).first;
-      final bitmap = _MonoBitmap.fromRgba(
-        raster.pixels,
-        raster.width,
-        raster.height,
+    for (final row in _rowsFor(config, items)) {
+      final tiles = <_MonoBitmap>[];
+      for (final item in row.labels) {
+        final pdf = await buildBatchLabelsPdf(
+          config: config,
+          items: [item.copyWith(copies: 1)],
+        );
+        final raster = await Printing.raster(pdf, dpi: dpi).first;
+        tiles.add(_MonoBitmap.fromRgba(raster.pixels, raster.width, raster.height));
+      }
+      final bitmap = _MonoBitmap.composeRow(
+        tiles,
+        [for (var i = 0; i < tiles.length; i++) _labelOriginX(config, i)],
+        _rowWidthDots(config),
+        _originY(config),
       );
 
       if (language == 'zpl') {
-        out.addAll(_latin1(_zplGraphic(config, bitmap, item.copies)));
+        out.addAll(_latin1(_zplGraphic(config, bitmap, row.quantity)));
       } else {
-        out.addAll(_tsplGraphic(config, bitmap, item.copies));
+        out.addAll(_tsplGraphic(config, bitmap, row.quantity));
       }
     }
     return out;
   }
 
   String _zplGraphic(PrinterConfig c, _MonoBitmap bitmap, int copies) {
-    final size = _dotSize(c);
+    final width = _rowWidthDots(c);
+    final height = _mmToDots(_labelHeightMm(c), c.barcodeDpi);
     final hex = StringBuffer();
     for (final byte in bitmap.bytes) {
       hex.write(byte.toRadixString(16).padLeft(2, '0').toUpperCase());
     }
     final total = bitmap.bytes.length;
-    return '^XA\n^PW${size.$1}\n^LL${size.$2}\n^LH0,0\n'
+    return '^XA\n^PW$width\n^LL$height\n^LH0,0\n'
         '^FO0,0^GFA,$total,$total,${bitmap.bytesPerRow},${hex.toString()}^FS\n'
         '^PQ$copies,0,1,N\n^XZ\n';
   }
 
   List<int> _tsplGraphic(PrinterConfig c, _MonoBitmap bitmap, int copies) {
-    final widthMm = _labelWidthMm(c);
-    final heightMm = _labelHeightMm(c);
     final header = StringBuffer()
-      ..writeln('SIZE ${widthMm.toStringAsFixed(2)} mm,${heightMm.toStringAsFixed(2)} mm')
+      ..writeln('SIZE ${_rowWidthMm(c).toStringAsFixed(2)} mm,${_labelHeightMm(c).toStringAsFixed(2)} mm')
       ..writeln('GAP ${c.barcodeLabelGapMm.toStringAsFixed(2)} mm,0 mm')
       ..writeln('DIRECTION 1')
       ..writeln('CLS')
@@ -1067,15 +1287,7 @@ class BarcodeLabelPrinterService {
     return out;
   }
 
-  (int, int) _dotSize(PrinterConfig config) => (
-        _mmToDots(_labelWidthMm(config), config.barcodeDpi),
-        _mmToDots(_labelHeightMm(config), config.barcodeDpi),
-      );
-
   int _mmToDots(num mm, int dpi) => (mm * dpi / 25.4).round();
-
-  int _centerX(int width, String value, int charWidth) =>
-      ((width - (value.length * charWidth)) / 2).round().clamp(0, width).toInt();
 
   // ── text handling ──────────────────────────────────────────────────────────
 
@@ -1197,6 +1409,15 @@ class BarcodeLabelPrinterService {
   }
 }
 
+/// One printed row on the roll: the labels sharing it (one per column) and how
+/// many times the row repeats.
+class _LabelRow {
+  final List<BarcodeLabelItem> labels;
+  final int quantity;
+
+  const _LabelRow(this.labels, this.quantity);
+}
+
 /// A 1-bit-per-pixel image, packed MSB-first with a set bit meaning a black
 /// dot — the convention ZPL's ^GF uses directly and TSPL's BITMAP uses
 /// inverted.
@@ -1212,6 +1433,46 @@ class _MonoBitmap {
     required this.bytesPerRow,
     required this.bytes,
   });
+
+  /// Places several label bitmaps side by side on one row bitmap.
+  ///
+  /// [xs] are each tile's left edge in dots; anything past [width] is clipped.
+  /// [yShift] moves the artwork down (negative moves it up) inside the row.
+  factory _MonoBitmap.composeRow(
+    List<_MonoBitmap> tiles,
+    List<int> xs,
+    int width,
+    int yShift,
+  ) {
+    final height = tiles.isEmpty ? 0 : tiles.first.height;
+    final bytesPerRow = (width + 7) ~/ 8;
+    final out = Uint8List(bytesPerRow * height);
+
+    for (var t = 0; t < tiles.length; t++) {
+      final tile = tiles[t];
+      final dx = xs[t];
+      for (var y = 0; y < tile.height; y++) {
+        final destY = y + yShift;
+        if (destY < 0 || destY >= height) continue;
+        final srcRow = y * tile.bytesPerRow;
+        final destRow = destY * bytesPerRow;
+        for (var x = 0; x < tile.width; x++) {
+          final destX = x + dx;
+          if (destX >= width) break;
+          if ((tile.bytes[srcRow + (x >> 3)] & (0x80 >> (x & 7))) != 0) {
+            out[destRow + (destX >> 3)] |= 0x80 >> (destX & 7);
+          }
+        }
+      }
+    }
+
+    return _MonoBitmap(
+      width: width,
+      height: height,
+      bytesPerRow: bytesPerRow,
+      bytes: out,
+    );
+  }
 
   /// Thresholds an RGBA raster to black and white.
   ///

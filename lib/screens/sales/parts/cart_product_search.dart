@@ -14,12 +14,18 @@ class CartProductSearch extends StatefulWidget {
   final Future<List<ProductRef>> Function(String q) onQuery;
   final void Function(ProductRef ref) onSelected;
 
+  /// Scanner support: called with the typed text when Enter is pressed on a
+  /// single code-like token. Return true when it was a barcode and the product
+  /// was added to the cart.
+  final Future<bool> Function(String code)? onSubmitText;
+
   const CartProductSearch({
     super.key,
     required this.focusNode,
     required this.controller,
     required this.onQuery,
     required this.onSelected,
+    this.onSubmitText,
   });
 
   @override
@@ -110,6 +116,43 @@ class _CartProductSearchState extends State<CartProductSearch> {
   void _removeOverlay() {
     _overlayEntry?.remove();
     _overlayEntry = null;
+  }
+
+  /// Scanner flow: a scanner types the code and presses Enter before any
+  /// suggestion can load. Try the code as a barcode first; if it is not one,
+  /// fall back to the normal Enter behaviour.
+  Future<void> _submitScanCode(String code) async {
+    _debounce?.cancel();
+    final fallback = (_highlightIndex >= 0 && _highlightIndex < _suggestions.length)
+        ? _suggestions[_highlightIndex]
+        : null;
+    // Clear immediately so an instant second scan starts from an empty field.
+    widget.controller.clear();
+    _removeOverlay();
+    var handled = false;
+    try {
+      handled = await widget.onSubmitText!(code);
+    } catch (_) {
+      handled = false;
+    }
+    if (!mounted) return;
+    setState(() {
+      _suggestions = [];
+      _highlightIndex = -1;
+      _loading = false;
+    });
+    if (!handled) {
+      if (fallback != null) {
+        widget.onSelected(fallback);
+      } else if (widget.controller.text.isEmpty) {
+        widget.controller.text = code;
+        widget.controller.selection =
+            TextSelection.collapsed(offset: code.length);
+      }
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) widget.focusNode.requestFocus();
+    });
   }
 
   void _selectIndex(int i) {
@@ -276,6 +319,15 @@ class _CartProductSearchState extends State<CartProductSearch> {
               return KeyEventResult.handled;
             } else if (event.logicalKey == LogicalKeyboardKey.enter ||
                 event.logicalKey == LogicalKeyboardKey.numpadEnter) {
+              if (event is KeyDownEvent) {
+                final code = widget.controller.text.trim();
+                if (widget.onSubmitText != null &&
+                    code.length >= 3 &&
+                    !RegExp(r'\s').hasMatch(code)) {
+                  _submitScanCode(code);
+                  return KeyEventResult.handled;
+                }
+              }
               if (_highlightIndex >= 0) {
                 _selectIndex(_highlightIndex);
                 return KeyEventResult.handled;

@@ -61,10 +61,12 @@ class SaleCartTableHeader extends StatelessWidget {
 /// Notification banner displaying active return invoice context.
 class SaleReturnContextBanner extends StatelessWidget {
   final String returnInvoice;
+  final bool loading;
 
   const SaleReturnContextBanner({
     super.key,
     required this.returnInvoice,
+    this.loading = false,
   });
 
   @override
@@ -89,7 +91,9 @@ class SaleReturnContextBanner extends StatelessWidget {
           const SizedBox(width: 8),
           Expanded(
             child: Text(
-              'Return / Exchange for $invoice • Enter a negative quantity on the item being returned. Original delivery is non-refundable.',
+              loading
+                  ? 'Return / Exchange for $invoice • Loading the items still returnable…'
+                  : 'Return / Exchange for $invoice • Items still returnable are listed with negative quantities; remove any the customer is keeping, or add exchange items. Original delivery is non-refundable.',
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
@@ -114,6 +118,7 @@ class SaleCartInputRow extends StatelessWidget {
   final VoidCallback onFocusScanner;
   final bool scannerEnabled;
   final VoidCallback onAddItemsManual;
+  final Future<bool> Function(String code)? onSubmitText;
 
   const SaleCartInputRow({
     super.key,
@@ -124,6 +129,7 @@ class SaleCartInputRow extends StatelessWidget {
     required this.onFocusScanner,
     required this.scannerEnabled,
     required this.onAddItemsManual,
+    this.onSubmitText,
   });
 
   @override
@@ -140,6 +146,7 @@ class SaleCartInputRow extends StatelessWidget {
               controller: searchController,
               onQuery: onQueryProducts,
               onSelected: onProductSelected,
+              onSubmitText: onSubmitText,
             ),
           ),
           const SizedBox(width: 6),

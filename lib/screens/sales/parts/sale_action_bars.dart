@@ -728,6 +728,7 @@ class SaleStandardBottomBar extends StatelessWidget {
   final VoidCallback? onAddSplitPayment;
   final VoidCallback onClear;
   final bool submitting;
+  final VoidCallback? onPreview;
   final VoidCallback? onSaveOnly;
   final VoidCallback? onSaveAndPrint;
 
@@ -749,6 +750,7 @@ class SaleStandardBottomBar extends StatelessWidget {
     required this.onAddSplitPayment,
     required this.onClear,
     required this.submitting,
+    this.onPreview,
     required this.onSaveOnly,
     required this.onSaveAndPrint,
   });
@@ -948,6 +950,29 @@ class SaleStandardBottomBar extends StatelessWidget {
             child: const Text('Clear'),
           ),
           const SizedBox(width: 8),
+
+          // Preview only — never saves.
+          if (onPreview != null) ...[
+            SizedBox(
+              height: 38,
+              child: OutlinedButton.icon(
+                onPressed: submitting ? null : onPreview,
+                icon: const Icon(Icons.visibility_outlined, size: 15),
+                label: const Text(
+                  'Preview',
+                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+                ),
+                style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  minimumSize: const Size(0, 38),
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  side: BorderSide(color: AppTheme.primary.withOpacity(.5)),
+                  foregroundColor: AppTheme.primary,
+                ),
+              ),
+            ),
+            const SizedBox(width: 6),
+          ],
 
           // Save without print
           SizedBox(

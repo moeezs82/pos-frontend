@@ -65,6 +65,10 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
   final _barcodeWidthCtrl = TextEditingController(text: '50');
   final _barcodeHeightCtrl = TextEditingController(text: '30');
   final _barcodeGapCtrl = TextEditingController(text: '2');
+  final _barcodeColumnGapCtrl = TextEditingController(text: '2');
+  final _barcodeOffsetXCtrl = TextEditingController(text: '0');
+  final _barcodeOffsetYCtrl = TextEditingController(text: '0');
+  int _barcodeLabelsAcross = 1;
   final _invoiceHeadingCtrl = TextEditingController(text: 'SALES INVOICE');
   final _qrUrlCtrl = TextEditingController();
   final _qrCaptionCtrl = TextEditingController(text: 'Scan to review us');
@@ -170,6 +174,9 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
     _barcodeWidthCtrl.dispose();
     _barcodeHeightCtrl.dispose();
     _barcodeGapCtrl.dispose();
+    _barcodeColumnGapCtrl.dispose();
+    _barcodeOffsetXCtrl.dispose();
+    _barcodeOffsetYCtrl.dispose();
     _invoiceHeadingCtrl.dispose();
     _qrUrlCtrl.dispose();
     _qrCaptionCtrl.dispose();
@@ -313,6 +320,10 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
       _barcodeWidthCtrl.text = _numberText(config.barcodeLabelWidthMm);
       _barcodeHeightCtrl.text = _numberText(config.barcodeLabelHeightMm);
       _barcodeGapCtrl.text = _numberText(config.barcodeLabelGapMm);
+      _barcodeLabelsAcross = config.barcodeLabelsAcross.clamp(1, 4).toInt();
+      _barcodeColumnGapCtrl.text = _numberText(config.barcodeColumnGapMm);
+      _barcodeOffsetXCtrl.text = _numberText(config.barcodeOffsetXMm);
+      _barcodeOffsetYCtrl.text = _numberText(config.barcodeOffsetYMm);
       _barcodeDpi = config.barcodeDpi;
       _barcodeOrientation = config.barcodeOrientation;
       _setBarcodeLines(config.effectiveLabelLines);
@@ -602,6 +613,10 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
         barcodeLabelWidthMm: barcodeWidth ?? 50,
         barcodeLabelHeightMm: barcodeHeight ?? 30,
         barcodeLabelGapMm: barcodeGap ?? 2,
+        barcodeLabelsAcross: _barcodeLabelsAcross,
+        barcodeColumnGapMm: double.tryParse(_barcodeColumnGapCtrl.text.trim()) ?? 2,
+        barcodeOffsetXMm: double.tryParse(_barcodeOffsetXCtrl.text.trim()) ?? 0,
+        barcodeOffsetYMm: double.tryParse(_barcodeOffsetYCtrl.text.trim()) ?? 0,
         barcodeDpi: _barcodeDpi,
         barcodeOrientation: _barcodeOrientation,
         barcodeCurrency: _selectedBranchCurrency,
@@ -795,6 +810,10 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
       barcodeLabelWidthMm: double.tryParse(_barcodeWidthCtrl.text.trim()) ?? 50,
       barcodeLabelHeightMm: double.tryParse(_barcodeHeightCtrl.text.trim()) ?? 30,
       barcodeLabelGapMm: double.tryParse(_barcodeGapCtrl.text.trim()) ?? 2,
+      barcodeLabelsAcross: _barcodeLabelsAcross,
+      barcodeColumnGapMm: double.tryParse(_barcodeColumnGapCtrl.text.trim()) ?? 2,
+      barcodeOffsetXMm: double.tryParse(_barcodeOffsetXCtrl.text.trim()) ?? 0,
+      barcodeOffsetYMm: double.tryParse(_barcodeOffsetYCtrl.text.trim()) ?? 0,
       barcodeDpi: _barcodeDpi,
       barcodeOrientation: _barcodeOrientation,
       barcodeCurrency: _selectedBranchCurrency,
@@ -2549,6 +2568,28 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
                 controller: _barcodeLocalPrinterCtrl,
                 label: 'Installed barcode printer',
               ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                value: const {'driver', 'zpl', 'tspl'}.contains(_barcodeLanguage)
+                    ? _barcodeLanguage
+                    : 'driver',
+                decoration: const InputDecoration(
+                  labelText: 'Print method',
+                  prefixIcon: Icon(Icons.code_rounded),
+                ),
+                items: const [
+                  DropdownMenuItem(value: 'driver', child: Text('Printer driver (PDF)')),
+                  DropdownMenuItem(value: 'tspl', child: Text('Native TSPL — TSC / Black Copper (recommended for USB label printers)')),
+                  DropdownMenuItem(value: 'zpl', child: Text('Native ZPL — Zebra and compatible')),
+                ],
+                onChanged: (value) => setState(() => _barcodeLanguage = value ?? 'driver'),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Native TSPL/ZPL sends the label straight to the Windows printer queue, so the driver paper size cannot blank or shift it. '
+                'Set the printer to the matching emulation mode if it supports several.',
+                style: TextStyle(color: AppTheme.textMuted, fontSize: 12, fontWeight: FontWeight.w600),
+              ),
             ],
             if (_barcodeConnection == 'network') ...[
               Row(
@@ -2639,6 +2680,54 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
                 ),
               ],
             ),
+            if (_barcodeLanguage == 'zpl' || _barcodeLanguage == 'tspl') ...[
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: DropdownButtonFormField<int>(
+                      value: _barcodeLabelsAcross,
+                      decoration: const InputDecoration(labelText: 'Labels across the roll'),
+                      items: const [1, 2, 3, 4]
+                          .map((n) => DropdownMenuItem(value: n, child: Text(n == 1 ? '1 (single column)' : '$n side by side')))
+                          .toList(),
+                      onChanged: (value) => setState(() => _barcodeLabelsAcross = value ?? 1),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: TextFormField(
+                      controller: _barcodeColumnGapCtrl,
+                      enabled: _barcodeLabelsAcross > 1,
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      decoration: const InputDecoration(labelText: 'Column gap (mm)'),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: TextFormField(
+                      controller: _barcodeOffsetXCtrl,
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
+                      decoration: const InputDecoration(labelText: 'Shift right (mm)'),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: TextFormField(
+                      controller: _barcodeOffsetYCtrl,
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
+                      decoration: const InputDecoration(labelText: 'Shift down (mm)'),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              const Text(
+                'Width and Height above are for ONE label. For two 40 × 30 mm labels on one roll, set Width 40, Height 30, Labels across 2. '
+                'Use the shift fields to nudge the print if it sits too high or too far left.',
+                style: TextStyle(color: AppTheme.textMuted, fontSize: 12, fontWeight: FontWeight.w600),
+              ),
+            ],
             const SizedBox(height: 12),
             Row(
               children: [

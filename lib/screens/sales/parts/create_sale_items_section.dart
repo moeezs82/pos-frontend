@@ -61,6 +61,10 @@ class ItemsTable extends StatefulWidget {
   /// suitable for embedding inside the reference-style left panel layout.
   final bool compact;
 
+  /// Sales have a per-line "Extra Disc" amount; purchases do not. When false
+  /// the column/field is hidden and no extra discount can be entered.
+  final bool showExtraDiscount;
+
   const ItemsTable({
     super.key,
     required this.items,
@@ -74,6 +78,7 @@ class ItemsTable extends StatefulWidget {
     this.unitActionLabel = 'selling unit',
     this.priceActionLabel = 'sale price',
     this.compact = false,
+    this.showExtraDiscount = true,
   });
 
   @override
@@ -181,7 +186,8 @@ class _ItemsTableState extends State<ItemsTable> {
           return [
             _CellKey(i, _CellField.price),
             _CellKey(i, _CellField.discount),
-            _CellKey(i, _CellField.extraDiscount),
+            if (widget.showExtraDiscount)
+              _CellKey(i, _CellField.extraDiscount),
             _CellKey(i, _CellField.qty),
           ];
         }).expand((e) => e),
@@ -1084,9 +1090,10 @@ class _ItemsTableState extends State<ItemsTable> {
             ),
             child: Column(
               children: [
-                _TableHeader(),
+                _TableHeader(showExtraDiscount: widget.showExtraDiscount),
                 const SizedBox(height: 7),
                 _InlineSearchRow(
+                  showExtraDiscount: widget.showExtraDiscount,
                   productField: _AddProductBox(
                     controller: _addController,
                     focusNode: _addFocus,
@@ -1246,6 +1253,7 @@ class _ItemsTableState extends State<ItemsTable> {
                             ],
                           ),
                         ),
+                        if (widget.showExtraDiscount) ...[
                         const SizedBox(width: 8),
                         Expanded(
                           flex: 2,
@@ -1263,6 +1271,7 @@ class _ItemsTableState extends State<ItemsTable> {
                             },
                           ),
                         ),
+                        ],
                         const SizedBox(width: 8),
                         Expanded(
                           flex: 2,
@@ -1506,6 +1515,7 @@ class _ItemsTableState extends State<ItemsTable> {
             ),
           ),
           const SizedBox(width: 4),
+          if (widget.showExtraDiscount) ...[
           // Extra discount — fixed money amount for the complete cart line.
           Expanded(
             flex: 2,
@@ -1525,6 +1535,7 @@ class _ItemsTableState extends State<ItemsTable> {
             ),
           ),
           const SizedBox(width: 4),
+          ],
           // Qty — plain editable field (no ± buttons)
           Expanded(
             flex: 2,
@@ -1596,8 +1607,10 @@ class _InlineSearchRow extends StatelessWidget {
   final Widget productField;
   final GlobalKey anchorKey;
   final LayerLink link;
+  final bool showExtraDiscount;
 
   const _InlineSearchRow({
+    this.showExtraDiscount = true,
     required this.productField,
     required this.anchorKey,
     required this.link,
@@ -1639,7 +1652,8 @@ class _InlineSearchRow extends StatelessWidget {
           ),
           const Expanded(flex: 2, child: SizedBox()), // T.P
           const Expanded(flex: 3, child: SizedBox()), // Discount
-          const Expanded(flex: 2, child: SizedBox()), // Extra Disc
+          if (showExtraDiscount)
+            const Expanded(flex: 2, child: SizedBox()), // Extra Disc
           const Expanded(flex: 2, child: SizedBox()), // Qty
           const Expanded(flex: 2, child: SizedBox()), // Total
           const SizedBox(width: 44), // Remove
@@ -1651,6 +1665,10 @@ class _InlineSearchRow extends StatelessWidget {
 
 /// ======= Header =======
 class _TableHeader extends StatelessWidget {
+  final bool showExtraDiscount;
+
+  const _TableHeader({this.showExtraDiscount = true});
+
   @override
   Widget build(BuildContext context) {
     final style = Theme.of(context).textTheme.labelMedium?.copyWith(
@@ -1670,10 +1688,11 @@ class _TableHeader extends StatelessWidget {
             flex: 3,
             child: Text("Discount", style: style, textAlign: TextAlign.right),
           ),
-          Expanded(
-            flex: 2,
-            child: Text("Extra Disc", style: style, textAlign: TextAlign.right),
-          ),
+          if (showExtraDiscount)
+            Expanded(
+              flex: 2,
+              child: Text("Extra Disc", style: style, textAlign: TextAlign.right),
+            ),
           Expanded(
             flex: 2,
             child: Text("Qty", style: style, textAlign: TextAlign.right),

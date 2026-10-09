@@ -86,6 +86,8 @@ import 'package:enterprise_pos/screens/sales/parts/sale_party_section.dart';
 import 'package:enterprise_pos/screens/sales/parts/sale_post_task_panel.dart';
 import 'package:enterprise_pos/screens/sales/parts/sale_return_source_dialog.dart';
 import 'package:enterprise_pos/screens/sales/parts/sale_walk_in_section.dart';
+import 'package:enterprise_pos/screens/sales/parts/sale_preview_dialog.dart';
+import 'package:enterprise_pos/widgets/whatsapp_icon.dart';
 
 
 class CreateSaleScreen extends StatefulWidget {
@@ -224,6 +226,8 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
   bool _submitting = false;
   bool _autoCashIfEmpty = true;
   bool _didAutoOpenPicker = false;
+  bool _returnPrefillLoading = false;
+  bool _previewBusy = false;
 
   // WhatsApp invoice preparation is intentionally non-blocking. Completed
   // attachments stay here until the cashier explicitly opens/dismisses them;
@@ -396,6 +400,8 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       if (!mounted) return;
       if (_isEditing) {
         _loadSaleForEdit();
+      } else if ((widget.initialReturnInvoice ?? '').trim().isNotEmpty) {
+        _prefillReturnItems();
       } else {
         _productSearchFocusNode.requestFocus();
       }
@@ -871,9 +877,29 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     setState(() {
       _selectedVendor = vendor;
       _selectedVendorId = _metaInt(vendor?['id']);
-      if (!_isEditing) _items = []; // avoid cross-vendor mix on a new sale
     });
+    if (!_isEditing) _pruneItemsForVendor();
     _restoreSaleScreenFocus();
+  }
+
+  /// Avoids cross-vendor mix on a new sale without emptying the cart: keeps
+  /// products with no vendor (sellable under any vendor) or whose vendor
+  /// matches the selected one, and removes only rows of other vendors.
+  void _pruneItemsForVendor() {
+    if (!mounted) return;
+    final vendorId = _selectedVendorId;
+    if (vendorId == null) return;
+    final kept = _items.where((item) {
+      final pv = int.tryParse(item['product_vendor_id']?.toString() ?? '');
+      return pv == null || pv == vendorId;
+    }).toList();
+    final removed = _items.length - kept.length;
+    if (removed == 0) return;
+    setState(() => _items = kept);
+    AppFeedback.warning(
+      context,
+      '$removed item${removed == 1 ? '' : 's'} removed because ${removed == 1 ? 'it belongs' : 'they belong'} to a different vendor.',
+    );
   }
 
   Future<void> _pickVendor() async {
@@ -1079,15 +1105,42 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
   }
 
   // ---------------- Barcode ----------------
-  Future<void> _onBarcodeScanned(String code) async {
-    if (code.isEmpty) return;
 
-    final product = await SaleProductQueryService.lookupByBarcode(
+  /// Same lookup the scan button uses (live first, offline catalog cache as
+  /// fallback), returning null when nothing has that barcode.
+  Future<Map<String, dynamic>?> _lookupProductByCode(String code) {
+    return SaleProductQueryService.lookupByBarcode(
       productService: _productService,
       barcode: code,
       vendorId: _selectedVendorId,
       branchId: int.tryParse(_effectiveBranchIdStr()),
     );
+  }
+
+  /// Enter pressed in the product search bar on a code-like token (what a
+  /// barcode scanner types): add the product straight to the cart exactly as
+  /// the scan button does. Returns false when it is not a known barcode so the
+  /// search bar can behave as an ordinary text search.
+  Future<bool> _addProductFromSearchText(String code) async {
+    final product = await _lookupProductByCode(code.trim());
+    if (!mounted) return true;
+    if (product == null) {
+      // A long all-digit code is certainly a scan, not a name search.
+      if (RegExp(r'^\d{8,}$').hasMatch(code.trim())) {
+        AppFeedback.warning(context, "Product not found: ${code.trim()}");
+        return true;
+      }
+      return false;
+    }
+    final p = product;
+    setState(() => _addOrIncrementProduct(p));
+    return true;
+  }
+
+  Future<void> _onBarcodeScanned(String code) async {
+    if (code.isEmpty) return;
+
+    final product = await _lookupProductByCode(code);
     if (product != null) {
       setState(() => _addOrIncrementProduct(product));
     } else {
@@ -1131,6 +1184,177 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       }
     }
     return 0;
+  }
+
+  Future<Map<String, String>?> _askReturnSource({
+    String initialInvoice = '',
+    String initialReason = '',
+  }) =>
+      SaleReturnService.askReturnSource(
+        context: context,
+        initialInvoice: initialInvoice,
+        initialReason: initialReason,
+        fallbackInitialInvoice: widget.initialReturnInvoice,
+      );
+
+  /// Returns [current] (a cart row) turned into a negative row linked to the
+  /// original sale line [picked]. All refund economics come from the original
+  /// sale, never from today's price. Shared by the manual return link and the
+  /// Return / Exchange pre-fill.
+  Map<String, dynamic> _linkedReturnRow({
+    required Map<String, dynamic> current,
+    required Map<String, dynamic> picked,
+    required int sourceSaleId,
+    required Map<String, dynamic> sale,
+    required String invoice,
+    required String reason,
+    required double authoritativeQty,
+  }) {
+    return Map<String, dynamic>.from(current)
+      ..['original_sale_id'] = sourceSaleId
+      ..['original_sale_item_id'] = _metaInt(picked['sale_item_id'])
+      ..['return_source_invoice'] = (sale['invoice_no'] ?? invoice).toString()
+      ..['return_reason'] = reason
+      ..['returnable_quantity'] = _metaNum(picked['returnable_qty'])
+      ..['return_original_outstanding'] = _metaNum(sale['outstanding'])
+      ..['return_credit'] = _metaNum(picked['return_credit'])
+      ..['return_merchandise_subtotal'] = _metaNum(picked['merchandise_subtotal'])
+      ..['return_invoice_discount'] = _metaNum(picked['invoice_discount_allocated'])
+      ..['return_tax'] = _metaNum(picked['tax_allocated'])
+      ..['return_linked_quantity'] = authoritativeQty
+      ..['price'] = _metaNum(picked['original_price'])
+      ..['discount_pct'] = _metaNum(picked['line_discount'])
+      ..['extra_discount'] = _metaNum(picked['extra_discount_allocated'])
+      ..['discount_type'] = (picked['discount_type'] ?? 'percentage').toString()
+      ..['quantity'] = -authoritativeQty
+      ..['total'] = -_metaNum(picked['return_credit']).abs();
+  }
+
+  /// Return / Exchange opened for an invoice: after the cashier confirms the
+  /// invoice and reason, adds every line that still has a returnable quantity
+  /// as a linked negative row. The cashier can then edit quantities, delete
+  /// lines they are not returning, and add exchange items. The backend still
+  /// re-validates everything when the sale is posted.
+  Future<void> _prefillReturnItems() async {
+    final seeded = (widget.initialReturnInvoice ?? '').trim();
+    if (!mounted || _isEditing || seeded.isEmpty || _items.isNotEmpty) return;
+
+    final request = await _askReturnSource(initialInvoice: seeded);
+    if (!mounted || request == null) return;
+    final invoice = request['invoice']!;
+    final reason = request['reason']!;
+
+    setState(() => _returnPrefillLoading = true);
+    try {
+      final data = await _saleService.getReturnableItems(invoice);
+      if (!mounted) return;
+      final sale = data['sale'] is Map
+          ? Map<String, dynamic>.from(data['sale'] as Map)
+          : <String, dynamic>{};
+      final sourceSaleId = _metaInt(sale['id']);
+      if (sourceSaleId == null) {
+        throw Exception('Original sale could not be resolved.');
+      }
+      final lines = (data['items'] is List ? data['items'] as List : const [])
+          .whereType<Map>()
+          .map((m) => Map<String, dynamic>.from(m))
+          .toList();
+      if (lines.isEmpty) {
+        AppFeedback.warning(
+          context,
+          'Nothing is left to return on invoice ${sale['invoice_no'] ?? invoice}.',
+        );
+        return;
+      }
+
+      final results = await Future.wait(lines.map((line) async {
+        try {
+          final productId = _metaInt(line['product_id']);
+          if (productId == null) return null;
+          return await _productService.getProduct(productId);
+        } catch (_) {
+          return null;
+        }
+      }));
+      if (!mounted) return;
+
+      final rows = <Map<String, dynamic>>[];
+      var skipped = 0;
+      for (var i = 0; i < lines.length; i++) {
+        final product = results[i];
+        final line = lines[i];
+        final qty = _metaNum(line['quantity']);
+        if (product == null || qty <= 0) {
+          skipped++;
+          continue;
+        }
+        final base = <String, dynamic>{
+          'product_id': _metaInt(line['product_id']),
+          'product_vendor_id': int.tryParse(product['vendor_id']?.toString() ?? ''),
+          'product_vendor_name': (product['vendor_name'] ?? '').toString().trim().isEmpty
+              ? null
+              : (product['vendor_name'] ?? '').toString().trim(),
+          'name': product['name'] ?? line['product_name'],
+          'secondary_name': product['secondary_name'],
+          'cost_price': product['cost_price'],
+          'wholesale_price': product['wholesale_price'],
+          ...SaleProfitCalculator.costFieldsFromProduct(product),
+          ...ProductStock.toTransactionRowFields(product),
+          'quantity': -qty,
+          'price': _metaNum(line['original_price']),
+          'discount_pct': 0.0,
+          'discount_type': 'percentage',
+          'total': 0.0,
+          'packagings': product['packagings'],
+          ...QuantityRule.fromProduct(product).toRowFields(),
+        };
+        rows.add(_linkedReturnRow(
+          current: base,
+          picked: line,
+          sourceSaleId: sourceSaleId,
+          sale: sale,
+          invoice: invoice,
+          reason: reason,
+          authoritativeQty: qty,
+        ));
+      }
+
+      if (rows.isEmpty) {
+        AppFeedback.error(
+          context,
+          'Could not load the products of invoice ${sale['invoice_no'] ?? invoice}.',
+        );
+        return;
+      }
+
+      final customer = sale['customer'];
+      if (customer is Map) {
+        _applyCustomerSelection(Map<String, dynamic>.from(customer));
+      } else {
+        _applyCustomerSelection(null);
+      }
+      setState(() {
+        _items = rows;
+        // Return linkage changes what is payable/refundable; stale tender
+        // amounts must not survive it.
+        _payments = [];
+        cashReceivedController.clear();
+      });
+      if (skipped > 0) {
+        AppFeedback.warning(
+          context,
+          '$skipped item${skipped == 1 ? '' : 's'} could not be loaded; add ${skipped == 1 ? 'it' : 'them'} manually with a negative quantity.',
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      final message = e is ApiException
+          ? e.message
+          : e.toString().replaceFirst('Exception: ', '');
+      AppFeedback.error(context, message);
+    } finally {
+      if (mounted) setState(() => _returnPrefillLoading = false);
+    }
   }
 
   Future<bool> _linkReturnForRow(
@@ -1224,7 +1448,13 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     }
   }
 
-  Future<void> _submitSale({bool print = true}) async {
+  Future<void> _submitSale({
+    bool print = true,
+    bool previewOnly = false,
+    bool forceWhatsApp = false,
+    void Function(String receiptNo, SaleOutputRunner runOutputs)? onSaved,
+    void Function(PendingWhatsAppTask task)? onWhatsAppTask,
+  }) async {
     if (widget.isSalesOrder) {
       await _submitSalesOrder(submitForApproval: true);
       return;
@@ -1267,7 +1497,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     final valid = SaleSubmissionService.validatePreflight(
       context: context,
       items: _items,
-      sendInvoiceOnWhatsApp: _sendInvoiceOnWhatsApp,
+      sendInvoiceOnWhatsApp: _sendInvoiceOnWhatsApp || forceWhatsApp,
       whatsAppPhone: _whatsAppDestinationPhone(),
       isMasterAdmin: auth.isMasterAdmin,
       globalBranchId: globalBranchId,
@@ -1285,6 +1515,25 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       if (!canContinue || !mounted) return;
     }
 
+    if (previewOnly) {
+      await _showSalePreview(
+        effectiveBranchId: effectiveBranchId,
+        subtotal: totals.subtotal,
+        discount: totals.discount,
+        tax: totals.tax,
+        shipping: totals.shipping,
+        saleTotal: totals.saleTotal,
+        returnCredit: totals.returnCredit,
+        total: totals.signedTotal,
+        paid: totals.paid,
+        balance: totals.balance,
+        cashReceived: totals.cashReceived,
+        changeAmount: totals.changeAmount,
+        paymentsToSend: totals.paymentsToSend,
+      );
+      return;
+    }
+
     setState(() => _submitting = true);
 
     try {
@@ -1300,7 +1549,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         items: _items,
         totals: totals,
         printReceipt: print,
-        sendInvoiceOnWhatsApp: _sendInvoiceOnWhatsApp,
+        sendInvoiceOnWhatsApp: _sendInvoiceOnWhatsApp || forceWhatsApp,
         whatsAppPhone: _whatsAppDestinationPhone(),
         effectiveBranchId: effectiveBranchId!,
         originBranchId: originBranchId,
@@ -1331,12 +1580,15 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
           required WhatsAppInvoicePreparation prepared,
           required String message,
         }) {
-          _addPendingWhatsAppTask(
+          final task = _addPendingWhatsAppTask(
             receiptNo: receiptNo,
             prepared: prepared,
             message: message,
           );
+          if (task != null) onWhatsAppTask?.call(task);
+          return task;
         },
+        onSaved: onSaved,
         onResetSale: ({required bool keepInitialCustomer}) {
           _resetForNextSale(keepInitialCustomer: keepInitialCustomer);
         },
@@ -1353,19 +1605,181 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     }
   }
 
-  void _addPendingWhatsAppTask({
+  /// Builds the bill exactly as the main receipt would print and shows it in
+  /// a centred dialog. Nothing is saved until the user picks Save, Print or
+  /// WhatsApp inside the dialog.
+  Future<void> _showSalePreview({
+    required String? effectiveBranchId,
+    required double subtotal,
+    required double discount,
+    required double tax,
+    required double shipping,
+    required double saleTotal,
+    required double returnCredit,
+    required double total,
+    required double paid,
+    required double balance,
+    required double cashReceived,
+    required double changeAmount,
+    required List<Map<String, dynamic>> paymentsToSend,
+  }) async {
+    if (_previewBusy) return;
+    _previewBusy = true;
+    try {
+      final meta = SaleMetaBuilder.buildSaleMeta(
+        context: context,
+        effectiveBranchId: effectiveBranchId,
+        selectedBranch: _selectedBranch,
+        selectedCustomer: _selectedCustomer,
+        selectedCustomerId: _selectedCustomerId,
+        walkInCustomerName: customerNameController.text,
+        walkInPhone: customerPhoneController.text,
+        selectedCustomerSecondaryPhones: _selectedCustomerSecondaryPhones,
+        walkInAddress: addressController.text,
+        selectedAreaId: _selectedAreaId,
+        selectedAreaName: _selectedAreaName,
+        selectedUser: _selectedUser,
+        selectedUserId: _selectedUserId,
+        selectedDeliveryBoy: _selectedDeliveryBoy,
+        selectedDeliveryBoyId: _selectedDeliveryBoyId,
+        selectedVendor: _selectedVendor,
+        selectedVendorId: _selectedVendorId,
+        selectedSaleSourceId: _selectedSaleSourceId,
+        selectedSaleSourceName: _selectedSaleSource?['name']?.toString(),
+        subtotal: subtotal,
+        discount: discount,
+        tax: tax,
+        shipping: shipping,
+        total: saleTotal,
+        paid: paid,
+        balance: balance,
+        cashReceived: cashReceived,
+        changeAmount: changeAmount,
+        paymentsToSend: paymentsToSend,
+      );
+      final printerConfig = context.read<PrinterConfigProvider>();
+      if (!printerConfig.isConfigured) {
+        try {
+          final token = context.read<AuthProvider>().token;
+          if (token != null) await printerConfig.refresh(token);
+        } catch (e, s) {
+          debugPrint('Printer config refresh failed: $e');
+          debugPrintStack(stackTrace: s);
+        }
+      }
+      if (!mounted) return;
+      final mainTemplate = printerConfig.mainInvoiceTemplate;
+      final paperCode = printerConfig.mainPaperCode;
+      final pdfBytes = await ReceiptPreviewService.instance.buildReceiptPdf(
+        shopName:
+            printerConfig.shopName.isNotEmpty ? printerConfig.shopName : 'My Shop',
+        shopAddress:
+            printerConfig.shopAddress.isNotEmpty ? printerConfig.shopAddress : null,
+        shopPhone:
+            printerConfig.shopPhone.isNotEmpty ? printerConfig.shopPhone : null,
+        receiptNo: 'PREVIEW',
+        dateTime: DateTime.now(),
+        items: SaleReceiptDispatcher.mapCartToReceiptItems(_items, lineTotalFallback: _cartLineTotal),
+        subtotal: subtotal - returnCredit,
+        discount: discount,
+        tax: tax,
+        grandTotal: total,
+        meta: {
+          ...meta,
+          'item_discount_display': printerConfig.itemDiscountDisplay.value,
+        },
+        sections: mainTemplate.sections,
+        paperWidth: paperCode,
+        footerLines: printerConfig.footerLines,
+        footerLineStyles: printerConfig.footerLineStyles,
+        invoiceHeading: printerConfig.invoiceHeading,
+        showLogo: printerConfig.printLogoEnabled && mainTemplate.isCustomerFacing,
+        logoData: printerConfig.printLogoData,
+        showQr: printerConfig.qrCodeEnabled && mainTemplate.isCustomerFacing,
+        qrUrl: printerConfig.qrCodeUrl,
+        qrCaption: printerConfig.qrCodeCaption,
+        template: mainTemplate,
+        devCreditEnabled: printerConfig.devCreditEnabled,
+        devCreditText: printerConfig.devCreditText,
+      );
+      if (!mounted) return;
+
+      SaleOutputRunner? runOutputs;
+
+      Future<bool> save() async {
+        if (runOutputs != null) return true;
+        await _submitSale(
+          print: false,
+          onSaved: (_, runner) => runOutputs = runner,
+        );
+        return runOutputs != null;
+      }
+
+      Future<void> printBill() async {
+        final runner = runOutputs;
+        if (runner != null) {
+          await runner(print: true, whatsApp: false);
+          return;
+        }
+        await _submitSale(
+          print: true,
+          onSaved: (_, r) => runOutputs = r,
+        );
+      }
+
+      Future<void> sendWhatsApp() async {
+        void open(PendingWhatsAppTask task) =>
+            unawaited(_openPendingWhatsAppTask(task));
+        final runner = runOutputs;
+        if (runner != null) {
+          await runner(print: false, whatsApp: true, onWhatsAppTask: open);
+          return;
+        }
+        await _submitSale(
+          print: false,
+          forceWhatsApp: true,
+          onSaved: (_, r) => runOutputs = r,
+          onWhatsAppTask: open,
+        );
+      }
+
+      await showDialog<void>(
+        context: context,
+        barrierDismissible: true,
+        builder: (_) => SalePreviewDialog(
+          pdfBytes: pdfBytes,
+          pageFormat:
+              ReceiptPreviewService.instance.pageFormatForPaperWidth(paperCode),
+          isSaved: () => runOutputs != null,
+          onSave: save,
+          onPrint: printBill,
+          onWhatsApp: sendWhatsApp,
+        ),
+      );
+    } catch (e, st) {
+      debugPrint('SALE PREVIEW ERROR: $e');
+      debugPrintStack(stackTrace: st);
+      if (mounted) AppFeedback.error(context, 'Could not build the preview: $e');
+    } finally {
+      _previewBusy = false;
+    }
+  }
+
+  PendingWhatsAppTask? _addPendingWhatsAppTask({
     required String receiptNo,
     required WhatsAppInvoicePreparation prepared,
     required String message,
   }) {
-    if (!mounted) return;
+    if (!mounted) return null;
+    PendingWhatsAppTask? task;
     setState(() {
-      _postTaskManager.addTask(
+      task = _postTaskManager.addTask(
         receiptNo: receiptNo,
         prepared: prepared,
         message: message,
       );
     });
+    return task;
   }
 
   Future<void> _openPendingWhatsAppTask(PendingWhatsAppTask task) async {
@@ -1941,6 +2355,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
           if ((widget.initialReturnInvoice ?? '').trim().isNotEmpty && !_isEditing)
             SaleReturnContextBanner(
               returnInvoice: widget.initialReturnInvoice!,
+              loading: _returnPrefillLoading,
             ),
 
           // 2. FIXED — walk-in/customer snapshot fields are immutable once the
@@ -1956,6 +2371,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
             searchFocusNode: _productSearchFocusNode,
             searchController: _productSearchController,
             onQueryProducts: _queryProducts,
+            onSubmitText: _addProductFromSearchText,
             onProductSelected: (ref) {
               final productMap = ref.raw ??
                   <String, dynamic>{
@@ -2142,6 +2558,9 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       onAddSplitPayment: () => _addSalePaymentDialog(total),
       onClear: () => _resetForNextSale(),
       submitting: _submitting,
+      onPreview: !_isEditing && !widget.isSalesOrder
+          ? () => _submitSale(previewOnly: true)
+          : null,
       onSaveOnly: () => _submitSale(print: false),
       onSaveAndPrint: () => _submitSale(print: true),
     );

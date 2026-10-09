@@ -94,6 +94,20 @@ class SaleService {
     throw Exception(res['message'] ?? 'Failed to load return source');
   }
 
+  /// Lists every line of [invoice] that still has a returnable quantity, each
+  /// previewed for its full remaining quantity (base units). Same payload
+  /// shape as [getReturnSource]: `{sale: {...}, items: [...]}`.
+  Future<Map<String, dynamic>> getReturnableItems(String invoice) async {
+    final res = await _client.get(
+      '/sales/return-source/items',
+      query: {'invoice': invoice.trim()},
+    );
+    if (res['success'] == true && res['data'] is Map<String, dynamic>) {
+      return res['data'] as Map<String, dynamic>;
+    }
+    throw Exception(res['message'] ?? 'Failed to load returnable items');
+  }
+
   /// Resolves an existing branch customer by the walk-in primary phone.
   /// This is intentionally a Sales endpoint (guarded by create-sales), so a
   /// cashier does not need customer-management permission merely to identify
