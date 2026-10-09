@@ -6,6 +6,7 @@ import 'package:enterprise_pos/models/barcode_label_line.dart';
 import 'package:enterprise_pos/models/printer_config.dart';
 import 'package:enterprise_pos/services/local_printer_service.dart';
 import 'package:enterprise_pos/services/pdf_arabic_font_loader.dart';
+import 'package:enterprise_pos/services/windows_raw_printer.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
@@ -699,6 +700,10 @@ class BarcodeLabelPrinterService {
       if (name.isEmpty) {
         throw Exception('Select a local printer first.');
       }
+      if (_usesRawQueue(config, layout)) {
+        await _printRawToQueue(config: config, items: items, printerName: name);
+        return;
+      }
       await _directPrintPdf(
         printerName: name,
         bytes: bytes,
@@ -715,6 +720,10 @@ class BarcodeLabelPrinterService {
         final name = (config.barcodeLocalPrinterName ?? '').trim();
         if (name.isEmpty) {
           throw Exception('Select an installed barcode printer first.');
+        }
+        if (_usesRawQueue(config, layout)) {
+          await _printRawToQueue(config: config, items: items, printerName: name);
+          return;
         }
         await _directPrintPdf(
           printerName: name,
@@ -814,14 +823,7 @@ class BarcodeLabelPrinterService {
       );
     }
 
-    // A ZPL/TSPL printer draws text with its own resident fonts, which are
-    // Latin-only. When the design contains Urdu, Arabic or any other non-ASCII
-    // text, the label is rendered here instead and sent as a bitmap, so the
-    // printer reproduces exactly what the on-screen preview showed.
-    final unicode = _needsUnicode(config, items);
-    final payload = unicode
-        ? await _rasterCommands(config: config, items: items, language: language)
-        : _textCommands(config: config, items: items, language: language);
+    final payload = await _rawPayload(config: config, items: items);
 
     final socket = await Socket.connect(
       ip,
@@ -834,6 +836,50 @@ class BarcodeLabelPrinterService {
     } finally {
       await socket.close();
     }
+  }
+
+  /// True when an installed (Windows queue) printer should receive native
+  /// ZPL/TSPL instead of a driver-rendered PDF. Driven by the "Printer command
+  /// language" chosen in Printer Settings; `driver` keeps the PDF path.
+  bool _usesRawQueue(PrinterConfig config, BarcodeOutputLayout layout) {
+    if (layout != BarcodeOutputLayout.labels) return false;
+    if (!WindowsRawPrinter.isSupported) return false;
+    final language = config.barcodePrinterLanguage.toLowerCase();
+    return language == 'zpl' || language == 'tspl';
+  }
+
+  /// Builds the ZPL/TSPL bytes for [items].
+  ///
+  /// A ZPL/TSPL printer draws text with its own resident fonts, which are
+  /// Latin-only. When the design contains Urdu, Arabic or any other non-ASCII
+  /// text, the label is rendered here instead and sent as a bitmap, so the
+  /// printer reproduces exactly what the on-screen preview showed.
+  Future<List<int>> _rawPayload({
+    required PrinterConfig config,
+    required List<BarcodeLabelItem> items,
+  }) async {
+    final language = config.barcodePrinterLanguage.toLowerCase();
+    return _needsUnicode(config, items)
+        ? await _rasterCommands(config: config, items: items, language: language)
+        : _textCommands(config: config, items: items, language: language);
+  }
+
+  /// Sends native ZPL/TSPL to a USB/installed Windows printer as a RAW
+  /// spooler job. No driver page layout is involved, so paper size and
+  /// offsets configured in the driver cannot blank or shift the label.
+  Future<void> _printRawToQueue({
+    required PrinterConfig config,
+    required List<BarcodeLabelItem> items,
+    required String printerName,
+  }) async {
+    final selected = await LocalPrinterService.instance.requirePrinter(printerName);
+    final payload = await _rawPayload(config: config, items: items);
+    final total = items.fold<int>(0, (sum, item) => sum + item.copies);
+    WindowsRawPrinter.send(
+      printerName: selected.name,
+      data: Uint8List.fromList(payload),
+      jobName: 'Barcode labels ($total)',
+    );
   }
 
   /// Native printer-font commands. Fast and compact, ASCII only.
@@ -852,7 +898,11 @@ class BarcodeLabelPrinterService {
           : _tspl(config, item, lines, layout, contentHeightMm));
       buffer.writeln();
     }
-    return _latin1(buffer.toString());
+    final text = buffer.toString();
+    // TSC/TSPL firmwares terminate commands with CR+LF; ZPL ignores it.
+    return _latin1(
+      language == 'tspl' ? text.replaceAll('\r\n', '\n').replaceAll('\n', '\r\n') : text,
+    );
   }
 
   /// Walks the resolved lines top to bottom and hands back the vertical

@@ -2549,6 +2549,28 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
                 controller: _barcodeLocalPrinterCtrl,
                 label: 'Installed barcode printer',
               ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                value: const {'driver', 'zpl', 'tspl'}.contains(_barcodeLanguage)
+                    ? _barcodeLanguage
+                    : 'driver',
+                decoration: const InputDecoration(
+                  labelText: 'Print method',
+                  prefixIcon: Icon(Icons.code_rounded),
+                ),
+                items: const [
+                  DropdownMenuItem(value: 'driver', child: Text('Printer driver (PDF)')),
+                  DropdownMenuItem(value: 'tspl', child: Text('Native TSPL — TSC / Black Copper (recommended for USB label printers)')),
+                  DropdownMenuItem(value: 'zpl', child: Text('Native ZPL — Zebra and compatible')),
+                ],
+                onChanged: (value) => setState(() => _barcodeLanguage = value ?? 'driver'),
+              ),
+              const SizedBox(height: 8),
+              const Text(
+                'Native TSPL/ZPL sends the label straight to the Windows printer queue, so the driver paper size cannot blank or shift it. '
+                'Set the printer to the matching emulation mode if it supports several.',
+                style: TextStyle(color: AppTheme.textMuted, fontSize: 12, fontWeight: FontWeight.w600),
+              ),
             ],
             if (_barcodeConnection == 'network') ...[
               Row(
