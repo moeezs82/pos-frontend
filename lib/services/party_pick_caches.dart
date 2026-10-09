@@ -247,6 +247,8 @@ class ProductPickCache {
     int? brandId,
     String? stockStatus,
     bool mostSale = false,
+    String? sortBy,
+    String? sortOrder,
     int perPage = 100,
   }) async {
     final data = await service.getProducts(
@@ -258,6 +260,8 @@ class ProductPickCache {
       brandId: brandId,
       stockStatus: stockStatus,
       mostSale: mostSale,
+      sortBy: sortBy,
+      sortOrder: sortOrder,
       per_page: perPage,
     );
 
