@@ -1,3 +1,5 @@
+import 'package:enterprise_pos/api/backup_service.dart';
+import 'package:enterprise_pos/config/backend_config.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/providers/branch_provider.dart';
 import 'package:enterprise_pos/screens/branches/branch_control_screen.dart';
@@ -21,6 +23,7 @@ import 'package:enterprise_pos/screens/stock_screen.dart';
 import 'package:enterprise_pos/screens/users_screen.dart';
 import 'package:enterprise_pos/screens/vendors/vendors_screen.dart';
 import 'package:enterprise_pos/services/app_navigator.dart';
+import 'package:enterprise_pos/services/backup_runner_service.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -48,7 +51,8 @@ class PosShortcutCatalog {
   PosShortcutCatalog._();
 
   static const global = <PosShortcutInfo>[
-    PosShortcutInfo(keys: 'Ctrl + /', title: 'Show shortcut guide', section: 'System', icon: Icons.keyboard_rounded),
+    PosShortcutInfo(keys: 'Ctrl + / / F1', title: 'Show shortcut guide', section: 'System', icon: Icons.keyboard_rounded),
+    PosShortcutInfo(keys: 'F10 / Ctrl + F10 / F12', title: 'Create Backup', section: 'System', icon: Icons.backup_rounded, permission: 'create-backups'),
     PosShortcutInfo(keys: 'Esc', title: 'Go back', section: 'Navigation', icon: Icons.arrow_back_rounded),
     PosShortcutInfo(keys: 'Ctrl + H', title: 'Go to Home', section: 'Navigation', icon: Icons.home_rounded),
     PosShortcutInfo(keys: 'Ctrl + N / F2', title: 'Create Sale', section: 'Sales', icon: Icons.point_of_sale_rounded, permission: 'create-sales'),
@@ -160,6 +164,11 @@ class AppKeyboardShortcuts extends StatelessWidget {
       _ctrl(LogicalKeyboardKey.slash): () => _showShortcutGuide(context, auth),
       _cmd(LogicalKeyboardKey.slash): () => _showShortcutGuide(context, auth),
       const SingleActivator(LogicalKeyboardKey.f1): () => _showShortcutGuide(context, auth),
+
+      const SingleActivator(LogicalKeyboardKey.f10): () => _triggerDirectBackup(context, auth),
+      _ctrl(LogicalKeyboardKey.f10): () => _triggerDirectBackup(context, auth),
+      _cmd(LogicalKeyboardKey.f10): () => _triggerDirectBackup(context, auth),
+      const SingleActivator(LogicalKeyboardKey.f12): () => _triggerDirectBackup(context, auth),
 
       _ctrl(LogicalKeyboardKey.keyH): () => _goHome(auth),
       _cmd(LogicalKeyboardKey.keyH): () => _goHome(auth),
@@ -304,6 +313,81 @@ class AppKeyboardShortcuts extends StatelessWidget {
       return;
     }
     PosNavigation.openSingleton(routeId: routeId, builder: builder);
+  }
+
+  static bool _backupInProgress = false;
+
+  void _triggerDirectBackup(BuildContext context, AuthProvider auth) async {
+    debugPrint('[CounterIQ] Backup shortcut triggered (F10 / Ctrl+F10 / F12).');
+    if (!auth.isAuthenticated) {
+      _message('Please log in first to create backups.');
+      return;
+    }
+    if (!BackendConfig.isLocal) {
+      _message('Backups are available in CounterIQ Local edition.');
+      return;
+    }
+    if (!auth.hasPermission('create-backups')) {
+      _message('You do not have permission to create backups.');
+      return;
+    }
+    final token = auth.token;
+    if (token == null) {
+      _message('No active session found. Please re-login.');
+      return;
+    }
+
+    if (_backupInProgress) {
+      _message('A backup is already in progress.');
+      return;
+    }
+
+    _backupInProgress = true;
+    final navContext = appNavigatorKey.currentContext ?? context;
+    final service = BackupService(token: token);
+
+    try {
+      await BackupRunnerService.instance.run(
+        navContext,
+        service: service,
+        onBusy: (text) {
+          final messenger = appScaffoldMessengerKey.currentState;
+          if (text != null) {
+            messenger
+              ?..hideCurrentSnackBar()
+              ..showSnackBar(
+                SnackBar(
+                  duration: const Duration(minutes: 5),
+                  content: Row(
+                    children: [
+                      const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          text,
+                          style: const TextStyle(fontWeight: FontWeight.w600),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+          } else {
+            messenger?.hideCurrentSnackBar();
+          }
+        },
+      );
+    } finally {
+      _backupInProgress = false;
+      appScaffoldMessengerKey.currentState?.hideCurrentSnackBar();
+    }
   }
 
   static void _message(String text) {
