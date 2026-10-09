@@ -2327,6 +2327,47 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
   }
 
   // ---------------- Barcode ----------------
+
+  /// Same lookup the scan button uses (live first, offline catalog cache as
+  /// fallback), returning null when nothing has that barcode.
+  Future<Map<String, dynamic>?> _lookupProductByCode(String code) async {
+    Map<String, dynamic>? product;
+    try {
+      product = await _productService.getProductByBarcode(
+        code,
+        vendorId: _selectedVendorId,
+      );
+    } catch (_) {
+      product = null;
+    }
+    product ??= await CatalogCacheService.instance.productByBarcode(
+      code,
+      branchId: int.tryParse(_effectiveBranchIdStr()),
+      vendorId: _selectedVendorId,
+    );
+    return product;
+  }
+
+  /// Enter pressed in the product search bar on a code-like token (what a
+  /// barcode scanner types): add the product straight to the cart exactly as
+  /// the scan button does. Returns false when it is not a known barcode so the
+  /// search bar can behave as an ordinary text search.
+  Future<bool> _addProductFromSearchText(String code) async {
+    final product = await _lookupProductByCode(code.trim());
+    if (!mounted) return true;
+    if (product == null) {
+      // A long all-digit code is certainly a scan, not a name search.
+      if (RegExp(r'^\d{8,}$').hasMatch(code.trim())) {
+        AppFeedback.warning(context, "Product not found: ${code.trim()}");
+        return true;
+      }
+      return false;
+    }
+    final p = product;
+    setState(() => _addOrIncrementProduct(p));
+    return true;
+  }
+
   Future<void> _onBarcodeScanned(String code) async {
     if (code.isEmpty) return;
 
@@ -5469,6 +5510,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
               focusNode: _productSearchFocusNode,
               controller: _productSearchController,
               onQuery: _queryProducts,
+              onSubmitText: _addProductFromSearchText,
               onSelected: (ref) {
                 // Route through the centralized merge/increment method for
                 // both raw-data-available and raw-data-missing cases so that
@@ -6402,11 +6444,17 @@ class _CartProductSearch extends StatefulWidget {
   final Future<List<ProductRef>> Function(String q) onQuery;
   final void Function(ProductRef ref) onSelected;
 
+  /// Scanner support: called with the typed text when Enter is pressed on a
+  /// single code-like token. Return true when it was a barcode and the product
+  /// was added to the cart.
+  final Future<bool> Function(String code)? onSubmitText;
+
   const _CartProductSearch({
     required this.focusNode,
     required this.controller,
     required this.onQuery,
     required this.onSelected,
+    this.onSubmitText,
   });
 
   @override
@@ -6498,6 +6546,43 @@ class _CartProductSearchState extends State<_CartProductSearch> {
   void _removeOverlay() {
     _overlayEntry?.remove();
     _overlayEntry = null;
+  }
+
+  /// Scanner flow: a scanner types the code and presses Enter before any
+  /// suggestion can load. Try the code as a barcode first; if it is not one,
+  /// fall back to the normal Enter behaviour.
+  Future<void> _submitScanCode(String code) async {
+    _debounce?.cancel();
+    final fallback = (_highlightIndex >= 0 && _highlightIndex < _suggestions.length)
+        ? _suggestions[_highlightIndex]
+        : null;
+    // Clear immediately so an instant second scan starts from an empty field.
+    widget.controller.clear();
+    _removeOverlay();
+    var handled = false;
+    try {
+      handled = await widget.onSubmitText!(code);
+    } catch (_) {
+      handled = false;
+    }
+    if (!mounted) return;
+    setState(() {
+      _suggestions = [];
+      _highlightIndex = -1;
+      _loading = false;
+    });
+    if (!handled) {
+      if (fallback != null) {
+        widget.onSelected(fallback);
+      } else if (widget.controller.text.isEmpty) {
+        widget.controller.text = code;
+        widget.controller.selection =
+            TextSelection.collapsed(offset: code.length);
+      }
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) widget.focusNode.requestFocus();
+    });
   }
 
   void _selectIndex(int i) {
@@ -6664,6 +6749,15 @@ class _CartProductSearchState extends State<_CartProductSearch> {
             return KeyEventResult.handled;
           } else if (event.logicalKey == LogicalKeyboardKey.enter ||
               event.logicalKey == LogicalKeyboardKey.numpadEnter) {
+            if (event is KeyDownEvent) {
+              final code = widget.controller.text.trim();
+              if (widget.onSubmitText != null &&
+                  code.length >= 3 &&
+                  !RegExp(r'\s').hasMatch(code)) {
+                _submitScanCode(code);
+                return KeyEventResult.handled;
+              }
+            }
             if (_highlightIndex >= 0) {
               _selectIndex(_highlightIndex);
               return KeyEventResult.handled;

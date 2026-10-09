@@ -64,6 +64,19 @@ class PrinterConfig {
   final double barcodeLabelWidthMm;
   final double barcodeLabelHeightMm;
   final double barcodeLabelGapMm;
+
+  /// How many labels sit side by side on the roll (1 for a single-column
+  /// roll). Only the native ZPL/TSPL paths use it; the PDF/driver path still
+  /// prints one label per page.
+  final int barcodeLabelsAcross;
+
+  /// Horizontal gap between neighbouring labels on a multi-across roll.
+  final double barcodeColumnGapMm;
+
+  /// Origin shift for native ZPL/TSPL output, to line the artwork up with the
+  /// label when the printer's print origin is slightly off.
+  final double barcodeOffsetXMm;
+  final double barcodeOffsetYMm;
   final int barcodeDpi;
   final String barcodeOrientation;
   final String barcodeCurrency;
@@ -131,6 +144,10 @@ class PrinterConfig {
     this.barcodeLabelWidthMm = 50,
     this.barcodeLabelHeightMm = 30,
     this.barcodeLabelGapMm = 2,
+    this.barcodeLabelsAcross = 1,
+    this.barcodeColumnGapMm = 2,
+    this.barcodeOffsetXMm = 0,
+    this.barcodeOffsetYMm = 0,
     this.barcodeDpi = 203,
     this.barcodeOrientation = 'portrait',
     this.barcodeCurrency = 'KD',
@@ -305,6 +322,10 @@ class PrinterConfig {
       barcodeLabelWidthMm: toDouble(json['barcode_label_width_mm'], 50),
       barcodeLabelHeightMm: toDouble(json['barcode_label_height_mm'], 30),
       barcodeLabelGapMm: toDouble(json['barcode_label_gap_mm'], 2),
+      barcodeLabelsAcross: toInt(json['barcode_labels_across'], 1).clamp(1, 4).toInt(),
+      barcodeColumnGapMm: toDouble(json['barcode_column_gap_mm'], 2),
+      barcodeOffsetXMm: toDouble(json['barcode_offset_x_mm'], 0),
+      barcodeOffsetYMm: toDouble(json['barcode_offset_y_mm'], 0),
       barcodeDpi: toInt(json['barcode_dpi'], 203),
       barcodeOrientation: (json['barcode_orientation'] ?? 'portrait').toString(),
       barcodeCurrency: (json['barcode_currency'] ?? 'KD').toString(),
@@ -367,6 +388,10 @@ class PrinterConfig {
         'barcode_label_width_mm': barcodeLabelWidthMm,
         'barcode_label_height_mm': barcodeLabelHeightMm,
         'barcode_label_gap_mm': barcodeLabelGapMm,
+        'barcode_labels_across': barcodeLabelsAcross,
+        'barcode_column_gap_mm': barcodeColumnGapMm,
+        'barcode_offset_x_mm': barcodeOffsetXMm,
+        'barcode_offset_y_mm': barcodeOffsetYMm,
         'barcode_dpi': barcodeDpi,
         'barcode_orientation': barcodeOrientation,
         'barcode_currency': barcodeCurrency,
@@ -426,6 +451,10 @@ class PrinterConfig {
     double? barcodeLabelWidthMm,
     double? barcodeLabelHeightMm,
     double? barcodeLabelGapMm,
+    int? barcodeLabelsAcross,
+    double? barcodeColumnGapMm,
+    double? barcodeOffsetXMm,
+    double? barcodeOffsetYMm,
     int? barcodeDpi,
     String? barcodeOrientation,
     String? barcodeCurrency,
@@ -497,6 +526,10 @@ class PrinterConfig {
       barcodeLabelHeightMm:
           barcodeLabelHeightMm ?? this.barcodeLabelHeightMm,
       barcodeLabelGapMm: barcodeLabelGapMm ?? this.barcodeLabelGapMm,
+      barcodeLabelsAcross: barcodeLabelsAcross ?? this.barcodeLabelsAcross,
+      barcodeColumnGapMm: barcodeColumnGapMm ?? this.barcodeColumnGapMm,
+      barcodeOffsetXMm: barcodeOffsetXMm ?? this.barcodeOffsetXMm,
+      barcodeOffsetYMm: barcodeOffsetYMm ?? this.barcodeOffsetYMm,
       barcodeDpi: barcodeDpi ?? this.barcodeDpi,
       barcodeOrientation: barcodeOrientation ?? this.barcodeOrientation,
       barcodeCurrency: barcodeCurrency ?? this.barcodeCurrency,

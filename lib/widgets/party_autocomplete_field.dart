@@ -88,6 +88,18 @@ class PartyAutocompleteField<T> extends StatefulWidget {
   /// pick) used by Customer / Vendor / Salesman / Delivery Boy fields.
   final bool keepFocusAfterSelect;
 
+  /// Optional hook for scanner input typed into this field.
+  ///
+  /// A barcode scanner types the code and presses Enter within a few
+  /// milliseconds, long before any suggestion list can load, so Enter alone
+  /// used to do nothing. When this is set and Enter is pressed on a single
+  /// token that looks like a code (no spaces, 3+ characters), the text is
+  /// handed here first. Return true when the code was handled (for example the
+  /// product was added to the cart): the field is cleared and keeps focus so
+  /// the next scan can follow immediately. Return false to fall back to the
+  /// normal behaviour (pick the highlighted suggestion).
+  final Future<bool> Function(String code)? onSubmitText;
+
   const PartyAutocompleteField({
     super.key,
     required this.getCachedItems,
@@ -110,6 +122,7 @@ class PartyAutocompleteField<T> extends StatefulWidget {
     this.focusNode,
     this.controller,
     this.keepFocusAfterSelect = false,
+    this.onSubmitText,
   });
 
   @override
@@ -323,10 +336,59 @@ class _PartyAutocompleteFieldState<T> extends State<PartyAutocompleteField<T>> {
     return box?.size.width ?? 280;
   }
 
-  void _handleSubmitted(String _) {
+  static bool _looksLikeScanCode(String text) =>
+      text.length >= 3 && !RegExp(r'\s').hasMatch(text);
+
+  void _handleSubmitted(String value) {
+    final hook = widget.onSubmitText;
+    final code = value.trim();
+    if (hook != null && _looksLikeScanCode(code)) {
+      _submitScanCode(hook, code);
+      return;
+    }
     if (_highlightedIndex >= 0 && _highlightedIndex < _suggestions.length) {
       _select(_suggestions[_highlightedIndex]);
     }
+  }
+
+  Future<void> _submitScanCode(
+    Future<bool> Function(String code) hook,
+    String code,
+  ) async {
+    _debounce?.cancel();
+    final fallback =
+        (_highlightedIndex >= 0 && _highlightedIndex < _suggestions.length)
+            ? _suggestions[_highlightedIndex]
+            : null;
+    // Clear straight away so a scanner that fires the next code immediately
+    // starts from an empty field instead of appending to this one.
+    _controller.clear();
+    _removeOverlay();
+    var handled = false;
+    try {
+      handled = await hook(code);
+    } catch (_) {
+      handled = false;
+    }
+    if (!mounted) return;
+    if (handled) {
+      setState(() {
+        _suggestions = [];
+        _highlightedIndex = -1;
+      });
+    } else if (fallback != null) {
+      // Not a barcode: behave exactly as Enter always did.
+      widget.onSelected(fallback);
+    } else if (_controller.text.isEmpty) {
+      // Nothing matched and nothing was typed meanwhile: put the text back so
+      // the normal search results appear for what the user typed.
+      _controller.text = code;
+      _controller.selection = TextSelection.collapsed(offset: code.length);
+      _runLocalFilter(code);
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _focusNode.requestFocus();
+    });
   }
 
   void _moveHighlight(int delta) {

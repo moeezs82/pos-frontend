@@ -745,15 +745,42 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
     final safeCode = code.trim();
     if (safeCode.isEmpty) return;
 
-    final product = await _productService.getProductByBarcode(safeCode, vendorId: _selectedVendorId);
+    final added = await _addProductByCode(safeCode);
     if (!mounted) return;
 
-    if (product == null) {
+    if (!added) {
       AppFeedback.warning(context, 'Product not found: $safeCode');
-      _barcodeController.clear();
-      _refocusScanner();
-      return;
     }
+    _barcodeController.clear();
+    _refocusScanner();
+  }
+
+  /// Enter pressed in the "Add product" search field on a code-like token
+  /// (what a barcode scanner types): add it to the purchase exactly as the
+  /// scan button does. Returns false when it is not a known barcode so the
+  /// field can behave as an ordinary text search.
+  Future<bool> _addProductFromSearchText(String code) async {
+    final safeCode = code.trim();
+    var added = false;
+    try {
+      added = await _addProductByCode(safeCode);
+    } catch (_) {
+      added = false;
+    }
+    if (!mounted) return true;
+    if (!added && RegExp(r'^\d{8,}$').hasMatch(safeCode)) {
+      // A long all-digit code is certainly a scan, not a name search.
+      AppFeedback.warning(context, 'Product not found: $safeCode');
+      return true;
+    }
+    return added;
+  }
+
+  /// Looks the barcode up and adds the product to the purchase (or increments
+  /// its existing row). Returns false when no product has that barcode.
+  Future<bool> _addProductByCode(String safeCode) async {
+    final product = await _productService.getProductByBarcode(safeCode, vendorId: _selectedVendorId);
+    if (!mounted || product == null) return false;
 
     final productId = int.tryParse(product['id']?.toString() ?? '') ?? 0;
     final unitCost = _purchaseUnitCost(product);
@@ -788,9 +815,7 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
         });
       }
     });
-
-    _barcodeController.clear();
-    _refocusScanner();
+    return true;
   }
 
   void _refocusScanner() {
@@ -1169,6 +1194,7 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
               subtitleOf: (product) =>
                   (product['sku'] ?? product['barcode'] ?? '').toString(),
               idOf: (product) => (product['id'] ?? '').toString(),
+              onSubmitText: _addProductFromSearchText,
               onSelected: (product) {
                 setState(() => _applyPickedProduct(product));
                 _productSearchController.clear();
