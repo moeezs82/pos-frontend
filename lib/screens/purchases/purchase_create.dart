@@ -194,6 +194,7 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
     final unitCost = _purchaseUnitCost(product);
     final row = <String, dynamic>{
       'product_id': productId,
+      'product_vendor_id': int.tryParse(product['vendor_id']?.toString() ?? ''),
       'name': product['name'] ?? product['title'] ?? 'Unnamed product',
       'cost_price': product['cost_price'],
       'wholesale_price': product['wholesale_price'],
@@ -301,8 +302,27 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
       _selectedVendorId = vendor?['id'] is int
           ? vendor!['id'] as int
           : int.tryParse(vendor?['id']?.toString() ?? '');
-      _items = [];
     });
+    _pruneItemsForVendor();
+  }
+
+  /// Keeps cart rows that can be bought from the selected vendor: products
+  /// with no vendor (any vendor may supply them) or whose vendor matches.
+  /// Only rows tied to a different vendor are removed.
+  void _pruneItemsForVendor() {
+    final vendorId = _selectedVendorId;
+    if (vendorId == null) return;
+    final kept = _items.where((item) {
+      final pv = int.tryParse(item['product_vendor_id']?.toString() ?? '');
+      return pv == null || pv == vendorId;
+    }).toList();
+    final removed = _items.length - kept.length;
+    if (removed == 0) return;
+    setState(() => _items = kept);
+    AppFeedback.warning(
+      context,
+      '$removed item${removed == 1 ? '' : 's'} removed because ${removed == 1 ? 'it belongs' : 'they belong'} to a different vendor.',
+    );
   }
 
   Future<void> _pickVendor() async {
@@ -314,7 +334,6 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
     setState(() {
       _selectedVendor = null;
       _selectedVendorId = null;
-      _items = [];
     });
   }
 
@@ -426,6 +445,7 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
             : _toNum(existing['discount_pct'] ?? existing['discount']);
         nextBase.add({
           'product_id': productId,
+          'product_vendor_id': int.tryParse(product['vendor_id']?.toString() ?? ''),
           'name': product['name'] ?? product['title'] ?? 'Unnamed product',
           'cost_price': product['cost_price'],
           'wholesale_price': product['wholesale_price'],
@@ -477,6 +497,7 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
           : qty;
       _items.add({
         'product_id': productId,
+        'product_vendor_id': int.tryParse(product['vendor_id']?.toString() ?? ''),
         'name': product['name'] ?? product['title'] ?? 'Unnamed product',
         'cost_price': product['cost_price'],
         'wholesale_price': product['wholesale_price'],
@@ -802,6 +823,7 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
       } else {
         _items.add({
           'product_id': productId,
+          'product_vendor_id': int.tryParse(product['vendor_id']?.toString() ?? ''),
           'name': product['name'] ?? 'Unnamed product',
           'cost_price': product['cost_price'],
           'wholesale_price': product['wholesale_price'],
@@ -1412,6 +1434,7 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
           Expanded(
             child: ItemsTable(
               compact: true,
+              showExtraDiscount: false,
               items: _items,
               onAddItem: _addItemManual,
               onQueryProducts: _queryProducts,

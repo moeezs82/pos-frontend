@@ -58,6 +58,8 @@ import 'package:enterprise_pos/services/whatsapp_message_template_service.dart';
 
 // local widgets split into small files
 import 'package:enterprise_pos/screens/sales/parts/sale_party_section.dart';
+import 'package:enterprise_pos/screens/sales/parts/sale_preview_dialog.dart';
+import 'package:enterprise_pos/widgets/whatsapp_icon.dart';
 
 
 class _PendingWhatsAppTask {
@@ -75,6 +77,16 @@ class _PendingWhatsAppTask {
     this.opening = false,
   });
 }
+
+/// Re-runs the post-save outputs (physical print and/or WhatsApp invoice
+/// preparation) for a sale that was ALREADY saved by [_submitSale]. It never
+/// saves anything. Used by the Preview dialog so Print and WhatsApp can be
+/// used repeatedly after the first save without creating a second sale.
+typedef _SaleOutputRunner = Future<void> Function({
+  required bool print,
+  required bool whatsApp,
+  void Function(_PendingWhatsAppTask task)? onWhatsAppTask,
+});
 
 class _OfflineCreditDecision {
   final bool allowed;
@@ -306,6 +318,8 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       if (!mounted) return;
       if (_isEditing) {
         _loadSaleForEdit();
+      } else if ((widget.initialReturnInvoice ?? '').trim().isNotEmpty) {
+        _prefillReturnItems();
       } else {
         _productSearchFocusNode.requestFocus();
       }
@@ -1274,9 +1288,29 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     setState(() {
       _selectedVendor = vendor;
       _selectedVendorId = _metaInt(vendor?['id']);
-      if (!_isEditing) _items = []; // avoid cross-vendor mix on a new sale
     });
+    if (!_isEditing) _pruneItemsForVendor();
     _restoreSaleScreenFocus();
+  }
+
+  /// Avoids cross-vendor mix on a new sale without emptying the cart: keeps
+  /// products with no vendor (sellable under any vendor) or whose vendor
+  /// matches the selected one, and removes only rows of other vendors.
+  void _pruneItemsForVendor() {
+    if (!mounted) return;
+    final vendorId = _selectedVendorId;
+    if (vendorId == null) return;
+    final kept = _items.where((item) {
+      final pv = int.tryParse(item['product_vendor_id']?.toString() ?? '');
+      return pv == null || pv == vendorId;
+    }).toList();
+    final removed = _items.length - kept.length;
+    if (removed == 0) return;
+    setState(() => _items = kept);
+    AppFeedback.warning(
+      context,
+      '$removed item${removed == 1 ? '' : 's'} removed because ${removed == 1 ? 'it belongs' : 'they belong'} to a different vendor.',
+    );
   }
 
   Future<void> _pickVendor() async {
@@ -2525,6 +2559,168 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     );
   }
 
+  /// Returns [current] (a cart row) turned into a negative row linked to the
+  /// original sale line [picked]. All refund economics come from the original
+  /// sale, never from today's price. Shared by the manual return link and the
+  /// Return / Exchange pre-fill.
+  Map<String, dynamic> _linkedReturnRow({
+    required Map<String, dynamic> current,
+    required Map<String, dynamic> picked,
+    required int sourceSaleId,
+    required Map<String, dynamic> sale,
+    required String invoice,
+    required String reason,
+    required double authoritativeQty,
+  }) {
+    return Map<String, dynamic>.from(current)
+      ..['original_sale_id'] = sourceSaleId
+      ..['original_sale_item_id'] = _metaInt(picked['sale_item_id'])
+      ..['return_source_invoice'] = (sale['invoice_no'] ?? invoice).toString()
+      ..['return_reason'] = reason
+      ..['returnable_quantity'] = _metaNum(picked['returnable_qty'])
+      ..['return_original_outstanding'] = _metaNum(sale['outstanding'])
+      ..['return_credit'] = _metaNum(picked['return_credit'])
+      ..['return_merchandise_subtotal'] = _metaNum(picked['merchandise_subtotal'])
+      ..['return_invoice_discount'] = _metaNum(picked['invoice_discount_allocated'])
+      ..['return_tax'] = _metaNum(picked['tax_allocated'])
+      ..['return_linked_quantity'] = authoritativeQty
+      ..['price'] = _metaNum(picked['original_price'])
+      ..['discount_pct'] = _metaNum(picked['line_discount'])
+      ..['extra_discount'] = _metaNum(picked['extra_discount_allocated'])
+      ..['discount_type'] = (picked['discount_type'] ?? 'percentage').toString()
+      ..['quantity'] = -authoritativeQty
+      ..['total'] = -_metaNum(picked['return_credit']).abs();
+  }
+
+  bool _returnPrefillLoading = false;
+
+  /// Return / Exchange opened for an invoice: after the cashier confirms the
+  /// invoice and reason, adds every line that still has a returnable quantity
+  /// as a linked negative row. The cashier can then edit quantities, delete
+  /// lines they are not returning, and add exchange items. The backend still
+  /// re-validates everything when the sale is posted.
+  Future<void> _prefillReturnItems() async {
+    final seeded = (widget.initialReturnInvoice ?? '').trim();
+    if (!mounted || _isEditing || seeded.isEmpty || _items.isNotEmpty) return;
+
+    final request = await _askReturnSource(initialInvoice: seeded);
+    if (!mounted || request == null) return;
+    final invoice = request['invoice']!;
+    final reason = request['reason']!;
+
+    setState(() => _returnPrefillLoading = true);
+    try {
+      final data = await _saleService.getReturnableItems(invoice);
+      if (!mounted) return;
+      final sale = data['sale'] is Map
+          ? Map<String, dynamic>.from(data['sale'] as Map)
+          : <String, dynamic>{};
+      final sourceSaleId = _metaInt(sale['id']);
+      if (sourceSaleId == null) {
+        throw Exception('Original sale could not be resolved.');
+      }
+      final lines = (data['items'] is List ? data['items'] as List : const [])
+          .whereType<Map>()
+          .map((m) => Map<String, dynamic>.from(m))
+          .toList();
+      if (lines.isEmpty) {
+        AppFeedback.warning(
+          context,
+          'Nothing is left to return on invoice ${sale['invoice_no'] ?? invoice}.',
+        );
+        return;
+      }
+
+      final results = await Future.wait(lines.map((line) async {
+        try {
+          final productId = _metaInt(line['product_id']);
+          if (productId == null) return null;
+          return await _productService.getProduct(productId);
+        } catch (_) {
+          return null;
+        }
+      }));
+      if (!mounted) return;
+
+      final rows = <Map<String, dynamic>>[];
+      var skipped = 0;
+      for (var i = 0; i < lines.length; i++) {
+        final product = results[i];
+        final line = lines[i];
+        final qty = _metaNum(line['quantity']);
+        if (product == null || qty <= 0) {
+          skipped++;
+          continue;
+        }
+        final base = <String, dynamic>{
+          'product_id': _metaInt(line['product_id']),
+          'product_vendor_id': int.tryParse(product['vendor_id']?.toString() ?? ''),
+          'product_vendor_name': (product['vendor_name'] ?? '').toString().trim().isEmpty
+              ? null
+              : (product['vendor_name'] ?? '').toString().trim(),
+          'name': product['name'] ?? line['product_name'],
+          'secondary_name': product['secondary_name'],
+          'cost_price': product['cost_price'],
+          'wholesale_price': product['wholesale_price'],
+          ...SaleProfitCalculator.costFieldsFromProduct(product),
+          ...ProductStock.toTransactionRowFields(product),
+          'quantity': -qty,
+          'price': _metaNum(line['original_price']),
+          'discount_pct': 0.0,
+          'discount_type': 'percentage',
+          'total': 0.0,
+          'packagings': product['packagings'],
+          ...QuantityRule.fromProduct(product).toRowFields(),
+        };
+        rows.add(_linkedReturnRow(
+          current: base,
+          picked: line,
+          sourceSaleId: sourceSaleId,
+          sale: sale,
+          invoice: invoice,
+          reason: reason,
+          authoritativeQty: qty,
+        ));
+      }
+
+      if (rows.isEmpty) {
+        AppFeedback.error(
+          context,
+          'Could not load the products of invoice ${sale['invoice_no'] ?? invoice}.',
+        );
+        return;
+      }
+
+      final customer = sale['customer'];
+      if (customer is Map) {
+        _applyCustomerSelection(Map<String, dynamic>.from(customer));
+      } else {
+        _applyCustomerSelection(null);
+      }
+      setState(() {
+        _items = rows;
+        // Return linkage changes what is payable/refundable; stale tender
+        // amounts must not survive it.
+        _payments = [];
+        cashReceivedController.clear();
+      });
+      if (skipped > 0) {
+        AppFeedback.warning(
+          context,
+          '$skipped item${skipped == 1 ? '' : 's'} could not be loaded; add ${skipped == 1 ? 'it' : 'them'} manually with a negative quantity.',
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      final message = e is ApiException
+          ? e.message
+          : e.toString().replaceFirst('Exception: ', '');
+      AppFeedback.error(context, message);
+    } finally {
+      if (mounted) setState(() => _returnPrefillLoading = false);
+    }
+  }
+
   Future<bool> _linkReturnForRow(
     int index,
     double quantity,
@@ -2628,24 +2824,15 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       if (authoritativeQty <= 0) {
         throw Exception('The original invoice returned an invalid return quantity.');
       }
-      final updated = Map<String, dynamic>.from(current)
-        ..['original_sale_id'] = sourceSaleId
-        ..['original_sale_item_id'] = _metaInt(picked['sale_item_id'])
-        ..['return_source_invoice'] = (sale['invoice_no'] ?? invoice).toString()
-        ..['return_reason'] = reason
-        ..['returnable_quantity'] = _metaNum(picked['returnable_qty'])
-        ..['return_original_outstanding'] = _metaNum(sale['outstanding'])
-        ..['return_credit'] = _metaNum(picked['return_credit'])
-        ..['return_merchandise_subtotal'] = _metaNum(picked['merchandise_subtotal'])
-        ..['return_invoice_discount'] = _metaNum(picked['invoice_discount_allocated'])
-        ..['return_tax'] = _metaNum(picked['tax_allocated'])
-        ..['return_linked_quantity'] = authoritativeQty
-        ..['price'] = _metaNum(picked['original_price'])
-        ..['discount_pct'] = _metaNum(picked['line_discount'])
-        ..['extra_discount'] = _metaNum(picked['extra_discount_allocated'])
-        ..['discount_type'] = (picked['discount_type'] ?? 'percentage').toString()
-        ..['quantity'] = -authoritativeQty
-        ..['total'] = -_metaNum(picked['return_credit']).abs();
+      final updated = _linkedReturnRow(
+        current: current,
+        picked: picked,
+        sourceSaleId: sourceSaleId,
+        sale: sale,
+        invoice: invoice,
+        reason: reason,
+        authoritativeQty: authoritativeQty,
+      );
 
       if (requestedPackagingId != null) {
         final returnPackagingId = _metaInt(picked['return_packaging_id']);
@@ -3164,7 +3351,79 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     return 'Sale not saved — please correct and try again.\n${lines.join('\n')}';
   }
 
-  Future<void> _submitSale({bool print = true}) async {
+  List<SaleReceiptItem> _buildReceiptItems() {
+    return _items.map((i) {
+      final name = (i['name'] ?? '').toString();
+      final packaged = i['packaging_id'] != null;
+      final basePrice = double.tryParse(i['price']?.toString() ?? '') ?? 0.0;
+      final baseQty = double.tryParse(i['quantity']?.toString() ?? '') ?? 0.0;
+      final price = packaged
+          ? _metaNum(i['packaging_unit_price'])
+          : basePrice;
+      final qty = packaged
+          ? _metaNum(i['packaging_quantity'])
+          : baseQty;
+      final lineTotal =
+          double.tryParse(i['total']?.toString() ?? '') ?? _cartLineTotal(i);
+      final gross = (price * qty).abs();
+      final net = lineTotal.abs();
+      final extraDiscount = _metaNum(i['extra_discount']).abs();
+      final lineDiscount =
+          (gross - net - extraDiscount).clamp(0.0, double.infinity).toDouble();
+      final unitRaw = i['unit_name'] ?? i['unit_symbol'] ?? i['unit'];
+      final baseUnitName = unitRaw is Map
+          ? (unitRaw['symbol'] ?? unitRaw['name'] ?? '').toString()
+          : (unitRaw ?? '').toString();
+      final packageLabel = (i['packaging_short_name_snapshot'] ??
+              i['packaging_name_snapshot'] ??
+              '')
+          .toString()
+          .trim();
+      final discountType =
+          (i['discount_type'] ?? 'percentage').toString();
+      return SaleReceiptItem(
+        name: name,
+        secondaryName: (i['secondary_name'] ?? '').toString().trim().isEmpty
+            ? null
+            : (i['secondary_name'] ?? '').toString().trim(),
+        price: price,
+        qty: qty,
+        total: lineTotal,
+        unitName: packaged && packageLabel.isNotEmpty
+            ? packageLabel
+            : baseUnitName,
+        packagingName: packaged
+            ? (i['packaging_name_snapshot'] ?? '').toString().trim()
+            : null,
+        packagingShortName: packaged
+            ? (i['packaging_short_name_snapshot'] ?? '').toString().trim()
+            : null,
+        packagingFactor: packaged
+            ? _metaNum(i['packaging_factor_snapshot'])
+            : null,
+        baseUnitName: baseUnitName,
+        discountAmount: lineDiscount,
+        discountType: discountType,
+        discountValue: discountType == 'fixed' && packaged
+            ? _metaNum(i['packaging_discount_snapshot'])
+            : _metaNum(i['discount_pct']),
+        extraDiscountAmount: extraDiscount,
+      );
+    }).toList();
+  }
+
+  Future<void> _submitSale({
+    bool print = true,
+    // Runs the normal validation and totals, then only builds the bill and
+    // shows it in the Preview dialog. Nothing is saved, printed or sent.
+    bool previewOnly = false,
+    // Send the invoice on WhatsApp even if the WhatsApp toggle is off.
+    bool forceWhatsApp = false,
+    // Called once the sale is saved (online or queued offline).
+    void Function(String receiptNo, _SaleOutputRunner runOutputs)? onSaved,
+    // Called when the WhatsApp attachment of this save is ready.
+    void Function(_PendingWhatsAppTask task)? onWhatsAppTask,
+  }) async {
     if (_isEditing) {
       await _submitAmendment();
       return;
@@ -3183,10 +3442,13 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       return;
     }
 
-    if (_sendInvoiceOnWhatsApp) {
+    final wantsWhatsApp = _sendInvoiceOnWhatsApp || forceWhatsApp;
+    // Captured now: the customer fields are cleared once the sale is saved.
+    final whatsappDestinationPhone = _whatsAppDestinationPhone();
+    if (wantsWhatsApp) {
       try {
         WhatsAppInvoiceService.instance.normalizePhone(
-          _whatsAppDestinationPhone(),
+          whatsappDestinationPhone,
         );
       } on FormatException catch (e) {
         AppFeedback.warning(context, e.message.toString());
@@ -3336,6 +3598,25 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     final changeAmount = cashDue > 0
         ? (cashReceived - cashDue).clamp(0.0, double.infinity).toDouble()
         : 0.0;
+
+    if (previewOnly) {
+      await _showSalePreview(
+        effectiveBranchId: effectiveBranchId,
+        subtotal: subtotal,
+        discount: discount,
+        tax: tax,
+        shipping: shipping,
+        saleTotal: saleTotal,
+        returnCredit: returnCredit,
+        total: total,
+        paid: paid,
+        balance: balance,
+        cashReceived: cashReceived,
+        changeAmount: changeAmount,
+        paymentsToSend: paymentsToSend,
+      );
+      return;
+    }
 
     setState(() => _submitting = true);
 
@@ -3567,68 +3848,18 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       // WhatsApp delivery needs the receipt *document*, not a printer, so the
       // document-building section below must also run on the Save-only path.
       // Physical printing and the preview dialog stay gated on `print`.
-      final prepareWhatsAppInvoice = _sendInvoiceOnWhatsApp && !queuedOffline;
+      // Built now, while the cart still exists: the Preview dialog may run
+      // Print / WhatsApp again after the cart has been cleared.
+      final receiptItems = _buildReceiptItems();
 
-      if (print || prepareWhatsAppInvoice) {
+      Future<void> runOutputs({
+        required bool print,
+        required bool whatsApp,
+        void Function(_PendingWhatsAppTask task)? onWhatsAppTask,
+      }) async {
+      final prepareWhatsAppInvoice = whatsApp && !queuedOffline;
+      if (!print && !prepareWhatsAppInvoice) return;
       final receiptSubtotal = subtotal - returnCredit;
-      final receiptItems = _items.map((i) {
-        final name = (i['name'] ?? '').toString();
-        final packaged = i['packaging_id'] != null;
-        final basePrice = double.tryParse(i['price']?.toString() ?? '') ?? 0.0;
-        final baseQty = double.tryParse(i['quantity']?.toString() ?? '') ?? 0.0;
-        final price = packaged
-            ? _metaNum(i['packaging_unit_price'])
-            : basePrice;
-        final qty = packaged
-            ? _metaNum(i['packaging_quantity'])
-            : baseQty;
-        final lineTotal =
-            double.tryParse(i['total']?.toString() ?? '') ?? _cartLineTotal(i);
-        final gross = (price * qty).abs();
-        final net = lineTotal.abs();
-        final extraDiscount = _metaNum(i['extra_discount']).abs();
-        final lineDiscount =
-            (gross - net - extraDiscount).clamp(0.0, double.infinity).toDouble();
-        final unitRaw = i['unit_name'] ?? i['unit_symbol'] ?? i['unit'];
-        final baseUnitName = unitRaw is Map
-            ? (unitRaw['symbol'] ?? unitRaw['name'] ?? '').toString()
-            : (unitRaw ?? '').toString();
-        final packageLabel = (i['packaging_short_name_snapshot'] ??
-                i['packaging_name_snapshot'] ??
-                '')
-            .toString()
-            .trim();
-        final discountType =
-            (i['discount_type'] ?? 'percentage').toString();
-        return SaleReceiptItem(
-          name: name,
-          secondaryName: (i['secondary_name'] ?? '').toString().trim().isEmpty
-              ? null
-              : (i['secondary_name'] ?? '').toString().trim(),
-          price: price,
-          qty: qty,
-          total: lineTotal,
-          unitName: packaged && packageLabel.isNotEmpty
-              ? packageLabel
-              : baseUnitName,
-          packagingName: packaged
-              ? (i['packaging_name_snapshot'] ?? '').toString().trim()
-              : null,
-          packagingShortName: packaged
-              ? (i['packaging_short_name_snapshot'] ?? '').toString().trim()
-              : null,
-          packagingFactor: packaged
-              ? _metaNum(i['packaging_factor_snapshot'])
-              : null,
-          baseUnitName: baseUnitName,
-          discountAmount: lineDiscount,
-          discountType: discountType,
-          discountValue: discountType == 'fixed' && packaged
-              ? _metaNum(i['packaging_discount_snapshot'])
-              : _metaNum(i['discount_pct']),
-          extraDiscountAmount: extraDiscount,
-        );
-      }).toList();
       final printerConfig = context.read<PrinterConfigProvider>();
 
       if (!printerConfig.isConfigured) {
@@ -3934,7 +4165,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
             'attachment_format': whatsappFormat.label,
           },
         );
-        final whatsappPhone = _whatsAppDestinationPhone();
+        final whatsappPhone = whatsappDestinationPhone;
         final reusablePrimaryPdf = whatsappTemplate == mainTemplate &&
                 whatsappPaperCode == printerConfig.mainPaperCode
             ? customerInvoicePdfBytes
@@ -3973,11 +4204,12 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
               '[WHATSAPP-TIMING] background attachment ready in ${prepareTiming.elapsedMilliseconds}ms format=${whatsappFormat.value}',
             );
             if (!mounted) return;
-            _addPendingWhatsAppTask(
+            final task = _addPendingWhatsAppTask(
               receiptNo: receiptNo,
               prepared: prepared,
               message: whatsappMessage,
             );
+            if (task != null) onWhatsAppTask?.call(task);
           } catch (e, st) {
             debugPrint('WHATSAPP INVOICE ERROR: $e');
             debugPrintStack(stackTrace: st);
@@ -3996,10 +4228,17 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
           }
         }());
       }
-      } // if (print || prepareWhatsAppInvoice)
+      } // runOutputs
+
+      onSaved?.call(receiptNo, runOutputs);
+      await runOutputs(
+        print: print,
+        whatsApp: wantsWhatsApp,
+        onWhatsAppTask: onWhatsAppTask,
+      );
 
       if (!mounted) return;
-      final whatsappWasRequested = _sendInvoiceOnWhatsApp;
+      final whatsappWasRequested = wantsWhatsApp;
       _resetForNextSale(keepInitialCustomer: widget.initialCustomer != null);
       if (queuedOffline) {
         AppFeedback.warning(
@@ -4053,22 +4292,166 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     }
   }
 
-  void _addPendingWhatsAppTask({
+  bool _previewBusy = false;
+
+  /// Builds the bill exactly as the main receipt would print and shows it in
+  /// a centred dialog. Nothing is saved until the user picks Save, Print or
+  /// WhatsApp inside the dialog.
+  Future<void> _showSalePreview({
+    required String? effectiveBranchId,
+    required double subtotal,
+    required double discount,
+    required double tax,
+    required double shipping,
+    required double saleTotal,
+    required double returnCredit,
+    required double total,
+    required double paid,
+    required double balance,
+    required double cashReceived,
+    required double changeAmount,
+    required List<Map<String, dynamic>> paymentsToSend,
+  }) async {
+    if (_previewBusy) return;
+    _previewBusy = true;
+    try {
+      final meta = _buildSaleMeta(
+        effectiveBranchId: effectiveBranchId,
+        subtotal: subtotal,
+        discount: discount,
+        tax: tax,
+        shipping: shipping,
+        total: saleTotal,
+        paid: paid,
+        balance: balance,
+        cashReceived: cashReceived,
+        changeAmount: changeAmount,
+        paymentsToSend: paymentsToSend,
+      );
+      final printerConfig = context.read<PrinterConfigProvider>();
+      if (!printerConfig.isConfigured) {
+        try {
+          final token = context.read<AuthProvider>().token;
+          if (token != null) await printerConfig.refresh(token);
+        } catch (e, s) {
+          debugPrint('Printer config refresh failed: $e');
+          debugPrintStack(stackTrace: s);
+        }
+      }
+      if (!mounted) return;
+      final mainTemplate = printerConfig.mainInvoiceTemplate;
+      final paperCode = printerConfig.mainPaperCode;
+      final pdfBytes = await ReceiptPreviewService.instance.buildReceiptPdf(
+        shopName:
+            printerConfig.shopName.isNotEmpty ? printerConfig.shopName : 'My Shop',
+        shopAddress:
+            printerConfig.shopAddress.isNotEmpty ? printerConfig.shopAddress : null,
+        shopPhone:
+            printerConfig.shopPhone.isNotEmpty ? printerConfig.shopPhone : null,
+        receiptNo: 'PREVIEW',
+        dateTime: DateTime.now(),
+        items: _buildReceiptItems(),
+        subtotal: subtotal - returnCredit,
+        discount: discount,
+        tax: tax,
+        grandTotal: total,
+        meta: {
+          ...meta,
+          'item_discount_display': printerConfig.itemDiscountDisplay.value,
+        },
+        sections: mainTemplate.sections,
+        paperWidth: paperCode,
+        footerLines: printerConfig.footerLines,
+        footerLineStyles: printerConfig.footerLineStyles,
+        invoiceHeading: printerConfig.invoiceHeading,
+        showLogo: printerConfig.printLogoEnabled && mainTemplate.isCustomerFacing,
+        logoData: printerConfig.printLogoData,
+        showQr: printerConfig.qrCodeEnabled && mainTemplate.isCustomerFacing,
+        qrUrl: printerConfig.qrCodeUrl,
+        qrCaption: printerConfig.qrCodeCaption,
+        template: mainTemplate,
+        devCreditEnabled: printerConfig.devCreditEnabled,
+        devCreditText: printerConfig.devCreditText,
+      );
+      if (!mounted) return;
+
+      // Set by _submitSale once the sale exists. After that, Print / WhatsApp
+      // re-run only the outputs and never save a second sale.
+      _SaleOutputRunner? runOutputs;
+
+      Future<bool> save() async {
+        if (runOutputs != null) return true;
+        await _submitSale(
+          print: false,
+          onSaved: (_, runner) => runOutputs = runner,
+        );
+        return runOutputs != null;
+      }
+
+      Future<void> printBill() async {
+        final runner = runOutputs;
+        if (runner != null) {
+          await runner(print: true, whatsApp: false);
+          return;
+        }
+        await _submitSale(
+          print: true,
+          onSaved: (_, r) => runOutputs = r,
+        );
+      }
+
+      Future<void> sendWhatsApp() async {
+        void open(_PendingWhatsAppTask task) =>
+            unawaited(_openPendingWhatsAppTask(task));
+        final runner = runOutputs;
+        if (runner != null) {
+          await runner(print: false, whatsApp: true, onWhatsAppTask: open);
+          return;
+        }
+        await _submitSale(
+          print: false,
+          forceWhatsApp: true,
+          onSaved: (_, r) => runOutputs = r,
+          onWhatsAppTask: open,
+        );
+      }
+
+      await showDialog<void>(
+        context: context,
+        barrierDismissible: true,
+        builder: (_) => SalePreviewDialog(
+          pdfBytes: pdfBytes,
+          pageFormat:
+              ReceiptPreviewService.instance.pageFormatForPaperWidth(paperCode),
+          isSaved: () => runOutputs != null,
+          onSave: save,
+          onPrint: printBill,
+          onWhatsApp: sendWhatsApp,
+        ),
+      );
+    } catch (e, st) {
+      debugPrint('SALE PREVIEW ERROR: $e');
+      debugPrintStack(stackTrace: st);
+      if (mounted) AppFeedback.error(context, 'Could not build the preview: $e');
+    } finally {
+      _previewBusy = false;
+    }
+  }
+
+  _PendingWhatsAppTask? _addPendingWhatsAppTask({
     required String receiptNo,
     required WhatsAppInvoicePreparation prepared,
     required String message,
   }) {
-    if (!mounted) return;
+    if (!mounted) return null;
+    final task = _PendingWhatsAppTask(
+      id: '${DateTime.now().microsecondsSinceEpoch}-${_postSaleTaskSequence++}',
+      receiptNo: receiptNo,
+      prepared: prepared,
+      message: message,
+    );
     setState(() {
-      _pendingWhatsAppTasks.insert(
-        0,
-        _PendingWhatsAppTask(
-          id: '${DateTime.now().microsecondsSinceEpoch}-${_postSaleTaskSequence++}',
-          receiptNo: receiptNo,
-          prepared: prepared,
-          message: message,
-        ),
-      );
+      _pendingWhatsAppTasks.insert(0, task);
       // Keep a useful recent queue without allowing a busy shift to grow this
       // state forever. Older generated files remain on disk and can be resent
       // from the sale later.
@@ -4076,6 +4459,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         _pendingWhatsAppTasks.removeRange(8, _pendingWhatsAppTasks.length);
       }
     });
+    return task;
   }
 
   Future<void> _openPendingWhatsAppTask(_PendingWhatsAppTask task) async {
@@ -4142,7 +4526,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
               padding: const EdgeInsets.fromLTRB(12, 9, 8, 7),
               child: Row(
                 children: [
-                  const Icon(Icons.chat_rounded, size: 17, color: Color(0xFF128C7E)),
+                  const WhatsAppIcon(size: 18),
                   const SizedBox(width: 7),
                   Expanded(
                     child: Text(
@@ -5064,7 +5448,9 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
           const SizedBox(width: 8),
           Expanded(
             child: Text(
-              'Return / Exchange for $invoice • Enter a negative quantity on the item being returned. Original delivery is non-refundable.',
+              _returnPrefillLoading
+                  ? 'Return / Exchange for $invoice • Loading the items still returnable…'
+                  : 'Return / Exchange for $invoice • Items still returnable are listed with negative quantities; remove any the customer is keeping, or add exchange items. Original delivery is non-refundable.',
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
@@ -5261,7 +5647,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(Icons.chat_rounded, size: 14, color: Color(0xFF128C7E)),
+            const WhatsAppIcon(size: 15),
             const SizedBox(width: 6),
             Flexible(
               child: Text(
@@ -6248,6 +6634,31 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
             child: const Text('Clear'),
           ),
           const SizedBox(width: 8),
+
+          // Preview only — never saves.
+          if (!_isEditing) ...[
+            SizedBox(
+              height: 38,
+              child: OutlinedButton.icon(
+                onPressed: _submitting
+                    ? null
+                    : () => _submitSale(previewOnly: true),
+                icon: const Icon(Icons.visibility_outlined, size: 15),
+                label: const Text(
+                  'Preview',
+                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+                ),
+                style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  minimumSize: const Size(0, 38),
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  side: BorderSide(color: AppTheme.primary.withOpacity(.5)),
+                  foregroundColor: AppTheme.primary,
+                ),
+              ),
+            ),
+            const SizedBox(width: 6),
+          ],
 
           // Save without print
           SizedBox(

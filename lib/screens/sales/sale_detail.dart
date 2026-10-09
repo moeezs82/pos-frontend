@@ -10,6 +10,7 @@ import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/providers/printer_config_provider.dart';
 import 'package:enterprise_pos/providers/payment_method_provider.dart';
 import 'package:enterprise_pos/widgets/branch_indicator.dart';
+import 'package:enterprise_pos/widgets/whatsapp_icon.dart';
 import 'package:enterprise_pos/widgets/credit_limit_override_dialog.dart';
 import 'package:flutter/material.dart';
 import 'package:enterprise_pos/services/app_currency.dart';
@@ -850,7 +851,7 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
                 padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
                 child: OutlinedButton.icon(
                   onPressed: _openSendWhatsAppInvoiceDialog,
-                  icon: const Icon(Icons.chat_rounded, size: 17, color: Color(0xFF25D366)),
+                  icon: const WhatsAppIcon(size: 18),
                   label: const Text('WhatsApp'),
                 ),
               ),
@@ -989,7 +990,7 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
                             if (context.watch<AuthProvider>().hasAddon('whatsapp_invoice'))
                               IconButton(
                                 tooltip: 'Send invoice via WhatsApp',
-                                icon: const Icon(Icons.chat_rounded, color: Color(0xFF25D366)),
+                                icon: const WhatsAppIcon(size: 24),
                                 onPressed: _openSendWhatsAppInvoiceDialog,
                               ),
                             IconButton(
@@ -2148,11 +2149,7 @@ class _SendWhatsAppInvoiceDialogState extends State<_SendWhatsAppInvoiceDialog> 
                       color: const Color(0xFF25D366).withValues(alpha: 0.15),
                       borderRadius: BorderRadius.circular(10),
                     ),
-                    child: const Icon(
-                      Icons.chat_rounded,
-                      color: Color(0xFF25D366),
-                      size: 24,
-                    ),
+                    child: const Center(child: WhatsAppIcon(size: 26)),
                   ),
                   const SizedBox(width: 14),
                   Expanded(
@@ -2393,7 +2390,7 @@ class _SendWhatsAppInvoiceDialogState extends State<_SendWhatsAppInvoiceDialog> 
                               color: Colors.white,
                             ),
                           )
-                        : const Icon(Icons.chat_rounded, size: 18),
+                        : const WhatsAppIcon(size: 18, color: Colors.white),
                     label: Text(
                       _submitting ? 'Preparing...' : 'Open WhatsApp & Send',
                       style: const TextStyle(fontWeight: FontWeight.bold),
