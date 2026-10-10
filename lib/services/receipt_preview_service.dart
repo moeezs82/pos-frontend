@@ -513,9 +513,15 @@ class ReceiptPreviewService {
     // content left without letting the Total column run into the right edge.
     // Top is intentionally zero: any remaining leading paper on a real printer
     // is then the printer/driver's own feed area rather than template padding.
+    //
+    // The right inset (12 pt on 58 mm, 24 pt on 80 mm) is required by the
+    // printer's real printable area: smaller values crop the AMOUNT column.
+    // The bottom inset is deliberately generous: the last footer / software
+    // credit line sits right above the auto-cutter and the driver's
+    // non-printable bottom area, and a ~3 mm tail used to clip it.
     final receiptMargin = is58mm
-        ? const pw.EdgeInsets.fromLTRB(1, 0, 12, 6)
-        : const pw.EdgeInsets.fromLTRB(1, 0, 24, 8);
+        ? const pw.EdgeInsets.fromLTRB(1, 0, 12, 16)
+        : const pw.EdgeInsets.fromLTRB(1, 0, 24, 24);
 
     doc.addPage(
       pw.Page(
@@ -666,12 +672,12 @@ class ReceiptPreviewService {
                           pw.Expanded(child: micro('QTY', right: true)),
                           pw.SizedBox(
                             width: rateWidth,
-                            child: micro('RATE', right: true),
+                            child: micro(showMrp ? 'NET' : 'PRICE', right: true),
                           ),
                           if (showMrp)
                             pw.SizedBox(
                               width: mrpWidth,
-                              child: micro('MRP', right: true),
+                              child: micro('PRICE', right: true),
                             ),
                           pw.SizedBox(
                             width: amountWidth,
@@ -1071,7 +1077,14 @@ class ReceiptPreviewService {
                 gap(6),
                 ...activeFooterLines.map(
                   (line) => line.isDevCredit
-                      ? _devCreditFooterWidget(line.text, 7.5)
+                      ? _devCreditFooterWidget(
+                          line.text,
+                          7.5,
+                          // Thermal heads are 1-bit: grey text/rules dither
+                          // and look cropped, so keep the credit solid black.
+                          color: PdfColors.black,
+                          dividerColor: PdfColors.black,
+                        )
                       : pw.Container(
                           width: double.infinity,
                           alignment: _footerPdfAlignment(line.style.alignment),

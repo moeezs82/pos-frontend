@@ -561,9 +561,9 @@ class ThermalPrinterService {
     if (!operationalTicket) {
       printer.row([
         PosColumn(text: 'QTY', width: qtyUnits, styles: rightBold),
-        PosColumn(text: 'RATE', width: rateUnits, styles: rightBold),
+        PosColumn(text: showMrp ? 'NET' : 'PRICE', width: rateUnits, styles: rightBold),
         if (showMrp)
-          PosColumn(text: 'MRP', width: mrpUnits, styles: rightBold),
+          PosColumn(text: 'PRICE', width: mrpUnits, styles: rightBold),
         PosColumn(text: 'AMOUNT', width: amountUnits, styles: rightBold),
         PosColumn(text: '', width: gutterUnits),
       ]);
