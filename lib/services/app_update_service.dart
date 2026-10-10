@@ -264,6 +264,23 @@ class AppUpdateService {
       throw const AppUpdateException('The update download was interrupted by a network error.');
     } on Object catch (error) {
       await _deleteIfExists(partialFile);
+
+      // Dart's TLS stack can occasionally fail to build a certificate chain on
+      // a Windows installation even when Windows/Schannel trusts the same
+      // endpoint. For certificate-handshake failures only, retry the download
+      // through Windows' built-in curl.exe (Schannel). curl still performs
+      // normal HTTPS certificate verification, and the installer remains
+      // protected by the manifest SHA-256 check below.
+      if (_isCertificateHandshakeFailure(error)) {
+        return _downloadWithWindowsCurlAndVerify(
+          manifest,
+          partialFile: partialFile,
+          finalFile: finalFile,
+          onProgress: onProgress,
+          dartTlsError: error,
+        );
+      }
+
       throw AppUpdateException('CounterIQ could not download the update: $error');
     } finally {
       try {
@@ -271,6 +288,97 @@ class AppUpdateService {
       } catch (_) {}
       client.close();
     }
+  }
+
+  static bool _isCertificateHandshakeFailure(Object error) {
+    if (error is HandshakeException) return true;
+
+    final message = error.toString().toLowerCase();
+    return message.contains('handshakeexception') ||
+        message.contains('certificate_verify_failed') ||
+        message.contains('unable to get local issuer certificate');
+  }
+
+  static Future<File> _downloadWithWindowsCurlAndVerify(
+    UpdateManifest manifest, {
+    required File partialFile,
+    required File finalFile,
+    required void Function(UpdateDownloadProgress progress) onProgress,
+    required Object dartTlsError,
+  }) async {
+    await _deleteIfExists(partialFile);
+    await _deleteIfExists(finalFile);
+
+    // curl.exe ships with supported Windows 10/11 installations and uses the
+    // Windows Schannel certificate store. Do not use -k/--insecure here.
+    onProgress(const UpdateDownloadProgress(0, null));
+
+    ProcessResult result;
+    try {
+      result = await Process.run(
+        'curl.exe',
+        <String>[
+          '--fail',
+          '--location',
+          '--silent',
+          '--show-error',
+          '--connect-timeout',
+          '15',
+          '--max-time',
+          _downloadTimeout.inSeconds.toString(),
+          '--output',
+          partialFile.path,
+          manifest.downloadUri.toString(),
+        ],
+        runInShell: false,
+      ).timeout(_downloadTimeout + const Duration(seconds: 30));
+    } on TimeoutException {
+      await _deleteIfExists(partialFile);
+      throw const AppUpdateException(
+        'The Windows update download timed out. Please try again.',
+      );
+    } on ProcessException catch (curlError) {
+      await _deleteIfExists(partialFile);
+      throw AppUpdateException(
+        'CounterIQ could not download the update because Dart TLS verification failed '
+        'and the Windows secure-download fallback could not start. '
+        'Dart: $dartTlsError; Windows: ${curlError.message}',
+      );
+    }
+
+    if (result.exitCode != 0) {
+      await _deleteIfExists(partialFile);
+      final stderrText = result.stderr.toString().trim();
+      throw AppUpdateException(
+        'CounterIQ could not download the update. Dart TLS verification failed, '
+        'and the Windows secure-download fallback returned exit code '
+        '${result.exitCode}${stderrText.isEmpty ? '' : ': $stderrText'}',
+      );
+    }
+
+    if (!await partialFile.exists()) {
+      throw const AppUpdateException(
+        'The Windows update download completed without creating the installer.',
+      );
+    }
+
+    final downloadedBytes = await partialFile.length();
+    if (downloadedBytes <= 0) {
+      await _deleteIfExists(partialFile);
+      throw const AppUpdateException('The downloaded installer is empty.');
+    }
+    onProgress(UpdateDownloadProgress(downloadedBytes, downloadedBytes));
+
+    final actualHash = await Sha256FileService.hashFile(partialFile);
+    if (actualHash.toLowerCase() != manifest.sha256.toLowerCase()) {
+      await _deleteIfExists(partialFile);
+      throw const AppUpdateException(
+        'CounterIQ could not verify the downloaded update. The SHA-256 checksum does not match.',
+      );
+    }
+
+    await partialFile.rename(finalFile.path);
+    return finalFile;
   }
 
   static Future<void> launchInstaller(File installer) async {
