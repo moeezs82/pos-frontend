@@ -40,6 +40,14 @@ class SalePreviewDialog extends StatefulWidget {
 class _SalePreviewDialogState extends State<SalePreviewDialog> {
   String? _busyAction;
 
+  // Zoom: 1.0 = default (fits dialog width).
+  // PdfPreview renders the page at maxPageWidth; we scale from a 500px base.
+  static const double _zoomBase = 620.0;
+  static const double _zoomMin  = 0.6;
+  static const double _zoomMax  = 3.0;
+  static const double _zoomStep = 0.2;
+  double _zoom = 1.0;
+
   bool get _busy => _busyAction != null;
 
   Future<void> _run(String name, Future<void> Function() action) async {
@@ -57,28 +65,43 @@ class _SalePreviewDialogState extends State<SalePreviewDialog> {
         if (saved && mounted) Navigator.of(context).pop();
       });
 
+  void _zoomIn() {
+    if (_zoom < _zoomMax) {
+      setState(() => _zoom = (_zoom + _zoomStep).clamp(_zoomMin, _zoomMax));
+    }
+  }
+
+  void _zoomOut() {
+    if (_zoom > _zoomMin) {
+      setState(() => _zoom = (_zoom - _zoomStep).clamp(_zoomMin, _zoomMax));
+    }
+  }
+
+  void _zoomReset() => setState(() => _zoom = 1.0);
+
   @override
   Widget build(BuildContext context) {
     final size = MediaQuery.of(context).size;
     final saved = widget.isSaved();
+    final zoomPct = '${(_zoom * 100).round()}%';
     return PopScope(
       // Do not let the dialog be dismissed mid-save.
       canPop: !_busy,
       child: Dialog(
-        insetPadding: const EdgeInsets.all(24),
+        insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 20),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
         clipBehavior: Clip.antiAlias,
         child: ConstrainedBox(
           constraints: BoxConstraints(
-            maxWidth: 520,
-            maxHeight: size.height * 0.88,
+            maxWidth: 860,
+            maxHeight: size.height * 0.94,
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Padding(
-                padding: const EdgeInsets.fromLTRB(18, 10, 8, 6),
+                padding: const EdgeInsets.fromLTRB(18, 8, 8, 6),
                 child: Row(
                   children: [
                     Expanded(
@@ -90,6 +113,38 @@ class _SalePreviewDialogState extends State<SalePreviewDialog> {
                         ),
                       ),
                     ),
+                    // ── Zoom controls ──────────────────────────────
+                    IconButton(
+                      tooltip: 'Zoom out',
+                      onPressed: _zoom > _zoomMin ? _zoomOut : null,
+                      iconSize: 18,
+                      icon: const Icon(Icons.zoom_out_rounded),
+                    ),
+                    InkWell(
+                      onTap: _zoomReset,
+                      borderRadius: BorderRadius.circular(6),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 6, vertical: 4),
+                        child: Text(
+                          zoomPct,
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            color: _zoom == 1.0
+                                ? AppTheme.textMuted
+                                : AppTheme.primary,
+                          ),
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: 'Zoom in',
+                      onPressed: _zoom < _zoomMax ? _zoomIn : null,
+                      iconSize: 18,
+                      icon: const Icon(Icons.zoom_in_rounded),
+                    ),
+                    const SizedBox(width: 4),
                     IconButton(
                       tooltip: 'Close',
                       onPressed:
@@ -104,8 +159,10 @@ class _SalePreviewDialogState extends State<SalePreviewDialog> {
                 child: Container(
                   color: AppTheme.surfaceSoft,
                   child: PdfPreview(
+                    // Return cached bytes — no re-render cost on zoom change.
                     build: (_) async => widget.pdfBytes,
                     initialPageFormat: widget.pageFormat,
+                    maxPageWidth: _zoomBase * _zoom,
                     canChangePageFormat: false,
                     canChangeOrientation: false,
                     canDebug: false,
@@ -113,6 +170,9 @@ class _SalePreviewDialogState extends State<SalePreviewDialog> {
                     allowSharing: false,
                     useActions: false,
                     pdfFileName: 'bill-preview.pdf',
+                    scrollViewDecoration: const BoxDecoration(
+                      color: AppTheme.surfaceSoft,
+                    ),
                   ),
                 ),
               ),
@@ -145,8 +205,9 @@ class _SalePreviewDialogState extends State<SalePreviewDialog> {
                     const SizedBox(width: 8),
                     Expanded(
                       child: OutlinedButton.icon(
-                        onPressed:
-                            _busy ? null : () => _run('print', widget.onPrint),
+                        onPressed: _busy
+                            ? null
+                            : () => _run('print', widget.onPrint),
                         icon: _busyAction == 'print'
                             ? const _BtnSpinner(dark: true)
                             : const Icon(Icons.print_rounded, size: 16),

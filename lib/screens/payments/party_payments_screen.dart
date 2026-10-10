@@ -2012,7 +2012,7 @@ class _LedgerRow extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w900)),
+                Text(title, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontWeight: FontWeight.w900, color: (status == 'reversed' || status == 'reversal') ? AppTheme.textMuted : null, fontStyle: status == 'reversal' ? FontStyle.italic : null)),
                 const SizedBox(height: 2),
                 Text(
                   [date, account].where((e) => e.trim().isNotEmpty).join(' • '),
@@ -2035,9 +2035,9 @@ class _LedgerRow extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 8),
-          _AmountColumn(label: 'Dr', value: _money(row['debit']), color: AppTheme.warning),
+          _AmountColumn(label: 'Dr', value: _money(row['debit']), color: AppTheme.warning, corrected: status == 'reversed' || status == 'reversal', strike: status == 'reversed'),
           const SizedBox(width: 14),
-          _AmountColumn(label: 'Cr', value: _money(row['credit']), color: AppTheme.success),
+          _AmountColumn(label: 'Cr', value: _money(row['credit']), color: AppTheme.success, corrected: status == 'reversed' || status == 'reversal', strike: status == 'reversed'),
           const SizedBox(width: 14),
           _AmountColumn(label: 'Bal', value: _money(row['balance']), color: AppTheme.navy, bold: true),
           if (canReverse) ...[
@@ -2139,12 +2139,15 @@ class _ReversePaymentDialogState extends State<_ReversePaymentDialog> {
 }
 
 class _AmountColumn extends StatelessWidget {
-  const _AmountColumn({required this.label, required this.value, required this.color, this.bold = false});
+  const _AmountColumn({required this.label, required this.value, required this.color, this.bold = false, this.corrected = false, this.strike = false});
 
   final String label;
   final String value;
   final Color color;
   final bool bold;
+  // Reversed payment / its reversal entry: shown as correction history.
+  final bool corrected;
+  final bool strike;
 
   @override
   Widget build(BuildContext context) {
@@ -2158,7 +2161,7 @@ class _AmountColumn extends StatelessWidget {
             value,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: TextStyle(color: color, fontWeight: bold ? FontWeight.w900 : FontWeight.w800),
+            style: TextStyle(color: corrected ? AppTheme.textMuted : color, fontWeight: bold ? FontWeight.w900 : FontWeight.w800, decoration: strike ? TextDecoration.lineThrough : null),
           ),
         ],
       ),

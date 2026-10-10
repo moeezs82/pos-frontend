@@ -2089,10 +2089,11 @@ class _PartyLedgerRow extends StatelessWidget {
                         memo.trim().isEmpty ? '(No description)' : memo.trim(),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 13,
-                          color: AppTheme.navy,
+                          color: statusLabel != null ? AppTheme.textMuted : AppTheme.navy,
                           fontWeight: FontWeight.w500,
+                          fontStyle: statusLabel == 'Reversal' ? FontStyle.italic : null,
                         ),
                       ),
                     ),
@@ -2122,17 +2123,23 @@ class _PartyLedgerRow extends StatelessWidget {
                   width: partyLedgerBalanceWidth,
                   value: debit != _dashAmount ? debit : credit,
                   color: debit != _dashAmount ? AppTheme.danger : AppTheme.success,
+                  dim: statusLabel != null,
+                  strike: statusLabel == 'Reversed',
                 )
               else ...[
                 _PartyLedgerAmount(
                   width: partyLedgerMoneyWidth,
                   value: debit,
                   color: AppTheme.danger,
+                  dim: statusLabel != null,
+                  strike: statusLabel == 'Reversed',
                 ),
                 _PartyLedgerAmount(
                   width: partyLedgerMoneyWidth,
                   value: credit,
                   color: AppTheme.success,
+                  dim: statusLabel != null,
+                  strike: statusLabel == 'Reversed',
                 ),
               ],
               _PartyLedgerAmount(
@@ -2169,12 +2176,17 @@ class _PartyLedgerAmount extends StatelessWidget {
     required this.value,
     required this.color,
     this.bold = false,
+    this.dim = false,
+    this.strike = false,
   });
 
   final double width;
   final String value;
   final Color color;
   final bool bold;
+  // Reversed payment / its reversal entry: shown as correction history.
+  final bool dim;
+  final bool strike;
 
   @override
   Widget build(BuildContext context) {
@@ -2189,7 +2201,8 @@ class _PartyLedgerAmount extends StatelessWidget {
         style: TextStyle(
           fontSize: 13,
           fontWeight: bold ? FontWeight.w800 : FontWeight.w500,
-          color: muted ? AppTheme.textMuted : color,
+          color: (muted || dim) ? AppTheme.textMuted : color,
+          decoration: strike ? TextDecoration.lineThrough : null,
         ),
       ),
     );

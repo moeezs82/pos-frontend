@@ -4314,6 +4314,17 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
   }) async {
     if (_previewBusy) return;
     _previewBusy = true;
+
+    // Show a loading dialog immediately so the user gets instant feedback.
+    // It is closed as soon as the PDF bytes are ready.
+    if (mounted) {
+      showDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => const _PreviewLoadingDialog(),
+      );
+    }
+
     try {
       final meta = _buildSaleMeta(
         effectiveBranchId: effectiveBranchId,
@@ -4373,6 +4384,8 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         devCreditEnabled: printerConfig.devCreditEnabled,
         devCreditText: printerConfig.devCreditText,
       );
+      // Close the loading dialog before opening the preview.
+      if (mounted) Navigator.of(context, rootNavigator: true).pop();
       if (!mounted) return;
 
       // Set by _submitSale once the sale exists. After that, Print / WhatsApp
@@ -4430,6 +4443,10 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         ),
       );
     } catch (e, st) {
+      // Close the loading dialog if it's still showing.
+      if (mounted) {
+        try { Navigator.of(context, rootNavigator: true).pop(); } catch (_) {}
+      }
       debugPrint('SALE PREVIEW ERROR: $e');
       debugPrintStack(stackTrace: st);
       if (mounted) AppFeedback.error(context, 'Could not build the preview: $e');
@@ -6639,7 +6656,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
           if (!_isEditing) ...[
             SizedBox(
               height: 38,
-              child: OutlinedButton.icon(
+              child: FilledButton.icon(
                 onPressed: _submitting
                     ? null
                     : () => _submitSale(previewOnly: true),
@@ -6648,12 +6665,10 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
                   'Preview',
                   style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
                 ),
-                style: OutlinedButton.styleFrom(
+                style: FilledButton.styleFrom(
                   padding: const EdgeInsets.symmetric(horizontal: 12),
                   minimumSize: const Size(0, 38),
                   tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  side: BorderSide(color: AppTheme.primary.withOpacity(.5)),
-                  foregroundColor: AppTheme.primary,
                 ),
               ),
             ),
@@ -6663,7 +6678,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
           // Save without print
           SizedBox(
             height: 38,
-            child: OutlinedButton.icon(
+            child: FilledButton.icon(
               onPressed: _submitting
                   ? null
                   : () => _submitSale(print: false),
@@ -6675,12 +6690,10 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
                   fontWeight: FontWeight.w700,
                 ),
               ),
-              style: OutlinedButton.styleFrom(
+              style: FilledButton.styleFrom(
                 padding: const EdgeInsets.symmetric(horizontal: 12),
                 minimumSize: const Size(0, 38),
                 tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                side: BorderSide(color: AppTheme.primary.withOpacity(.5)),
-                foregroundColor: AppTheme.primary,
               ),
             ),
           ),
@@ -6704,7 +6717,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
                     )
                   : const Icon(Icons.print_rounded, size: 15),
               label: Text(
-                _submitting ? 'Saving…' : 'Create & Print  Ctrl+↵',
+                _submitting ? 'Saving…' : 'Print  Ctrl+↵',
                 style: const TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w800,
@@ -8318,6 +8331,38 @@ class _ReturnSourceDialogState extends State<_ReturnSourceDialog> {
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Small loading dialog shown while the preview PDF is being built.
+/// It appears instantly and is dismissed by [_showSalePreview] once the
+/// bytes are ready, so the user never sees a frozen UI.
+class _PreviewLoadingDialog extends StatelessWidget {
+  const _PreviewLoadingDialog();
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 28),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const CircularProgressIndicator(),
+            const SizedBox(height: 16),
+            Text(
+              'Building preview…',
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: AppTheme.navy.withOpacity(.75),
+              ),
+            ),
+          ],
         ),
       ),
     );

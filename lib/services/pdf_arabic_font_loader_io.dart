@@ -10,6 +10,17 @@ class ArabicPdfFonts {
   const ArabicPdfFonts({required this.regular, required this.bold});
 }
 
+// ---------------------------------------------------------------------------
+// Module-level font cache.
+// Font files (segoeui.ttf = 20+ MB on some builds) are read from disk only
+// once per app session. Subsequent preview / print calls return instantly.
+// The sentinel value _kNoFonts marks a failed load so we never retry it.
+// ---------------------------------------------------------------------------
+
+const _kNoFonts = 'no_fonts'; // sentinel
+Object? _cachedFonts; // ArabicPdfFonts | _kNoFonts | null
+Future<ArabicPdfFonts?>? _fontsFuture;
+
 Future<pw.Font?> _loadFirst(List<String> paths) async {
   for (final path in paths) {
     try {
@@ -30,7 +41,24 @@ Future<pw.Font?> _loadFirst(List<String> paths) async {
 /// printing remains available even when the POS workstation has no internet
 /// connection. Windows is the primary CounterIQ desktop target; Linux/macOS
 /// paths are included for portability.
+///
+/// Results are cached for the lifetime of the app process — fonts are large
+/// binary files and reading them from disk on every preview/print is the
+/// primary cause of slow preview opening on lower-end machines.
 Future<ArabicPdfFonts?> loadSystemArabicPdfFonts() async {
+  // Return cached result immediately (hot path).
+  if (_cachedFonts != null) {
+    return _cachedFonts == _kNoFonts ? null : _cachedFonts as ArabicPdfFonts;
+  }
+  // Coalesce concurrent callers onto a single Future.
+  return _fontsFuture ??= _loadFonts().then((result) {
+    _cachedFonts = result ?? _kNoFonts;
+    _fontsFuture = null; // allow GC of the Future once done
+    return result;
+  });
+}
+
+Future<ArabicPdfFonts?> _loadFonts() async {
   final regular = await _loadFirst(const [
     r'C:\Windows\Fonts\segoeui.ttf',
     r'C:\Windows\Fonts\tahoma.ttf',
