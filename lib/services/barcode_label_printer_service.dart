@@ -1336,7 +1336,7 @@ class BarcodeLabelPrinterService {
   String _priceText(double price, String currency) {
     final amount = price.toStringAsFixed(2);
     if (currency.isEmpty) return amount;
-    return const {r'$', '€', '£', '¥', '₹', '₩', '₽', '₺', '₫', '฿', '₱'}
+    return const {r'$', '€', '£', '¥', '₹', '₩', '₽', '₺', '₫', '฿', '₱', 'Rs', 'Rs.'}
             .contains(currency)
         ? '$currency$amount'
         : '$amount $currency';

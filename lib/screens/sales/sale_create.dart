@@ -52,6 +52,7 @@ import 'package:provider/provider.dart';
 import 'package:enterprise_pos/services/thermal_printer_service.dart';
 import 'package:enterprise_pos/services/local_printer_service.dart';
 import 'package:enterprise_pos/services/receipt_preview_service.dart';
+import 'package:enterprise_pos/services/pdf_arabic_font_loader.dart';
 import 'package:enterprise_pos/models/whatsapp_invoice_format.dart';
 import 'package:enterprise_pos/services/whatsapp_invoice_service.dart';
 import 'package:enterprise_pos/services/whatsapp_message_template_service.dart';
@@ -244,6 +245,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
   @override
   void initState() {
     super.initState();
+    unawaited(loadSystemArabicPdfFonts());
     final token = Provider.of<AuthProvider>(context, listen: false).token!;
     _productService = ProductService(token: token);
     _saleService = SaleService(token: token);

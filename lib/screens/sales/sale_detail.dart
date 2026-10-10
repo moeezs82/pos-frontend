@@ -701,12 +701,15 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
         _sale?['customer']?['current_balance'] ??
         _sale?['customer']?['balance'];
 
-    String renderMessageForFormat(WhatsAppInvoiceFormat format) {
+    String renderMessageForFormat(WhatsAppInvoiceFormat format, {String? nameOverride}) {
+      final defaultName = (data.customerSnapshot['name'] ?? '').toString().trim();
+      final effectiveName = (nameOverride != null && nameOverride.isNotEmpty) ? nameOverride : defaultName;
+
       return WhatsAppMessageTemplateService.render(
         template: printerConfig.whatsappMessageTemplate,
         showCustomerBalance: printerConfig.whatsappShowCustomerBalance,
         values: {
-          'customer_name': (data.customerSnapshot['name'] ?? '').toString().trim(),
+          'customer_name': effectiveName,
           'customer_code': (data.customerSnapshot['customer_code'] ?? '').toString().trim(),
           'invoice_no': data.receiptNo,
           'invoice_amount': data.total.toStringAsFixed(2),
@@ -2017,7 +2020,7 @@ class _SendWhatsAppInvoiceDialog extends StatefulWidget {
   final WhatsAppInvoiceFormat initialFormat;
   final String initialPhone;
   final List<String> secondaryPhones;
-  final String Function(WhatsAppInvoiceFormat format) initialMessageBuilder;
+  final String Function(WhatsAppInvoiceFormat format, {String? nameOverride}) initialMessageBuilder;
   final Future<void> Function({
     required String phone,
     required WhatsAppInvoiceFormat format,
@@ -2041,6 +2044,7 @@ class _SendWhatsAppInvoiceDialog extends StatefulWidget {
 class _SendWhatsAppInvoiceDialogState extends State<_SendWhatsAppInvoiceDialog> {
   late final TextEditingController _phoneController;
   late final TextEditingController _messageController;
+  late final TextEditingController _nameController;
   late WhatsAppInvoiceFormat _format;
   bool _submitting = false;
   String? _errorMessage;
@@ -2051,6 +2055,8 @@ class _SendWhatsAppInvoiceDialogState extends State<_SendWhatsAppInvoiceDialog> 
     super.initState();
     _format = widget.initialFormat;
     _phoneController = TextEditingController(text: widget.initialPhone);
+    _nameController = TextEditingController();
+    _nameController.addListener(_onNameChanged);
     _messageController = TextEditingController(
       text: widget.initialMessageBuilder(widget.initialFormat),
     );
@@ -2059,15 +2065,26 @@ class _SendWhatsAppInvoiceDialogState extends State<_SendWhatsAppInvoiceDialog> 
   @override
   void dispose() {
     _phoneController.dispose();
+    _nameController.dispose();
     _messageController.dispose();
     super.dispose();
+  }
+
+  void _onNameChanged() {
+    if (!_userEditedMessage) {
+      final oldText = _messageController.text;
+      final newText = widget.initialMessageBuilder(_format, nameOverride: _nameController.text.trim());
+      if (oldText != newText) {
+        _messageController.text = newText;
+      }
+    }
   }
 
   void _onFormatChanged(WhatsAppInvoiceFormat newFormat) {
     setState(() {
       _format = newFormat;
       if (!_userEditedMessage) {
-        _messageController.text = widget.initialMessageBuilder(newFormat);
+        _messageController.text = widget.initialMessageBuilder(newFormat, nameOverride: _nameController.text.trim());
       }
     });
   }
@@ -2217,6 +2234,34 @@ class _SendWhatsAppInvoiceDialogState extends State<_SendWhatsAppInvoiceDialog> 
                         ),
                       ),
                     ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+              ],
+
+              // Customer Name (for Walk-in)
+              if (!widget.receiptData.customerSnapshot.containsKey('id')) ...[
+                Text(
+                  'Customer Name',
+                  style: theme.textTheme.labelMedium?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                TextField(
+                  controller: _nameController,
+                  enabled: !_submitting,
+                  textCapitalization: TextCapitalization.words,
+                  decoration: InputDecoration(
+                    prefixIcon: const Icon(Icons.person_outline, size: 20),
+                    hintText: 'Optional walk-in customer name',
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 12,
+                    ),
                   ),
                 ),
                 const SizedBox(height: 16),
