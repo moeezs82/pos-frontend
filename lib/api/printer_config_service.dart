@@ -68,6 +68,7 @@ class PrinterConfigService {
     String? shopName,
     String? shopAddress,
     String? shopPhone,
+    String? shopWebsite,
     List<String> footerLines = const [],
     List<ReceiptFooterStyle> footerLineStyles = const [],
     required String activeConnection,
@@ -115,6 +116,7 @@ class PrinterConfigService {
     bool barcodeShowPrice = true,
     bool barcodeShowVariantDetails = true,
     List<BarcodeLabelLine> barcodeLabelLines = const [],
+    String? barcodeShopName,
     bool devCreditEnabled = true,
     String devCreditText = 'Powered by A Developers',
   }) async {
@@ -123,6 +125,8 @@ class PrinterConfigService {
       'shop_name': shopName,
       'shop_address': shopAddress,
       'shop_phone': shopPhone,
+      // Empty string clears the website; the backend stores NULL for it.
+      'shop_website': shopWebsite ?? '',
       'footer_lines': footerLines,
       'footer_line_styles': footerLineStyles.map((style) => style.toJson()).toList(),
       'active_connection': activeConnection,
@@ -175,6 +179,8 @@ class PrinterConfigService {
       if (barcodeLabelLines.isNotEmpty)
         'barcode_label_lines':
             barcodeLabelLines.map((line) => line.toJson()).toList(),
+      // Empty string means "use the branch name"; the backend stores NULL.
+      'barcode_shop_name': barcodeShopName ?? '',
       'dev_credit_enabled': devCreditEnabled,
       'dev_credit_text': devCreditText,
     });

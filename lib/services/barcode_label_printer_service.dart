@@ -260,7 +260,7 @@ class BarcodeLabelPrinterService {
 
       switch (line.field) {
         case BarcodeLabelField.shopName:
-          value = (config.shopName ?? '').trim();
+          value = config.barcodeLabelShopName.trim();
           break;
         case BarcodeLabelField.productName:
           value = item.productName.trim();

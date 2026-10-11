@@ -52,6 +52,9 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
   final _shopNameCtrl = TextEditingController();
   final _shopAddressCtrl = TextEditingController();
   final _shopPhoneCtrl = TextEditingController();
+  final _shopWebsiteCtrl = TextEditingController();
+  final _barcodeShopNameCtrl = TextEditingController();
+  String _barcodeBranchName = '';
   final _networkIpCtrl = TextEditingController();
   final _networkPortCtrl = TextEditingController(text: '9100');
   final _localPrinterCtrl = TextEditingController();
@@ -158,6 +161,8 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
     _shopNameCtrl.dispose();
     _shopAddressCtrl.dispose();
     _shopPhoneCtrl.dispose();
+    _shopWebsiteCtrl.dispose();
+    _barcodeShopNameCtrl.dispose();
     _networkIpCtrl.dispose();
     _networkPortCtrl.dispose();
     _localPrinterCtrl.dispose();
@@ -280,6 +285,11 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
       _shopNameCtrl.text = config.shopName ?? '';
       _shopAddressCtrl.text = config.shopAddress ?? '';
       _shopPhoneCtrl.text = config.shopPhone ?? '';
+      _shopWebsiteCtrl.text = config.shopWebsite ?? '';
+      _barcodeShopNameCtrl.text = config.barcodeShopName ?? '';
+      _barcodeBranchName = (config.barcodeBranchName ?? '').trim().isNotEmpty
+          ? config.barcodeBranchName!.trim()
+          : (config.branchName ?? '').trim();
       _activeConnection = config.activeConnection;
       _networkIpCtrl.text = config.networkIp ?? '';
       _networkPortCtrl.text = config.networkPort.toString();
@@ -576,6 +586,7 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
         shopName: _shopNameCtrl.text.trim(),
         shopAddress: _shopAddressCtrl.text.trim(),
         shopPhone: _shopPhoneCtrl.text.trim(),
+        shopWebsite: _shopWebsiteCtrl.text.trim(),
         footerLines: _currentFooterLines,
         footerLineStyles: _currentFooterStyles,
         activeConnection: _activeConnection,
@@ -625,6 +636,7 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
         barcodeShowPrice: _barcodeShowPrice,
         barcodeShowVariantDetails: _barcodeShowVariantDetails,
         barcodeLabelLines: _barcodeLabelLines,
+        barcodeShopName: _barcodeShopNameCtrl.text.trim(),
         devCreditEnabled: _devCreditEnabled,
         devCreditText: _devCreditTextCtrl.text.trim().isEmpty
             ? 'Powered by A Developers'
@@ -703,6 +715,7 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
           shopName: _shopNameCtrl.text.trim().isNotEmpty ? _shopNameCtrl.text.trim() : 'CounterIQ',
           shopAddress: _shopAddressCtrl.text.trim().isEmpty ? null : _shopAddressCtrl.text.trim(),
           shopPhone: _shopPhoneCtrl.text.trim().isEmpty ? null : _shopPhoneCtrl.text.trim(),
+          shopWebsite: _shopWebsiteCtrl.text.trim(),
           sections: _mainTemplate.sections,
           paperWidth: _mainPaperCode,
           footerLines: _currentFooterLines,
@@ -773,6 +786,7 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
               ? null
               : _shopAddressCtrl.text.trim(),
           shopPhone: _shopPhoneCtrl.text.trim().isEmpty ? null : _shopPhoneCtrl.text.trim(),
+          shopWebsite: _shopWebsiteCtrl.text.trim(),
           sections: _secondaryTemplate.sections,
           paperWidth: _secondaryTemplate.paperWidthCode,
           footerLines: _currentFooterLines,
@@ -825,6 +839,8 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
       // The shop-name line reads this, so a preview shows the real shop name
       // as it is currently typed rather than a blank row.
       shopName: _shopNameCtrl.text.trim(),
+      barcodeShopName: _barcodeShopNameCtrl.text.trim(),
+      barcodeBranchName: _barcodeBranchName,
     );
   }
 
@@ -939,6 +955,23 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
                 fontSize: 12,
                 color: AppTheme.textMuted,
                 fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: TextFormField(
+              controller: _barcodeShopNameCtrl,
+              maxLength: 120,
+              onChanged: (_) => setState(() {}),
+              decoration: InputDecoration(
+                labelText: 'Shop name on label',
+                prefixIcon: const Icon(Icons.storefront_rounded),
+                counterText: '',
+                helperMaxLines: 2,
+                helperText: _barcodeBranchName.isEmpty
+                    ? 'Leave empty to print the branch name.'
+                    : 'Leave empty to print the branch name ($_barcodeBranchName).',
               ),
             ),
           ),
@@ -1284,6 +1317,7 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
           shopName: _shopNameCtrl.text.trim().isNotEmpty ? _shopNameCtrl.text.trim() : 'My Shop',
           shopAddress: _shopAddressCtrl.text.trim().isEmpty ? null : _shopAddressCtrl.text.trim(),
           shopPhone: _shopPhoneCtrl.text.trim().isEmpty ? null : _shopPhoneCtrl.text.trim(),
+          shopWebsite: _shopWebsiteCtrl.text.trim(),
           footerLines: _currentFooterLines,
           footerLineStyles: _currentFooterStyles,
           receiptHeader: receiptHeader,
@@ -1478,6 +1512,18 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
           TextFormField(
             controller: _shopPhoneCtrl,
             decoration: const InputDecoration(labelText: 'Phone', prefixIcon: Icon(Icons.call_rounded)),
+          ),
+          const SizedBox(height: 12),
+          TextFormField(
+            controller: _shopWebsiteCtrl,
+            keyboardType: TextInputType.url,
+            maxLength: 255,
+            decoration: const InputDecoration(
+              labelText: 'Website (optional)',
+              prefixIcon: Icon(Icons.language_rounded),
+              counterText: '',
+              helperText: 'Printed under the shop name when filled in.',
+            ),
           ),
         ],
       ),

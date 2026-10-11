@@ -3911,6 +3911,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       final printMeta = <String, dynamic>{
         ...meta,
         'item_discount_display': printerConfig.itemDiscountDisplay.value,
+        'shop_website': printerConfig.shopWebsite,
       };
       final receiptPrintTime = DateTime.now();
 
@@ -4393,6 +4394,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         meta: {
           ...meta,
           'item_discount_display': printerConfig.itemDiscountDisplay.value,
+          'shop_website': printerConfig.shopWebsite,
         },
         sections: mainTemplate.sections,
         paperWidth: paperCode,

@@ -7,6 +7,7 @@ import 'package:enterprise_pos/models/sale_receipt_item.dart';
 import 'package:enterprise_pos/services/receipt_preview_service.dart';
 import 'package:enterprise_pos/utils/customer_phone_utils.dart';
 import 'package:enterprise_pos/utils/print_text_utils.dart';
+import 'package:enterprise_pos/utils/receipt_extras.dart';
 import 'package:enterprise_pos/utils/thermal_receipt_layout.dart';
 import 'package:esc_pos_printer_plus/esc_pos_printer_plus.dart';
 import 'package:esc_pos_utils_plus/esc_pos_utils_plus.dart';
@@ -420,6 +421,11 @@ class ThermalPrinterService {
     final itemDiscountDisplay = itemDiscountDisplayFromValue(
       meta?['item_discount_display']?.toString(),
     );
+    final shopWebsite = ReceiptExtras.websiteFrom(meta);
+    final savings = ReceiptExtras.totalSavings(
+      items: items,
+      invoiceDiscount: discount,
+    );
     final operationalTicket =
         !sections.itemPrices && !sections.totalsBreakdown;
     final showMrp = ThermalReceiptLayout.showsMrp(
@@ -498,6 +504,12 @@ class ThermalPrinterService {
           width: PosTextSize.size2,
         ),
       );
+      if (shopWebsite != null) {
+        printer.text(
+          shopWebsite,
+          styles: const PosStyles(align: PosAlign.center, bold: true),
+        );
+      }
       if (shopAddress != null && shopAddress.trim().isNotEmpty) {
         printer.text(
           shopAddress.trim(),
@@ -507,7 +519,7 @@ class ThermalPrinterService {
       if (shopPhone != null && shopPhone.trim().isNotEmpty) {
         printer.text(
           shopPhone.trim(),
-          styles: const PosStyles(align: PosAlign.center),
+          styles: const PosStyles(align: PosAlign.center, bold: true),
         );
       }
       printer.hr();
@@ -698,6 +710,14 @@ class ThermalPrinterService {
         PosColumn(text: '', width: gutterUnits),
       ]);
       printer.hr();
+
+      // Only printed when a discount was applied to this bill.
+      if (savings > 0) {
+        printer.text(
+          'You Save: ${ReceiptExtras.money(savings)}',
+          styles: const PosStyles(align: PosAlign.center, bold: true),
+        );
+      }
 
       // Payment method breakdown (split tender / non-cash tenders).
       final paymentsSnap = (meta?['payments_snapshot'] is List)

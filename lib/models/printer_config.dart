@@ -11,6 +11,10 @@ class PrinterConfig {
   final String? shopName;
   final String? shopAddress;
   final String? shopPhone;
+
+  /// Optional website printed directly under the shop name on receipts and
+  /// invoices. Empty/null means nothing is printed.
+  final String? shopWebsite;
   final List<String> footerLines;
   final List<ReceiptFooterStyle> footerLineStyles;
 
@@ -91,6 +95,24 @@ class PrinterConfig {
   /// existed.
   final List<BarcodeLabelLine> barcodeLabelLines;
 
+  /// Optional custom shop-name text for barcode labels. Empty means labels use
+  /// the branch name ([barcodeBranchName]).
+  final String? barcodeShopName;
+
+  /// Owning branch name supplied by the backend so labels can default to it.
+  final String? barcodeBranchName;
+
+  /// The text the label's "Shop name" line prints: the custom name when the
+  /// branch set one, otherwise the branch name, otherwise (older servers that
+  /// do not send the branch name) the receipt shop name.
+  String get barcodeLabelShopName {
+    final custom = (barcodeShopName ?? '').trim();
+    if (custom.isNotEmpty) return custom;
+    final branch = (barcodeBranchName ?? '').trim();
+    if (branch.isNotEmpty) return branch;
+    return (shopName ?? '').trim();
+  }
+
   // Legacy display helpers retained for older call sites.
   final String? mainPrinterName;
   final String? secondaryPrinterName;
@@ -106,6 +128,7 @@ class PrinterConfig {
     this.shopName,
     this.shopAddress,
     this.shopPhone,
+    this.shopWebsite,
     this.footerLines = const [],
     this.footerLineStyles = const [],
     this.activeConnection = 'none',
@@ -156,6 +179,8 @@ class PrinterConfig {
     this.barcodeShowPrice = true,
     this.barcodeShowVariantDetails = true,
     this.barcodeLabelLines = const [],
+    this.barcodeShopName,
+    this.barcodeBranchName,
     this.mainPrinterName,
     this.secondaryPrinterName,
     this.devCreditEnabled = true,
@@ -265,6 +290,7 @@ class PrinterConfig {
       shopName: json['shop_name']?.toString(),
       shopAddress: json['shop_address']?.toString(),
       shopPhone: json['shop_phone']?.toString(),
+      shopWebsite: json['shop_website']?.toString(),
       footerLines: _parseFooterLines(json['footer_lines']),
       footerLineStyles: _parseFooterLineStyles(json['footer_line_styles']),
       activeConnection: (json['active_connection'] ?? 'none').toString(),
@@ -334,6 +360,8 @@ class PrinterConfig {
       barcodeShowPrice: _bool(json['barcode_show_price'], fallback: true),
       barcodeShowVariantDetails: _bool(json['barcode_show_variant_details'], fallback: true),
       barcodeLabelLines: _labelLines(json),
+      barcodeShopName: json['barcode_shop_name']?.toString(),
+      barcodeBranchName: json['barcode_branch_name']?.toString(),
       mainPrinterName: json['main_printer_name']?.toString(),
       secondaryPrinterName:
           preferred('secondary_printer_name', 'kitchen_printer_name')?.toString(),
@@ -350,6 +378,7 @@ class PrinterConfig {
         'shop_name': shopName,
         'shop_address': shopAddress,
         'shop_phone': shopPhone,
+        'shop_website': shopWebsite,
         'footer_lines': footerLines,
         'footer_line_styles': footerLineStyles.map((style) => style.toJson()).toList(),
         'active_connection': activeConnection,
@@ -401,6 +430,8 @@ class PrinterConfig {
         'barcode_show_variant_details': barcodeShowVariantDetails,
         'barcode_label_lines':
             barcodeLabelLines.map((line) => line.toJson()).toList(),
+        'barcode_shop_name': barcodeShopName,
+        'barcode_branch_name': barcodeBranchName,
         'main_printer_name': mainPrinterName,
         'secondary_printer_name': secondaryPrinterName,
         'dev_credit_enabled': devCreditEnabled,
@@ -411,6 +442,7 @@ class PrinterConfig {
     String? shopName,
     String? shopAddress,
     String? shopPhone,
+    String? shopWebsite,
     List<String>? footerLines,
     List<ReceiptFooterStyle>? footerLineStyles,
     String? activeConnection,
@@ -463,6 +495,7 @@ class PrinterConfig {
     bool? barcodeShowPrice,
     bool? barcodeShowVariantDetails,
     List<BarcodeLabelLine>? barcodeLabelLines,
+    String? barcodeShopName,
     bool? devCreditEnabled,
     String? devCreditText,
   }) {
@@ -472,6 +505,7 @@ class PrinterConfig {
       shopName: shopName ?? this.shopName,
       shopAddress: shopAddress ?? this.shopAddress,
       shopPhone: shopPhone ?? this.shopPhone,
+      shopWebsite: shopWebsite ?? this.shopWebsite,
       footerLines: footerLines ?? this.footerLines,
       footerLineStyles: footerLineStyles ?? this.footerLineStyles,
       activeConnection: activeConnection ?? this.activeConnection,
@@ -539,6 +573,8 @@ class PrinterConfig {
       barcodeShowVariantDetails:
           barcodeShowVariantDetails ?? this.barcodeShowVariantDetails,
       barcodeLabelLines: barcodeLabelLines ?? this.barcodeLabelLines,
+      barcodeShopName: barcodeShopName ?? this.barcodeShopName,
+      barcodeBranchName: barcodeBranchName,
       mainPrinterName: mainPrinterName,
       secondaryPrinterName: secondaryPrinterName,
       devCreditEnabled: devCreditEnabled ?? this.devCreditEnabled,

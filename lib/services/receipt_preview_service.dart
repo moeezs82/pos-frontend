@@ -7,6 +7,7 @@ import 'package:enterprise_pos/models/sale_receipt_item.dart';
 import 'package:enterprise_pos/services/pdf_arabic_font_loader.dart';
 import 'package:enterprise_pos/utils/customer_phone_utils.dart';
 import 'package:enterprise_pos/utils/print_text_utils.dart';
+import 'package:enterprise_pos/utils/receipt_extras.dart';
 import 'package:enterprise_pos/utils/thermal_receipt_layout.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
@@ -407,6 +408,12 @@ class ReceiptPreviewService {
     final itemDiscountDisplay = itemDiscountDisplayFromValue(
       meta?["item_discount_display"]?.toString(),
     );
+    final shopWebsite = ReceiptExtras.websiteFrom(meta);
+    final savings = ReceiptExtras.totalSavings(
+      items: items,
+      invoiceDiscount: discount,
+    );
+    final savingsText = ReceiptExtras.money(savings);
 
     if (template == InvoiceTemplate.arabicStandardInvoice) {
       return _buildArabicStandardInvoicePdf(
@@ -864,6 +871,14 @@ class ReceiptPreviewService {
                     textAlign: pw.TextAlign.center,
                   ),
                 ),
+                if (shopWebsite != null)
+                  pw.Center(
+                    child: pw.Text(
+                      shopWebsite,
+                      style: text(fsShopMeta, bold: true),
+                      textAlign: pw.TextAlign.center,
+                    ),
+                  ),
                 gap(2),
                 if (shopAddress != null && shopAddress.trim().isNotEmpty)
                   pw.Center(
@@ -875,7 +890,7 @@ class ReceiptPreviewService {
                   ),
                 if (shopPhone != null && shopPhone.trim().isNotEmpty)
                   pw.Center(
-                    child: pw.Text(shopPhone.trim(), style: text(fsShopMeta)),
+                    child: pw.Text(shopPhone.trim(), style: text(fsShopMeta, bold: true)),
                   ),
                 gap(6),
                 hairline(),
@@ -1013,6 +1028,18 @@ class ReceiptPreviewService {
                   ),
                 ),
                 hairline(),
+                // Only printed when a discount was applied to this bill.
+                if (savings > 0) ...[
+                  gap(4),
+                  pw.Center(
+                    child: pw.Text(
+                      'You Save: $savingsText',
+                      style: text(fsNumber, bold: true),
+                      textAlign: pw.TextAlign.center,
+                    ),
+                  ),
+                  gap(2),
+                ],
                 gap(6),
 
                 // Payment method breakdown - printed for split tenders or any
@@ -1214,6 +1241,12 @@ class ReceiptPreviewService {
     final itemDiscountDisplay = itemDiscountDisplayFromValue(
       meta?['item_discount_display']?.toString(),
     );
+    final shopWebsite = ReceiptExtras.websiteFrom(meta);
+    final savings = ReceiptExtras.totalSavings(
+      items: items,
+      invoiceDiscount: discount,
+    );
+    final savingsText = ReceiptExtras.money(savings);
 
     double numericMeta(String key) {
       final raw = meta?[key];
@@ -1382,6 +1415,15 @@ class ReceiptPreviewService {
               align: pw.TextAlign.center,
               lineGap: 1.2,
             ),
+            if (shopWebsite != null)
+              pw.Padding(
+                padding: const pw.EdgeInsets.only(top: 1),
+                child: pw.Text(
+                  shopWebsite,
+                  style: style(is58 ? 6.6 : 7.6, bold: true, color: muted),
+                  textAlign: pw.TextAlign.center,
+                ),
+              ),
             if ((shopAddress ?? '').trim().isNotEmpty)
               pw.Padding(
                 padding: const pw.EdgeInsets.only(top: 2),
@@ -1400,7 +1442,7 @@ class ReceiptPreviewService {
                 padding: const pw.EdgeInsets.only(top: 1),
                 child: pw.Text(
                   shopPhone!.trim(),
-                  style: style(is58 ? 6.6 : 7.6, color: muted),
+                  style: style(is58 ? 6.6 : 7.6, bold: true, color: muted),
                   textAlign: pw.TextAlign.center,
                 ),
               ),
@@ -1514,6 +1556,7 @@ class ReceiptPreviewService {
             if (delivery > 0) valueRow('التوصيل', 'Delivery', _m(delivery)),
             divider(),
             valueRow('الإجمالي', 'TOTAL', _m(grandTotal), strong: true),
+            if (savings > 0) valueRow('لقد وفرت', 'You Save', savingsText, strong: true),
             if (paid > 0) valueRow('المدفوع', 'Paid', _m(paid), strong: true),
             if (change > 0) valueRow('الباقي', 'Change', _m(change), strong: true),
             if (balanceDue > .004) valueRow('المتبقي', 'Balance Due', _m(balanceDue), strong: true),
@@ -1652,6 +1695,12 @@ class ReceiptPreviewService {
     final itemDiscountDisplay = itemDiscountDisplayFromValue(
       meta?['item_discount_display']?.toString(),
     );
+    final shopWebsite = ReceiptExtras.websiteFrom(meta);
+    final savings = ReceiptExtras.totalSavings(
+      items: items,
+      invoiceDiscount: discount,
+    );
+    final savingsText = ReceiptExtras.money(savings);
     final showExtraDiscountColumn =
         itemDiscountDisplay != ItemDiscountDisplay.hidden &&
             items.any((item) => item.hasExtraDiscount);
@@ -1893,6 +1942,11 @@ class ReceiptPreviewService {
                 align: pw.TextAlign.center,
                 lineGap: 1.4,
               ),
+              if (shopWebsite != null)
+                pw.Padding(
+                  padding: const pw.EdgeInsets.only(top: 1),
+                  child: pw.Text(shopWebsite, style: style(isA5 ? 6.4 : 7.4, bold: true, color: muted), textAlign: pw.TextAlign.center),
+                ),
               if ((shopAddress ?? '').trim().isNotEmpty)
                 pw.Padding(
                   padding: const pw.EdgeInsets.only(top: 2),
@@ -1909,7 +1963,7 @@ class ReceiptPreviewService {
               if ((shopPhone ?? '').trim().isNotEmpty)
                 pw.Padding(
                   padding: const pw.EdgeInsets.only(top: 1),
-                  child: pw.Text(shopPhone!.trim(), style: style(isA5 ? 6.4 : 7.4, color: muted), textAlign: pw.TextAlign.center),
+                  child: pw.Text(shopPhone!.trim(), style: style(isA5 ? 6.4 : 7.4, bold: true, color: muted), textAlign: pw.TextAlign.center),
                 ),
               pw.SizedBox(height: isA5 ? 6 : 8),
               arText(headingAr, size: isA5 ? 14 : 17, bold: true, color: accent, align: pw.TextAlign.center),
@@ -2106,6 +2160,7 @@ class ReceiptPreviewService {
                       if (delivery > 0) singleValueRow('التوصيل', 'Delivery', _m(delivery)),
                       pw.Container(height: .6, margin: const pw.EdgeInsets.symmetric(vertical: 4), color: border),
                       singleValueRow('الإجمالي', 'TOTAL', _m(grandTotal), strong: true, accentValue: true),
+                      if (savings > 0) singleValueRow('لقد وفرت', 'You Save', savingsText, strong: true),
                       if (paid > 0) singleValueRow('المدفوع', 'Paid', _m(paid), strong: true),
                       if (change > 0) singleValueRow('الباقي', 'Change', _m(change), strong: true),
                       if (balanceDue > .004) singleValueRow('المتبقي', 'Balance Due', _m(balanceDue), strong: true, accentValue: true),
@@ -2263,6 +2318,12 @@ class ReceiptPreviewService {
     final itemDiscountDisplay = itemDiscountDisplayFromValue(
       meta?['item_discount_display']?.toString(),
     );
+    final shopWebsite = ReceiptExtras.websiteFrom(meta);
+    final savings = ReceiptExtras.totalSavings(
+      items: items,
+      invoiceDiscount: discount,
+    );
+    final savingsText = ReceiptExtras.money(savings);
     final showExtraDiscountColumn =
         itemDiscountDisplay != ItemDiscountDisplay.hidden &&
             items.any((item) => item.hasExtraDiscount);
@@ -2484,6 +2545,10 @@ class ReceiptPreviewService {
                       bold: true,
                       align: pw.TextAlign.left,
                     ),
+                    if (shopWebsite != null) ...[
+                      pw.SizedBox(height: 2),
+                      pw.Text(shopWebsite, style: textStyle(isA5 ? 7.5 : 8.5, bold: true, color: muted)),
+                    ],
                     if ((shopAddress ?? '').trim().isNotEmpty) ...[
                       pw.SizedBox(height: 3),
                       brandedText(
@@ -2495,7 +2560,7 @@ class ReceiptPreviewService {
                     ],
                     if ((shopPhone ?? '').trim().isNotEmpty) ...[
                       pw.SizedBox(height: 2),
-                      pw.Text(shopPhone!.trim(), style: textStyle(isA5 ? 7.5 : 8.5, color: muted)),
+                      pw.Text(shopPhone!.trim(), style: textStyle(isA5 ? 7.5 : 8.5, bold: true, color: muted)),
                     ],
                   ],
                 ),
@@ -2732,6 +2797,7 @@ class ReceiptPreviewService {
                     if (delivery > 0) labelValue('Delivery', _m(delivery)),
                     pw.Container(margin: const pw.EdgeInsets.symmetric(vertical: 5), height: .8, color: border),
                     labelValue('TOTAL', _m(grandTotal), strong: true, accentValue: true),
+                    if (savings > 0) labelValue('You Save', savingsText, strong: true),
                     if (paid > 0) labelValue('Paid', _m(paid), strong: true),
                     if (change > 0) labelValue('Change', _m(change), strong: true, accentValue: true),
                     if (balanceDue > .004) labelValue('Balance Due', _m(balanceDue), strong: true, accentValue: true),

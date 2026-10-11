@@ -492,6 +492,7 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
     final printMeta = <String, dynamic>{
       ...data.printMeta,
       'item_discount_display': printerConfig.itemDiscountDisplay.value,
+      'shop_website': printerConfig.shopWebsite,
     };
 
     debugPrint('Active printer connection: ${printerConfig.activeConnection}, template: ${mainTemplate.value}');
@@ -750,6 +751,7 @@ class _SaleDetailScreenState extends State<SaleDetailScreen> {
           final printMeta = <String, dynamic>{
             ...data.printMeta,
             'item_discount_display': printerConfig.itemDiscountDisplay.value,
+            'shop_website': printerConfig.shopWebsite,
           };
 
           final pdfBytes = await ReceiptPreviewService.instance.buildReceiptPdf(

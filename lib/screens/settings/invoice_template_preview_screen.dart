@@ -17,6 +17,7 @@ class InvoiceTemplatePreviewScreen extends StatefulWidget {
   final String shopName;
   final String? shopAddress;
   final String? shopPhone;
+  final String? shopWebsite;
   final List<String> footerLines;
   final List<ReceiptFooterStyle> footerLineStyles;
   final String? receiptHeader;
@@ -39,6 +40,7 @@ class InvoiceTemplatePreviewScreen extends StatefulWidget {
     this.shopName = 'My Shop',
     this.shopAddress,
     this.shopPhone,
+    this.shopWebsite,
     this.footerLines = const [
       'Thank you, visit again!',
       'Follow us on Instagram @myshop',
@@ -141,6 +143,7 @@ class _InvoiceTemplatePreviewScreenState
         'cash_received': 1000,
         'change_amount': 0,
         'item_discount_display': widget.itemDiscountDisplay.value,
+        'shop_website': widget.shopWebsite ?? '',
       },
       sections: _selected.sections,
       paperWidth: _paperCode,

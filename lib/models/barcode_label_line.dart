@@ -12,7 +12,7 @@ library;
 
 /// What a single label line prints.
 enum BarcodeLabelField {
-  shopName('shop_name', 'Shop name', 'Your branch name from Printer Settings'),
+  shopName('shop_name', 'Shop name', 'Your branch name, or the custom shop name set for labels'),
   productName('product_name', 'Product name', 'Product or product family name'),
   variantDetails('variant_details', 'Variant details', 'For example "Black / M"'),
   price('price', 'Price', 'The product price before any discount'),

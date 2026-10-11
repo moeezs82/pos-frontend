@@ -36,6 +36,7 @@ class PrinterConfigProvider extends ChangeNotifier {
   String get shopName => _config.shopName ?? '';
   String get shopAddress => _config.shopAddress ?? '';
   String get shopPhone => _config.shopPhone ?? '';
+  String get shopWebsite => _config.shopWebsite ?? '';
 
   String get activeConnection => _config.activeConnection;
   bool get isNetworkPrinter => _config.activeConnection == 'network';
