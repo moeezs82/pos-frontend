@@ -1597,6 +1597,26 @@ class _PostedSaleSummaryCard extends StatelessWidget {
 
   double _n(dynamic value) => double.tryParse(value?.toString() ?? '') ?? 0.0;
 
+  /// Item-level discounts (line discount + extra discount) in money. Posted
+  /// `subtotal` is the sum of NET line totals, so adding this back gives the
+  /// pre-discount subtotal. Display only; nothing posted is changed.
+  double _itemDiscountTotal() {
+    final items = (sale['items'] as List?) ?? const [];
+    var total = 0.0;
+    for (final raw in items) {
+      if (raw is! Map) continue;
+      final packaged = raw['packaging_id'] != null;
+      final price = _n(packaged ? raw['packaging_unit_price'] : raw['price']);
+      final qty = _n(packaged ? raw['packaging_quantity'] : raw['quantity']);
+      final lineTotal = _n(raw['total']) != 0 ? _n(raw['total']) : price * qty;
+      final gross = (price * qty).abs();
+      final extra = _n(raw['extra_discount']).abs();
+      final line = (gross - lineTotal.abs() - extra).clamp(0.0, double.infinity);
+      total += line + extra;
+    }
+    return (total * 100).round() / 100;
+  }
+
   Widget _row(
     BuildContext context,
     String label,
@@ -1634,8 +1654,9 @@ class _PostedSaleSummaryCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final subtotal = _n(sale['subtotal']);
-    final discount = _n(sale['discount']);
+    final itemSavings = _itemDiscountTotal();
+    final subtotal = _n(sale['subtotal']) + itemSavings;
+    final discount = _n(sale['discount']) + itemSavings;
     final tax = _n(sale['tax']);
     final delivery = _n(sale['delivery']);
     final total = _n(sale['total']);

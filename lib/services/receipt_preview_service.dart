@@ -409,11 +409,23 @@ class ReceiptPreviewService {
       meta?["item_discount_display"]?.toString(),
     );
     final shopWebsite = ReceiptExtras.websiteFrom(meta);
+    // The posted subtotal is the sum of NET line amounts, so item discounts
+    // would otherwise be invisible in the totals block. Show the gross
+    // subtotal and one combined discount so Subtotal - Discount + Tax +
+    // Delivery = Total. Display only: stored/posted figures are untouched.
+    // When item discounts are set to "hidden" they stay off the totals too.
+    final includeItemDiscounts =
+        itemDiscountDisplay != ItemDiscountDisplay.hidden;
+    final itemSavings =
+        includeItemDiscounts ? ReceiptExtras.itemDiscountTotal(items) : 0.0;
+    final displaySubtotal = subtotal + itemSavings;
+    final displayDiscount = discount + itemSavings;
     final savings = ReceiptExtras.totalSavings(
       items: items,
       invoiceDiscount: discount,
+      includeItemDiscounts: includeItemDiscounts,
     );
-    final savingsText = ReceiptExtras.money(savings);
+    final savingsText = savings.toStringAsFixed(2);
 
     if (template == InvoiceTemplate.arabicStandardInvoice) {
       return _buildArabicStandardInvoicePdf(
@@ -996,8 +1008,8 @@ class ReceiptPreviewService {
               // -- TOTALS ----------------------------------------------------
               if (sections.totalsBreakdown) ...[
                 gap(5),
-                kv('Subtotal', _m(subtotal)),
-                if (discount > 0) kv('Discount', '-${_m(discount)}'),
+                kv('Subtotal', _m(displaySubtotal)),
+                if (displayDiscount > 0) kv('Discount', '-${_m(displayDiscount)}'),
                 if (tax > 0) kv('Tax', _m(tax)),
                 if (delivery > 0) kv('Shipping Charges', _m(delivery)),
               ],
@@ -1242,11 +1254,23 @@ class ReceiptPreviewService {
       meta?['item_discount_display']?.toString(),
     );
     final shopWebsite = ReceiptExtras.websiteFrom(meta);
+    // The posted subtotal is the sum of NET line amounts, so item discounts
+    // would otherwise be invisible in the totals block. Show the gross
+    // subtotal and one combined discount so Subtotal - Discount + Tax +
+    // Delivery = Total. Display only: stored/posted figures are untouched.
+    // When item discounts are set to "hidden" they stay off the totals too.
+    final includeItemDiscounts =
+        itemDiscountDisplay != ItemDiscountDisplay.hidden;
+    final itemSavings =
+        includeItemDiscounts ? ReceiptExtras.itemDiscountTotal(items) : 0.0;
+    final displaySubtotal = subtotal + itemSavings;
+    final displayDiscount = discount + itemSavings;
     final savings = ReceiptExtras.totalSavings(
       items: items,
       invoiceDiscount: discount,
+      includeItemDiscounts: includeItemDiscounts,
     );
-    final savingsText = ReceiptExtras.money(savings);
+    final savingsText = savings.toStringAsFixed(2);
 
     double numericMeta(String key) {
       final raw = meta?[key];
@@ -1550,8 +1574,8 @@ class ReceiptPreviewService {
                 ),
               );
             }),
-            valueRow('المجموع الفرعي', 'Subtotal', _m(subtotal)),
-            if (discount > 0) valueRow('الخصم', 'Discount', '-${_m(discount)}'),
+            valueRow('المجموع الفرعي', 'Subtotal', _m(displaySubtotal)),
+            if (displayDiscount > 0) valueRow('الخصم', 'Discount', '-${_m(displayDiscount)}'),
             if (tax > 0) valueRow('الضريبة', 'Tax', _m(tax)),
             if (delivery > 0) valueRow('التوصيل', 'Delivery', _m(delivery)),
             divider(),
@@ -1696,11 +1720,23 @@ class ReceiptPreviewService {
       meta?['item_discount_display']?.toString(),
     );
     final shopWebsite = ReceiptExtras.websiteFrom(meta);
+    // The posted subtotal is the sum of NET line amounts, so item discounts
+    // would otherwise be invisible in the totals block. Show the gross
+    // subtotal and one combined discount so Subtotal - Discount + Tax +
+    // Delivery = Total. Display only: stored/posted figures are untouched.
+    // When item discounts are set to "hidden" they stay off the totals too.
+    final includeItemDiscounts =
+        itemDiscountDisplay != ItemDiscountDisplay.hidden;
+    final itemSavings =
+        includeItemDiscounts ? ReceiptExtras.itemDiscountTotal(items) : 0.0;
+    final displaySubtotal = subtotal + itemSavings;
+    final displayDiscount = discount + itemSavings;
     final savings = ReceiptExtras.totalSavings(
       items: items,
       invoiceDiscount: discount,
+      includeItemDiscounts: includeItemDiscounts,
     );
-    final savingsText = ReceiptExtras.money(savings);
+    final savingsText = savings.toStringAsFixed(2);
     final showExtraDiscountColumn =
         itemDiscountDisplay != ItemDiscountDisplay.hidden &&
             items.any((item) => item.hasExtraDiscount);
@@ -2154,8 +2190,8 @@ class ReceiptPreviewService {
                   ),
                   child: pw.Column(
                     children: [
-                      singleValueRow('المجموع الفرعي', 'Subtotal', _m(subtotal)),
-                      if (discount > 0) singleValueRow('الخصم', 'Discount', '-${_m(discount)}'),
+                      singleValueRow('المجموع الفرعي', 'Subtotal', _m(displaySubtotal)),
+                      if (displayDiscount > 0) singleValueRow('الخصم', 'Discount', '-${_m(displayDiscount)}'),
                       if (tax > 0) singleValueRow('الضريبة', 'Tax', _m(tax)),
                       if (delivery > 0) singleValueRow('التوصيل', 'Delivery', _m(delivery)),
                       pw.Container(height: .6, margin: const pw.EdgeInsets.symmetric(vertical: 4), color: border),
@@ -2319,11 +2355,23 @@ class ReceiptPreviewService {
       meta?['item_discount_display']?.toString(),
     );
     final shopWebsite = ReceiptExtras.websiteFrom(meta);
+    // The posted subtotal is the sum of NET line amounts, so item discounts
+    // would otherwise be invisible in the totals block. Show the gross
+    // subtotal and one combined discount so Subtotal - Discount + Tax +
+    // Delivery = Total. Display only: stored/posted figures are untouched.
+    // When item discounts are set to "hidden" they stay off the totals too.
+    final includeItemDiscounts =
+        itemDiscountDisplay != ItemDiscountDisplay.hidden;
+    final itemSavings =
+        includeItemDiscounts ? ReceiptExtras.itemDiscountTotal(items) : 0.0;
+    final displaySubtotal = subtotal + itemSavings;
+    final displayDiscount = discount + itemSavings;
     final savings = ReceiptExtras.totalSavings(
       items: items,
       invoiceDiscount: discount,
+      includeItemDiscounts: includeItemDiscounts,
     );
-    final savingsText = ReceiptExtras.money(savings);
+    final savingsText = savings.toStringAsFixed(2);
     final showExtraDiscountColumn =
         itemDiscountDisplay != ItemDiscountDisplay.hidden &&
             items.any((item) => item.hasExtraDiscount);
@@ -2791,8 +2839,8 @@ class ReceiptPreviewService {
                 child: pw.Column(
                   crossAxisAlignment: pw.CrossAxisAlignment.stretch,
                   children: [
-                    labelValue('Subtotal', _m(subtotal)),
-                    if (discount > 0) labelValue('Discount', '-${_m(discount)}'),
+                    labelValue('Subtotal', _m(displaySubtotal)),
+                    if (displayDiscount > 0) labelValue('Discount', '-${_m(displayDiscount)}'),
                     if (tax > 0) labelValue('Tax', _m(tax)),
                     if (delivery > 0) labelValue('Delivery', _m(delivery)),
                     pw.Container(margin: const pw.EdgeInsets.symmetric(vertical: 5), height: .8, color: border),

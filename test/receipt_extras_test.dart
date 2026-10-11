@@ -43,6 +43,27 @@ void main() {
     });
   });
 
+  test('item discounts can be left out (hidden display mode)', () {
+    const items = [
+      SaleReceiptItem(
+        name: 'A',
+        price: 100,
+        qty: 1,
+        total: 90,
+        discountAmount: 10,
+      ),
+    ];
+    expect(ReceiptExtras.itemDiscountTotal(items), 10);
+    expect(
+      ReceiptExtras.totalSavings(
+        items: items,
+        invoiceDiscount: 5,
+        includeItemDiscounts: false,
+      ),
+      5,
+    );
+  });
+
   group('ReceiptExtras.money', () {
     test('uses Rs. for PKR / Rs', () {
       AppCurrency.configure('PKR');

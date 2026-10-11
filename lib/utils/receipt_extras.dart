@@ -27,8 +27,18 @@ class ReceiptExtras {
   static double totalSavings({
     required List<SaleReceiptItem> items,
     required double invoiceDiscount,
+    bool includeItemDiscounts = true,
   }) {
     var total = invoiceDiscount > 0 ? invoiceDiscount : 0.0;
+    if (includeItemDiscounts) total += itemDiscountTotal(items);
+    return (total * 100).round() / 100;
+  }
+
+  /// Sum of every line's item discount and extra discount (money, not %).
+  /// Line totals on the receipt are already net of these, so adding this back
+  /// to the posted subtotal gives the pre-discount (gross) subtotal.
+  static double itemDiscountTotal(List<SaleReceiptItem> items) {
+    var total = 0.0;
     for (final item in items) {
       if (item.hasDiscount) total += item.discountAmount.abs();
       if (item.hasExtraDiscount) total += item.extraDiscountAmount.abs();

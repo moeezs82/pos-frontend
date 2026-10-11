@@ -422,9 +422,18 @@ class ThermalPrinterService {
       meta?['item_discount_display']?.toString(),
     );
     final shopWebsite = ReceiptExtras.websiteFrom(meta);
+    // Display-only gross subtotal / combined discount (see
+    // ReceiptPreviewService): keeps Subtotal - Discount + Tax = Total.
+    final includeItemDiscounts =
+        itemDiscountDisplay != ItemDiscountDisplay.hidden;
+    final itemSavings =
+        includeItemDiscounts ? ReceiptExtras.itemDiscountTotal(items) : 0.0;
+    final displaySubtotal = subtotal + itemSavings;
+    final displayDiscount = discount + itemSavings;
     final savings = ReceiptExtras.totalSavings(
       items: items,
       invoiceDiscount: discount,
+      includeItemDiscounts: includeItemDiscounts,
     );
     final operationalTicket =
         !sections.itemPrices && !sections.totalsBreakdown;
@@ -684,8 +693,8 @@ class ThermalPrinterService {
 
     // -- TOTALS --------------------------------------------------------------
     if (sections.totalsBreakdown) {
-      kv('Subtotal', _m(subtotal));
-      if (discount > 0) kv('Discount', '-${_m(discount)}');
+      kv('Subtotal', _m(displaySubtotal));
+      if (displayDiscount > 0) kv('Discount', '-${_m(displayDiscount)}');
       if (tax > 0) kv('Tax', _m(tax));
       if (delivery > 0) kv('Shipping', _m(delivery));
     }
@@ -714,7 +723,7 @@ class ThermalPrinterService {
       // Only printed when a discount was applied to this bill.
       if (savings > 0) {
         printer.text(
-          'You Save: ${ReceiptExtras.money(savings)}',
+          'You Save: ${savings.toStringAsFixed(2)}',
           styles: const PosStyles(align: PosAlign.center, bold: true),
         );
       }
