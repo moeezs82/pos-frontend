@@ -178,6 +178,14 @@ class BarcodeLabelPrinterService {
   /// so text is squeezed before the symbol is.
   static const double _minBarcodeMm = 6.0;
 
+  /// Upper bound for the symbol: a bar taller than this adds no scanning
+  /// benefit, it only looks stretched when few lines are enabled.
+  static const double _maxBarcodeMm = 10.0;
+
+  /// The symbol never takes more than this share of the printable height, so a
+  /// sparse label (shop name + product name + barcode) keeps a balanced look.
+  static const double _maxBarcodeShare = 0.4;
+
   /// Text is never scaled below this: an unreadable price is worse than a
   /// label that overflows slightly, and the settings preview shows the result.
   static const double _minTextScale = 0.42;
@@ -375,9 +383,16 @@ class BarcodeLabelPrinterService {
 
     final roomAtFullText = contentHeightMm - gaps - textTotal;
     if (roomAtFullText >= _minBarcodeMm) {
-      // The text fits at full size, so every millimetre left over goes to the
-      // symbol — a taller bar only ever helps scanning.
-      return _LabelLayout(textScale: 1.0, barcodeHeightMm: roomAtFullText);
+      // The text fits at full size, so the leftover height goes to the symbol
+      // ...up to a sensible ceiling, otherwise a label with only a couple of
+      // text lines ends up with a huge, stretched-looking barcode.
+      final cap = (contentHeightMm * _maxBarcodeShare)
+          .clamp(_minBarcodeMm, _maxBarcodeMm)
+          .toDouble();
+      return _LabelLayout(
+        textScale: 1.0,
+        barcodeHeightMm: math.min(roomAtFullText, cap),
+      );
     }
 
     final textRoom = contentHeightMm - gaps - _minBarcodeMm;

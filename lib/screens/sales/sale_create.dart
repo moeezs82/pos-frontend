@@ -246,6 +246,15 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
   void initState() {
     super.initState();
     unawaited(loadSystemArabicPdfFonts());
+    // Prepare the receipt logo once the screen is up so the first Preview
+    // does not pay for decoding it.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final cfg = context.read<PrinterConfigProvider>();
+      if (cfg.isConfigured && cfg.printLogoEnabled) {
+        unawaited(ReceiptPreviewService.instance.warmLogo(cfg.printLogoData));
+      }
+    });
     final token = Provider.of<AuthProvider>(context, listen: false).token!;
     _productService = ProductService(token: token);
     _saleService = SaleService(token: token);
@@ -4348,6 +4357,9 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         barrierDismissible: false,
         builder: (_) => const _PreviewLoadingDialog(),
       );
+      // Let the spinner paint before the heavy work starts; otherwise the
+      // dialog only appears once the PDF is already built.
+      await WidgetsBinding.instance.endOfFrame;
     }
 
     try {
@@ -4377,6 +4389,12 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       if (!mounted) return;
       final mainTemplate = printerConfig.mainInvoiceTemplate;
       final paperCode = printerConfig.mainPaperCode;
+      // Downscale/decode the logo in a background isolate (first time only).
+      if (printerConfig.printLogoEnabled && mainTemplate.isCustomerFacing) {
+        await ReceiptPreviewService.instance
+            .warmLogo(printerConfig.printLogoData);
+        if (!mounted) return;
+      }
       final pdfBytes = await ReceiptPreviewService.instance.buildReceiptPdf(
         shopName:
             printerConfig.shopName.isNotEmpty ? printerConfig.shopName : 'My Shop',

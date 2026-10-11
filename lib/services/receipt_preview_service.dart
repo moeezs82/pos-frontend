@@ -1,5 +1,7 @@
 import 'dart:convert';
 import 'dart:typed_data';
+import 'package:flutter/foundation.dart' show compute;
+import 'package:image/image.dart' as img;
 import 'package:enterprise_pos/models/invoice_template.dart';
 import 'package:enterprise_pos/models/item_discount_display.dart';
 import 'package:enterprise_pos/models/receipt_footer_style.dart';
@@ -32,6 +34,30 @@ class _ReceiptFooterRenderLine {
     this.style, {
     this.isDevCredit = false,
   });
+}
+
+/// Runs in a background isolate. Returns a smaller copy of an oversized logo,
+/// or null when the original is already small enough (or cannot be decoded).
+///
+/// The logo prints about 42 pt tall on a receipt, but shops often upload a
+/// multi-megapixel image. Decoding that on every preview was a large part of
+/// the preview delay on low-end machines.
+Uint8List? _downscaleLogoBytes(Uint8List bytes) {
+  try {
+    final decoded = img.decodeImage(bytes);
+    if (decoded == null) return null;
+    const maxW = 480;
+    const maxH = 240;
+    if (decoded.width <= maxW && decoded.height <= maxH) return null;
+    final resized = decoded.width / maxW > decoded.height / maxH
+        ? img.copyResize(decoded, width: maxW)
+        : img.copyResize(decoded, height: maxH);
+    return decoded.hasAlpha
+        ? Uint8List.fromList(img.encodePng(resized))
+        : Uint8List.fromList(img.encodeJpg(resized, quality: 90));
+  } catch (_) {
+    return null;
+  }
 }
 
 class ReceiptPreviewService {
@@ -1655,12 +1681,12 @@ class ReceiptPreviewService {
               ),
             ],
             pw.SizedBox(height: 5),
-            arText('شكراً لتسوقكم معنا', size: is58 ? 8 : 9, bold: true, color: accent, align: pw.TextAlign.center),
-            pw.Text(
-              'Thank you for your business!',
-              style: style(is58 ? 6.4 : 7.2, bold: true, color: accent),
-              textAlign: pw.TextAlign.center,
-            ),
+            // arText('شكراً لتسوقكم معنا', size: is58 ? 8 : 9, bold: true, color: accent, align: pw.TextAlign.center),
+            // pw.Text(
+            //   'Thank you for your business!',
+            //   style: style(is58 ? 6.4 : 7.2, bold: true, color: accent),
+            //   textAlign: pw.TextAlign.center,
+            // ),
           ],
         ),
       ),
@@ -1941,13 +1967,13 @@ class ReceiptPreviewService {
           child: pw.Row(
             mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
             children: [
-              pw.Column(
-                crossAxisAlignment: pw.CrossAxisAlignment.start,
-                children: [
-                  arText('شكراً لتسوقكم معنا', size: isA5 ? 6.2 : 7, bold: true, color: accent),
-                  pw.Text('Thank you for your business!', style: style(isA5 ? 5.3 : 6.1, color: accent)),
-                ],
-              ),
+              // pw.Column(
+              //   crossAxisAlignment: pw.CrossAxisAlignment.start,
+              //   children: [
+              //     arText('شكراً لتسوقكم معنا', size: isA5 ? 6.2 : 7, bold: true, color: accent),
+              //     pw.Text('Thank you for your business!', style: style(isA5 ? 5.3 : 6.1, color: accent)),
+              //   ],
+              // ),
               pw.Text(
                 'صفحة / Page ${context.pageNumber}/${context.pagesCount}',
                 style: style(isA5 ? 5.5 : 6.3, color: muted),
@@ -2243,13 +2269,13 @@ class ReceiptPreviewService {
                   ),
                 ],
                 pw.Spacer(),
-                pw.Column(
-                  crossAxisAlignment: pw.CrossAxisAlignment.center,
-                  children: [
-                    arText('شكراً لتسوقكم معنا', size: isA5 ? 7.4 : 8.6, bold: true, color: accent, align: pw.TextAlign.center),
-                    pw.Text('Thank you for your business!', style: style(isA5 ? 5.8 : 6.8, bold: true, color: accent), textAlign: pw.TextAlign.center),
-                  ],
-                ),
+                // pw.Column(
+                //   crossAxisAlignment: pw.CrossAxisAlignment.center,
+                //   children: [
+                //     arText('شكراً لتسوقكم معنا', size: isA5 ? 7.4 : 8.6, bold: true, color: accent, align: pw.TextAlign.center),
+                //     pw.Text('Thank you for your business!', style: style(isA5 ? 5.8 : 6.8, bold: true, color: accent), textAlign: pw.TextAlign.center),
+                //   ],
+                // ),
                 if (activeFooterLines.isNotEmpty) ...[
                   pw.Spacer(),
                   pw.SizedBox(
@@ -2546,13 +2572,13 @@ class ReceiptPreviewService {
           child: pw.Column(
             crossAxisAlignment: pw.CrossAxisAlignment.stretch,
             children: [
-              pw.Row(
-                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-                children: [
-                  pw.Text('Thank you for your business!', style: textStyle(isA5 ? 7.5 : 8.5, bold: true, color: accent)),
-                  pw.Text('Page ${context.pageNumber} of ${context.pagesCount}', style: textStyle(isA5 ? 7 : 8, color: muted)),
-                ],
-              ),
+              // pw.Row(
+              //   mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+              //   children: [
+              //     pw.Text('Thank you for your business!', style: textStyle(isA5 ? 7.5 : 8.5, bold: true, color: accent)),
+              //     pw.Text('Page ${context.pageNumber} of ${context.pagesCount}', style: textStyle(isA5 ? 7 : 8, color: muted)),
+              //   ],
+              // ),
               if (devCreditLine.isNotEmpty)
                 pw.Padding(
                   padding: const pw.EdgeInsets.only(top: 4),
@@ -2861,7 +2887,43 @@ class ReceiptPreviewService {
     return doc.save();
   }
 
+  // Single-entry cache: the shop has one logo, so remembering the last one
+  // avoids base64-decoding it (and re-reading its pixels) on every preview.
+  static String? _logoCacheKey;
+  static Uint8List? _logoCacheBytes;
+  static bool _logoOptimized = false;
+
+  /// Prepares the logo off the UI thread. Call before building a receipt;
+  /// afterwards [_decodeLogo] returns the cached, print-sized bytes instantly.
+  Future<void> warmLogo(String? data) async {
+    final raw = _decodeLogoRaw(data);
+    if (raw == null) return;
+    if (_logoOptimized && _logoCacheKey == data) return;
+    Uint8List? small;
+    try {
+      small = await compute(_downscaleLogoBytes, raw);
+    } catch (_) {
+      small = null;
+    }
+    _logoCacheKey = data;
+    _logoCacheBytes = small ?? raw;
+    _logoOptimized = true;
+  }
+
   static Uint8List? _decodeLogo(String? data) {
+    if (data != null && _logoCacheKey != null && _logoCacheKey == data) {
+      return _logoCacheBytes;
+    }
+    final raw = _decodeLogoRaw(data);
+    if (raw != null && data != null) {
+      _logoCacheKey = data;
+      _logoCacheBytes = raw;
+      _logoOptimized = false;
+    }
+    return raw;
+  }
+
+  static Uint8List? _decodeLogoRaw(String? data) {
     final raw = (data ?? '').trim();
     if (raw.isEmpty || !raw.startsWith('data:image/')) return null;
     final comma = raw.indexOf(',');
