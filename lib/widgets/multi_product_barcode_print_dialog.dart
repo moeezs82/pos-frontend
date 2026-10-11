@@ -107,6 +107,7 @@ class _MultiProductBarcodePrintDialogState
         perPage: 20,
         search: _search.isEmpty ? null : _search,
         type: _type == 'all' ? null : _type,
+        status: 'active',
       );
       final raw = (data['data'] as List?) ?? const [];
       final items = raw

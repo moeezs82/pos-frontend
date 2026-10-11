@@ -2368,19 +2368,30 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
   /// fallback), returning null when nothing has that barcode.
   Future<Map<String, dynamic>?> _lookupProductByCode(String code) async {
     Map<String, dynamic>? product;
+    // The offline cache may still hold a stale "active" copy of a product that
+    // was deactivated on the server, so it is only consulted when the server
+    // could not be reached — never when the server answered "not found".
+    var serverAnswered = false;
     try {
       product = await _productService.getProductByBarcode(
         code,
         vendorId: _selectedVendorId,
+        rethrowErrors: true,
       );
+      serverAnswered = true;
+    } on ApiException catch (e) {
+      serverAnswered = e.statusCode == 404;
+      product = null;
     } catch (_) {
       product = null;
     }
-    product ??= await CatalogCacheService.instance.productByBarcode(
-      code,
-      branchId: int.tryParse(_effectiveBranchIdStr()),
-      vendorId: _selectedVendorId,
-    );
+    if (!serverAnswered) {
+      product ??= await CatalogCacheService.instance.productByBarcode(
+        code,
+        branchId: int.tryParse(_effectiveBranchIdStr()),
+        vendorId: _selectedVendorId,
+      );
+    }
     return product;
   }
 
@@ -2412,19 +2423,30 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     // G1). getProductByBarcode returns null for "not found" and throws for a
     // network error — both fall through to the cache.
     Map<String, dynamic>? product;
+    // The offline cache may still hold a stale "active" copy of a product that
+    // was deactivated on the server, so it is only consulted when the server
+    // could not be reached — never when the server answered "not found".
+    var serverAnswered = false;
     try {
       product = await _productService.getProductByBarcode(
         code,
         vendorId: _selectedVendorId,
+        rethrowErrors: true,
       );
+      serverAnswered = true;
+    } on ApiException catch (e) {
+      serverAnswered = e.statusCode == 404;
+      product = null;
     } catch (_) {
       product = null;
     }
-    product ??= await CatalogCacheService.instance.productByBarcode(
-      code,
-      branchId: int.tryParse(_effectiveBranchIdStr()),
-      vendorId: _selectedVendorId,
-    );
+    if (!serverAnswered) {
+      product ??= await CatalogCacheService.instance.productByBarcode(
+        code,
+        branchId: int.tryParse(_effectiveBranchIdStr()),
+        vendorId: _selectedVendorId,
+      );
+    }
     if (product != null) {
       // Capture into a final local so Dart flow analysis narrows the type
       // inside the setState closure (local variable reassigned via ??= above

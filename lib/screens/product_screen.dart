@@ -466,7 +466,9 @@ class _ProductsScreenState extends State<ProductsScreen> {
   int? _categoryId;
   int? _brandId;
   int? _vendorId;
-  String _statusFilter = 'all';
+  // Listing shows active products by default; 'all' / 'inactive' are opt-in.
+  static const String _defaultStatusFilter = 'active';
+  String _statusFilter = _defaultStatusFilter;
   String _stockFilter = 'all';
   bool _showCategory = true;
   bool _showBrand = true;
@@ -689,7 +691,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
       _categoryId != null ||
       _brandId != null ||
       _vendorId != null ||
-      _statusFilter != 'all' ||
+      _statusFilter != _defaultStatusFilter ||
       _stockFilter != 'all';
 
   void _clearFilters({bool fetch = true}) {
@@ -700,7 +702,7 @@ class _ProductsScreenState extends State<ProductsScreen> {
       _categoryId = null;
       _brandId = null;
       _vendorId = null;
-      _statusFilter = 'all';
+      _statusFilter = _defaultStatusFilter;
       _stockFilter = 'all';
     });
     if (fetch) _fetchProducts(reset: true);

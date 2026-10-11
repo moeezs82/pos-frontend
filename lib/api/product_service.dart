@@ -66,6 +66,10 @@ class ProductService {
     String? sortBy,
     String? sortOrder,
     int per_page = 20,
+    // Inactive products must never appear in pickers/search used for new
+    // sales and purchases, so only active products are requested by default.
+    // Pass `false` explicitly to include inactive products.
+    bool activeOnly = true,
   }) async {
     final queryParams = {
       "page": page.toString(),
@@ -79,6 +83,7 @@ class ProductService {
       if (mostSale) "most_sale": "1",
       if (sortBy != null && sortBy.isNotEmpty) "sort_by": sortBy,
       if (sortOrder != null && sortOrder.isNotEmpty) "sort_order": sortOrder,
+      if (activeOnly) "is_active": "1",
     };
     return await _client.get("/products", query: queryParams);
   }
@@ -158,6 +163,11 @@ class ProductService {
   Future<Map<String, dynamic>?> getProductByBarcode(
     String barcode, {
     int? vendorId,
+    bool activeOnly = true,
+    // When true, errors (network down, 5xx, 404) are rethrown instead of being
+    // swallowed into `null`, so callers can tell "server says no such active
+    // product" apart from "server unreachable".
+    bool rethrowErrors = false,
   }) async {
     final safeBarcode = Uri.encodeComponent(barcode.trim());
     final path = vendorId != null
@@ -165,13 +175,14 @@ class ProductService {
         : "/products/by-barcode/$safeBarcode";
 
     try {
-      final res = await _client.get(path);
+      final res = await _client.get(path, query: activeOnly ? {"is_active": "1"} : null);
       final data = res["data"];
       if (data is Map) {
         return Map<String, dynamic>.from(data);
       }
       return null;
     } catch (e) {
+      if (rethrowErrors) rethrow;
       // If your ApiClient throws typed errors with status codes, you can
       // check for 404 here and return null. Otherwise, just swallow and return null.
       // Example:
