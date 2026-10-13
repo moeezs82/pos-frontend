@@ -2,6 +2,7 @@ import 'package:enterprise_pos/api/partner_service.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/screens/cash_ledger/cash_ledger_create_screen.dart' show kOwnerEquityPermission;
 import 'package:enterprise_pos/screens/reports/enterprise_reports_workspace_screen.dart';
+import 'package:enterprise_pos/services/app_navigator.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -12,7 +13,11 @@ import 'package:provider/provider.dart';
 /// drawings keep their owner. Active ownership cannot exceed 100% (enforced by
 /// the backend; the error is shown as returned).
 class PartnersScreen extends StatefulWidget {
-  const PartnersScreen({super.key});
+  /// Embedded mode (inside the Cash Ledger workspace): shows a Back button that
+  /// calls this instead of relying on a pushed route.
+  final VoidCallback? onBack;
+
+  const PartnersScreen({super.key, this.onBack});
 
   @override
   State<PartnersScreen> createState() => _PartnersScreenState();
@@ -85,13 +90,18 @@ class _PartnersScreenState extends State<PartnersScreen> {
 
     return Scaffold(
       appBar: AppBar(
+        automaticallyImplyLeading: widget.onBack == null,
+        leading: widget.onBack == null
+            ? null
+            : IconButton(tooltip: 'Back to Owner Equity', icon: const Icon(Icons.arrow_back_rounded), onPressed: widget.onBack),
         title: const Text('Partners'),
         actions: [
           if (canReport)
             TextButton.icon(
-              onPressed: () => Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const EnterpriseReportsWorkspaceScreen(initialReportKey: 'partner-statement')),
+              // Reports open as a shell workspace (sidebar stays visible).
+              onPressed: () => PosNavigation.openSingleton(
+                routeId: PosRouteIds.report('partner-statement'),
+                builder: (_) => const EnterpriseReportsWorkspaceScreen(initialReportKey: 'partner-statement'),
               ),
               icon: const Icon(Icons.description_outlined),
               label: const Text('Partner Statement'),

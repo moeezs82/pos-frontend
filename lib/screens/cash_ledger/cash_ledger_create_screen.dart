@@ -19,16 +19,21 @@ import 'package:provider/provider.dart';
 const _kAddonLoan    = 'loan_module';
 const _kAddonQameti  = 'qameti_module';
 const _kAddonOwnerEquity = 'owner_equity';
+const _kAddonExtendedAccounts = 'extended_accounts';
 
 /// Owner capital/drawings also need this permission (backend enforces it).
 const kOwnerEquityPermission = 'manage-owner-equity';
+
+/// Loans payable / accruals / prepayments also need this permission (backend
+/// enforces it, for void too).
+const kExtendedAccountsPermission = 'manage-extended-accounts';
 
 /// Metadata for each cash-ledger category, kept in one place so the form and
 /// the list screen render them consistently.
 class CashLedgerCategoryMeta {
   final String value; // backend enum
   final String label;
-  final String direction; // in | out
+  final String direction; // in | out | none (no cash leg)
   final IconData icon;
   final Color color;
   final String hint;
@@ -44,17 +49,25 @@ class CashLedgerCategoryMeta {
 
   bool get isInflow => direction == 'in';
 
+  /// Accruals and prepaid recognition post DR expense / CR 2310 or 1500 with
+  /// no cash leg: no payment method, no drawer check, no register shift.
+  bool get isNonCash => direction == 'none';
+
   /// The addon key this category requires, or null if no addon is needed.
   String? get requiredAddon => switch (value) {
     'LOAN_GIVEN' || 'LOAN_RECOVERED' => _kAddonLoan,
     'QAMETI_PAYMENT' || 'QAMETI_COLLECTION' => _kAddonQameti,
     'CAPITAL_IN' || 'OWNER_DRAWINGS' => _kAddonOwnerEquity,
+    'LOAN_RECEIVED' || 'LOAN_REPAID' || 'ACCRUED_EXPENSE' || 'ACCRUED_PAYMENT' ||
+    'PREPAID_PAYMENT' || 'PREPAID_EXPENSE_RECOGNISE' => _kAddonExtendedAccounts,
     _ => null,
   };
 
   /// The extra permission this category requires, or null.
   String? get requiredPermission => switch (value) {
     'CAPITAL_IN' || 'OWNER_DRAWINGS' => kOwnerEquityPermission,
+    'LOAN_RECEIVED' || 'LOAN_REPAID' || 'ACCRUED_EXPENSE' || 'ACCRUED_PAYMENT' ||
+    'PREPAID_PAYMENT' || 'PREPAID_EXPENSE_RECOGNISE' => kExtendedAccountsPermission,
     _ => null,
   };
 
@@ -117,6 +130,55 @@ class CashLedgerCategoryMeta {
       color: AppTheme.warning,
       hint: 'Money the owner takes out for personal use. Not an expense — it reduces owner equity.',
     ),
+    // Loans payable, accruals, prepayments (add-on extended_accounts).
+    CashLedgerCategoryMeta(
+      value: 'LOAN_RECEIVED',
+      label: 'Loan Received',
+      direction: 'in',
+      icon: Icons.call_received_rounded,
+      color: AppTheme.info,
+      hint: 'Money borrowed by the business. Not income — it is owed back to the lender (Loans Payable).',
+    ),
+    CashLedgerCategoryMeta(
+      value: 'LOAN_REPAID',
+      label: 'Loan Repaid',
+      direction: 'out',
+      icon: Icons.call_made_rounded,
+      color: AppTheme.warning,
+      hint: 'Repayment of money the business borrowed. Not an expense — it reduces Loans Payable.',
+    ),
+    CashLedgerCategoryMeta(
+      value: 'ACCRUED_EXPENSE',
+      label: 'Accrued Expense',
+      direction: 'none',
+      icon: Icons.pending_actions_rounded,
+      color: AppTheme.purple,
+      hint: 'An expense incurred but not yet paid (e.g. this month\'s electricity bill). No cash moves now.',
+    ),
+    CashLedgerCategoryMeta(
+      value: 'ACCRUED_PAYMENT',
+      label: 'Pay Accrued Expense',
+      direction: 'out',
+      icon: Icons.task_alt_rounded,
+      color: AppTheme.danger,
+      hint: 'Paying an expense that was already accrued. Clears Accrued Expenses; not a new expense.',
+    ),
+    CashLedgerCategoryMeta(
+      value: 'PREPAID_PAYMENT',
+      label: 'Prepaid Expense',
+      direction: 'out',
+      icon: Icons.event_available_rounded,
+      color: AppTheme.danger,
+      hint: 'Paying in advance for a future period (e.g. yearly rent or insurance). Becomes an expense later.',
+    ),
+    CashLedgerCategoryMeta(
+      value: 'PREPAID_EXPENSE_RECOGNISE',
+      label: 'Recognise Prepaid',
+      direction: 'none',
+      icon: Icons.update_rounded,
+      color: AppTheme.purple,
+      hint: 'Move the used-up part of a prepayment into expenses for this period. No cash moves now.',
+    ),
   ];
 
   static CashLedgerCategoryMeta byValue(String value) =>
@@ -132,10 +194,17 @@ class CashLedgerCreateScreen extends StatefulWidget {
   /// to false and retain the full multi-category cash-ledger form.
   final bool lockCategory;
 
+  /// Embedded mode: when set, the form is hosted inside another workspace
+  /// view (e.g. Cash Ledger → Owner Equity) instead of being a pushed route.
+  /// Called with `true` after a successful save and `false` on cancel/close,
+  /// in place of popping the navigator.
+  final ValueChanged<bool>? onClose;
+
   const CashLedgerCreateScreen({
     super.key,
     this.initialCategory,
     this.lockCategory = false,
+    this.onClose,
   });
 
   @override
@@ -186,7 +255,10 @@ class _CashLedgerCreateScreenState extends State<CashLedgerCreateScreen> {
   bool get _expenseSelectionReady =>
       !_isExpense || (!_expenseLoading && _expenseError == null && _expenseAccountCode != null);
 
-  bool get _isExpense => _category == 'OTHER_EXPENSE';
+  /// Categories that debit an expense head chosen with the expense selector.
+  static bool _isExpenseValue(String v) =>
+      v == 'OTHER_EXPENSE' || v == 'ACCRUED_EXPENSE' || v == 'PREPAID_EXPENSE_RECOGNISE';
+  bool get _isExpense => _isExpenseValue(_category);
 
   CashLedgerCategoryMeta get _meta => CashLedgerCategoryMeta.byValue(_category);
 
@@ -382,8 +454,12 @@ class _CashLedgerCreateScreenState extends State<CashLedgerCreateScreen> {
     _applyCategory(available[index].value);
   }
 
-  static bool _isLoanValue(String v) => v == 'LOAN_GIVEN' || v == 'LOAN_RECOVERED';
+  static bool _isLoanValue(String v) =>
+      v == 'LOAN_GIVEN' || v == 'LOAN_RECOVERED' || v == 'LOAN_RECEIVED' || v == 'LOAN_REPAID';
   bool get _isLoan => _isLoanValue(_category);
+
+  /// Loans payable: the linked party is the LENDER, not a borrower.
+  bool get _isLender => _category == 'LOAN_RECEIVED' || _category == 'LOAN_REPAID';
 
   /// Change category and clear incompatible counterparty state so no stale
   /// party/ID is ever submitted. Only loan entries carry a (borrower) party;
@@ -397,12 +473,15 @@ class _CashLedgerCreateScreenState extends State<CashLedgerCreateScreen> {
         _partyKind = 'none';
       }
       _selectedParty = null;
-      // Expense account only applies to OTHER_EXPENSE; clear when leaving.
-      if (value != 'OTHER_EXPENSE') {
+      // Expense account only applies to expense-debiting categories; clear
+      // when leaving, and restore the default when coming back.
+      if (!_isExpenseValue(value)) {
         _expenseAccountCode = null;
+      } else if (_expenseAccountCode == null && _expenseAccounts.any((a) => a['code']?.toString() == _defaultExpenseCode)) {
+        _expenseAccountCode = _defaultExpenseCode;
       }
     });
-    if (value == 'OTHER_EXPENSE') _loadExpenseAccounts();
+    if (_isExpenseValue(value)) _loadExpenseAccounts();
     if (_isOwnerValue(value)) _loadPartners();
   }
 
@@ -543,7 +622,7 @@ class _CashLedgerCreateScreenState extends State<CashLedgerCreateScreen> {
     // send a commercial party — the backend rejects it defensively too.
     final hasParty = _isLoan && _partyKind != 'none' && _selectedParty != null;
     if (_isLoan && _selectedParty == null) {
-      _showMessage('Please select the borrower from the list.');
+      _showMessage(_isLender ? 'Please select the lender from the list.' : 'Please select the borrower from the list.');
       return;
     }
     if (_partnerRequired && _partnerId == null) {
@@ -576,12 +655,23 @@ class _CashLedgerCreateScreenState extends State<CashLedgerCreateScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('${_meta.label} recorded successfully.')),
       );
-      Navigator.pop(context, true);
+      _close(true);
     } catch (e) {
       if (!mounted) return;
       _showMessage(_friendlyError(e));
     } finally {
       if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  void _close([bool saved = false]) {
+    final onClose = widget.onClose;
+    if (onClose != null) {
+      onClose(saved);
+    } else if (saved) {
+      Navigator.pop(context, true);
+    } else {
+      Navigator.pop(context);
     }
   }
 
@@ -616,12 +706,13 @@ class _CashLedgerCreateScreenState extends State<CashLedgerCreateScreen> {
           posCtrl(LogicalKeyboardKey.slash): () => showAppShortcutGuide(context, extra: PosShortcutCatalog.cashLedgerCreate),
           posCmd(LogicalKeyboardKey.slash): () => showAppShortcutGuide(context, extra: PosShortcutCatalog.cashLedgerCreate),
           const SingleActivator(LogicalKeyboardKey.escape): () {
-            if (!_saving) Navigator.pop(context);
+            if (!_saving) _close();
           },
         },
         child: Scaffold(
           appBar: AppBar(
-            title: const Text('Cash Ledger Entry'),
+            automaticallyImplyLeading: widget.onClose == null,
+            title: Text(widget.onClose == null ? 'Cash Ledger Entry' : _meta.label),
             actions: [
               IconButton(
                 tooltip: 'Keyboard shortcuts',
@@ -629,7 +720,7 @@ class _CashLedgerCreateScreenState extends State<CashLedgerCreateScreen> {
                 icon: const Icon(Icons.keyboard_rounded),
               ),
               TextButton.icon(
-                onPressed: _saving ? null : () => Navigator.pop(context),
+                onPressed: _saving ? null : () => _close(),
                 icon: const Icon(Icons.close_rounded),
                 label: const Text('Close'),
               ),
@@ -666,7 +757,7 @@ class _CashLedgerCreateScreenState extends State<CashLedgerCreateScreen> {
               children: [
                 Expanded(
                   child: OutlinedButton.icon(
-                    onPressed: _saving ? null : () => Navigator.pop(context),
+                    onPressed: _saving ? null : () => _close(),
                     icon: const Icon(Icons.arrow_back_rounded),
                     label: const Text('Cancel'),
                   ),
@@ -798,6 +889,17 @@ class _CashLedgerCreateScreenState extends State<CashLedgerCreateScreen> {
   Widget _buildPartyPanel() {
     return Column(
       children: [
+        if (_meta.isNonCash)
+          const EnterprisePanel(
+            child: EnterpriseSectionHeader(
+              title: 'No cash movement',
+              subtitle: 'This entry only moves the amount between an expense account and a balance-sheet account. '
+                  'It does not touch the cash drawer, the register shift or the day book.',
+              icon: Icons.sync_alt_rounded,
+              color: AppTheme.purple,
+            ),
+          )
+        else
         EnterprisePanel(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -856,9 +958,11 @@ class _CashLedgerCreateScreenState extends State<CashLedgerCreateScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const EnterpriseSectionHeader(
-                title: 'Borrower',
-                subtitle: 'Who received / is repaying the loan. Required for loan entries.',
+              EnterpriseSectionHeader(
+                title: _isLender ? 'Lender' : 'Borrower',
+                subtitle: _isLender
+                    ? 'Who lent the money to the business / is being repaid. Required for loans payable.'
+                    : 'Who received / is repaying the loan. Required for loan entries.',
                 icon: Icons.groups_2_rounded,
                 color: AppTheme.warning,
               ),
@@ -957,7 +1061,7 @@ class _DirectionBanner extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final inflow = meta.isInflow;
-    final color = inflow ? AppTheme.success : AppTheme.danger;
+    final color = meta.isNonCash ? AppTheme.purple : (inflow ? AppTheme.success : AppTheme.danger);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
@@ -967,11 +1071,11 @@ class _DirectionBanner extends StatelessWidget {
       ),
       child: Row(
         children: [
-          Icon(inflow ? Icons.south_west_rounded : Icons.north_east_rounded, color: color, size: 18),
+          Icon(meta.isNonCash ? Icons.sync_alt_rounded : (inflow ? Icons.south_west_rounded : Icons.north_east_rounded), color: color, size: 18),
           const SizedBox(width: 8),
           Expanded(
             child: Text(
-              '${inflow ? 'Cash IN' : 'Cash OUT'} — ${meta.hint}',
+              '${meta.isNonCash ? 'NO CASH' : (inflow ? 'Cash IN' : 'Cash OUT')} — ${meta.hint}',
               style: TextStyle(color: color, fontWeight: FontWeight.w800, fontSize: 12.5),
             ),
           ),

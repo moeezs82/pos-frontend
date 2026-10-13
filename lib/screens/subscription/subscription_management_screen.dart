@@ -300,6 +300,7 @@ class _SummaryCards extends StatelessWidget {
       _SummaryCard('WhatsApp',       _n('whatsapp_invoice_addon'), const Color(0xFF128C7E)),
       _SummaryCard('Intelligence',    _n('intelligence_addon'),     AppTheme.purple),
       _SummaryCard('Owner Equity',    _n('owner_equity_addon'),     AppTheme.success),
+      _SummaryCard('Payables & Prepaids', _n('extended_accounts_addon'), AppTheme.info),
     ];
 
     return SizedBox(
@@ -393,6 +394,7 @@ class _BranchSubscriptionTile extends StatelessWidget {
       'whatsapp_invoice': 'WhatsApp',
       'intelligence':     'Intelligence',
       'owner_equity':     'Owner Equity',
+      'extended_accounts': 'Payables & Prepaids',
     };
     const _addonColors = <String, Color>{
       'barcode_labels':  AppTheme.purple,
@@ -401,6 +403,7 @@ class _BranchSubscriptionTile extends StatelessWidget {
       'whatsapp_invoice': Color(0xFF128C7E),
       'intelligence':     AppTheme.purple,
       'owner_equity':     AppTheme.success,
+      'extended_accounts': AppTheme.info,
     };
     final activeAddons = _addonLabels.keys
         .where((k) => addons[k] == true)
@@ -636,6 +639,7 @@ class _SubscriptionEditDialogState extends State<_SubscriptionEditDialog> {
   bool _whatsappInvoiceAddon = false;
   bool _intelligenceAddon    = false;
   bool _ownerEquityAddon     = false;
+  bool _extendedAccountsAddon = false;
   final _reasonCtrl = TextEditingController();
   final _suspendReasonCtrl = TextEditingController();
   final _notesCtrl = TextEditingController();
@@ -689,6 +693,7 @@ class _SubscriptionEditDialogState extends State<_SubscriptionEditDialog> {
         _whatsappInvoiceAddon = _addonBool('whatsapp_invoice');
         _intelligenceAddon     = _addonBool('intelligence');
         _ownerEquityAddon      = _addonBool('owner_equity');
+        _extendedAccountsAddon = _addonBool('extended_accounts');
         _loading = false;
       });
     } catch (e) {
@@ -728,6 +733,7 @@ class _SubscriptionEditDialogState extends State<_SubscriptionEditDialog> {
           'whatsapp_invoice': _whatsappInvoiceAddon,
           'intelligence':      _intelligenceAddon,
           'owner_equity':      _ownerEquityAddon,
+          'extended_accounts': _extendedAccountsAddon,
         },
       };
 
@@ -974,6 +980,32 @@ class _SubscriptionEditDialogState extends State<_SubscriptionEditDialog> {
                         ),
                         subtitle: const Text(
                           'Lets this branch record owner capital and drawings in the Cash Ledger, with an Owner Equity report. Users also need the "Record Owner Capital & Drawings" permission.',
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Container(
+                      decoration: BoxDecoration(
+                        color: AppTheme.info.withValues(alpha: .05),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(
+                          color: AppTheme.info.withValues(alpha: .2),
+                        ),
+                      ),
+                      child: SwitchListTile(
+                        value: _extendedAccountsAddon,
+                        onChanged: (value) =>
+                            setState(() => _extendedAccountsAddon = value),
+                        secondary: const Icon(
+                          Icons.pending_actions_rounded,
+                          color: AppTheme.info,
+                        ),
+                        title: const Text(
+                          'Loans Payable, Accruals & Prepayments',
+                          style: TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                        subtitle: const Text(
+                          'Lets this branch record money borrowed and repaid, accrued expenses and prepaid expenses in the Cash Ledger, with a matching report. Users also need the "Record Loans Payable, Accruals & Prepayments" permission.',
                         ),
                       ),
                     ),

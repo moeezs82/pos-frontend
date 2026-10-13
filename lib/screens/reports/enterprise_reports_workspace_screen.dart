@@ -167,11 +167,13 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
   ];
   Set<String> get _hiddenColumns => _hiddenColumnsByReport.putIfAbsent(_selectedReport.key, () => <String>{});
 
-  List<_EnterpriseReportMeta> _effectiveReports(bool deliveryEnabled, bool ownerEquityEnabled) {
+  List<_EnterpriseReportMeta> _effectiveReports(bool deliveryEnabled, bool ownerEquityEnabled, bool extendedAccountsEnabled) {
     return _allReports
         .where((r) => deliveryEnabled || r.key != 'delivery-boy-cash')
         // Owner Equity is a commercial add-on; the backend rejects the report without it.
         .where((r) => ownerEquityEnabled || !_ownerEquityReportKeys.contains(r.key))
+        // Same for Loans Payable, Accruals & Prepayments (add-on extended_accounts).
+        .where((r) => extendedAccountsEnabled || r.key != 'loans-accruals-prepaids')
         .toList(growable: false);
   }
 
@@ -535,7 +537,8 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
         CounterIQDesktopShell.isPersistentShellMounted(context);
 
     final deliveryEnabled = context.watch<BranchFeatureProvider>().deliveryEnabled;
-    final reports = _effectiveReports(deliveryEnabled, context.watch<AuthProvider>().hasAddon('owner_equity'));
+    final auth = context.watch<AuthProvider>();
+    final reports = _effectiveReports(deliveryEnabled, auth.hasAddon('owner_equity'), auth.hasAddon('extended_accounts'));
 
     // If delivery was just disabled and the active report is delivery-only,
     // switch to the first available report (post-frame to avoid setState-in-build).
@@ -1574,6 +1577,10 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
     if (k == 'no_purchase') return false;
     // Accounting Health Check counters are issue counts, not money.
     if (_healthCheckTotalKeys.contains(k)) return false;
+    if (_selectedReport.key == 'loans-accruals-prepaids' &&
+        const {'opening', 'increase', 'decrease', 'closing', 'loans_payable', 'accrued_expenses', 'prepaid_expenses'}.contains(k)) {
+      return true;
+    }
     if (k.contains('earnings') || k.contains('equity') || k.contains('liabilit') || k.contains('assets') || k == 'difference') return true;
 
     return k == 'net_expenses' || k.contains('total') || k.contains('amount') || k.contains('balance') || k.contains('paid') || k.contains('tax') || k.contains('discount') || k.contains('profit') || k.contains('revenue') || k.contains('cost') || k.contains('debit') || k.contains('credit') || k.contains('cash') || k.contains('valuation') || k.contains('sales') || k.contains('purchase');
@@ -1881,5 +1888,6 @@ const _enterpriseReports = <_EnterpriseReportMeta>[
   _EnterpriseReportMeta(key: 'owner-equity', title: 'Owner Equity', group: 'Accounting', description: 'Owner capital introduced and drawings by month, with opening and closing owner equity.', icon: Icons.savings_rounded),
   _EnterpriseReportMeta(key: 'partner-statement', title: 'Partner Statement', group: 'Accounting', description: 'Per-partner opening equity, capital, drawings and closing, reconciled to the ledger, plus a report-only profit share.', icon: Icons.handshake_rounded),
   _EnterpriseReportMeta(key: 'profit-share', title: 'Profit Share', group: 'Accounting', description: 'Net profit for the period split by ownership %. Report only — nothing is posted.', icon: Icons.pie_chart_outline_rounded),
+  _EnterpriseReportMeta(key: 'loans-accruals-prepaids', title: 'Loans Payable, Accruals & Prepaids', group: 'Accounting', description: 'Money owed to each lender, accrued expenses not yet paid and prepaid expenses not yet used, reconciled to the ledger.', icon: Icons.pending_actions_rounded),
   _EnterpriseReportMeta(key: 'accounting-health', title: 'Accounting Health Check', group: 'Accounting', description: 'Read-only ledger integrity checks: unbalanced entries, inventory GL vs stock, locked-period postings and more.', icon: Icons.health_and_safety_rounded),
 ];

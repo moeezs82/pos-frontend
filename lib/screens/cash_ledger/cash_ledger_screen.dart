@@ -5,6 +5,7 @@ import 'package:enterprise_pos/screens/cash_ledger/cash_void_action.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/screens/cash_ledger/cash_ledger_create_screen.dart';
 import 'package:enterprise_pos/screens/cash_ledger/owner_equity_view.dart';
+import 'package:enterprise_pos/screens/cash_ledger/extended_accounts_view.dart';
 import 'package:enterprise_pos/screens/cash_ledger/day_book_detail_screen.dart';
 import 'package:enterprise_pos/screens/cash_ledger/cash_ledger_subledgers.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
@@ -39,6 +40,7 @@ class _CashLedgerScreenState extends State<CashLedgerScreen> with SingleTickerPr
   bool _loansTabVisible  = false;
   bool _qametiTabVisible = false;
   bool _ownerEquityTabVisible = false;
+  bool _extendedTabVisible = false;
 
   @override
   void initState() {
@@ -54,21 +56,24 @@ class _CashLedgerScreenState extends State<CashLedgerScreen> with SingleTickerPr
     final loansNow  = auth.hasAddon('loan_module');
     final qametiNow = auth.hasAddon('qameti_module');
     final ownerNow = auth.hasAddon('owner_equity');
-    if (loansNow != _loansTabVisible || qametiNow != _qametiTabVisible || ownerNow != _ownerEquityTabVisible) {
-      _rebuildController(loansNow: loansNow, qametiNow: qametiNow, ownerNow: ownerNow);
+    final extendedNow = auth.hasAddon('extended_accounts');
+    if (loansNow != _loansTabVisible || qametiNow != _qametiTabVisible || ownerNow != _ownerEquityTabVisible || extendedNow != _extendedTabVisible) {
+      _rebuildController(loansNow: loansNow, qametiNow: qametiNow, ownerNow: ownerNow, extendedNow: extendedNow);
     }
   }
 
-  void _rebuildController({bool? loansNow, bool? qametiNow, bool? ownerNow}) {
+  void _rebuildController({bool? loansNow, bool? qametiNow, bool? ownerNow, bool? extendedNow}) {
     final auth = context.read<AuthProvider>();
     _loansTabVisible  = loansNow  ?? auth.hasAddon('loan_module');
     _qametiTabVisible = qametiNow ?? auth.hasAddon('qameti_module');
     _ownerEquityTabVisible = ownerNow ?? auth.hasAddon('owner_equity');
+    _extendedTabVisible = extendedNow ?? auth.hasAddon('extended_accounts');
 
     final count = 3 // Ledger, Expenses, Day Book — always present
         + (_loansTabVisible  ? 1 : 0)
         + (_qametiTabVisible ? 1 : 0)
-        + (_ownerEquityTabVisible ? 1 : 0);
+        + (_ownerEquityTabVisible ? 1 : 0)
+        + (_extendedTabVisible ? 1 : 0);
 
     final old = _tabController;
     _tabController = TabController(length: count, vsync: this);
@@ -97,6 +102,7 @@ class _CashLedgerScreenState extends State<CashLedgerScreen> with SingleTickerPr
     final showLoans = auth.hasAddon('loan_module');
     final showQameti = auth.hasAddon('qameti_module');
     final showOwnerEquity = auth.hasAddon('owner_equity');
+    final showExtended = auth.hasAddon('extended_accounts');
 
     final tabs = <Tab>[
       const Tab(text: 'Ledger', icon: Icon(Icons.receipt_long_rounded, size: 18)),
@@ -106,6 +112,8 @@ class _CashLedgerScreenState extends State<CashLedgerScreen> with SingleTickerPr
         const Tab(text: 'Qameti', icon: Icon(Icons.savings_rounded, size: 18)),
       if (showOwnerEquity)
         const Tab(text: 'Owner Equity', icon: Icon(Icons.account_balance_rounded, size: 18)),
+      if (showExtended)
+        const Tab(text: 'Payables & Prepaids', icon: Icon(Icons.pending_actions_rounded, size: 18)),
       const Tab(text: 'Expenses', icon: Icon(Icons.receipt_rounded, size: 18)),
       const Tab(text: 'Day Book', icon: Icon(Icons.calendar_view_day_rounded, size: 18)),
     ];
@@ -115,6 +123,7 @@ class _CashLedgerScreenState extends State<CashLedgerScreen> with SingleTickerPr
       if (showLoans) const SubledgerView(kind: SubledgerKind.loans),
       if (showQameti) const SubledgerView(kind: SubledgerKind.qameti),
       if (showOwnerEquity) OwnerEquityView(onRecorded: () => _ledgerKey.currentState?.refresh()),
+      if (showExtended) ExtendedAccountsView(onRecorded: () => _ledgerKey.currentState?.refresh()),
       const SubledgerView(kind: SubledgerKind.expenses),
       _DayBookView(onOpenDay: (date) => setState(() => _selectedDayDate = date)),
     ];

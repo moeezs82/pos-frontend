@@ -26,7 +26,7 @@ class CashLedgerService {
     String? partyId,
     String? referenceName,
     String? note,
-    String? expenseAccountCode, // OTHER_EXPENSE override only
+    String? expenseAccountCode, // OTHER_EXPENSE / ACCRUED_EXPENSE / PREPAID_EXPENSE_RECOGNISE
     bool allowNegativeCash = false,
     int? partnerId, // CAPITAL_IN / OWNER_DRAWINGS only (add-on owner_equity)
   }) async {
@@ -192,6 +192,17 @@ class CashLedgerService {
     final res = await _client.get('/cash-ledger/subledgers/owner-equity');
     if (res['success'] == true) return Map<String, dynamic>.from(res['data'] ?? {});
     throw Exception(res['message'] ?? 'Failed to load owner equity');
+  }
+
+  /// GET /cash-ledger/subledgers/extended-accounts (add-on extended_accounts).
+  /// Returns { as_of, loans_payable, accrued_expenses, prepaid_expenses,
+  /// lenders: [{party_type, party_id, name, outstanding}], entries: [...] }.
+  /// `entries` are the latest loan/accrual/prepaid entries, including the
+  /// non-cash ones that never appear in the cash-account based Ledger tab.
+  Future<Map<String, dynamic>> getExtendedAccountsSummary() async {
+    final res = await _client.get('/cash-ledger/subledgers/extended-accounts');
+    if (res['success'] == true) return Map<String, dynamic>.from(res['data'] ?? {});
+    throw Exception(res['message'] ?? 'Failed to load loans payable, accruals and prepayments');
   }
 
   /// GET /cash-ledger/cash-flow  (unified summary)

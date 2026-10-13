@@ -1,9 +1,11 @@
 import 'package:enterprise_pos/api/cash_ledger_service.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/screens/cash_ledger/cash_ledger_create_screen.dart';
+import 'package:enterprise_pos/screens/cash_ledger/owner_entry_form.dart';
 import 'package:enterprise_pos/screens/cash_ledger/partners_screen.dart';
 import 'package:enterprise_pos/screens/reports/enterprise_reports_workspace_screen.dart';
 import 'package:enterprise_pos/services/app_currency.dart';
+import 'package:enterprise_pos/services/app_navigator.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -60,15 +62,30 @@ class _OwnerEquityViewState extends State<OwnerEquityView> {
     }
   }
 
-  Future<void> _record(String category) async {
-    final created = await Navigator.push<bool>(
-      context,
-      MaterialPageRoute(builder: (_) => CashLedgerCreateScreen(initialCategory: category, lockCategory: true)),
+  /// Sub-view shown inside this tab. Forms and the partner list are hosted
+  /// here instead of being pushed as routes, so the desktop shell (sidebar and
+  /// top bar) stays visible.
+  _OwnerEquityPane _pane = _OwnerEquityPane.summary;
+
+  void _showPane(_OwnerEquityPane pane) => setState(() => _pane = pane);
+
+  void _backToSummary({bool reload = false}) {
+    setState(() => _pane = _OwnerEquityPane.summary);
+    if (reload) _fetch();
+  }
+
+  void _onEntryClosed(bool saved) {
+    if (saved) widget.onRecorded?.call();
+    _backToSummary(reload: saved);
+  }
+
+  /// Reports are shell workspaces: open them like the sidebar does so the
+  /// report keeps the sidebar instead of opening a standalone report hub.
+  void _openReport(String key) {
+    PosNavigation.openSingleton(
+      routeId: PosRouteIds.report(key),
+      builder: (_) => EnterpriseReportsWorkspaceScreen(initialReportKey: key),
     );
-    if (created == true) {
-      widget.onRecorded?.call();
-      _fetch();
-    }
   }
 
   num _num(String key) => num.tryParse('${_data[key] ?? 0}') ?? 0;
@@ -78,6 +95,21 @@ class _OwnerEquityViewState extends State<OwnerEquityView> {
     final auth = context.watch<AuthProvider>();
     final canRecord = auth.hasPermission(kOwnerEquityPermission);
     final canReport = auth.hasPermission('view-reports');
+
+    switch (_pane) {
+      case _OwnerEquityPane.capital:
+      case _OwnerEquityPane.drawings:
+        return OwnerEntryForm(
+          key: ValueKey(_pane),
+          kind: _pane == _OwnerEquityPane.capital ? OwnerEntryKind.capital : OwnerEntryKind.drawings,
+          summary: _data,
+          onClose: _onEntryClosed,
+        );
+      case _OwnerEquityPane.partners:
+        return PartnersScreen(onBack: () => _backToSummary(reload: true));
+      case _OwnerEquityPane.summary:
+        break;
+    }
 
     if (_loading) return const Center(child: CircularProgressIndicator());
     if (_error != null) {
@@ -119,30 +151,24 @@ class _OwnerEquityViewState extends State<OwnerEquityView> {
             children: [
               if (canRecord)
                 FilledButton.icon(
-                  onPressed: () => _record('CAPITAL_IN'),
+                  onPressed: () => _showPane(_OwnerEquityPane.capital),
                   icon: const Icon(Icons.add_rounded, size: 18),
                   label: const Text('Record Capital'),
                 ),
               if (canRecord)
                 OutlinedButton.icon(
-                  onPressed: () => _record('OWNER_DRAWINGS'),
+                  onPressed: () => _showPane(_OwnerEquityPane.drawings),
                   icon: const Icon(Icons.remove_rounded, size: 18),
                   label: const Text('Record Drawings'),
                 ),
               OutlinedButton.icon(
-                onPressed: () async {
-                  await Navigator.push(context, MaterialPageRoute(builder: (_) => const PartnersScreen()));
-                  _fetch();
-                },
+                onPressed: () => _showPane(_OwnerEquityPane.partners),
                 icon: const Icon(Icons.handshake_rounded, size: 18),
                 label: const Text('Partners'),
               ),
               if (canReport)
                 OutlinedButton.icon(
-                  onPressed: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => const EnterpriseReportsWorkspaceScreen(initialReportKey: 'owner-equity')),
-                  ),
+                  onPressed: () => _openReport('owner-equity'),
                   icon: const Icon(Icons.query_stats_rounded, size: 18),
                   label: const Text('Owner Equity Report'),
                 ),
@@ -153,6 +179,8 @@ class _OwnerEquityViewState extends State<OwnerEquityView> {
     );
   }
 }
+
+enum _OwnerEquityPane { summary, capital, drawings, partners }
 
 class _EquityCard extends StatelessWidget {
   final String label;
