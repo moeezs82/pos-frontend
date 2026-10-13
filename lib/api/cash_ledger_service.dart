@@ -184,6 +184,14 @@ class CashLedgerService {
     throw Exception(res['message'] ?? 'Failed to load $which subledger');
   }
 
+  /// GET /cash-ledger/subledgers/owner-equity (add-on owner_equity).
+  /// Returns { as_of, capital_contributed, drawings, net_owner_equity }.
+  Future<Map<String, dynamic>> getOwnerEquitySummary() async {
+    final res = await _client.get('/cash-ledger/subledgers/owner-equity');
+    if (res['success'] == true) return Map<String, dynamic>.from(res['data'] ?? {});
+    throw Exception(res['message'] ?? 'Failed to load owner equity');
+  }
+
   /// GET /cash-ledger/cash-flow  (unified summary)
   ///
   /// Returns: { filters, summary: { opening, incoming{...,total},

@@ -17,6 +17,10 @@ import 'package:provider/provider.dart';
 /// constants so they match BranchAddonService values without importing backend.
 const _kAddonLoan    = 'loan_module';
 const _kAddonQameti  = 'qameti_module';
+const _kAddonOwnerEquity = 'owner_equity';
+
+/// Owner capital/drawings also need this permission (backend enforces it).
+const kOwnerEquityPermission = 'manage-owner-equity';
 
 /// Metadata for each cash-ledger category, kept in one place so the form and
 /// the list screen render them consistently.
@@ -43,6 +47,13 @@ class CashLedgerCategoryMeta {
   String? get requiredAddon => switch (value) {
     'LOAN_GIVEN' || 'LOAN_RECOVERED' => _kAddonLoan,
     'QAMETI_PAYMENT' || 'QAMETI_COLLECTION' => _kAddonQameti,
+    'CAPITAL_IN' || 'OWNER_DRAWINGS' => _kAddonOwnerEquity,
+    _ => null,
+  };
+
+  /// The extra permission this category requires, or null.
+  String? get requiredPermission => switch (value) {
+    'CAPITAL_IN' || 'OWNER_DRAWINGS' => kOwnerEquityPermission,
     _ => null,
   };
 
@@ -86,6 +97,24 @@ class CashLedgerCategoryMeta {
       icon: Icons.receipt_long_rounded,
       color: AppTheme.danger,
       hint: 'Miscellaneous non-business cash expense.',
+    ),
+    // Owner equity (add-on owner_equity). Listed last so the Ctrl+1..5
+    // shortcuts of the existing categories keep their positions.
+    CashLedgerCategoryMeta(
+      value: 'CAPITAL_IN',
+      label: 'Owner Capital',
+      direction: 'in',
+      icon: Icons.account_balance_rounded,
+      color: AppTheme.success,
+      hint: 'Money the owner puts into the business. Not income — it increases owner equity.',
+    ),
+    CashLedgerCategoryMeta(
+      value: 'OWNER_DRAWINGS',
+      label: 'Owner Drawings',
+      direction: 'out',
+      icon: Icons.person_remove_alt_1_rounded,
+      color: AppTheme.warning,
+      hint: 'Money the owner takes out for personal use. Not an expense — it reduces owner equity.',
     ),
   ];
 
@@ -320,7 +349,9 @@ class _CashLedgerCreateScreenState extends State<CashLedgerCreateScreen> {
   List<CashLedgerCategoryMeta> _availableCategories(AuthProvider auth) {
     return CashLedgerCategoryMeta.all.where((c) {
       final addon = c.requiredAddon;
-      return addon == null || auth.hasAddon(addon);
+      final permission = c.requiredPermission;
+      return (addon == null || auth.hasAddon(addon)) &&
+          (permission == null || auth.hasPermission(permission));
     }).toList();
   }
 

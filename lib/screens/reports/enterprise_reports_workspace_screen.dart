@@ -138,11 +138,40 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
   bool get _supportsStockDimensions => _stockDimensionReportKeys.contains(_selectedReport.key);
   bool get _supportsCustomerType => _selectedReport.key == 'area-customer-potential';
   bool get _supportsExpenseFilters => _selectedReport.key == 'expense-report';
+  bool get _isBalanceSheet => _selectedReport.key == 'balance-sheet';
+  bool get _isHealthCheck => _selectedReport.key == 'accounting-health';
+
+  // Ordered summary cards for the financial statements; the backend returns
+  // totals as a JSON object, so key order cannot be relied on.
+  static const _balanceSheetTotalKeys = <String>[
+    'total_assets',
+    'total_liabilities',
+    'equity_accounts',
+    'prior_period_earnings',
+    'current_period_earnings',
+    'total_equity',
+    'total_liabilities_and_equity',
+    'difference',
+  ];
+  static const _healthCheckTotalKeys = <String>[
+    'health_status',
+    'issues_total',
+    'unbalanced_entries',
+    'inactive_account_postings',
+    'unclassified_account_postings',
+    'party_mismatch_postings',
+    'inventory_gl_mismatches',
+    'locked_period_entries',
+    'negative_cash_accounts',
+  ];
   Set<String> get _hiddenColumns => _hiddenColumnsByReport.putIfAbsent(_selectedReport.key, () => <String>{});
 
-  List<_EnterpriseReportMeta> _effectiveReports(bool deliveryEnabled) {
-    if (deliveryEnabled) return _allReports;
-    return _allReports.where((r) => r.key != 'delivery-boy-cash').toList(growable: false);
+  List<_EnterpriseReportMeta> _effectiveReports(bool deliveryEnabled, bool ownerEquityEnabled) {
+    return _allReports
+        .where((r) => deliveryEnabled || r.key != 'delivery-boy-cash')
+        // Owner Equity is a commercial add-on; the backend rejects the report without it.
+        .where((r) => ownerEquityEnabled || r.key != 'owner-equity')
+        .toList(growable: false);
   }
 
   @override
@@ -155,6 +184,7 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
       (r) => r.key == widget.initialReportKey,
       orElse: () => _allReports.first,
     );
+    if (_isBalanceSheet) _applyBalanceSheetDefaults();
 
     _searchCtrl.addListener(_onSearchChanged);
     _reportScrollController.addListener(_onReportScroll);
@@ -444,6 +474,13 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
     }
   }
 
+  /// Balance sheet: "From" is the period start for current-period earnings
+  /// (default Jan 1 of the as-of year) and "To" is the as-of date.
+  void _applyBalanceSheetDefaults() {
+    final asOf = _to ?? DateTime.now();
+    _from = DateTime(asOf.year, 1, 1);
+  }
+
   Future<void> _pickDateTime({required bool isFrom}) async {
     final current = isFrom ? (_from ?? DateTime.now()) : (_to ?? DateTime.now());
     final date = await showDatePicker(
@@ -474,6 +511,7 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
     if (_selectedReport.key == report.key) return;
     setState(() {
       _selectedReport = report;
+      if (report.key == 'balance-sheet') _applyBalanceSheetDefaults();
       _result = null;
       _error = null;
       _status = null;
@@ -496,7 +534,7 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
         CounterIQDesktopShell.isPersistentShellMounted(context);
 
     final deliveryEnabled = context.watch<BranchFeatureProvider>().deliveryEnabled;
-    final reports = _effectiveReports(deliveryEnabled);
+    final reports = _effectiveReports(deliveryEnabled, context.watch<AuthProvider>().hasAddon('owner_equity'));
 
     // If delivery was just disabled and the active report is delivery-only,
     // switch to the first available report (post-frame to avoid setState-in-build).
@@ -647,17 +685,22 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
   }
 
   SliverToBoxAdapter _buildFilterPanel({required bool isWide}) {
+    final fromLabel = _isBalanceSheet ? 'Period start' : 'From';
+    final toLabel = _isBalanceSheet ? 'As of' : 'To';
     final children = <Widget>[
-      _FilterChipButton(
-        icon: Icons.schedule_rounded,
-        label: _from == null ? 'From: Any' : 'From: ${_dateTimeFmt.format(_from!)}',
-        onTap: () => _pickDateTime(isFrom: true),
-      ),
-      _FilterChipButton(
-        icon: Icons.schedule_outlined,
-        label: _to == null ? 'To: Any' : 'To: ${_dateTimeFmt.format(_to!)}',
-        onTap: () => _pickDateTime(isFrom: false),
-      ),
+      // The health check always inspects the whole branch ledger.
+      if (!_isHealthCheck)
+        _FilterChipButton(
+          icon: Icons.schedule_rounded,
+          label: _from == null ? '$fromLabel: Any' : '$fromLabel: ${_dateTimeFmt.format(_from!)}',
+          onTap: () => _pickDateTime(isFrom: true),
+        ),
+      if (!_isHealthCheck)
+        _FilterChipButton(
+          icon: Icons.schedule_outlined,
+          label: _to == null ? '$toLabel: Any' : '$toLabel: ${_dateTimeFmt.format(_to!)}',
+          onTap: () => _pickDateTime(isFrom: false),
+        ),
       SizedBox(
         width: isWide ? 260 : double.infinity,
         child: TextField(
@@ -1262,22 +1305,56 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
     final totals = _result?.totals ?? const <String, dynamic>{};
     if (totals.isEmpty) return const SliverToBoxAdapter(child: SizedBox.shrink());
     final entries = totals.entries.where((e) => !_hiddenColumns.contains(e.key)).toList();
-    final visible = _supportsExpenseFilters
-        ? <String>['total_expenses', 'reversed_amount', 'net_expenses', 'entry_count', 'posted_entries', 'voided_entries']
-            .where(totals.containsKey)
-            .map((key) => MapEntry(key, totals[key]))
-            .toList()
+    final orderedKeys = _supportsExpenseFilters
+        ? const <String>['total_expenses', 'reversed_amount', 'net_expenses', 'entry_count', 'posted_entries', 'voided_entries']
+        : _isBalanceSheet
+            ? _balanceSheetTotalKeys
+            : _isHealthCheck
+                ? _healthCheckTotalKeys
+                : null;
+    final visible = orderedKeys != null
+        ? orderedKeys.where(totals.containsKey).map((key) => MapEntry(key, totals[key])).toList()
         : entries.take(8).toList();
+    final warning = _financialWarning(totals);
     return SliverToBoxAdapter(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(16, 2, 16, 6),
-        child: Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: visible.map((e) => _TotalCard(label: _labelize(e.key), value: _formatValue(e.value, e.key))).toList(),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (warning != null) _FinancialCheckBanner(message: warning),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: visible.map((e) => _TotalCard(label: _labelize(e.key), value: _formatValue(e.value, e.key))).toList(),
+            ),
+          ],
         ),
       ),
     );
+  }
+
+  /// Never hide an out-of-balance balance sheet or a failing health check:
+  /// the difference is shown as-is, never "fixed".
+  String? _financialWarning(Map<String, dynamic> totals) {
+    if (_isBalanceSheet) {
+      final diff = num.tryParse('${totals['difference'] ?? 0}') ?? 0;
+      if (diff.abs() >= 0.005) {
+        return 'Balance sheet is out of balance by ${_currencyFmt.format(diff)}. '
+            'Assets do not equal liabilities + equity. Run the Accounting Health Check to find the cause.';
+      }
+      final unclassified = num.tryParse('${totals['unclassified_balance'] ?? 0}') ?? 0;
+      if (unclassified.abs() >= 0.005) {
+        return 'Some accounts have no valid account type and are excluded from the totals.';
+      }
+    }
+    if (_isHealthCheck) {
+      final issues = num.tryParse('${totals['issues_total'] ?? 0}') ?? 0;
+      if (issues > 0) {
+        return '$issues accounting issue(s) found. Review the rows below; nothing has been changed automatically.';
+      }
+    }
+    return null;
   }
 
   SliverToBoxAdapter _buildExpenseAccountSummary() {
@@ -1494,6 +1571,9 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
     // `purchase` keyword check so totals, table cells and insight cards all
     // render it as a plain number (for example: `0 customers`).
     if (k == 'no_purchase') return false;
+    // Accounting Health Check counters are issue counts, not money.
+    if (_healthCheckTotalKeys.contains(k)) return false;
+    if (k.contains('earnings') || k.contains('equity') || k.contains('liabilit') || k.contains('assets') || k == 'difference') return true;
 
     return k == 'net_expenses' || k.contains('total') || k.contains('amount') || k.contains('balance') || k.contains('paid') || k.contains('tax') || k.contains('discount') || k.contains('profit') || k.contains('revenue') || k.contains('cost') || k.contains('debit') || k.contains('credit') || k.contains('cash') || k.contains('valuation') || k.contains('sales') || k.contains('purchase');
   }
@@ -1697,6 +1777,34 @@ class _TotalCard extends StatelessWidget {
   }
 }
 
+class _FinancialCheckBanner extends StatelessWidget {
+  final String message;
+
+  const _FinancialCheckBanner({required this.message});
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: scheme.errorContainer,
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.warning_amber_rounded, color: scheme.onErrorContainer),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(message, style: TextStyle(color: scheme.onErrorContainer, fontWeight: FontWeight.w600)),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _ErrorState extends StatelessWidget {
   final String message;
   final VoidCallback onRetry;
@@ -1768,4 +1876,7 @@ const _enterpriseReports = <_EnterpriseReportMeta>[
   _EnterpriseReportMeta(key: 'vendor-payables', title: 'Vendor Payables', group: 'Accounting', description: 'All vendor balances and AP base.', icon: Icons.group_work_rounded),
   _EnterpriseReportMeta(key: 'trial-balance', title: 'Trial Balance', group: 'Accounting', description: 'Debit, credit and balance by account.', icon: Icons.balance_rounded),
   _EnterpriseReportMeta(key: 'ledger-detail', title: 'Ledger Detail', group: 'Accounting', description: 'Journal posting detail with party filters.', icon: Icons.list_alt_rounded),
+  _EnterpriseReportMeta(key: 'balance-sheet', title: 'Balance Sheet', group: 'Accounting', description: 'Assets, liabilities and equity as of a date, with live current-period earnings and a balance check.', icon: Icons.account_balance_rounded),
+  _EnterpriseReportMeta(key: 'owner-equity', title: 'Owner Equity', group: 'Accounting', description: 'Owner capital introduced and drawings by month, with opening and closing owner equity.', icon: Icons.savings_rounded),
+  _EnterpriseReportMeta(key: 'accounting-health', title: 'Accounting Health Check', group: 'Accounting', description: 'Read-only ledger integrity checks: unbalanced entries, inventory GL vs stock, locked-period postings and more.', icon: Icons.health_and_safety_rounded),
 ];
