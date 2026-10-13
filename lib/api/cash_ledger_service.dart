@@ -28,6 +28,7 @@ class CashLedgerService {
     String? note,
     String? expenseAccountCode, // OTHER_EXPENSE override only
     bool allowNegativeCash = false,
+    int? partnerId, // CAPITAL_IN / OWNER_DRAWINGS only (add-on owner_equity)
   }) async {
     final body = <String, Object?>{
       'category': category,
@@ -42,6 +43,7 @@ class CashLedgerService {
       if (expenseAccountCode != null && expenseAccountCode.isNotEmpty)
         'expense_account_code': expenseAccountCode,
       if (allowNegativeCash) 'allow_negative_cash': true,
+      if (partnerId != null) 'partner_id': partnerId,
     };
 
     final res = await _client.post('/cash-ledger', body: body);

@@ -249,6 +249,10 @@ class _CounterIQDesktopShellState extends State<CounterIQDesktopShell> {
       _reportLeaf(key: 'accounting-health', title: 'Accounting Health Check', icon: Icons.health_and_safety_outlined),
       if (context.read<AuthProvider>().hasAddon('owner_equity'))
         _reportLeaf(key: 'owner-equity', title: 'Owner Equity', icon: Icons.savings_outlined),
+      if (context.read<AuthProvider>().hasAddon('owner_equity'))
+        _reportLeaf(key: 'partner-statement', title: 'Partner Statement', icon: Icons.handshake_outlined),
+      if (context.read<AuthProvider>().hasAddon('owner_equity'))
+        _reportLeaf(key: 'profit-share', title: 'Profit Share', icon: Icons.pie_chart_outline_rounded),
       _reportLeaf(key: 'ledger-detail', title: 'Ledger Detail', icon: Icons.list_alt_outlined),
     ];
 

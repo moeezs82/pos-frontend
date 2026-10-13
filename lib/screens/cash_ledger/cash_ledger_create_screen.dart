@@ -1,4 +1,5 @@
 import 'package:enterprise_pos/api/cash_ledger_service.dart';
+import 'package:enterprise_pos/api/partner_service.dart';
 import 'package:enterprise_pos/api/account_service.dart';
 import 'package:enterprise_pos/api/core/api_client.dart' show ApiException;
 import 'package:enterprise_pos/providers/auth_provider.dart';
@@ -161,6 +162,19 @@ class _CashLedgerCreateScreenState extends State<CashLedgerCreateScreen> {
   String _partyKind = 'none'; // none|customer|vendor|user
   Map<String, dynamic>? _selectedParty;
 
+  // Partner selector (CAPITAL_IN / OWNER_DRAWINGS only). The backend requires a
+  // partner once the branch has more than one active partner and assigns the
+  // only one automatically; the form mirrors that.
+  late final PartnerService _partnersApi;
+  List<Map<String, dynamic>> _partners = [];
+  int? _partnerId;
+  bool _partnersLoaded = false;
+  String? _partnersError;
+
+  static bool _isOwnerValue(String v) => v == 'CAPITAL_IN' || v == 'OWNER_DRAWINGS';
+  bool get _isOwner => _isOwnerValue(_category);
+  bool get _partnerRequired => _isOwner && _partners.length > 1;
+
   // Expense-account selector state (only used when category == OTHER_EXPENSE).
   static const _defaultExpenseCode = '5300';
   List<Map<String, dynamic>> _expenseAccounts = [];
@@ -190,7 +204,9 @@ class _CashLedgerCreateScreenState extends State<CashLedgerCreateScreen> {
     final token = auth.token!;
     _service = CashLedgerService(token: token);
     _accountsApi = AccountService(token: token);
+    _partnersApi = PartnerService(token: token);
     if (_isExpense) _loadExpenseAccounts();
+    if (_isOwner) _loadPartners();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _amountFocus.requestFocus();
     });
@@ -387,6 +403,50 @@ class _CashLedgerCreateScreenState extends State<CashLedgerCreateScreen> {
       }
     });
     if (value == 'OTHER_EXPENSE') _loadExpenseAccounts();
+    if (_isOwnerValue(value)) _loadPartners();
+  }
+
+  Future<void> _loadPartners() async {
+    if (_partnersLoaded) return;
+    try {
+      final data = await _partnersApi.list(activeOnly: true);
+      if (!mounted) return;
+      final rows = List<Map<String, dynamic>>.from(
+        (data['partners'] as List? ?? const []).map((e) => Map<String, dynamic>.from(e as Map)),
+      );
+      setState(() {
+        _partners = rows;
+        _partnersLoaded = true;
+        _partnersError = null;
+        if (rows.length == 1) _partnerId = (rows.first['id'] as num).toInt();
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _partnersError = e.toString().replaceFirst('Exception: ', ''));
+    }
+  }
+
+  Widget _buildPartnerSelector() {
+    if (_partnersError != null) {
+      return Text('Could not load partners: $_partnersError', style: const TextStyle(color: AppTheme.danger));
+    }
+    if (!_partnersLoaded) return const LinearProgressIndicator();
+    if (_partners.isEmpty) return const SizedBox.shrink();
+    return DropdownButtonFormField<int>(
+      initialValue: _partnerId,
+      decoration: InputDecoration(
+        labelText: _partnerRequired ? 'Partner *' : 'Partner',
+        prefixIcon: const Icon(Icons.handshake_rounded),
+      ),
+      items: _partners
+          .map((p) => DropdownMenuItem<int>(
+                value: (p['id'] as num).toInt(),
+                child: Text('${p['name']} (${p['ownership_percent']}%)'),
+              ))
+          .toList(),
+      onChanged: (v) => setState(() => _partnerId = v),
+      validator: (v) => _partnerRequired && v == null ? 'Select which partner this belongs to' : null,
+    );
   }
 
   /// F3 / Ctrl+Shift+P only does something once a party kind other than
@@ -486,7 +546,12 @@ class _CashLedgerCreateScreenState extends State<CashLedgerCreateScreen> {
       _showMessage('Please select the borrower from the list.');
       return;
     }
-    if (!hasParty && _referenceCtrl.text.trim().isEmpty) {
+    if (_partnerRequired && _partnerId == null) {
+      _showMessage('Select which partner this capital or drawing belongs to.');
+      return;
+    }
+    final hasPartner = _isOwner && _partnerId != null;
+    if (!hasParty && !hasPartner && _referenceCtrl.text.trim().isEmpty) {
       _showMessage('Enter a reference / payee name.');
       return;
     }
@@ -504,6 +569,7 @@ class _CashLedgerCreateScreenState extends State<CashLedgerCreateScreen> {
         note: _noteCtrl.text.trim().isNotEmpty ? _noteCtrl.text.trim() : null,
         allowNegativeCash: _allowNegativeCash,
         expenseAccountCode: _isExpense ? _expenseAccountCode : null,
+        partnerId: _isOwner ? _partnerId : null,
       );
 
       if (!mounted) return;
@@ -689,6 +755,10 @@ class _CashLedgerCreateScreenState extends State<CashLedgerCreateScreen> {
             const SizedBox(height: 14),
             _buildExpenseSelector(),
           ],
+          if (_isOwner) ...[
+            const SizedBox(height: 14),
+            _buildPartnerSelector(),
+          ],
           const SizedBox(height: 14),
           TextFormField(
             controller: _referenceCtrl,
@@ -702,7 +772,7 @@ class _CashLedgerCreateScreenState extends State<CashLedgerCreateScreen> {
                   : 'Optional label',
             ),
             validator: (value) {
-              if (_partyKind == 'none' && (value == null || value.trim().isEmpty)) {
+              if (_partyKind == 'none' && !(_isOwner && _partnerId != null) && (value == null || value.trim().isEmpty)) {
                 return 'Required when no party is linked';
               }
               return null;

@@ -1,6 +1,7 @@
 import 'package:enterprise_pos/api/cash_ledger_service.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/screens/cash_ledger/cash_ledger_create_screen.dart';
+import 'package:enterprise_pos/screens/cash_ledger/partners_screen.dart';
 import 'package:enterprise_pos/screens/reports/enterprise_reports_workspace_screen.dart';
 import 'package:enterprise_pos/services/app_currency.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
@@ -128,6 +129,14 @@ class _OwnerEquityViewState extends State<OwnerEquityView> {
                   icon: const Icon(Icons.remove_rounded, size: 18),
                   label: const Text('Record Drawings'),
                 ),
+              OutlinedButton.icon(
+                onPressed: () async {
+                  await Navigator.push(context, MaterialPageRoute(builder: (_) => const PartnersScreen()));
+                  _fetch();
+                },
+                icon: const Icon(Icons.handshake_rounded, size: 18),
+                label: const Text('Partners'),
+              ),
               if (canReport)
                 OutlinedButton.icon(
                   onPressed: () => Navigator.push(

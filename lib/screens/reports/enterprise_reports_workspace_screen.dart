@@ -139,6 +139,7 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
   bool get _supportsCustomerType => _selectedReport.key == 'area-customer-potential';
   bool get _supportsExpenseFilters => _selectedReport.key == 'expense-report';
   bool get _isBalanceSheet => _selectedReport.key == 'balance-sheet';
+  static const _ownerEquityReportKeys = <String>{'owner-equity', 'partner-statement', 'profit-share'};
   bool get _isHealthCheck => _selectedReport.key == 'accounting-health';
 
   // Ordered summary cards for the financial statements; the backend returns
@@ -170,7 +171,7 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
     return _allReports
         .where((r) => deliveryEnabled || r.key != 'delivery-boy-cash')
         // Owner Equity is a commercial add-on; the backend rejects the report without it.
-        .where((r) => ownerEquityEnabled || r.key != 'owner-equity')
+        .where((r) => ownerEquityEnabled || !_ownerEquityReportKeys.contains(r.key))
         .toList(growable: false);
   }
 
@@ -1878,5 +1879,7 @@ const _enterpriseReports = <_EnterpriseReportMeta>[
   _EnterpriseReportMeta(key: 'ledger-detail', title: 'Ledger Detail', group: 'Accounting', description: 'Journal posting detail with party filters.', icon: Icons.list_alt_rounded),
   _EnterpriseReportMeta(key: 'balance-sheet', title: 'Balance Sheet', group: 'Accounting', description: 'Assets, liabilities and equity as of a date, with live current-period earnings and a balance check.', icon: Icons.account_balance_rounded),
   _EnterpriseReportMeta(key: 'owner-equity', title: 'Owner Equity', group: 'Accounting', description: 'Owner capital introduced and drawings by month, with opening and closing owner equity.', icon: Icons.savings_rounded),
+  _EnterpriseReportMeta(key: 'partner-statement', title: 'Partner Statement', group: 'Accounting', description: 'Per-partner opening equity, capital, drawings and closing, reconciled to the ledger, plus a report-only profit share.', icon: Icons.handshake_rounded),
+  _EnterpriseReportMeta(key: 'profit-share', title: 'Profit Share', group: 'Accounting', description: 'Net profit for the period split by ownership %. Report only — nothing is posted.', icon: Icons.pie_chart_outline_rounded),
   _EnterpriseReportMeta(key: 'accounting-health', title: 'Accounting Health Check', group: 'Accounting', description: 'Read-only ledger integrity checks: unbalanced entries, inventory GL vs stock, locked-period postings and more.', icon: Icons.health_and_safety_rounded),
 ];
