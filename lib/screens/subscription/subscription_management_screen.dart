@@ -301,6 +301,7 @@ class _SummaryCards extends StatelessWidget {
       _SummaryCard('Intelligence',    _n('intelligence_addon'),     AppTheme.purple),
       _SummaryCard('Owner Equity',    _n('owner_equity_addon'),     AppTheme.success),
       _SummaryCard('Payables & Prepaids', _n('extended_accounts_addon'), AppTheme.info),
+      _SummaryCard('Fixed Assets', _n('fixed_assets_addon'), AppTheme.teal),
     ];
 
     return SizedBox(
@@ -395,6 +396,7 @@ class _BranchSubscriptionTile extends StatelessWidget {
       'intelligence':     'Intelligence',
       'owner_equity':     'Owner Equity',
       'extended_accounts': 'Payables & Prepaids',
+      'fixed_assets':      'Fixed Assets',
     };
     const _addonColors = <String, Color>{
       'barcode_labels':  AppTheme.purple,
@@ -404,6 +406,7 @@ class _BranchSubscriptionTile extends StatelessWidget {
       'intelligence':     AppTheme.purple,
       'owner_equity':     AppTheme.success,
       'extended_accounts': AppTheme.info,
+      'fixed_assets':      AppTheme.teal,
     };
     final activeAddons = _addonLabels.keys
         .where((k) => addons[k] == true)
@@ -640,6 +643,7 @@ class _SubscriptionEditDialogState extends State<_SubscriptionEditDialog> {
   bool _intelligenceAddon    = false;
   bool _ownerEquityAddon     = false;
   bool _extendedAccountsAddon = false;
+  bool _fixedAssetsAddon = false;
   final _reasonCtrl = TextEditingController();
   final _suspendReasonCtrl = TextEditingController();
   final _notesCtrl = TextEditingController();
@@ -694,6 +698,7 @@ class _SubscriptionEditDialogState extends State<_SubscriptionEditDialog> {
         _intelligenceAddon     = _addonBool('intelligence');
         _ownerEquityAddon      = _addonBool('owner_equity');
         _extendedAccountsAddon = _addonBool('extended_accounts');
+        _fixedAssetsAddon = _addonBool('fixed_assets');
         _loading = false;
       });
     } catch (e) {
@@ -734,6 +739,7 @@ class _SubscriptionEditDialogState extends State<_SubscriptionEditDialog> {
           'intelligence':      _intelligenceAddon,
           'owner_equity':      _ownerEquityAddon,
           'extended_accounts': _extendedAccountsAddon,
+          'fixed_assets': _fixedAssetsAddon,
         },
       };
 
@@ -1006,6 +1012,32 @@ class _SubscriptionEditDialogState extends State<_SubscriptionEditDialog> {
                         ),
                         subtitle: const Text(
                           'Lets this branch record money borrowed and repaid, accrued expenses and prepaid expenses in the Cash Ledger, with a matching report. Users also need the "Record Loans Payable, Accruals & Prepayments" permission.',
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Container(
+                      decoration: BoxDecoration(
+                        color: AppTheme.teal.withValues(alpha: .05),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(
+                          color: AppTheme.teal.withValues(alpha: .2),
+                        ),
+                      ),
+                      child: SwitchListTile(
+                        value: _fixedAssetsAddon,
+                        onChanged: (value) =>
+                            setState(() => _fixedAssetsAddon = value),
+                        secondary: const Icon(
+                          Icons.precision_manufacturing_rounded,
+                          color: AppTheme.teal,
+                        ),
+                        title: const Text(
+                          'Fixed Assets & Depreciation',
+                          style: TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                        subtitle: const Text(
+                          'Lets this branch register fixed assets, post monthly straight-line depreciation and record disposals, with an Asset Register and Depreciation Schedule. Users also need the "Manage Fixed Assets & Depreciation" permission.',
                         ),
                       ),
                     ),

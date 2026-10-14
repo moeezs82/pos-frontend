@@ -7,6 +7,7 @@ import 'package:enterprise_pos/providers/subscription_provider.dart';
 import 'package:enterprise_pos/screens/account_screen.dart';
 import 'package:enterprise_pos/screens/branches/branch_control_screen.dart';
 import 'package:enterprise_pos/screens/cash_ledger/cash_ledger_screen.dart';
+import 'package:enterprise_pos/screens/fixed_assets/fixed_assets_screen.dart';
 import 'package:enterprise_pos/screens/cashbook/cashbook_screen.dart';
 import 'package:enterprise_pos/screens/dashboard/low_stock_screen.dart';
 import 'package:enterprise_pos/screens/customers/customers_screen.dart';
@@ -255,6 +256,10 @@ class _CounterIQDesktopShellState extends State<CounterIQDesktopShell> {
         _reportLeaf(key: 'profit-share', title: 'Profit Share', icon: Icons.pie_chart_outline_rounded),
       if (context.read<AuthProvider>().hasAddon('extended_accounts'))
         _reportLeaf(key: 'loans-accruals-prepaids', title: 'Loans Payable, Accruals & Prepaids', icon: Icons.pending_actions_outlined),
+      if (context.read<AuthProvider>().hasAddon('fixed_assets'))
+        _reportLeaf(key: 'asset-register', title: 'Asset Register', icon: Icons.precision_manufacturing_outlined),
+      if (context.read<AuthProvider>().hasAddon('fixed_assets'))
+        _reportLeaf(key: 'depreciation-schedule', title: 'Depreciation Schedule', icon: Icons.timeline_outlined),
       _reportLeaf(key: 'ledger-detail', title: 'Ledger Detail', icon: Icons.list_alt_outlined),
     ];
 
@@ -532,6 +537,17 @@ class _CounterIQDesktopShellState extends State<CounterIQDesktopShell> {
               onTap: () => PosNavigation.openSingleton(
                 routeId: PosRouteIds.cashLedger,
                 builder: (_) => const CashLedgerScreen(),
+              ),
+            ),
+          if (auth.hasAddon('fixed_assets') &&
+              (auth.hasPermission('view-cashbook') || auth.hasPermission('view-reports') || auth.hasPermission('manage-fixed-assets')))
+            _NavEntry(
+              icon: Icons.precision_manufacturing_outlined,
+              title: 'Fixed Assets',
+              active: _isActive(PosRouteIds.fixedAssets),
+              onTap: () => PosNavigation.openSingleton(
+                routeId: PosRouteIds.fixedAssets,
+                builder: (_) => const FixedAssetsScreen(),
               ),
             ),
           if (auth.hasPermission('view-reports')) _reportsTree(),

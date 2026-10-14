@@ -167,13 +167,16 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
   ];
   Set<String> get _hiddenColumns => _hiddenColumnsByReport.putIfAbsent(_selectedReport.key, () => <String>{});
 
-  List<_EnterpriseReportMeta> _effectiveReports(bool deliveryEnabled, bool ownerEquityEnabled, bool extendedAccountsEnabled) {
+  static const _fixedAssetReportKeys = <String>{'asset-register', 'depreciation-schedule'};
+
+  List<_EnterpriseReportMeta> _effectiveReports(bool deliveryEnabled, bool ownerEquityEnabled, bool extendedAccountsEnabled, bool fixedAssetsEnabled) {
     return _allReports
         .where((r) => deliveryEnabled || r.key != 'delivery-boy-cash')
         // Owner Equity is a commercial add-on; the backend rejects the report without it.
         .where((r) => ownerEquityEnabled || !_ownerEquityReportKeys.contains(r.key))
         // Same for Loans Payable, Accruals & Prepayments (add-on extended_accounts).
         .where((r) => extendedAccountsEnabled || r.key != 'loans-accruals-prepaids')
+        .where((r) => fixedAssetsEnabled || !_fixedAssetReportKeys.contains(r.key))
         .toList(growable: false);
   }
 
@@ -538,7 +541,7 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
 
     final deliveryEnabled = context.watch<BranchFeatureProvider>().deliveryEnabled;
     final auth = context.watch<AuthProvider>();
-    final reports = _effectiveReports(deliveryEnabled, auth.hasAddon('owner_equity'), auth.hasAddon('extended_accounts'));
+    final reports = _effectiveReports(deliveryEnabled, auth.hasAddon('owner_equity'), auth.hasAddon('extended_accounts'), auth.hasAddon('fixed_assets'));
 
     // If delivery was just disabled and the active report is delivery-only,
     // switch to the first available report (post-frame to avoid setState-in-build).
@@ -1581,6 +1584,13 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
         const {'opening', 'increase', 'decrease', 'closing', 'loans_payable', 'accrued_expenses', 'prepaid_expenses'}.contains(k)) {
       return true;
     }
+    if (_fixedAssetReportKeys.contains(_selectedReport.key)) {
+      if (const {'assets', 'months_depreciated', 'useful_life_months'}.contains(k)) return false;
+      if (const {'cost', 'salvage_value', 'monthly_depreciation', 'accumulated_depreciation', 'book_value', 'amount', 'posted', 'projected',
+          'gl_fixed_assets', 'gl_accumulated_depreciation'}.contains(k)) {
+        return true;
+      }
+    }
     if (k.contains('earnings') || k.contains('equity') || k.contains('liabilit') || k.contains('assets') || k == 'difference') return true;
 
     return k == 'net_expenses' || k.contains('total') || k.contains('amount') || k.contains('balance') || k.contains('paid') || k.contains('tax') || k.contains('discount') || k.contains('profit') || k.contains('revenue') || k.contains('cost') || k.contains('debit') || k.contains('credit') || k.contains('cash') || k.contains('valuation') || k.contains('sales') || k.contains('purchase');
@@ -1888,6 +1898,8 @@ const _enterpriseReports = <_EnterpriseReportMeta>[
   _EnterpriseReportMeta(key: 'owner-equity', title: 'Owner Equity', group: 'Accounting', description: 'Owner capital introduced and drawings by month, with opening and closing owner equity.', icon: Icons.savings_rounded),
   _EnterpriseReportMeta(key: 'partner-statement', title: 'Partner Statement', group: 'Accounting', description: 'Per-partner opening equity, capital, drawings and closing, reconciled to the ledger, plus a report-only profit share.', icon: Icons.handshake_rounded),
   _EnterpriseReportMeta(key: 'profit-share', title: 'Profit Share', group: 'Accounting', description: 'Net profit for the period split by ownership %. Report only — nothing is posted.', icon: Icons.pie_chart_outline_rounded),
+  _EnterpriseReportMeta(key: 'asset-register', title: 'Asset Register', group: 'Accounting', description: 'Fixed assets held on the "To" date with cost, accumulated depreciation and book value, reconciled to the ledger.', icon: Icons.precision_manufacturing_rounded),
+  _EnterpriseReportMeta(key: 'depreciation-schedule', title: 'Depreciation Schedule', group: 'Accounting', description: 'Monthly straight-line depreciation per asset: posted months and projected months in the range.', icon: Icons.timeline_rounded),
   _EnterpriseReportMeta(key: 'loans-accruals-prepaids', title: 'Loans Payable, Accruals & Prepaids', group: 'Accounting', description: 'Money owed to each lender, accrued expenses not yet paid and prepaid expenses not yet used, reconciled to the ledger.', icon: Icons.pending_actions_rounded),
   _EnterpriseReportMeta(key: 'accounting-health', title: 'Accounting Health Check', group: 'Accounting', description: 'Read-only ledger integrity checks: unbalanced entries, inventory GL vs stock, locked-period postings and more.', icon: Icons.health_and_safety_rounded),
 ];

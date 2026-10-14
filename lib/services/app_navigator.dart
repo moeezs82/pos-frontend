@@ -32,6 +32,7 @@ abstract final class PosRouteIds {
   static const expenses = '/expenses';
   static const cashLedger = '/cash-ledger';
   static const cashLedgerCreate = '/cash-ledger/create';
+  static const fixedAssets = '/fixed-assets';
   static const expenseCreate = '/expenses/create';
   static const reports = '/reports';
   static const reportPrefix = '/reports/';

@@ -13,6 +13,7 @@ import 'package:enterprise_pos/screens/customers/customers_screen.dart';
 import 'package:enterprise_pos/screens/dashboard/command_center_dashboard.dart';
 import 'package:enterprise_pos/screens/dashboard/low_stock_screen.dart';
 import 'package:enterprise_pos/screens/intelligence/intelligence_hub_screen.dart';
+import 'package:enterprise_pos/screens/fixed_assets/fixed_assets_screen.dart';
 import 'package:enterprise_pos/screens/login_screen.dart';
 import 'package:enterprise_pos/screens/payments/party_payments_screen.dart';
 import 'package:enterprise_pos/screens/product_screen.dart';
@@ -73,6 +74,7 @@ class _HomeScreenState extends State<HomeScreen> {
     PosRouteIds.users,
     PosRouteIds.units,
     PosRouteIds.cashLedger,
+    PosRouteIds.fixedAssets,
     PosRouteIds.accounts,
     PosRouteIds.paymentMethods,
     PosRouteIds.printerSettings,
@@ -167,6 +169,8 @@ class _HomeScreenState extends State<HomeScreen> {
         return UnitsScreen(key: const ValueKey(PosRouteIds.units), token: auth.token!);
       case PosRouteIds.cashLedger:
         return const CashLedgerScreen(key: ValueKey(PosRouteIds.cashLedger));
+      case PosRouteIds.fixedAssets:
+        return const FixedAssetsScreen(key: ValueKey(PosRouteIds.fixedAssets));
       case PosRouteIds.accounts:
         return const AccountsScreen(key: ValueKey(PosRouteIds.accounts));
       case PosRouteIds.paymentMethods:
@@ -440,6 +444,16 @@ class _HomeScreenState extends State<HomeScreen> {
               onTap: () => PosNavigation.openSingleton(
                 routeId: PosRouteIds.cashLedger,
                 builder: (_) => const CashLedgerScreen(),
+              ),
+            ),
+          if (auth.hasAddon('fixed_assets') &&
+              (auth.hasPermission('view-cashbook') || auth.hasPermission('view-reports') || auth.hasPermission('manage-fixed-assets')))
+            _NavEntry(
+              icon: Icons.precision_manufacturing_outlined,
+              title: 'Fixed Assets',
+              onTap: () => PosNavigation.openSingleton(
+                routeId: PosRouteIds.fixedAssets,
+                builder: (_) => const FixedAssetsScreen(),
               ),
             ),
           if (auth.hasPermission('view-reports'))
