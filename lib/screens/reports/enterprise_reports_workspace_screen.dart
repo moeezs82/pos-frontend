@@ -141,6 +141,8 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
   bool get _isBalanceSheet => _selectedReport.key == 'balance-sheet';
   static const _ownerEquityReportKeys = <String>{'owner-equity', 'partner-statement', 'profit-share'};
   bool get _isHealthCheck => _selectedReport.key == 'accounting-health';
+  bool get _isTaxSummary => _selectedReport.key == 'tax-summary';
+  bool get _isCashFlow => _selectedReport.key == 'cash-flow-statement';
 
   // Ordered summary cards for the financial statements; the backend returns
   // totals as a JSON object, so key order cannot be relied on.
@@ -164,6 +166,26 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
     'inventory_gl_mismatches',
     'locked_period_entries',
     'negative_cash_accounts',
+  ];
+  static const _taxSummaryTotalKeys = <String>[
+    'output_tax_collected',
+    'tax_reversed_by_returns',
+    'input_tax_paid',
+    'other_tax_movements',
+    'net_tax_payable',
+    'reconciliation_status',
+    'reconciliation_difference',
+    'vendor_claim_tax_not_in_ledger',
+  ];
+  static const _cashFlowTotalKeys = <String>[
+    'opening_cash',
+    'net_operating',
+    'net_investing',
+    'net_financing',
+    'net_unclassified',
+    'net_change',
+    'closing_cash',
+    'difference',
   ];
   Set<String> get _hiddenColumns => _hiddenColumnsByReport.putIfAbsent(_selectedReport.key, () => <String>{});
 
@@ -1318,7 +1340,11 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
             ? _balanceSheetTotalKeys
             : _isHealthCheck
                 ? _healthCheckTotalKeys
-                : null;
+                : _isTaxSummary
+                    ? _taxSummaryTotalKeys
+                    : _isCashFlow
+                        ? _cashFlowTotalKeys
+                        : null;
     final visible = orderedKeys != null
         ? orderedKeys.where(totals.containsKey).map((key) => MapEntry(key, totals[key])).toList()
         : entries.take(8).toList();
@@ -1353,6 +1379,22 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
       final unclassified = num.tryParse('${totals['unclassified_balance'] ?? 0}') ?? 0;
       if (unclassified.abs() >= 0.005) {
         return 'Some accounts have no valid account type and are excluded from the totals.';
+      }
+    }
+    if (_isCashFlow) {
+      final diff = num.tryParse('${totals['difference'] ?? 0}') ?? 0;
+      if (diff.abs() >= 0.005) {
+        return 'Cash flow does not reconcile: ledger closing cash differs from opening + net change by ${_currencyFmt.format(diff)}.';
+      }
+      final other = num.tryParse('${totals['net_unclassified'] ?? 0}') ?? 0;
+      if (other.abs() >= 0.005) {
+        return 'Some cash movements could not be classified and are shown under "Other / unclassified".';
+      }
+    }
+    if (_isTaxSummary) {
+      final status = totals['reconciliation_status'];
+      if (status != null && status != 'Reconciled') {
+        return 'Tax ledger and source documents differ. See the Reconciliation rows; nothing has been changed automatically.';
       }
     }
     if (_isHealthCheck) {
@@ -1895,6 +1937,8 @@ const _enterpriseReports = <_EnterpriseReportMeta>[
   _EnterpriseReportMeta(key: 'trial-balance', title: 'Trial Balance', group: 'Accounting', description: 'Debit, credit and balance by account.', icon: Icons.balance_rounded),
   _EnterpriseReportMeta(key: 'ledger-detail', title: 'Ledger Detail', group: 'Accounting', description: 'Journal posting detail with party filters.', icon: Icons.list_alt_rounded),
   _EnterpriseReportMeta(key: 'balance-sheet', title: 'Balance Sheet', group: 'Accounting', description: 'Assets, liabilities and equity as of a date, with live current-period earnings and a balance check.', icon: Icons.account_balance_rounded),
+  _EnterpriseReportMeta(key: 'cash-flow-statement', title: 'Cash Flow Statement', group: 'Accounting', description: 'Opening cash and bank, operating, investing and financing cash flows, checked against the ledger closing balance.', icon: Icons.waterfall_chart_rounded),
+  _EnterpriseReportMeta(key: 'tax-summary', title: 'Tax Summary', group: 'Accounting', description: 'Output tax, tax reversed by returns, input tax and net payable by day or month, reconciled to sales, returns and purchases.', icon: Icons.request_quote_rounded),
   _EnterpriseReportMeta(key: 'owner-equity', title: 'Owner Equity', group: 'Accounting', description: 'Owner capital introduced and drawings by month, with opening and closing owner equity.', icon: Icons.savings_rounded),
   _EnterpriseReportMeta(key: 'partner-statement', title: 'Partner Statement', group: 'Accounting', description: 'Per-partner opening equity, capital, drawings and closing, reconciled to the ledger, plus a report-only profit share.', icon: Icons.handshake_rounded),
   _EnterpriseReportMeta(key: 'profit-share', title: 'Profit Share', group: 'Accounting', description: 'Net profit for the period split by ownership %. Report only — nothing is posted.', icon: Icons.pie_chart_outline_rounded),

@@ -25,6 +25,7 @@ import 'package:enterprise_pos/screens/sales/picking_list_screen.dart';
 import 'package:enterprise_pos/screens/sales/sale_returns_screen.dart';
 import 'package:enterprise_pos/screens/settings/backup_restore_screen.dart';
 import 'package:enterprise_pos/screens/settings/payment_methods_admin_screen.dart';
+import 'package:enterprise_pos/screens/settings/period_lock_screen.dart';
 import 'package:enterprise_pos/screens/settings/printer_settings_screen.dart';
 import 'package:enterprise_pos/screens/stock_screen.dart';
 import 'package:enterprise_pos/screens/subscription/branch_lock_screen.dart';
@@ -247,6 +248,8 @@ class _CounterIQDesktopShellState extends State<CounterIQDesktopShell> {
       _reportLeaf(key: 'expense-report', title: 'Expense Report', icon: Icons.receipt_long_outlined),
       _reportLeaf(key: 'trial-balance', title: 'Trial Balance', icon: Icons.balance_outlined),
       _reportLeaf(key: 'balance-sheet', title: 'Balance Sheet', icon: Icons.account_balance_outlined),
+      _reportLeaf(key: 'cash-flow-statement', title: 'Cash Flow Statement', icon: Icons.waterfall_chart_outlined),
+      _reportLeaf(key: 'tax-summary', title: 'Tax Summary', icon: Icons.request_quote_outlined),
       _reportLeaf(key: 'accounting-health', title: 'Accounting Health Check', icon: Icons.health_and_safety_outlined),
       if (context.read<AuthProvider>().hasAddon('owner_equity'))
         _reportLeaf(key: 'owner-equity', title: 'Owner Equity', icon: Icons.savings_outlined),
@@ -595,6 +598,16 @@ class _CounterIQDesktopShellState extends State<CounterIQDesktopShell> {
               onTap: () => PosNavigation.openSingleton(
                 routeId: PosRouteIds.printerSettings,
                 builder: (_) => const PrinterSettingsScreen(),
+              ),
+            ),
+          if (auth.hasPermission(kPeriodLockPermission))
+            _NavEntry(
+              icon: Icons.lock_clock_outlined,
+              title: 'Period Lock',
+              active: _isActive(PosRouteIds.periodLock),
+              onTap: () => PosNavigation.openSingleton(
+                routeId: PosRouteIds.periodLock,
+                builder: (_) => const PeriodLockScreen(),
               ),
             ),
           if (BackendConfig.isLocal &&
