@@ -117,6 +117,17 @@ class _PurchaseProductPanelState extends State<PurchaseProductPanel> {
   bool _filtersRestored = false;
   int _page = 1;
   int _lastPage = 1;
+
+  // Infinite scroll: the grid loads the next server page as the cashier nears
+  // the bottom instead of showing previous/next page buttons.
+  final ScrollController _gridScroll = ScrollController();
+  bool _loadingMore = false;
+  bool _loadMoreFailed = false;
+  // True while the grid shows an instant local preview of a search; the page
+  // counters then belong to the previous result set, so paging is paused.
+  bool _previewing = false;
+  List<Map<String, dynamic>>? _memoProducts;
+  int _memoSignature = 0;
   // True until the remembered filters are read, so the grid shows its loading
   // state instead of flashing an unfiltered catalogue first.
   bool _loading = true;
@@ -143,6 +154,7 @@ class _PurchaseProductPanelState extends State<PurchaseProductPanel> {
       _selectedVendorId = widget.vendorId;
     }
 
+    _gridScroll.addListener(_maybeLoadMore);
     _restoreFiltersAndLoad();
     _fetchFilterData();
 
@@ -233,6 +245,8 @@ class _PurchaseProductPanelState extends State<PurchaseProductPanel> {
     widget.externalSearchController
         ?.removeListener(_onExternalControllerChanged);
     _debounce?.cancel();
+    _gridScroll.removeListener(_maybeLoadMore);
+    _gridScroll.dispose();
     _searchCtrl.dispose(); // always dispose internal, even if unused
     _internalSearchFocus.dispose();
     super.dispose();
@@ -243,12 +257,26 @@ class _PurchaseProductPanelState extends State<PurchaseProductPanel> {
     required int page,
     bool replace = true,
     bool silent = false,
+    bool toTop = false,
   }) async {
     final requestId = ++_fetchRequestId;
-    if (silent) {
-      if (mounted) setState(() => _silentRefreshing = true);
+    // Loading the next page of the current result set (infinite scroll).
+    final appending = !replace && page > 1;
+    if (appending) {
+      if (mounted) {
+        setState(() {
+          _loadingMore = true;
+          _loadMoreFailed = false;
+        });
+      }
     } else {
-      if (mounted) setState(() => _loading = true);
+      _loadingMore = false;
+      _loadMoreFailed = false;
+      if (silent) {
+        if (mounted) setState(() => _silentRefreshing = true);
+      } else {
+        if (mounted) setState(() => _loading = true);
+      }
     }
 
     try {
@@ -260,7 +288,9 @@ class _PurchaseProductPanelState extends State<PurchaseProductPanel> {
           _selectedStockStatus != null ||
           _sortKey != null;
 
-      final entry = _search.isEmpty && !hasServerFilters
+      // Only the first page of the unfiltered catalogue lives in the shared
+      // cache; later pages must never overwrite it.
+      final entry = page == 1 && _search.isEmpty && !hasServerFilters
           ? await ProductPickCache.cache.refresh(
               _cacheKey,
               () => ProductPickCache.fetchPage(
@@ -289,11 +319,34 @@ class _PurchaseProductPanelState extends State<PurchaseProductPanel> {
       if (!mounted || requestId != _fetchRequestId) return;
       setState(() {
         if (replace) _products.clear();
-        _products.addAll(entry.items);
+        if (appending) {
+          // A shifting server page must not show the same product twice.
+          final seen = <Object?>{
+            for (final p in _products)
+              if (p['id'] != null) p['id'],
+          };
+          _products.addAll(
+            entry.items.where((p) => p['id'] == null || seen.add(p['id'])),
+          );
+        } else {
+          _products.addAll(entry.items);
+        }
+        _previewing = false;
         _page = entry.currentPage;
         _lastPage = entry.lastPage;
       });
+      if (toTop && _gridScroll.hasClients) _gridScroll.jumpTo(0);
+      // Fill the viewport if the first page is shorter than the screen.
+      WidgetsBinding.instance.addPostFrameCallback((_) => _maybeLoadMore());
     } catch (_) {
+      if (appending) {
+        // Keep what is on screen and offer a retry instead of replacing the
+        // list with the offline catalogue.
+        if (mounted && requestId == _fetchRequestId) {
+          setState(() => _loadMoreFailed = true);
+        }
+        return;
+      }
       try {
         final effectiveVendorId = _selectedVendorId ?? widget.vendorId;
         final strictVendor = _selectedVendorId != null;
@@ -311,6 +364,7 @@ class _PurchaseProductPanelState extends State<PurchaseProductPanel> {
           setState(() {
             if (replace) _products.clear();
             _products.addAll(offlineItems);
+            _previewing = false;
             _page = 1;
             _lastPage = 1; // collapse pagination while offline
           });
@@ -323,9 +377,26 @@ class _PurchaseProductPanelState extends State<PurchaseProductPanel> {
         setState(() {
           _loading = false;
           _silentRefreshing = false;
+          _loadingMore = false;
         });
       }
     }
+  }
+
+  /// Loads the next page when the cashier scrolls near the bottom (or when the
+  /// loaded products do not yet fill the viewport).
+  void _maybeLoadMore() {
+    if (!mounted || !_gridScroll.hasClients) return;
+    if (_loading || _loadingMore || _silentRefreshing) return;
+    if (_loadMoreFailed || _previewing) return;
+    if (_page >= _lastPage) return;
+    if (_gridScroll.position.extentAfter > 600) return;
+    _fetchProducts(page: _page + 1, replace: false);
+  }
+
+  void _retryLoadMore() {
+    setState(() => _loadMoreFailed = false);
+    _maybeLoadMore();
   }
 
   Future<void> _fetchFilterData() async {
@@ -381,6 +452,7 @@ class _PurchaseProductPanelState extends State<PurchaseProductPanel> {
             }).toList();
       if (mounted) {
         setState(() {
+          _previewing = true;
           _products
             ..clear()
             ..addAll(filtered);
@@ -392,7 +464,7 @@ class _PurchaseProductPanelState extends State<PurchaseProductPanel> {
     _debounce = Timer(const Duration(milliseconds: 320), () {
       if (!mounted) return;
       setState(() => _search = q);
-      _fetchProducts(page: 1, replace: true, silent: cached != null);
+      _fetchProducts(page: 1, replace: true, silent: cached != null, toTop: true);
     });
   }
 
@@ -400,35 +472,35 @@ class _PurchaseProductPanelState extends State<PurchaseProductPanel> {
     if (_selectedCategoryId == value) return;
     setState(() => _selectedCategoryId = value);
     _persistFilters();
-    _fetchProducts(page: 1, replace: true, silent: true);
+    _fetchProducts(page: 1, replace: true, silent: true, toTop: true);
   }
 
   void _onBrandFilterChanged(int? value) {
     if (_selectedBrandId == value) return;
     setState(() => _selectedBrandId = value);
     _persistFilters();
-    _fetchProducts(page: 1, replace: true, silent: true);
+    _fetchProducts(page: 1, replace: true, silent: true, toTop: true);
   }
 
   void _onVendorFilterChanged(int? value) {
     if (_selectedVendorId == value) return;
     setState(() => _selectedVendorId = value);
     _persistFilters();
-    _fetchProducts(page: 1, replace: true, silent: true);
+    _fetchProducts(page: 1, replace: true, silent: true, toTop: true);
   }
 
   void _onStockStatusFilterChanged(String? value) {
     if (_selectedStockStatus == value) return;
     setState(() => _selectedStockStatus = value);
     _persistFilters();
-    _fetchProducts(page: 1, replace: true, silent: true);
+    _fetchProducts(page: 1, replace: true, silent: true, toTop: true);
   }
 
   void _onSortChanged(String? key) {
     if (_sortKey == key) return;
     setState(() => _sortKey = key);
     _persistFilters();
-    _fetchProducts(page: 1, replace: true, silent: true);
+    _fetchProducts(page: 1, replace: true, silent: true, toTop: true);
   }
 
   void _onClearAllFilters() {
@@ -448,7 +520,7 @@ class _PurchaseProductPanelState extends State<PurchaseProductPanel> {
     });
     // Forget the remembered selection too, not just the on-screen one.
     ProductPanelFilterStore.clear(_filterScope, widget.branchId);
-    _fetchProducts(page: 1, replace: true, silent: true);
+    _fetchProducts(page: 1, replace: true, silent: true, toTop: true);
   }
 
   // ── Derived catalog (defensive filters + variant-family grouping) ─────────
@@ -459,6 +531,28 @@ class _PurchaseProductPanelState extends State<PurchaseProductPanel> {
   // purely for presentation.  An exact SKU/barcode search is intentionally NOT
   // collapsed so the cashier can add that exact child immediately.
   List<Map<String, dynamic>> get _filteredProducts {
+    // The family grouping is O(products) and the grid rebuilds on every cart
+    // change, so reuse the last result until the catalogue or a filter moves.
+    final signature = Object.hash(
+      _products.length,
+      _products.isEmpty ? 0 : identityHashCode(_products.first),
+      _products.isEmpty ? 0 : identityHashCode(_products.last),
+      _selectedCategoryId,
+      _selectedBrandId,
+      _selectedVendorId,
+      _selectedStockStatus,
+      _search,
+      0,
+    );
+    final memo = _memoProducts;
+    if (memo != null && signature == _memoSignature) return memo;
+    final computed = _computeFilteredProducts();
+    _memoProducts = computed;
+    _memoSignature = signature;
+    return computed;
+  }
+
+  List<Map<String, dynamic>> _computeFilteredProducts() {
     var list = _products;
     if (_selectedCategoryId != null) {
       list = list.where((p) {
@@ -504,6 +598,13 @@ class _PurchaseProductPanelState extends State<PurchaseProductPanel> {
       List<Map<String, dynamic>> products) {
     final result = <Map<String, dynamic>>[];
     final seenGroups = <int>{};
+    // One pass to bucket siblings, instead of rescanning the whole list for
+    // every family.
+    final byGroup = <int, List<Map<String, dynamic>>>{};
+    for (final p in products) {
+      final g = _asInt(p['product_group_id']);
+      if (g != null) (byGroup[g] ??= []).add(p);
+    }
 
     for (final product in products) {
       final groupId = _asInt(product['product_group_id']);
@@ -513,8 +614,7 @@ class _PurchaseProductPanelState extends State<PurchaseProductPanel> {
       }
       if (!seenGroups.add(groupId)) continue;
 
-      final siblings = products
-          .where((p) => _asInt(p['product_group_id']) == groupId)
+      final siblings = (byGroup[groupId] ?? const <Map<String, dynamic>>[])
           .where(_isActiveProduct)
           .toList();
       if (siblings.isEmpty) continue;
@@ -700,7 +800,7 @@ class _PurchaseProductPanelState extends State<PurchaseProductPanel> {
         // ── Point 2: compact grid search — always below filter row ──────────
         _buildGridSearchBar(),
         Expanded(child: _buildGrid()),
-        _buildPaginationBar(),
+        _buildLoadMoreFooter(),
       ],
     );
   }
@@ -866,7 +966,10 @@ class _PurchaseProductPanelState extends State<PurchaseProductPanel> {
     return LayoutBuilder(
       builder: (context, constraints) {
         final cols = _gridCrossAxisCount(constraints.maxWidth);
+        // The Quick Add tile closes the list once every page has loaded.
+        final showQuickAdd = _page >= _lastPage;
         return GridView.builder(
+          controller: _gridScroll,
           padding: const EdgeInsets.all(6),
           gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
             crossAxisCount: cols,
@@ -874,7 +977,7 @@ class _PurchaseProductPanelState extends State<PurchaseProductPanel> {
             mainAxisSpacing: 5,
             childAspectRatio: 0.80,
           ),
-          itemCount: products.length + 1, // +1 for Quick Add card
+          itemCount: products.length + (showQuickAdd ? 1 : 0),
           itemBuilder: (_, index) {
             if (index == products.length) {
               return _QuickAddCard(onTap: _quickAddProduct);
@@ -1041,50 +1144,63 @@ class _PurchaseProductPanelState extends State<PurchaseProductPanel> {
     );
   }
 
-  // ── Pagination bar ────────────────────────────────────────────────────────
-  Widget _buildPaginationBar() {
-    if (_lastPage <= 1) return const SizedBox.shrink();
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        border: Border(top: BorderSide(color: AppTheme.border)),
-      ),
-      child: Row(
-        children: [
-          IconButton(
-            onPressed: !_loading && _page > 1
-                ? () => _fetchProducts(page: _page - 1, replace: true)
-                : null,
-            icon: const Icon(Icons.chevron_left_rounded),
-            visualDensity: VisualDensity.compact,
-            tooltip: 'Previous page',
-          ),
-          Expanded(
-            child: Text(
-              'Page $_page of $_lastPage',
-              textAlign: TextAlign.center,
-              style: const TextStyle(
+  // ── Infinite-scroll footer ────────────────────────────────────────────────
+  Widget _buildLoadMoreFooter() {
+    if (_loadMoreFailed) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          border: Border(top: BorderSide(color: AppTheme.border)),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Text(
+              'Could not load more products',
+              style: TextStyle(
                 fontWeight: FontWeight.w700,
                 color: AppTheme.textMuted,
                 fontSize: 12,
               ),
             ),
+            TextButton(
+              onPressed: _retryLoadMore,
+              child: const Text('Retry'),
+            ),
+          ],
+        ),
+      );
+    }
+    if (!_loadingMore) return const SizedBox.shrink();
+    return Container(
+      height: 30,
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        border: Border(top: BorderSide(color: AppTheme.border)),
+      ),
+      child: const Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          SizedBox(
+            width: 14,
+            height: 14,
+            child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.primary),
           ),
-          IconButton(
-            onPressed: !_loading && _page < _lastPage
-                ? () => _fetchProducts(page: _page + 1, replace: true)
-                : null,
-            icon: const Icon(Icons.chevron_right_rounded),
-            visualDensity: VisualDensity.compact,
-            tooltip: 'Next page',
+          SizedBox(width: 8),
+          Text(
+            'Loading more products…',
+            style: TextStyle(
+              fontWeight: FontWeight.w700,
+              color: AppTheme.textMuted,
+              fontSize: 12,
+            ),
           ),
         ],
       ),
     );
   }
 }
-
 
 // ── Product card — matches reference image style ─────────────────────────────
 class _ProductCard extends StatelessWidget {

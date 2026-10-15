@@ -15,6 +15,7 @@ import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class CommandCenterDashboard extends StatefulWidget {
   final String userName;
@@ -53,6 +54,10 @@ class _DashboardRange {
 }
 
 class _CommandCenterDashboardState extends State<CommandCenterDashboard> {
+  /// Device-wide preference. It is deliberately not cleared on logout, so the
+  /// choice survives navigating away, signing out and signing back in.
+  static const _hideFiguresPrefKey = 'dashboard_hide_figures_v1';
+
   final _money = const AppMoneyFormatter(decimalDigits: 3);
   final _dateTime = DateFormat('yyyy-MM-dd HH:mm:ss');
   final _dateOnly = DateFormat('yyyy-MM-dd');
@@ -96,7 +101,40 @@ class _CommandCenterDashboardState extends State<CommandCenterDashboard> {
   void initState() {
     super.initState();
     _range = _rangeFor(_preset, custom: _customRange);
+    _restoreHideFigures();
     WidgetsBinding.instance.addPostFrameCallback((_) => _loadAll());
+  }
+
+  Future<void> _restoreHideFigures() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final saved = prefs.getBool(_hideFiguresPrefKey) ?? false;
+      if (mounted && saved != _obscured) setState(() => _obscured = saved);
+    } catch (_) {
+      // Storage unavailable: figures simply stay visible.
+    }
+  }
+
+  Future<void> _toggleHideFigures() async {
+    final next = !_obscured;
+    setState(() => _obscured = next);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_hideFiguresPrefKey, next);
+    } catch (_) {
+      // Still applies for this session.
+    }
+  }
+
+  /// Refresh button / retry. The date range is built once from "now", so a
+  /// plain reload kept asking the server for stats up to the moment the screen
+  /// opened. Rebuild it first so "Today", "This week" and "This month" end at
+  /// the current time again.
+  Future<void> _refreshAll() async {
+    if (_preset != _DashboardPreset.custom || _customRange != null) {
+      setState(() => _range = _rangeFor(_preset, custom: _customRange));
+    }
+    await _loadAll();
   }
 
   DateTime _startOfDay(DateTime value) => DateTime(value.year, value.month, value.day);
@@ -467,7 +505,7 @@ class _CommandCenterDashboardState extends State<CommandCenterDashboard> {
         _buildHeader(context),
         const SizedBox(height: 16),
         if (_error != null) ...[
-          _ErrorStrip(message: _error!, onRetry: _loadAll),
+          _ErrorStrip(message: _error!, onRetry: _refreshAll),
           const SizedBox(height: 12),
         ],
         _buildKpiGrid(canSeeProfit),
@@ -586,7 +624,7 @@ class _CommandCenterDashboardState extends State<CommandCenterDashboard> {
             Tooltip(
               message: _obscured ? 'Show financial figures' : 'Hide financial figures',
               child: OutlinedButton.icon(
-                onPressed: () => setState(() => _obscured = !_obscured),
+                onPressed: _toggleHideFigures,
                 icon: Icon(_obscured ? Icons.visibility_off_rounded : Icons.visibility_rounded, size: 18),
                 label: Text(_obscured ? 'Show figures' : 'Hide figures'),
               ),
@@ -594,7 +632,7 @@ class _CommandCenterDashboardState extends State<CommandCenterDashboard> {
             const SizedBox(width: 8),
             IconButton.filledTonal(
               tooltip: 'Refresh dashboard',
-              onPressed: _loading ? null : _loadAll,
+              onPressed: _loading ? null : _refreshAll,
               icon: _loading
                   ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
                   : const Icon(Icons.refresh_rounded),
