@@ -158,21 +158,25 @@ class BarcodeLabelPrinterService {
 
   /// Nominal height of one text line, before [_LabelLayout.textScale].
   static const Map<BarcodeLabelTextSize, double> _lineHeightsMm = {
-    BarcodeLabelTextSize.small: 3.0,
-    BarcodeLabelTextSize.normal: 4.2,
-    BarcodeLabelTextSize.large: 5.4,
+    BarcodeLabelTextSize.small: 2.7,
+    BarcodeLabelTextSize.normal: 3.4,
+    BarcodeLabelTextSize.large: 4.4,
   };
 
   /// Nominal font size matching [_lineHeightsMm]. A FittedBox still scales a
   /// long line down horizontally; this only sets the starting point.
   static const Map<BarcodeLabelTextSize, double> _fontSizes = {
-    BarcodeLabelTextSize.small: 6.8,
-    BarcodeLabelTextSize.normal: 8.4,
-    BarcodeLabelTextSize.large: 11.0,
+    BarcodeLabelTextSize.small: 5.6,
+    BarcodeLabelTextSize.normal: 7.0,
+    BarcodeLabelTextSize.large: 8.8,
   };
 
-  static const double _lineGapMm = 0.35;
-  static const double _labelPaddingMm = 1.5;
+  static const double _lineGapMm = 0.5;
+  static const double _labelPaddingMm = 2.0;
+
+  /// Blank space kept on each side of the bars, on top of the label padding,
+  /// so the symbol never touches the edge of the label.
+  static const double _barcodeQuietMm = 1.5;
 
   /// Below roughly 6 mm of bar height, handheld scanners start missing reads,
   /// so text is squeezed before the symbol is.
@@ -180,11 +184,11 @@ class BarcodeLabelPrinterService {
 
   /// Upper bound for the symbol: a bar taller than this adds no scanning
   /// benefit, it only looks stretched when few lines are enabled.
-  static const double _maxBarcodeMm = 10.0;
+  static const double _maxBarcodeMm = 8.5;
 
   /// The symbol never takes more than this share of the printable height, so a
   /// sparse label (shop name + product name + barcode) keeps a balanced look.
-  static const double _maxBarcodeShare = 0.4;
+  static const double _maxBarcodeShare = 0.38;
 
   /// Text is never scaled below this: an unreadable price is worse than a
   /// label that overflows slightly, and the settings preview shows the result.
@@ -458,6 +462,8 @@ class BarcodeLabelPrinterService {
             build: (_) => _labelBody(
               lines,
               heightMm: _labelHeightMm(config) - (_labelPaddingMm * 2),
+              widthMm: _labelWidthMm(config) - (_labelPaddingMm * 2),
+              dpi: config.barcodeDpi,
             ),
           ),
         );
@@ -549,6 +555,8 @@ class BarcodeLabelPrinterService {
                       child: _labelBody(
                         resolveLines(config, pageItems[index]),
                         heightMm: contentHeightMm,
+                        widthMm: labelWidthMm - (_labelPaddingMm * 2),
+                        dpi: config.barcodeDpi,
                       ),
                     ),
                   );
@@ -574,7 +582,12 @@ class BarcodeLabelPrinterService {
     return doc.save();
   }
 
-  pw.Widget _labelBody(List<ResolvedLabelLine> lines, {required double heightMm}) {
+  pw.Widget _labelBody(
+    List<ResolvedLabelLine> lines, {
+    required double heightMm,
+    required double widthMm,
+    int dpi = 203,
+  }) {
     if (lines.isEmpty) {
       return pw.Center(
         child: pw.Text('No label lines enabled',
@@ -592,47 +605,59 @@ class BarcodeLabelPrinterService {
       final line = lines[i];
 
       if (line.isGraphic) {
-        children.add(
-          pw.SizedBox(
-            height: layout.barcodeHeightMm * PdfPageFormat.mm,
-            child: pw.Padding(
-              padding: pw.EdgeInsets.symmetric(horizontal: 1.2 * PdfPageFormat.mm),
-              child: pw.BarcodeWidget(
-                barcode: pw.Barcode.code128(),
-                data: line.text,
-                drawText: false,
-              ),
-            ),
-          ),
-        );
+        children.add(_barcodeSymbol(line.text, layout.barcodeHeightMm, widthMm, dpi));
         continue;
       }
 
-      final heightsMm = (_lineHeightsMm[line.size] ?? 4.2) * layout.textScale;
-      final fontSize = (_fontSizes[line.size] ?? 8.4) * layout.textScale;
-      final emphasised = line.field == BarcodeLabelField.productName ||
-          line.field == BarcodeLabelField.salePrice ||
-          line.field == BarcodeLabelField.price;
+      final heightsMm = (_lineHeightsMm[line.size] ?? 3.4) * layout.textScale;
+      var fontSize = (_fontSizes[line.size] ?? 7.0) * layout.textScale;
+      var fontWeight = pw.FontWeight.normal;
+      var letterSpacing = 0.0;
+      var color = PdfColors.black;
+
+      switch (line.field) {
+        case BarcodeLabelField.shopName:
+          // Brand line: bold, slightly tracked-out sans-serif.
+          fontWeight = pw.FontWeight.bold;
+          letterSpacing = fontSize * 0.06;
+          break;
+        case BarcodeLabelField.productName:
+        case BarcodeLabelField.price:
+        case BarcodeLabelField.salePrice:
+          fontWeight = pw.FontWeight.bold;
+          break;
+        case BarcodeLabelField.barcodeValue:
+          // The digits under the bars are a reading aid, not the headline.
+          fontSize *= 0.9;
+          letterSpacing = fontSize * 0.12;
+          break;
+        case BarcodeLabelField.variantDetails:
+          color = PdfColors.grey800;
+          break;
+        default:
+          break;
+      }
 
       children.add(
         pw.SizedBox(
           height: heightsMm * PdfPageFormat.mm,
-          child: pw.FittedBox(
-            fit: pw.BoxFit.scaleDown,
-            child: pw.Text(
-              line.text,
-              maxLines: 1,
-              // Urdu and Arabic labels have to lay out right-to-left or the
-              // prefix word and its value come out in the wrong order.
-              textDirection:
-                  _isRtl(line.text) ? pw.TextDirection.rtl : pw.TextDirection.ltr,
-              textAlign: pw.TextAlign.center,
-              style: pw.TextStyle(
-                fontSize: fontSize,
-                fontWeight: emphasised ? pw.FontWeight.bold : pw.FontWeight.normal,
-                color: line.field == BarcodeLabelField.variantDetails
-                    ? PdfColors.grey800
-                    : PdfColors.black,
+          child: pw.Center(
+            child: pw.FittedBox(
+              fit: pw.BoxFit.scaleDown,
+              child: pw.Text(
+                line.text,
+                maxLines: 1,
+                // Urdu and Arabic labels have to lay out right-to-left or the
+                // prefix word and its value come out in the wrong order.
+                textDirection:
+                    _isRtl(line.text) ? pw.TextDirection.rtl : pw.TextDirection.ltr,
+                textAlign: pw.TextAlign.center,
+                style: pw.TextStyle(
+                  fontSize: fontSize,
+                  fontWeight: fontWeight,
+                  letterSpacing: _isRtl(line.text) ? 0 : letterSpacing,
+                  color: color,
+                ),
               ),
             ),
           ),
@@ -644,6 +669,48 @@ class BarcodeLabelPrinterService {
       crossAxisAlignment: pw.CrossAxisAlignment.stretch,
       mainAxisAlignment: pw.MainAxisAlignment.center,
       children: children,
+    );
+  }
+
+  /// The Code 128 symbol, centred, with a quiet zone either side.
+  ///
+  /// Every bar is a whole number of printer dots wide: a symbol stretched to an
+  /// arbitrary width lands on fractional dots once rasterised, which makes the
+  /// bars uneven and the label harder to scan. When even one dot per module
+  /// does not fit, it falls back to filling the available width.
+  pw.Widget _barcodeSymbol(String data, double heightMm, double widthMm, int dpi) {
+    final availableDots =
+        ((widthMm - (_barcodeQuietMm * 2)) * dpi / 25.4).floor();
+    final modules = _code128Modules(data);
+    var module = dpi >= 300 ? 3 : 2;
+    while (module > 1 && modules * module > availableDots) {
+      module--;
+    }
+    final symbolDots = modules * module;
+    final barcode = pw.BarcodeWidget(
+      barcode: pw.Barcode.code128(),
+      data: data,
+      drawText: false,
+    );
+
+    if (availableDots <= 0 || symbolDots > availableDots) {
+      return pw.SizedBox(
+        height: heightMm * PdfPageFormat.mm,
+        child: pw.Padding(
+          padding: pw.EdgeInsets.symmetric(horizontal: _barcodeQuietMm * PdfPageFormat.mm),
+          child: barcode,
+        ),
+      );
+    }
+
+    return pw.SizedBox(
+      height: heightMm * PdfPageFormat.mm,
+      child: pw.Center(
+        child: pw.SizedBox(
+          width: symbolDots * 72.0 / dpi,
+          child: barcode,
+        ),
+      ),
     );
   }
 
@@ -898,9 +965,19 @@ class BarcodeLabelPrinterService {
         'copies=${item.copies} lines=[$lines]',
       );
     }
-    return unicode
-        ? await _rasterCommands(config: config, items: items, language: language)
-        : _textCommands(config: config, items: items, language: language);
+    // Labels are rendered through the same PDF layout as the preview and sent
+    // as a bitmap, so the printer's blocky built-in fonts are never used. If
+    // this device cannot rasterise (and the text is plain ASCII), fall back to
+    // the printer's own fonts rather than failing the job.
+    if (unicode) {
+      return _rasterCommands(config: config, items: items, language: language);
+    }
+    try {
+      return await _rasterCommands(config: config, items: items, language: language);
+    } catch (error) {
+      print('[BARCODE-RAW] bitmap rendering unavailable, using printer fonts: $error');
+      return _textCommands(config: config, items: items, language: language);
+    }
   }
 
   /// Sends native ZPL/TSPL to a USB/installed Windows printer as a RAW
@@ -1232,16 +1309,23 @@ class BarcodeLabelPrinterService {
 
     final dpi = config.barcodeDpi.toDouble();
     final out = <int>[];
+    // Copies of one product share a single rendered label.
+    final rendered = <BarcodeLabelItem, _MonoBitmap>{};
 
     for (final row in _rowsFor(config, items)) {
       final tiles = <_MonoBitmap>[];
       for (final item in row.labels) {
-        final pdf = await buildBatchLabelsPdf(
-          config: config,
-          items: [item.copyWith(copies: 1)],
-        );
-        final raster = await Printing.raster(pdf, dpi: dpi).first;
-        tiles.add(_MonoBitmap.fromRgba(raster.pixels, raster.width, raster.height));
+        var tile = rendered[item];
+        if (tile == null) {
+          final pdf = await buildBatchLabelsPdf(
+            config: config,
+            items: [item.copyWith(copies: 1)],
+          );
+          final raster = await Printing.raster(pdf, dpi: dpi).first;
+          tile = _MonoBitmap.fromRgba(raster.pixels, raster.width, raster.height);
+          rendered[item] = tile;
+        }
+        tiles.add(tile);
       }
       final bitmap = _MonoBitmap.composeRow(
         tiles,
