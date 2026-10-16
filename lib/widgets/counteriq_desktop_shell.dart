@@ -8,6 +8,7 @@ import 'package:enterprise_pos/screens/account_screen.dart';
 import 'package:enterprise_pos/screens/branches/branch_control_screen.dart';
 import 'package:enterprise_pos/screens/cash_ledger/cash_ledger_screen.dart';
 import 'package:enterprise_pos/screens/fixed_assets/fixed_assets_screen.dart';
+import 'package:enterprise_pos/screens/profit_allocation/profit_allocation_screen.dart';
 import 'package:enterprise_pos/screens/cashbook/cashbook_screen.dart';
 import 'package:enterprise_pos/screens/dashboard/low_stock_screen.dart';
 import 'package:enterprise_pos/screens/customers/customers_screen.dart';
@@ -257,6 +258,8 @@ class _CounterIQDesktopShellState extends State<CounterIQDesktopShell> {
         _reportLeaf(key: 'partner-statement', title: 'Partner Statement', icon: Icons.handshake_outlined),
       if (context.read<AuthProvider>().hasAddon('owner_equity'))
         _reportLeaf(key: 'profit-share', title: 'Profit Share', icon: Icons.pie_chart_outline_rounded),
+      if (context.read<AuthProvider>().hasAddon('owner_equity'))
+        _reportLeaf(key: 'profit-allocations', title: 'Profit Allocations', icon: Icons.call_split_rounded),
       if (context.read<AuthProvider>().hasAddon('extended_accounts'))
         _reportLeaf(key: 'loans-accruals-prepaids', title: 'Loans Payable, Accruals & Prepaids', icon: Icons.pending_actions_outlined),
       if (context.read<AuthProvider>().hasAddon('fixed_assets'))
@@ -551,6 +554,17 @@ class _CounterIQDesktopShellState extends State<CounterIQDesktopShell> {
               onTap: () => PosNavigation.openSingleton(
                 routeId: PosRouteIds.fixedAssets,
                 builder: (_) => const FixedAssetsScreen(),
+              ),
+            ),
+          if (auth.hasAddon('owner_equity') &&
+              (auth.hasPermission('view-cashbook') || auth.hasPermission('view-reports') || auth.hasPermission(kProfitAllocationPermission)))
+            _NavEntry(
+              icon: Icons.call_split_rounded,
+              title: 'Profit Allocation',
+              active: _isActive(PosRouteIds.profitAllocation),
+              onTap: () => PosNavigation.openSingleton(
+                routeId: PosRouteIds.profitAllocation,
+                builder: (_) => const ProfitAllocationScreen(),
               ),
             ),
           if (auth.hasPermission('view-reports')) _reportsTree(),

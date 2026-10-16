@@ -5,6 +5,7 @@ import 'package:enterprise_pos/api/sale_source_service.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/providers/branch_feature_provider.dart';
 import 'package:enterprise_pos/providers/branch_provider.dart';
+import 'package:enterprise_pos/screens/reports/partner_report_actions.dart';
 import 'package:enterprise_pos/services/report_file_saver.dart';
 import 'package:enterprise_pos/services/app_currency.dart';
 import 'package:flutter/material.dart';
@@ -139,7 +140,7 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
   bool get _supportsCustomerType => _selectedReport.key == 'area-customer-potential';
   bool get _supportsExpenseFilters => _selectedReport.key == 'expense-report';
   bool get _isBalanceSheet => _selectedReport.key == 'balance-sheet';
-  static const _ownerEquityReportKeys = <String>{'owner-equity', 'partner-statement', 'profit-share'};
+  static const _ownerEquityReportKeys = <String>{'owner-equity', 'partner-statement', 'profit-share', 'profit-allocations'};
   bool get _isHealthCheck => _selectedReport.key == 'accounting-health';
   bool get _isTaxSummary => _selectedReport.key == 'tax-summary';
   bool get _isCashFlow => _selectedReport.key == 'cash-flow-statement';
@@ -152,6 +153,8 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
     'equity_accounts',
     'prior_period_earnings',
     'current_period_earnings',
+    'profit_allocated_to_partners',
+    'unallocated_earnings',
     'total_equity',
     'total_liabilities_and_equity',
     'difference',
@@ -166,6 +169,7 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
     'inventory_gl_mismatches',
     'locked_period_entries',
     'negative_cash_accounts',
+    'profit_allocations',
   ];
   static const _taxSummaryTotalKeys = <String>[
     'output_tax_collected',
@@ -1349,6 +1353,7 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
         ? orderedKeys.where(totals.containsKey).map((key) => MapEntry(key, totals[key])).toList()
         : entries.take(8).toList();
     final warning = _financialWarning(totals);
+    final notes = _result?.notes ?? const <String>[];
     return SliverToBoxAdapter(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(16, 2, 16, 6),
@@ -1356,6 +1361,16 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             if (warning != null) _FinancialCheckBanner(message: warning),
+            if (notes.isNotEmpty) _ReportNotes(notes: notes),
+            // Partner reports: one-click fixes for what they show (add
+            // partners, reassign unassigned capital, allocate profit).
+            if (_ownerEquityReportKeys.contains(_selectedReport.key))
+              PartnerReportActions(
+                reportKey: _selectedReport.key,
+                rows: _result?.rows ?? const [],
+                totals: totals,
+                onChanged: () => _fetch(),
+              ),
             Wrap(
               spacing: 8,
               runSpacing: 8,
@@ -1634,6 +1649,13 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
       }
     }
     if (k.contains('earnings') || k.contains('equity') || k.contains('liabilit') || k.contains('assets') || k == 'difference') return true;
+    // Partner / owner equity money columns whose names carry no money keyword.
+    if (_ownerEquityReportKeys.contains(_selectedReport.key) &&
+        const {'capital_in', 'drawings', 'book_closing', 'net_movement', 'opening_capital', 'opening_drawings', 'closing_capital', 'closing_drawings'}.contains(k)) {
+      return true;
+    }
+    // Profit allocation amounts (phase 7); allocated_percent stays a percentage.
+    if (k.contains('allocated') && !k.contains('percent') && !k.contains('count')) return true;
 
     return k == 'net_expenses' || k.contains('total') || k.contains('amount') || k.contains('balance') || k.contains('paid') || k.contains('tax') || k.contains('discount') || k.contains('profit') || k.contains('revenue') || k.contains('cost') || k.contains('debit') || k.contains('credit') || k.contains('cash') || k.contains('valuation') || k.contains('sales') || k.contains('purchase');
   }
@@ -1649,7 +1671,10 @@ class _EnterpriseReportResponse {
   final Map<String, List<Map<String, dynamic>>> breakdowns;
   final _ReportPagination? pagination;
 
-  _EnterpriseReportResponse({required this.title, required this.columns, required this.rows, required this.totals, required this.breakdowns, this.pagination});
+  /// How to read the figures (e.g. report-only vs posted); empty for most reports.
+  final List<String> notes;
+
+  _EnterpriseReportResponse({required this.title, required this.columns, required this.rows, required this.totals, required this.breakdowns, this.pagination, this.notes = const []});
 
   factory _EnterpriseReportResponse.fromJson(Map<String, dynamic> json) {
     return _EnterpriseReportResponse(
@@ -1665,6 +1690,7 @@ class _EnterpriseReportResponse {
         return MapEntry(key.toString(), rows);
       }),
       pagination: json['pagination'] is Map ? _ReportPagination.fromJson(Map<String, dynamic>.from(json['pagination'] as Map)) : null,
+      notes: (json['notes'] as List? ?? const []).map((e) => e.toString()).toList(growable: false),
     );
   }
 }
@@ -1837,6 +1863,45 @@ class _TotalCard extends StatelessWidget {
   }
 }
 
+/// Explanatory notes sent by the backend with a report (for example which
+/// figures are report-only and which are posted).
+class _ReportNotes extends StatelessWidget {
+  final List<String> notes;
+
+  const _ReportNotes({required this.notes});
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHighest.withValues(alpha: .5),
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.info_outline_rounded, size: 18, color: scheme.onSurfaceVariant),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: notes
+                  .map((n) => Padding(
+                        padding: const EdgeInsets.only(bottom: 2),
+                        child: Text(n, style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 12.5)),
+                      ))
+                  .toList(),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _FinancialCheckBanner extends StatelessWidget {
   final String message;
 
@@ -1940,8 +2005,9 @@ const _enterpriseReports = <_EnterpriseReportMeta>[
   _EnterpriseReportMeta(key: 'cash-flow-statement', title: 'Cash Flow Statement', group: 'Accounting', description: 'Opening cash and bank, operating, investing and financing cash flows, checked against the ledger closing balance.', icon: Icons.waterfall_chart_rounded),
   _EnterpriseReportMeta(key: 'tax-summary', title: 'Tax Summary', group: 'Accounting', description: 'Output tax, tax reversed by returns, input tax and net payable by day or month, reconciled to sales, returns and purchases.', icon: Icons.request_quote_rounded),
   _EnterpriseReportMeta(key: 'owner-equity', title: 'Owner Equity', group: 'Accounting', description: 'Owner capital introduced and drawings by month, with opening and closing owner equity.', icon: Icons.savings_rounded),
-  _EnterpriseReportMeta(key: 'partner-statement', title: 'Partner Statement', group: 'Accounting', description: 'Per-partner opening equity, capital, drawings and closing, reconciled to the ledger, plus a report-only profit share.', icon: Icons.handshake_rounded),
-  _EnterpriseReportMeta(key: 'profit-share', title: 'Profit Share', group: 'Accounting', description: 'Net profit for the period split by ownership %. Report only — nothing is posted.', icon: Icons.pie_chart_outline_rounded),
+  _EnterpriseReportMeta(key: 'partner-statement', title: 'Partner Statement', group: 'Accounting', description: 'Per-partner opening equity, capital, allocated profit, drawings and closing, reconciled to the ledger, plus a report-only share of profit not yet allocated.', icon: Icons.handshake_rounded),
+  _EnterpriseReportMeta(key: 'profit-share', title: 'Profit Share', group: 'Accounting', description: 'Net profit for the period split by ownership %, with what posted profit allocations already credited. This report posts nothing.', icon: Icons.pie_chart_outline_rounded),
+  _EnterpriseReportMeta(key: 'profit-allocations', title: 'Profit Allocations', group: 'Accounting', description: 'Posted and reversed partner profit allocations: period, net profit, partner amounts, who posted or reversed them.', icon: Icons.call_split_rounded),
   _EnterpriseReportMeta(key: 'asset-register', title: 'Asset Register', group: 'Accounting', description: 'Fixed assets held on the "To" date with cost, accumulated depreciation and book value, reconciled to the ledger.', icon: Icons.precision_manufacturing_rounded),
   _EnterpriseReportMeta(key: 'depreciation-schedule', title: 'Depreciation Schedule', group: 'Accounting', description: 'Monthly straight-line depreciation per asset: posted months and projected months in the range.', icon: Icons.timeline_rounded),
   _EnterpriseReportMeta(key: 'loans-accruals-prepaids', title: 'Loans Payable, Accruals & Prepaids', group: 'Accounting', description: 'Money owed to each lender, accrued expenses not yet paid and prepaid expenses not yet used, reconciled to the ledger.', icon: Icons.pending_actions_rounded),

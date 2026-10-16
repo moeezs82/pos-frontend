@@ -1,5 +1,8 @@
 import 'package:enterprise_pos/api/cash_ledger_service.dart';
+import 'package:enterprise_pos/api/core/api_client.dart' show ApiException;
+import 'package:enterprise_pos/api/partner_service.dart';
 import 'package:enterprise_pos/providers/auth_provider.dart';
+import 'package:enterprise_pos/screens/cash_ledger/capital_reassign_dialog.dart';
 import 'package:enterprise_pos/screens/cash_ledger/cash_ledger_create_screen.dart';
 import 'package:enterprise_pos/screens/cash_ledger/owner_entry_form.dart';
 import 'package:enterprise_pos/screens/cash_ledger/partners_screen.dart';
@@ -28,17 +31,74 @@ class OwnerEquityView extends StatefulWidget {
 
 class _OwnerEquityViewState extends State<OwnerEquityView> {
   late final CashLedgerService _service;
+  late final PartnerService _partners;
   final _money = const AppMoneyFormatter();
 
   bool _loading = true;
   String? _error;
   Map<String, dynamic> _data = const {};
+  int? _voidingId;
 
   @override
   void initState() {
     super.initState();
-    _service = CashLedgerService(token: context.read<AuthProvider>().token ?? '');
+    final token = context.read<AuthProvider>().token ?? '';
+    _service = CashLedgerService(token: token);
+    _partners = PartnerService(token: token);
     _fetch();
+  }
+
+  /// Phase 7a: move capital recorded without a partner to a partner.
+  Future<void> _reassign() async {
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (_) => CapitalReassignDialog(service: _service, partners: _partners, unassigned: _num('unassigned_capital')),
+    );
+    if (saved != true || !mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Capital reassigned to partner.')));
+    widget.onRecorded?.call();
+    _fetch();
+  }
+
+  Future<void> _voidReassign(Map<String, dynamic> e) async {
+    final id = (e['id'] as num).toInt();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (d) => AlertDialog(
+        title: const Text('Void reassignment?'),
+        content: Text(
+          'Void the reassignment of ${_money.format(num.tryParse('${e['amount']}') ?? 0)} to ${e['party'] ?? 'the partner'}? '
+          'A reversing entry dated today moves it back to unassigned capital; the original stays on record.',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(d, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(d, true), child: const Text('Void')),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    setState(() => _voidingId = id);
+    try {
+      await _service.voidEntry(id.toString());
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Reassignment voided and reversed.')));
+      widget.onRecorded?.call();
+      await _fetch();
+    } catch (err) {
+      if (!mounted) return;
+      var msg = err.toString().replaceFirst('Exception: ', '');
+      if (err is ApiException) {
+        final errs = err.body?['errors'];
+        if (errs is Map && errs.isNotEmpty && errs.values.first is List && (errs.values.first as List).isNotEmpty) {
+          msg = (errs.values.first as List).first.toString();
+        } else if (err.message.trim().isNotEmpty) {
+          msg = err.message;
+        }
+      }
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+    } finally {
+      if (mounted) setState(() => _voidingId = null);
+    }
   }
 
   Future<void> _fetch() async {
@@ -125,11 +185,24 @@ class _OwnerEquityViewState extends State<OwnerEquityView> {
       );
     }
 
+    final unassigned = _num('unassigned_capital');
+    final reassignments = List<Map<String, dynamic>>.from(
+      (_data['reassignments'] as List? ?? const []).map((e) => Map<String, dynamic>.from(e as Map)),
+    );
+    final reassignMeta = CashLedgerCategoryMeta.capitalReassign;
+
     return RefreshIndicator(
       onRefresh: _fetch,
       child: ListView(
         padding: const EdgeInsets.all(16),
         children: [
+          if (unassigned > 0) ...[
+            _UnassignedBanner(
+              amount: _money.format(unassigned),
+              onReassign: canRecord ? _reassign : null,
+            ),
+            const SizedBox(height: 16),
+          ],
           Wrap(
             spacing: 12,
             runSpacing: 12,
@@ -174,6 +247,46 @@ class _OwnerEquityViewState extends State<OwnerEquityView> {
                 ),
             ],
           ),
+          if (reassignments.isNotEmpty) ...[
+            const SizedBox(height: 20),
+            Text('Capital reassignments', style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800)),
+            const SizedBox(height: 8),
+            ...reassignments.map((e) {
+              final voided = e['status'] == 'void';
+              final id = (e['id'] as num).toInt();
+              return ListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(reassignMeta.icon, color: voided ? AppTheme.textMuted : reassignMeta.color),
+                title: Text(
+                  'To ${e['party'] ?? 'partner'}',
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontWeight: FontWeight.w700, decoration: voided ? TextDecoration.lineThrough : null),
+                ),
+                subtitle: Text(
+                  '${e['txn_date']} · no cash${voided ? ' · voided' : ''}${(e['note'] ?? '').toString().isEmpty ? '' : ' · ${e['note']}'}',
+                  overflow: TextOverflow.ellipsis,
+                ),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(_money.format(num.tryParse('${e['amount']}') ?? 0), style: const TextStyle(fontWeight: FontWeight.w800)),
+                    if (canRecord && e['can_void'] == true)
+                      _voidingId == id
+                          ? const Padding(
+                              padding: EdgeInsets.all(12),
+                              child: SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+                            )
+                          : IconButton(
+                              tooltip: 'Void',
+                              onPressed: _voidingId == null ? () => _voidReassign(e) : null,
+                              icon: const Icon(Icons.block_rounded, size: 18),
+                            ),
+                  ],
+                ),
+              );
+            }),
+          ],
         ],
       ),
     );
@@ -181,6 +294,48 @@ class _OwnerEquityViewState extends State<OwnerEquityView> {
 }
 
 enum _OwnerEquityPane { summary, capital, drawings, partners }
+
+/// Shown while some owner capital is not tagged to any partner (usually
+/// capital recorded before the first partner was added).
+class _UnassignedBanner extends StatelessWidget {
+  final String amount;
+  final VoidCallback? onReassign;
+
+  const _UnassignedBanner({required this.amount, this.onReassign});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppTheme.warning.withValues(alpha: .08),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppTheme.warning.withValues(alpha: .45)),
+      ),
+      child: Wrap(
+        spacing: 12,
+        runSpacing: 10,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          const Icon(Icons.info_outline_rounded, color: AppTheme.warning),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 560),
+            child: Text(
+              '$amount of capital is not assigned to any partner (shown as "Unassigned" on the Partner Statement).',
+              style: const TextStyle(fontWeight: FontWeight.w600),
+            ),
+          ),
+          if (onReassign != null)
+            FilledButton.icon(
+              onPressed: onReassign,
+              icon: const Icon(Icons.swap_horiz_rounded, size: 18),
+              label: const Text('Reassign to partner'),
+            ),
+        ],
+      ),
+    );
+  }
+}
 
 class _EquityCard extends StatelessWidget {
   final String label;

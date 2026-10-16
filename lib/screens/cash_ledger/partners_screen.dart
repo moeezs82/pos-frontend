@@ -132,9 +132,36 @@ class _PartnersScreenState extends State<PartnersScreen> {
                     children: [
                       Text(
                         'Active ownership allocated: ${_activeTotal.toStringAsFixed(2)}% of 100%. '
-                        'Profit share in reports uses these percentages and is never posted to the ledger.',
+                        'Profit share in reports and profit allocation use these percentages.',
                         style: Theme.of(context).textTheme.bodySmall,
                       ),
+                      // Profit allocation (phase 7) is refused by the backend
+                      // unless active partners add up to exactly 100%.
+                      if (_partners.isNotEmpty && (_activeTotal - 100).abs() >= 0.005) ...[
+                        const SizedBox(height: 10),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                          decoration: BoxDecoration(
+                            color: AppTheme.warning.withValues(alpha: .1),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: AppTheme.warning.withValues(alpha: .45)),
+                          ),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Icon(Icons.warning_amber_rounded, color: AppTheme.warning, size: 20),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  'Active partners add up to ${_activeTotal.toStringAsFixed(2)}%, not 100%. '
+                                  'Profit cannot be allocated to partners until the active percentages total exactly 100%.',
+                                  style: const TextStyle(fontWeight: FontWeight.w600),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
                       const SizedBox(height: 12),
                       if (_partners.isEmpty)
                         const Padding(

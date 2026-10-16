@@ -57,7 +57,7 @@ class CashLedgerCategoryMeta {
   String? get requiredAddon => switch (value) {
     'LOAN_GIVEN' || 'LOAN_RECOVERED' => _kAddonLoan,
     'QAMETI_PAYMENT' || 'QAMETI_COLLECTION' => _kAddonQameti,
-    'CAPITAL_IN' || 'OWNER_DRAWINGS' => _kAddonOwnerEquity,
+    'CAPITAL_IN' || 'OWNER_DRAWINGS' || 'OWNER_CAPITAL_REASSIGN' => _kAddonOwnerEquity,
     'LOAN_RECEIVED' || 'LOAN_REPAID' || 'ACCRUED_EXPENSE' || 'ACCRUED_PAYMENT' ||
     'PREPAID_PAYMENT' || 'PREPAID_EXPENSE_RECOGNISE' => _kAddonExtendedAccounts,
     _ => null,
@@ -65,7 +65,7 @@ class CashLedgerCategoryMeta {
 
   /// The extra permission this category requires, or null.
   String? get requiredPermission => switch (value) {
-    'CAPITAL_IN' || 'OWNER_DRAWINGS' => kOwnerEquityPermission,
+    'CAPITAL_IN' || 'OWNER_DRAWINGS' || 'OWNER_CAPITAL_REASSIGN' => kOwnerEquityPermission,
     'LOAN_RECEIVED' || 'LOAN_REPAID' || 'ACCRUED_EXPENSE' || 'ACCRUED_PAYMENT' ||
     'PREPAID_PAYMENT' || 'PREPAID_EXPENSE_RECOGNISE' => kExtendedAccountsPermission,
     _ => null,
@@ -181,8 +181,22 @@ class CashLedgerCategoryMeta {
     ),
   ];
 
-  static CashLedgerCategoryMeta byValue(String value) =>
-      all.firstWhere((c) => c.value == value, orElse: () => all.first);
+  /// Reassign unassigned capital to a partner (DR 3000 untagged / CR 3000
+  /// partner, no cash). Not in [all]: it cannot be created from this form,
+  /// only from Owner Equity → Reassign to partner
+  /// (POST /owner-equity/reassign-capital).
+  static const capitalReassign = CashLedgerCategoryMeta(
+    value: 'OWNER_CAPITAL_REASSIGN',
+    label: 'Capital Reassigned to Partner',
+    direction: 'none',
+    icon: Icons.swap_horiz_rounded,
+    color: AppTheme.purple,
+    hint: 'Moves capital recorded without a partner to a partner. No cash moves.',
+  );
+
+  static CashLedgerCategoryMeta byValue(String value) => value == capitalReassign.value
+      ? capitalReassign
+      : all.firstWhere((c) => c.value == value, orElse: () => all.first);
 }
 
 class CashLedgerCreateScreen extends StatefulWidget {

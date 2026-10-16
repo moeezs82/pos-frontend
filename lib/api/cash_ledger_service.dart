@@ -186,8 +186,31 @@ class CashLedgerService {
     throw Exception(res['message'] ?? 'Failed to load $which subledger');
   }
 
+  /// POST /owner-equity/reassign-capital (add-on owner_equity,
+  /// manage-owner-equity). Moves untagged owner capital to a partner with no
+  /// cash movement (DR 3000 untagged / CR 3000 partner). Returns the
+  /// OWNER_CAPITAL_REASSIGN cash-ledger row plus `unassigned_capital` left.
+  Future<Map<String, dynamic>> reassignCapital({
+    required int partnerId,
+    required String amount, // stringified decimal, e.g. "600000.00"
+    String? entryDate, // YYYY-MM-DD; server default is today
+    String? note,
+  }) async {
+    final res = await _client.post('/owner-equity/reassign-capital', body: {
+      'partner_id': partnerId,
+      'amount': amount,
+      if (entryDate != null && entryDate.isNotEmpty) 'entry_date': entryDate,
+      if (note != null && note.trim().isNotEmpty) 'note': note.trim(),
+    });
+    if (res['success'] == true) return Map<String, dynamic>.from(res['data'] ?? {});
+    throw Exception(res['message'] ?? 'Failed to reassign capital');
+  }
+
   /// GET /cash-ledger/subledgers/owner-equity (add-on owner_equity).
-  /// Returns { as_of, capital_contributed, drawings, net_owner_equity }.
+  /// Returns { as_of, capital_contributed, drawings, net_owner_equity,
+  /// unassigned_capital, reassignments: [...] }. `unassigned_capital` is
+  /// capital not tagged to any partner; `reassignments` are the latest
+  /// OWNER_CAPITAL_REASSIGN entries (non-cash, so not in the Ledger tab).
   Future<Map<String, dynamic>> getOwnerEquitySummary() async {
     final res = await _client.get('/cash-ledger/subledgers/owner-equity');
     if (res['success'] == true) return Map<String, dynamic>.from(res['data'] ?? {});

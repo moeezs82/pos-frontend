@@ -14,6 +14,7 @@ import 'package:enterprise_pos/screens/dashboard/command_center_dashboard.dart';
 import 'package:enterprise_pos/screens/dashboard/low_stock_screen.dart';
 import 'package:enterprise_pos/screens/intelligence/intelligence_hub_screen.dart';
 import 'package:enterprise_pos/screens/fixed_assets/fixed_assets_screen.dart';
+import 'package:enterprise_pos/screens/profit_allocation/profit_allocation_screen.dart';
 import 'package:enterprise_pos/screens/login_screen.dart';
 import 'package:enterprise_pos/screens/payments/party_payments_screen.dart';
 import 'package:enterprise_pos/screens/product_screen.dart';
@@ -75,6 +76,7 @@ class _HomeScreenState extends State<HomeScreen> {
     PosRouteIds.units,
     PosRouteIds.cashLedger,
     PosRouteIds.fixedAssets,
+    PosRouteIds.profitAllocation,
     PosRouteIds.accounts,
     PosRouteIds.paymentMethods,
     PosRouteIds.printerSettings,
@@ -171,6 +173,8 @@ class _HomeScreenState extends State<HomeScreen> {
         return const CashLedgerScreen(key: ValueKey(PosRouteIds.cashLedger));
       case PosRouteIds.fixedAssets:
         return const FixedAssetsScreen(key: ValueKey(PosRouteIds.fixedAssets));
+      case PosRouteIds.profitAllocation:
+        return const ProfitAllocationScreen(key: ValueKey(PosRouteIds.profitAllocation));
       case PosRouteIds.accounts:
         return const AccountsScreen(key: ValueKey(PosRouteIds.accounts));
       case PosRouteIds.paymentMethods:
@@ -454,6 +458,16 @@ class _HomeScreenState extends State<HomeScreen> {
               onTap: () => PosNavigation.openSingleton(
                 routeId: PosRouteIds.fixedAssets,
                 builder: (_) => const FixedAssetsScreen(),
+              ),
+            ),
+          if (auth.hasAddon('owner_equity') &&
+              (auth.hasPermission('view-cashbook') || auth.hasPermission('view-reports') || auth.hasPermission(kProfitAllocationPermission)))
+            _NavEntry(
+              icon: Icons.call_split_rounded,
+              title: 'Profit Allocation',
+              onTap: () => PosNavigation.openSingleton(
+                routeId: PosRouteIds.profitAllocation,
+                builder: (_) => const ProfitAllocationScreen(),
               ),
             ),
           if (auth.hasPermission('view-reports'))
