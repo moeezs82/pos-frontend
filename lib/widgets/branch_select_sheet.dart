@@ -307,6 +307,25 @@ class _BranchEditorDialogState extends State<_BranchEditorDialog> {
   late final TextEditingController _phoneController;
   late final TextEditingController _currencyController;
   late bool _isActive;
+  // Starter template for a NEW branch only (backend applies it when
+  // POS_BRANCH_TEMPLATES_ENABLED is on; otherwise it is ignored).
+  String? _businessType;
+  String? _region;
+
+  static const _businessTypes = <String, String>{
+    'retail': 'Retail',
+    'restaurant': 'Restaurant',
+    'wholesale': 'Wholesale',
+    'pharmacy': 'Pharmacy',
+  };
+  // Region code → (label, default currency). Generic has no default.
+  static const _regions = <String, (String, String?)>{
+    'PK': ('Pakistan', 'PKR'),
+    'KW': ('Kuwait', 'KWD'),
+    'SA': ('Saudi Arabia', 'SAR'),
+    'AE': ('United Arab Emirates', 'AED'),
+    'GENERIC': ('Generic', null),
+  };
 
   @override
   void initState() {
@@ -338,6 +357,8 @@ class _BranchEditorDialogState extends State<_BranchEditorDialog> {
       'phone': _phoneController.text.trim(),
       'currency': currency,
       'is_active': _isActive,
+      if (widget.branch == null && _businessType != null) 'business_type': _businessType,
+      if (widget.branch == null && _region != null) 'region_code': _region,
     });
   }
 
@@ -361,6 +382,33 @@ class _BranchEditorDialogState extends State<_BranchEditorDialog> {
               controller: _currencyController,
               maxLength: 20,
             ),
+            if (widget.branch == null) ...[
+              DropdownButtonFormField<String?>(
+                initialValue: _businessType,
+                decoration: const InputDecoration(labelText: 'Business type (optional)'),
+                items: [
+                  const DropdownMenuItem<String?>(value: null, child: Text('None')),
+                  ..._businessTypes.entries.map((e) => DropdownMenuItem<String?>(value: e.key, child: Text(e.value))),
+                ],
+                onChanged: (v) => setState(() => _businessType = v),
+              ),
+              DropdownButtonFormField<String?>(
+                initialValue: _region,
+                decoration: const InputDecoration(
+                  labelText: 'Region (optional)',
+                  helperText: 'Sets currency, tax label and local payment methods for this new branch only.',
+                ),
+                items: [
+                  const DropdownMenuItem<String?>(value: null, child: Text('None')),
+                  ..._regions.entries.map((e) => DropdownMenuItem<String?>(value: e.key, child: Text(e.value.$1))),
+                ],
+                onChanged: (v) => setState(() {
+                  _region = v;
+                  final currency = v == null ? null : _regions[v]!.$2;
+                  if (currency != null) _currencyController.text = currency;
+                }),
+              ),
+            ],
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
               title: const Text('Active'),
