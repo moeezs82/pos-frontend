@@ -144,6 +144,20 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
   bool get _isHealthCheck => _selectedReport.key == 'accounting-health';
   bool get _isTaxSummary => _selectedReport.key == 'tax-summary';
   bool get _isCashFlow => _selectedReport.key == 'cash-flow-statement';
+  bool get _isProfitShare => _selectedReport.key == 'profit-share';
+
+  // Profit Share summary cards: net profit first, then where it comes from
+  // (sales profit vs non-sales ledger income such as an asset-disposal gain).
+  static const _profitShareTotalKeys = <String>[
+    'period_net_profit',
+    'operating_profit',
+    'other_income',
+    'allocated_profit',
+    'allocated_percent',
+    'already_allocated_profit',
+    'not_yet_allocated_profit',
+    'unallocated_profit',
+  ];
 
   // Ordered summary cards for the financial statements; the backend returns
   // totals as a JSON object, so key order cannot be relied on.
@@ -1348,7 +1362,9 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
                     ? _taxSummaryTotalKeys
                     : _isCashFlow
                         ? _cashFlowTotalKeys
-                        : null;
+                        : _isProfitShare
+                            ? _profitShareTotalKeys
+                            : null;
     final visible = orderedKeys != null
         ? orderedKeys.where(totals.containsKey).map((key) => MapEntry(key, totals[key])).toList()
         : entries.take(8).toList();
@@ -1656,6 +1672,8 @@ class _EnterpriseReportsWorkspaceScreenState extends State<EnterpriseReportsWork
     }
     // Profit allocation amounts (phase 7); allocated_percent stays a percentage.
     if (k.contains('allocated') && !k.contains('percent') && !k.contains('count')) return true;
+    // Non-sales ledger income (asset-disposal gain, cash overage) on P&L / Profit Share.
+    if (k == 'other_income') return true;
 
     return k == 'net_expenses' || k.contains('total') || k.contains('amount') || k.contains('balance') || k.contains('paid') || k.contains('tax') || k.contains('discount') || k.contains('profit') || k.contains('revenue') || k.contains('cost') || k.contains('debit') || k.contains('credit') || k.contains('cash') || k.contains('valuation') || k.contains('sales') || k.contains('purchase');
   }
