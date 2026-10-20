@@ -19,6 +19,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/auth_provider.dart';
+import 'package:enterprise_pos/widgets/workspace_pages.dart';
 
 /// Detail screen for a variable product group.
 /// Shows metadata in a structured info card + all variants in a polished table.
@@ -328,17 +329,15 @@ class _ProductGroupDetailScreenState extends State<ProductGroupDetailScreen> {
     List<ProductPackaging> packagings = [];
     final groupName = _group?['name']?.toString() ?? widget.groupName;
 
-    final result = await showDialog<bool>(
-      context: context,
-      barrierDismissible: false,
+    final result = await PosWorkspacePages.open<bool>(
+      context,
       builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setSt) => Dialog(
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(16),
-          ),
-          insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 24),
+        builder: (ctx, setSt) => WorkspaceCardPage(
+          maxWidth: 580,
+          scrollable: false,
+          padding: EdgeInsets.zero,
           child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 580, maxHeight: 780),
+            constraints: const BoxConstraints(),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -837,17 +836,15 @@ class _ProductGroupDetailScreenState extends State<ProductGroupDetailScreen> {
     bool barcodeBusy = false;
     bool saving = false;
 
-    final saved = await showDialog<bool>(
-      context: context,
-      barrierDismissible: false,
+    final saved = await PosWorkspacePages.open<bool>(
+      context,
       builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setSt) => Dialog(
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-          insetPadding:
-              const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
+        builder: (ctx, setSt) => WorkspaceCardPage(
+          maxWidth: 560,
+          scrollable: false,
+          padding: EdgeInsets.zero,
           child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 560, maxHeight: 780),
+            constraints: const BoxConstraints(),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,

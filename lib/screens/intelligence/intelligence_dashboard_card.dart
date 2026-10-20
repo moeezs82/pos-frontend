@@ -7,6 +7,7 @@ import 'package:enterprise_pos/screens/intelligence/widgets/intelligence_widgets
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:enterprise_pos/services/app_navigator.dart';
 
 class IntelligenceDashboardCard extends StatefulWidget {
   const IntelligenceDashboardCard({super.key});
@@ -63,7 +64,7 @@ class _IntelligenceDashboardCardState extends State<IntelligenceDashboardCard> {
       borderRadius: BorderRadius.circular(18),
       child: InkWell(
         borderRadius: BorderRadius.circular(18),
-        onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const IntelligenceHubScreen())),
+        onTap: () => PosNavigation.openSingleton(routeId: PosRouteIds.intelligence, builder: (_) => const IntelligenceHubScreen()),
         child: Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(

@@ -10,6 +10,7 @@ import '../../providers/register_shift_provider.dart';
 import '../../theme/app_theme.dart';
 import 'register_shift_management_dialog.dart';
 import 'register_shift_variance_dialog.dart';
+import 'package:enterprise_pos/widgets/workspace_pages.dart';
 
 class RegisterShiftScreen extends StatefulWidget {
   const RegisterShiftScreen({super.key});
@@ -561,7 +562,7 @@ class _RegisterShiftScreenState extends State<RegisterShiftScreen> {
 
   Future<void> _openDialog(List<Map<String, dynamic>> availableRegisters) async {
     int registerId = int.parse(availableRegisters.first['id'].toString()); final cash = TextEditingController(text: '0.00'); final note = TextEditingController();
-    final ok = await showDialog<bool>(context: context, builder: (d) => AlertDialog(title: const Text('Open Register Shift'), content: SizedBox(width: 440, child: Column(mainAxisSize: MainAxisSize.min, children: [DropdownButtonFormField<int>(initialValue: registerId, decoration: const InputDecoration(labelText: 'Register'), items: availableRegisters.map((r) => DropdownMenuItem(value: int.parse(r['id'].toString()), child: Text(r['name'].toString()))).toList(), onChanged: (v) => registerId = v!), const SizedBox(height: 12), TextField(controller: cash, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Opening cash')), const SizedBox(height: 12), TextField(controller: note, decoration: const InputDecoration(labelText: 'Opening note (optional)'))])), actions: [TextButton(onPressed: () => Navigator.pop(d, false), child: const Text('Cancel')), FilledButton(onPressed: () => Navigator.pop(d, true), child: const Text('Open Shift'))]));
+    final ok = await PosWorkspacePages.open<bool>(context, builder: (d) => WorkspaceFormPage(title: const Text('Open Register Shift'), content: SizedBox(width: 440, child: Column(mainAxisSize: MainAxisSize.min, children: [DropdownButtonFormField<int>(initialValue: registerId, decoration: const InputDecoration(labelText: 'Register'), items: availableRegisters.map((r) => DropdownMenuItem(value: int.parse(r['id'].toString()), child: Text(r['name'].toString()))).toList(), onChanged: (v) => registerId = v!), const SizedBox(height: 12), TextField(controller: cash, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Opening cash')), const SizedBox(height: 12), TextField(controller: note, decoration: const InputDecoration(labelText: 'Opening note (optional)'))])), actions: [TextButton(onPressed: () => Navigator.pop(d, false), child: const Text('Cancel')), FilledButton(onPressed: () => Navigator.pop(d, true), child: const Text('Open Shift'))]));
     if (ok == true && mounted) { try { await context.read<RegisterShiftProvider>().open(registerId: registerId, openingCash: double.tryParse(cash.text) ?? 0, note: note.text); } catch (e) { _error(e); } }
   }
 
@@ -572,10 +573,10 @@ class _RegisterShiftScreenState extends State<RegisterShiftScreen> {
       final service = RegisterShiftService(token);
       var registers = await service.registers(includeInactive: true);
       if (!mounted) return;
-      await showDialog<void>(
-        context: context,
+      await PosWorkspacePages.open<void>(
+        context,
         builder: (dialogContext) => StatefulBuilder(
-          builder: (context, setDialogState) => AlertDialog(
+          builder: (context, setDialogState) => WorkspaceFormPage(
             title: const Text('Manage Registers'),
             content: SizedBox(
               width: 720,
@@ -651,10 +652,10 @@ class _RegisterShiftScreenState extends State<RegisterShiftScreen> {
     final code = TextEditingController(text: register?['code']?.toString() ?? '');
     final device = TextEditingController(text: register?['device_identifier']?.toString() ?? '');
     var isActive = register == null || register['is_active'] == true || register['is_active'] == 1;
-    final save = await showDialog<bool>(
-      context: context,
+    final save = await PosWorkspacePages.open<bool>(
+      context,
       builder: (editorContext) => StatefulBuilder(
-        builder: (_, setEditorState) => AlertDialog(
+        builder: (_, setEditorState) => WorkspaceFormPage(
           title: Text(register == null ? 'Add Register' : 'Edit Register'),
           content: SizedBox(
             width: 440,
@@ -695,15 +696,15 @@ class _RegisterShiftScreenState extends State<RegisterShiftScreen> {
 
   Future<void> _movementDialog(String direction) async {
     final amount = TextEditingController(); final reason = TextEditingController();
-    final ok = await showDialog<bool>(context: context, builder: (d) => AlertDialog(title: Text(direction == 'in' ? 'Cash In' : 'Cash Out'), content: Column(mainAxisSize: MainAxisSize.min, children: [TextField(controller: amount, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Amount')), const SizedBox(height: 12), TextField(controller: reason, decoration: const InputDecoration(labelText: 'Reason'))]), actions: [TextButton(onPressed: () => Navigator.pop(d, false), child: const Text('Cancel')), FilledButton(onPressed: () => Navigator.pop(d, true), child: const Text('Record'))]));
+    final ok = await PosWorkspacePages.open<bool>(context, builder: (d) => WorkspaceFormPage(title: Text(direction == 'in' ? 'Cash In' : 'Cash Out'), content: Column(mainAxisSize: MainAxisSize.min, children: [TextField(controller: amount, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Amount')), const SizedBox(height: 12), TextField(controller: reason, decoration: const InputDecoration(labelText: 'Reason'))]), actions: [TextButton(onPressed: () => Navigator.pop(d, false), child: const Text('Cancel')), FilledButton(onPressed: () => Navigator.pop(d, true), child: const Text('Record'))]));
     if (ok == true && mounted) { try { await context.read<RegisterShiftProvider>().addMovement(direction: direction, amount: double.tryParse(amount.text) ?? 0, reason: reason.text); } catch (e) { _error(e); } }
   }
 
   Future<void> _closeDialog() async {
     final pending = context.read<OfflineQueueProvider>().pendingCount;
     final existing = context.read<RegisterShiftProvider>().closeRequest;
-    final input = await showDialog<_CloseShiftInput>(
-      context: context,
+    final input = await PosWorkspacePages.open<_CloseShiftInput>(
+      context,
       builder: (_) => _CloseShiftDialog(
         pendingSyncCount: pending,
         expectedCash: _number(context.read<RegisterShiftProvider>().summary['expected_cash']),
@@ -767,7 +768,7 @@ class _RegisterShiftScreenState extends State<RegisterShiftScreen> {
       final page = await RegisterShiftService(token).history();
       final rows = (page['data'] as List?) ?? const [];
       if (!mounted) return;
-      await showDialog<void>(context: context, builder: (d) => AlertDialog(
+      await PosWorkspacePages.open<void>(context, builder: (d) => WorkspaceFormPage(
         title: const Text('Shift History'),
         content: SizedBox(width: 760, height: 480, child: rows.isEmpty ? const Center(child: Text('No completed shifts yet.')) : ListView.separated(
           itemCount: rows.length, separatorBuilder: (_, __) => const Divider(height: 1),
@@ -799,7 +800,7 @@ class _RegisterShiftScreenState extends State<RegisterShiftScreen> {
               ?.map((e) => Map<String, dynamic>.from(e as Map))
               .toList() ??
           const <Map<String, dynamic>>[];
-      await showDialog<void>(context: context, builder: (d) => AlertDialog(
+      await PosWorkspacePages.open<void>(context, builder: (d) => WorkspaceFormPage(
         title: Text('Shift #$shiftId Details'),
         content: SizedBox(width: 820, height: 560, child: ListView(children: [
           Wrap(spacing: 12, runSpacing: 8, children: [
@@ -958,7 +959,7 @@ class _CloseShiftDialogState extends State<_CloseShiftDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
+    return WorkspaceFormPage(
       title: const Text('Close Register Shift'),
       content: SizedBox(
         width: 470,

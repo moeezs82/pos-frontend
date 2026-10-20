@@ -10,6 +10,7 @@ import 'package:enterprise_pos/services/app_navigator.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:enterprise_pos/widgets/workspace_pages.dart';
 
 /// Action bar shown on the partner reports (Owner Equity, Partner Statement,
 /// Profit Share, Profit Allocations) so the fixes for what the report shows
@@ -49,16 +50,9 @@ class PartnerReportActions extends StatelessWidget {
   }
 
   Future<void> _openPartners(BuildContext context) async {
-    await showDialog<void>(
-      context: context,
-      builder: (d) => Dialog(
-        clipBehavior: Clip.antiAlias,
-        child: SizedBox(
-          width: 760,
-          height: 620,
-          child: PartnersScreen(onBack: () => Navigator.of(d).pop()),
-        ),
-      ),
+    await PosWorkspacePages.open<void>(
+      context,
+      builder: (d) => PartnersScreen(onBack: () => Navigator.of(d).pop()),
     );
     onChanged();
   }
@@ -74,8 +68,8 @@ class PartnerReportActions extends StatelessWidget {
       available = _num(summary['unassigned_capital']);
     } catch (_) {}
     if (!context.mounted) return;
-    final saved = await showDialog<bool>(
-      context: context,
+    final saved = await PosWorkspacePages.open<bool>(
+      context,
       builder: (_) => CapitalReassignDialog(service: ledger, partners: PartnerService(token: token), unassigned: available),
     );
     if (saved == true && context.mounted) {

@@ -9,6 +9,7 @@ import 'package:enterprise_pos/widgets/enterprise/enterprise_ui.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import 'package:enterprise_pos/widgets/workspace_pages.dart';
 
 /// Posting and reversing need this permission (backend enforces it); reading
 /// needs it, view-reports or view-cashbook. All of it needs add-on owner_equity.
@@ -88,12 +89,12 @@ class _ProfitAllocationScreenState extends State<ProfitAllocationScreen> {
       );
 
   Future<void> _sync() async {
-    final posted = await showDialog<bool>(context: context, builder: (_) => _SyncProfitDialog(api: _api));
+    final posted = await PosWorkspacePages.open<bool>(context, builder: (_) => _SyncProfitDialog(api: _api));
     if (posted == true) _fetch();
   }
 
   Future<void> _reverse(Map<String, dynamic> a) async {
-    final done = await showDialog<bool>(context: context, builder: (_) => _ReverseDialog(api: _api, allocation: a));
+    final done = await PosWorkspacePages.open<bool>(context, builder: (_) => _ReverseDialog(api: _api, allocation: a));
     if (done == true) _fetch();
   }
 
@@ -350,7 +351,7 @@ class _SyncProfitDialogState extends State<_SyncProfitDialog> {
 
     return CallbackShortcuts(
       bindings: {const SingleActivator(LogicalKeyboardKey.enter, control: true): _post},
-      child: AlertDialog(
+      child: WorkspaceFormPage(
         title: const Text('Sync profit to partners'),
         content: SizedBox(
           width: 580,
@@ -488,7 +489,7 @@ class _ReverseDialogState extends State<_ReverseDialog> {
   @override
   Widget build(BuildContext context) {
     final a = widget.allocation;
-    return AlertDialog(
+    return WorkspaceFormPage(
       title: Text('Reverse allocation #${a['id']}?'),
       content: SizedBox(
         width: 440,

@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 
 import 'package:enterprise_pos/api/unit_service.dart';
 import 'package:enterprise_pos/models/product_unit.dart';
+import 'package:enterprise_pos/widgets/workspace_pages.dart';
 
 /// Units of measure.
 ///
@@ -84,8 +85,8 @@ class _UnitsScreenState extends State<UnitsScreen> {
   }
 
   Future<void> _create() async {
-    final result = await showDialog<_UnitDraft>(
-      context: context,
+    final result = await PosWorkspacePages.open<_UnitDraft>(
+      context,
       builder: (_) => const _UnitDialog(),
     );
     if (result == null) return;
@@ -104,8 +105,8 @@ class _UnitsScreenState extends State<UnitsScreen> {
   }
 
   Future<void> _edit(ProductUnit unit) async {
-    final result = await showDialog<_UnitDraft>(
-      context: context,
+    final result = await PosWorkspacePages.open<_UnitDraft>(
+      context,
       builder: (_) => _UnitDialog(existing: unit),
     );
     if (result == null) return;
@@ -376,7 +377,7 @@ class _UnitDialogState extends State<_UnitDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
+    return WorkspaceFormPage(
       title: Text(_isEdit ? 'Edit unit' : 'Add unit'),
       content: Form(
         key: _formKey,

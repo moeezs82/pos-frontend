@@ -4,6 +4,7 @@ import 'package:uuid/uuid.dart';
 
 import '../../api/register_shift_service.dart';
 import '../../theme/app_theme.dart';
+import 'package:enterprise_pos/widgets/workspace_pages.dart';
 
 Future<void> showRegisterShiftVarianceDialog({
   required BuildContext context,
@@ -11,9 +12,8 @@ Future<void> showRegisterShiftVarianceDialog({
   required bool canResolve,
   Future<void> Function()? onChanged,
 }) async {
-  await showDialog<void>(
-    context: context,
-    barrierDismissible: false,
+  await PosWorkspacePages.open<void>(
+    context,
     builder: (_) => _RegisterShiftVarianceDialog(
       token: token,
       canResolve: canResolve,
@@ -97,22 +97,30 @@ class _RegisterShiftVarianceDialogState
 
   @override
   Widget build(BuildContext context) {
-    return Dialog(
-      insetPadding: const EdgeInsets.symmetric(horizontal: 34, vertical: 28),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 1120, maxHeight: 760),
-        child: Column(
-          children: [
-            _header(),
-            const Divider(height: 1),
-            _filters(),
-            const Divider(height: 1),
-            Expanded(child: _body()),
-            if (!_loading && _error == null && _total > 0) ...[
+    return Material(
+      color: AppTheme.bg,
+      child: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Container(
+          clipBehavior: Clip.antiAlias,
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(AppTheme.radiusLarge),
+            border: Border.all(color: AppTheme.border),
+          ),
+          child: Column(
+            children: [
+              _header(),
               const Divider(height: 1),
-              _paginationBar(),
+              _filters(),
+              const Divider(height: 1),
+              Expanded(child: _body()),
+              if (!_loading && _error == null && _total > 0) ...[
+                const Divider(height: 1),
+                _paginationBar(),
+              ],
             ],
-          ],
+          ),
         ),
       ),
     );

@@ -47,6 +47,8 @@ import 'package:enterprise_pos/widgets/counteriq_desktop_shell.dart';
 import 'package:enterprise_pos/widgets/subscription_warning_banner.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:enterprise_pos/screens/settings/period_lock_screen.dart';
+import 'package:enterprise_pos/widgets/workspace_pages.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -89,6 +91,7 @@ class _HomeScreenState extends State<HomeScreen> {
     PosRouteIds.offlineSync,
     PosRouteIds.backupRestore,
     PosRouteIds.intelligence,
+    PosRouteIds.periodLock,
   };
 
   @override
@@ -115,6 +118,9 @@ class _HomeScreenState extends State<HomeScreen> {
 
     if (_activeWorkspaceRoute != targetRoute) {
       setState(() => _activeWorkspaceRoute = targetRoute);
+    } else {
+      // Clicking the already-open module returns to its list.
+      PosWorkspacePages.closeAll();
     }
 
     // If the request came from a detail/form route or a global shortcut while
@@ -199,6 +205,8 @@ class _HomeScreenState extends State<HomeScreen> {
         return const BackupRestoreScreen(key: ValueKey(PosRouteIds.backupRestore));
       case PosRouteIds.intelligence:
         return const IntelligenceHubScreen(key: ValueKey(PosRouteIds.intelligence));
+      case PosRouteIds.periodLock:
+        return const PeriodLockScreen(key: ValueKey(PosRouteIds.periodLock));
       case PosRouteIds.home:
       default:
         return SingleChildScrollView(

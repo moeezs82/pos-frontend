@@ -17,6 +17,7 @@ import 'package:flutter/material.dart';
 import 'package:enterprise_pos/services/app_currency.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import 'package:enterprise_pos/widgets/workspace_pages.dart';
 
 enum PartyPaymentKind { customer, vendor, deliveryBoy }
 enum PartyBalanceFilter { all, advanceCredit, outstanding }
@@ -536,16 +537,15 @@ class _PartyPaymentsScreenState extends State<PartyPaymentsScreen> {
       );
     }
 
-    final result = await showDialog<Map<int, double>>(
-      context: context,
-      barrierDismissible: false,
+    final result = await PosWorkspacePages.open<Map<int, double>>(
+      context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, setDialogState) {
           double allocated() => controllers.values.fold<double>(
                 0,
                 (sum, c) => sum + _toDouble(c.text),
               );
-          return AlertDialog(
+          return WorkspaceFormPage(
             title: Text(_kind == PartyPaymentKind.customer
                 ? 'Allocate Customer Credit'
                 : 'Allocate Vendor Credit'),
@@ -1036,9 +1036,8 @@ class _PartyPaymentsScreenState extends State<PartyPaymentsScreen> {
     final amount = _kind == PartyPaymentKind.customer
         ? _toDouble(row['credit'])
         : _toDouble(row['debit']);
-    final reason = await showDialog<String>(
-      context: context,
-      barrierDismissible: false,
+    final reason = await PosWorkspacePages.open<String>(
+      context,
       builder: (_) => _ReversePaymentDialog(
         partyLabel: _partyName(_activeParty),
         paymentLabel: _kind == PartyPaymentKind.customer ? 'customer receipt' : 'vendor payment',
@@ -2088,7 +2087,7 @@ class _ReversePaymentDialogState extends State<_ReversePaymentDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
+    return WorkspaceFormPage(
       title: const Text('Reverse Payment'),
       content: SizedBox(
         width: 440,

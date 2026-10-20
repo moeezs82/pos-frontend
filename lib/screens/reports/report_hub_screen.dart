@@ -30,7 +30,7 @@ class ReportsHubScreen extends StatelessWidget {
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
         children: [
           _HeroHeader(
-            onOpenAll: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const EnterpriseReportsWorkspaceScreen())),
+            onOpenAll: () => PosNavigation.openSingleton(routeId: PosRouteIds.reports, builder: (_) => const EnterpriseReportsWorkspaceScreen()),
           ),
           const SizedBox(height: 16),
           GridView.count(
@@ -59,14 +59,14 @@ class ReportsHubScreen extends StatelessWidget {
                 title: 'All Enterprise Reports',
                 subtitle: 'Sales, purchases, inventory, accounting, tax, returns, cashbook, P&L, trial balance.',
                 accent: Colors.purple,
-                onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const EnterpriseReportsWorkspaceScreen())),
+                onTap: () => PosNavigation.openSingleton(routeId: PosRouteIds.reports, builder: (_) => const EnterpriseReportsWorkspaceScreen()),
               ),
               _CommandCard(
                 icon: Icons.point_of_sale_rounded,
                 title: 'Sales Performance',
                 subtitle: 'Open the new report workspace directly on sales summary.',
                 accent: Colors.green,
-                onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const EnterpriseReportsWorkspaceScreen(initialReportKey: 'sales-summary'))),
+                onTap: () => PosNavigation.openSingleton(routeId: PosRouteIds.report('sales-summary'), builder: (_) => const EnterpriseReportsWorkspaceScreen(initialReportKey: 'sales-summary')),
               ),
               if (canViewCreditAudits)
                 _CommandCard(
@@ -74,7 +74,7 @@ class ReportsHubScreen extends StatelessWidget {
                   title: 'Credit Control',
                   subtitle: 'Review exposure, warnings, overrides, corrections, and blocked attempts.',
                   accent: AppTheme.warning,
-                  onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const CreditControlScreen())),
+                  onTap: () => PosNavigation.openSingleton(routeId: PosRouteIds.creditControl, builder: (_) => const CreditControlScreen()),
                 ),
             ],
           ),

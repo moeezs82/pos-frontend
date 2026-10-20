@@ -6,6 +6,7 @@ import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/product_picker_sheet.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:enterprise_pos/widgets/workspace_pages.dart';
 
 class SeasonsScreen extends StatefulWidget {
   const SeasonsScreen({super.key});
@@ -532,14 +533,12 @@ class _SeasonsScreenState extends State<SeasonsScreen> {
     final status = _seasonStatus(row);
     final statusColor = _statusColor(status, row['missing_current_year'] == true);
 
-    await showDialog<void>(
-      context: context,
-      builder: (ctx) => Dialog(
-        insetPadding: const EdgeInsets.all(28),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-        child: Container(
-          width: 760,
-          padding: const EdgeInsets.all(24),
+    await PosWorkspacePages.open<void>(
+      context,
+      builder: (ctx) => WorkspaceCardPage(
+        maxWidth: 760,
+        child: Padding(
+          padding: EdgeInsets.zero,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -661,8 +660,8 @@ class _SeasonsScreenState extends State<SeasonsScreen> {
       if (em != null && ed != null) endDate = DateTime(2000, em, ed);
     }
 
-    final result = await showDialog<Map<String, dynamic>>(
-      context: context,
+    final result = await PosWorkspacePages.open<Map<String, dynamic>>(
+      context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setLocal) {
           Future<void> pickStart() async {
@@ -691,13 +690,11 @@ class _SeasonsScreenState extends State<SeasonsScreen> {
             if (picked != null) setLocal(() => endDate = picked);
           }
 
-          return Dialog(
-            insetPadding: const EdgeInsets.all(28),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-            child: Container(
-              width: 650,
-              constraints: const BoxConstraints(maxHeight: 760),
-              padding: const EdgeInsets.all(24),
+          return WorkspaceCardPage(
+            maxWidth: 650,
+            scrollable: false,
+            child: Padding(
+              padding: EdgeInsets.zero,
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -981,14 +978,13 @@ class _SeasonsScreenState extends State<SeasonsScreen> {
       if (picked != null) setLocal(() => selected = picked);
     }
 
-    final ok = await showDialog<bool>(
-      context: context,
+    final ok = await PosWorkspacePages.open<bool>(
+      context,
       builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setLocal) => Dialog(
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
-          child: Container(
-            width: 540,
-            padding: const EdgeInsets.all(22),
+        builder: (ctx, setLocal) => WorkspaceCardPage(
+          maxWidth: 540,
+          child: Padding(
+            padding: EdgeInsets.zero,
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,

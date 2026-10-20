@@ -6,6 +6,7 @@ import 'package:enterprise_pos/screens/purchases/purchase_create.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:enterprise_pos/widgets/workspace_pages.dart';
 
 class ReplenishmentScreen extends StatefulWidget {
   const ReplenishmentScreen({super.key});
@@ -572,15 +573,18 @@ class _ReplenishmentScreenState extends State<ReplenishmentScreen> {
     final rawVelocity = (row['velocity_per_day'] as num?)?.toDouble() ?? 0;
     final effectiveVelocity = (row['effective_velocity_per_day'] as num?)?.toDouble() ?? rawVelocity;
 
-    await showDialog<void>(
-      context: context,
-      builder: (dialogContext) => Dialog(
-        insetPadding: const EdgeInsets.symmetric(horizontal: 36, vertical: 28),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+    await PosWorkspacePages.open<void>(
+      context,
+      builder: (dialogContext) => Material(
+        color: AppTheme.bg,
         child: Container(
-          width: 900,
-          height: 720,
+          margin: const EdgeInsets.all(20),
           padding: const EdgeInsets.all(24),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(AppTheme.radiusLarge),
+            border: Border.all(color: AppTheme.border),
+          ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [

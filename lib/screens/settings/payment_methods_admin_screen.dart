@@ -10,6 +10,7 @@ import 'package:enterprise_pos/providers/auth_provider.dart';
 import 'package:enterprise_pos/providers/branch_provider.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/enterprise/enterprise_ui.dart';
+import 'package:enterprise_pos/widgets/workspace_pages.dart';
 
 /// Master-Admin, per-branch payment method configuration. Replaces the fixed
 /// four-row Branch Payment Mappings screen with a dynamic list where methods
@@ -362,8 +363,8 @@ class _PaymentMethodsAdminScreenState extends State<PaymentMethodsAdminScreen> {
 
   Future<void> _openEditor(PaymentMethod? existing) async {
     if (_branchId == null) return;
-    final saved = await showDialog<bool>(
-      context: context,
+    final saved = await PosWorkspacePages.open<bool>(
+      context,
       builder: (_) => _MethodEditorDialog(
         branchId: _branchId!,
         existing: existing,
@@ -477,7 +478,7 @@ class _MethodEditorDialogState extends State<_MethodEditorDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
+    return WorkspaceFormPage(
       title: Text(_isEdit ? 'Edit Payment Method' : 'Add Payment Method'),
       content: SizedBox(
         width: 420,

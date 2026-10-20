@@ -10,6 +10,7 @@ import 'package:enterprise_pos/widgets/enterprise/enterprise_ui.dart';
 import 'package:enterprise_pos/widgets/vendor_picker_sheet.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:enterprise_pos/widgets/workspace_pages.dart';
 
 /// Writes need this permission (backend enforces it); reading only needs
 /// view-cashbook or view-reports.
@@ -96,18 +97,18 @@ class _FixedAssetsScreenState extends State<FixedAssetsScreen> {
       );
 
   Future<void> _addAsset() async {
-    final saved = await showDialog<bool>(context: context, builder: (_) => _AssetFormDialog(api: _api));
+    final saved = await PosWorkspacePages.open<bool>(context, builder: (_) => _AssetFormDialog(api: _api));
     if (saved == true) _fetch();
   }
 
   Future<void> _runDepreciation() async {
-    final changed = await showDialog<bool>(context: context, builder: (_) => _DepreciationRunDialog(api: _api));
+    final changed = await PosWorkspacePages.open<bool>(context, builder: (_) => _DepreciationRunDialog(api: _api));
     if (changed == true) _fetch();
   }
 
   Future<void> _openAsset(Map<String, dynamic> a) async {
-    final changed = await showDialog<bool>(
-      context: context,
+    final changed = await PosWorkspacePages.open<bool>(
+      context,
       builder: (_) => _AssetDetailDialog(api: _api, assetId: (a['id'] as num).toInt()),
     );
     if (changed == true) _fetch();
@@ -313,7 +314,7 @@ class _AssetFormDialogState extends State<_AssetFormDialog> {
   Widget build(BuildContext context) {
     final methods = context.watch<PaymentMethodProvider>().activeMethods;
     String? positive(String? v) => (double.tryParse((v ?? '').trim()) ?? 0) > 0 ? null : 'Enter an amount above 0';
-    return AlertDialog(
+    return WorkspaceFormPage(
       title: const Text('Add Fixed Asset'),
       content: SizedBox(
         width: 520,
@@ -473,7 +474,7 @@ class _AssetDetailDialogState extends State<_AssetDetailDialog> {
       true;
 
   Future<void> _dispose() async {
-    final result = await showDialog<Map<String, dynamic>>(context: context, builder: (_) => _DisposeDialog(bookValue: _num(_asset!['book_value'])));
+    final result = await PosWorkspacePages.open<Map<String, dynamic>>(context, builder: (_) => _DisposeDialog(bookValue: _num(_asset!['book_value'])));
     if (result == null) return;
     await _act(
       () => widget.api.dispose(widget.assetId,
@@ -486,7 +487,12 @@ class _AssetDetailDialogState extends State<_AssetDetailDialog> {
   Widget build(BuildContext context) {
     final canManage = context.watch<AuthProvider>().hasPermission(kFixedAssetsPermission);
     final a = _asset;
-    return AlertDialog(
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) Navigator.of(context).pop(_changed);
+      },
+      child: WorkspaceFormPage(
       title: Text(a == null ? 'Fixed Asset' : '${a['name']}'),
       content: SizedBox(
         width: 560,
@@ -556,7 +562,7 @@ class _AssetDetailDialogState extends State<_AssetDetailDialog> {
           ),
         TextButton(onPressed: () => Navigator.pop(context, _changed), child: const Text('Close')),
       ],
-    );
+    ));
   }
 
   Widget _kv(String k, String v) => Padding(
@@ -595,7 +601,7 @@ class _DisposeDialogState extends State<_DisposeDialog> {
     final methods = context.watch<PaymentMethodProvider>().activeMethods;
     final proceeds = double.tryParse(_proceeds.text.trim()) ?? 0;
     final diff = proceeds - widget.bookValue;
-    return AlertDialog(
+    return WorkspaceFormPage(
       title: const Text('Dispose / Sell Asset'),
       content: SizedBox(
         width: 440,
@@ -717,7 +723,7 @@ class _DepreciationRunDialogState extends State<_DepreciationRunDialog> {
   Widget build(BuildContext context) {
     final lines = List<Map<String, dynamic>>.from((_preview?['lines'] as List? ?? const []).map((e) => Map<String, dynamic>.from(e as Map)));
     final summary = Map<String, dynamic>.from(_preview?['summary'] ?? const {});
-    return AlertDialog(
+    return WorkspaceFormPage(
       title: const Text('Run Depreciation'),
       content: SizedBox(
         width: 560,

@@ -6,6 +6,7 @@ import 'package:enterprise_pos/widgets/app_feedback.dart';
 import 'package:enterprise_pos/widgets/enterprise/enterprise_ui.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:enterprise_pos/widgets/workspace_pages.dart';
 
 /// Owner-only screen for viewing and managing branch subscriptions.
 ///
@@ -535,8 +536,8 @@ class _BranchSubscriptionTile extends StatelessWidget {
 
   Future<void> _openEditDialog(
       BuildContext context, int branchId, String branchName) async {
-    final result = await showDialog<bool>(
-      context: context,
+    final result = await PosWorkspacePages.open<bool>(
+      context,
       builder: (_) => _SubscriptionEditDialog(
         branchId: branchId,
         branchName: branchName,
@@ -758,7 +759,7 @@ class _SubscriptionEditDialogState extends State<_SubscriptionEditDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
+    return WorkspaceFormPage(
       title: Text('Manage — ${widget.branchName}'),
       content: _loading
           ? const SizedBox(

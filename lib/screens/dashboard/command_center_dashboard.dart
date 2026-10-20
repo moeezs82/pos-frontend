@@ -942,23 +942,20 @@ class _CommandCenterDashboardState extends State<CommandCenterDashboard> {
         color: _lowStockCount > 0 ? AppTheme.danger : AppTheme.success,
         title: _lowStockCount > 0 ? '$_lowStockCount products below stock threshold' : 'Stock thresholds look healthy',
         subtitle: _lowStockPreview.isEmpty ? 'Open current stock report' : 'Review low-stock products',
-        onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const LowStockScreen())),
+        onTap: () => PosNavigation.openSingleton(routeId: PosRouteIds.lowStock, builder: (_) => const LowStockScreen()),
       ),
       if (_hasIntelligence)
         _AttentionItem(
           color: _marginLeakLines > 0 ? AppTheme.warning : AppTheme.success,
           title: _marginLeakLines > 0 ? '$_marginLeakLines margin-leak lines identified' : 'No margin leaks need review',
           subtitle: _marginLeakLines > 0 ? '${_money.format(_recoverableMargin)} potential recovery • ${_range.label}' : 'Money Finder is clear for ${_range.label}',
-          onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const IntelligenceHubScreen())),
+          onTap: () => PosNavigation.openSingleton(routeId: PosRouteIds.intelligence, builder: (_) => const IntelligenceHubScreen()),
         ),
       _AttentionItem(
         color: offline.pendingCount > 0 ? AppTheme.warning : AppTheme.success,
         title: offline.pendingCount > 0 ? '${offline.pendingCount} offline sales waiting to sync' : 'Offline sales queue is clear',
         subtitle: offline.pendingCount > 0 ? 'Review the sync queue' : 'No pending offline sales',
-        onTap: () async {
-          await Navigator.push(context, MaterialPageRoute(builder: (_) => const OfflineSyncScreen()));
-          if (context.mounted) context.read<OfflineQueueProvider>().refresh();
-        },
+        onTap: () => PosNavigation.openSingleton(routeId: PosRouteIds.offlineSync, builder: (_) => const OfflineSyncScreen()),
       ),
       _AttentionItem(
         color: shift.hasPendingCloseRequest
@@ -1068,7 +1065,7 @@ class _CommandCenterDashboardState extends State<CommandCenterDashboard> {
                 Align(
                   alignment: Alignment.centerRight,
                   child: TextButton.icon(
-                    onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const IntelligenceHubScreen())),
+                    onPressed: () => PosNavigation.openSingleton(routeId: PosRouteIds.intelligence, builder: (_) => const IntelligenceHubScreen()),
                     icon: const Icon(Icons.auto_awesome_rounded, size: 18),
                     label: const Text('Open Intelligence'),
                   ),

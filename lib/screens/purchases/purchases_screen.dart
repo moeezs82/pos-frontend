@@ -389,9 +389,9 @@ class _PurchasesScreenState extends State<PurchasesScreen> {
           children: [
             if (canManage)
               OutlinedButton.icon(
-                onPressed: () => Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => const PurchaseClaimsScreen()),
+                onPressed: () => PosNavigation.openSingleton(
+                  routeId: PosRouteIds.purchaseClaims,
+                  builder: (_) => const PurchaseClaimsScreen(),
                 ),
                 icon: const Icon(Icons.assignment_return_outlined, size: 18),
                 label: const Text('Purchase Claims'),

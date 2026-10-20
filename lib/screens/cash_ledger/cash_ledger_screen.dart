@@ -16,6 +16,7 @@ import 'package:flutter/material.dart';
 import 'package:enterprise_pos/services/app_currency.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
+import 'package:enterprise_pos/widgets/workspace_pages.dart';
 
 /// The unified Cash Ledger: a single view of ALL cash movements
 /// (Customer receipts, vendor payments, expenses, Qameti, loans, etc.)
@@ -363,22 +364,16 @@ class _LedgerViewState extends State<_LedgerView> {
     final label = (e['label'] ?? '').toString();
     final canVoid = (e['can_void'] ?? false) == true;
 
-    await showModalBottomSheet<void>(
-      context: context,
-      useSafeArea: true,
-      isScrollControlled: true,
-      builder: (ctx) => Padding(
-        padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-        child: Column(
+    await PosWorkspacePages.open<void>(
+      context,
+      builder: (ctx) => WorkspaceFormPage(
+        title: const Text('Ledger entry'),
+        content: SizedBox(
+          width: 520,
+          child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Container(
-              width: 44,
-              height: 4,
-              margin: const EdgeInsets.only(bottom: 14),
-              decoration: BoxDecoration(color: AppTheme.border, borderRadius: BorderRadius.circular(2)),
-            ),
             Row(
               children: [
                 Expanded(
@@ -428,6 +423,7 @@ class _LedgerViewState extends State<_LedgerView> {
                 ),
               ),
           ],
+        ),
         ),
       ),
     );

@@ -6,6 +6,7 @@ import 'package:enterprise_pos/services/app_navigator.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:enterprise_pos/widgets/workspace_pages.dart';
 
 /// Business partners / co-owners of the active branch (add-on `owner_equity`).
 ///
@@ -64,8 +65,8 @@ class _PartnersScreenState extends State<PartnersScreen> {
   String _errorText(Object e) => e.toString().replaceFirst('Exception: ', '');
 
   Future<void> _edit([Map<String, dynamic>? partner]) async {
-    final saved = await showDialog<bool>(
-      context: context,
+    final saved = await PosWorkspacePages.open<bool>(
+      context,
       builder: (_) => _PartnerDialog(api: _api, partner: partner, errorText: _errorText),
     );
     if (saved == true) _fetch();
@@ -272,7 +273,7 @@ class _PartnerDialogState extends State<_PartnerDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
+    return WorkspaceFormPage(
       title: Text(widget.partner == null ? 'Add Partner' : 'Edit Partner'),
       content: SizedBox(
         width: 420,

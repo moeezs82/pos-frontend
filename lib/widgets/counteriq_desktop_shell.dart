@@ -40,6 +40,7 @@ import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/app_keyboard_shortcuts.dart';
 import 'package:enterprise_pos/widgets/backup_reminder_gate.dart';
 import 'package:enterprise_pos/widgets/subscription_warning_banner.dart';
+import 'package:enterprise_pos/widgets/workspace_pages.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -155,7 +156,12 @@ class _CounterIQDesktopShellState extends State<CounterIQDesktopShell> {
                           ? _BranchRequiredView(
                               onOpenBranchControl: _openBranchControl,
                             )
-                          : _CounterIQDesktopShellScope(child: widget.child),
+                          : WorkspacePageHost(
+                              resetKey: widget.activeRouteId,
+                              child: _CounterIQDesktopShellScope(
+                                child: widget.child,
+                              ),
+                            ),
                     ),
                   ],
                 ),
@@ -1444,15 +1450,10 @@ class _SyncButton extends StatelessWidget {
           : 'Offline sales sync',
       child: InkWell(
         borderRadius: BorderRadius.circular(10),
-        onTap: () async {
-          await Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => const OfflineSyncScreen()),
-          );
-          if (context.mounted) {
-            context.read<OfflineQueueProvider>().refresh();
-          }
-        },
+        onTap: () => PosNavigation.openSingleton(
+          routeId: PosRouteIds.offlineSync,
+          builder: (_) => const OfflineSyncScreen(),
+        ),
         child: Container(
           width: 38,
           height: 38,

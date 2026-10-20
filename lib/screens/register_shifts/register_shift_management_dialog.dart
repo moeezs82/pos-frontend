@@ -4,15 +4,15 @@ import 'package:enterprise_pos/services/app_currency.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:uuid/uuid.dart';
+import 'package:enterprise_pos/widgets/workspace_pages.dart';
 
 Future<void> showRegisterShiftManagementDialog({
   required BuildContext context,
   required String token,
   required Future<void> Function() onChanged,
 }) {
-  return showDialog<void>(
-    context: context,
-    barrierDismissible: false,
+  return PosWorkspacePages.open<void>(
+    context,
     builder: (_) => _RegisterShiftManagementDialog(
       token: token,
       onChanged: onChanged,
@@ -70,54 +70,30 @@ class _RegisterShiftManagementDialogState
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      insetPadding: const EdgeInsets.all(24),
-      titlePadding: const EdgeInsets.fromLTRB(24, 20, 16, 10),
-      contentPadding: const EdgeInsets.fromLTRB(24, 4, 24, 12),
-      actionsPadding: const EdgeInsets.fromLTRB(24, 8, 24, 20),
-      title: Row(
-        children: [
-          const CircleAvatar(
-            backgroundColor: AppTheme.primarySoft,
-            foregroundColor: AppTheme.primary,
-            child: Icon(Icons.admin_panel_settings_rounded),
-          ),
-          const SizedBox(width: 12),
-          const Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('Open Shift Management'),
-                SizedBox(height: 2),
-                Text(
-                  'Review cashier close requests, request a recount, or force-close an abandoned shift.',
-                  style: TextStyle(
-                    color: AppTheme.textMuted,
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          IconButton(
-            tooltip: 'Refresh',
-            onPressed: _loading ? null : _load,
-            icon: const Icon(Icons.refresh_rounded),
-          ),
-        ],
-      ),
-      content: SizedBox(
-        width: 1120,
-        height: 650,
-        child: _buildBody(),
-      ),
+    return WorkspaceDialogPage(
+      title: const Text('Open Shift Management'),
       actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Close'),
+        IconButton(
+          tooltip: 'Refresh',
+          onPressed: _loading ? null : _load,
+          icon: const Icon(Icons.refresh_rounded),
         ),
       ],
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Text(
+            'Review cashier close requests, request a recount, or force-close an abandoned shift.',
+            style: TextStyle(
+              color: AppTheme.textMuted,
+              fontSize: 12.5,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 12),
+          Expanded(child: _buildBody()),
+        ],
+      ),
     );
   }
 
@@ -525,8 +501,8 @@ class _RegisterShiftManagementDialogState
     int pendingSync, {
     dynamic initialCount,
   }) async {
-    final input = await showDialog<_ForceCloseInput>(
-      context: context,
+    final input = await PosWorkspacePages.open<_ForceCloseInput>(
+      context,
       builder: (_) => _ForceCloseDialog(
         pendingSyncCount: pendingSync,
         initialCount: initialCount,
@@ -587,9 +563,9 @@ class _RegisterShiftManagementDialogState
               ?.map((item) => Map<String, dynamic>.from(item as Map))
               .toList() ??
           const <Map<String, dynamic>>[];
-      await showDialog<void>(
-        context: context,
-        builder: (_) => AlertDialog(
+      await PosWorkspacePages.open<void>(
+        context,
+        builder: (_) => WorkspaceFormPage(
           title: Text('Shift #$shiftId Activity'),
           content: SizedBox(
             width: 860,
@@ -906,7 +882,7 @@ class _ForceCloseDialogState extends State<_ForceCloseDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
+    return WorkspaceFormPage(
       title: const Text('Force Close Register Shift'),
       content: SizedBox(
         width: 500,

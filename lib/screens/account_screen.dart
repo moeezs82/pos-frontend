@@ -7,6 +7,8 @@ import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/widgets/enterprise/enterprise_ui.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:enterprise_pos/widgets/workspace_pages.dart';
+import 'package:enterprise_pos/services/app_navigator.dart';
 
 class AccountsScreen extends StatefulWidget {
   const AccountsScreen({super.key});
@@ -178,10 +180,10 @@ class _AccountsScreenState extends State<AccountsScreen> {
       if (hit.isNotEmpty) accountTypeId = (hit.first['id'] as num).toInt();
     }
 
-    await showDialog(
-      context: context,
+    await PosWorkspacePages.open<void>(
+      context,
       builder: (_) => StatefulBuilder(
-        builder: (context, setStateDialog) => AlertDialog(
+        builder: (context, setStateDialog) => WorkspaceFormPage(
           title: Text(row == null ? 'Create Account' : 'Edit Account'),
           content: SizedBox(
             width: 560,
@@ -290,7 +292,7 @@ class _AccountsScreenState extends State<AccountsScreen> {
       icon: Icons.account_balance_outlined,
       actions: [
         OutlinedButton.icon(
-          onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const PaymentMethodsAdminScreen())),
+          onPressed: () => PosNavigation.openSingleton(routeId: PosRouteIds.paymentMethods, builder: (_) => const PaymentMethodsAdminScreen()),
           icon: const Icon(Icons.payments_outlined, size: 18),
           label: const Text('Payment Methods'),
         ),

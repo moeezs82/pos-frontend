@@ -4,6 +4,7 @@ import 'package:enterprise_pos/screens/intelligence/widgets/intelligence_widgets
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:enterprise_pos/widgets/workspace_pages.dart';
 
 class MoneyFinderScreen extends StatefulWidget {
   const MoneyFinderScreen({super.key});
@@ -1197,18 +1198,19 @@ class _MoneyFinderScreenState extends State<MoneyFinderScreen> {
   Future<void> _showMarginDetail(Map<String, dynamic> row) async {
     final groupKey = row['group_key']?.toString() ?? '';
     final title = row['group_label']?.toString() ?? 'Margin Leak Detail';
-    await showDialog<void>(
-      context: context,
-      barrierDismissible: true,
+    await PosWorkspacePages.open<void>(
+      context,
       builder: (dialogContext) {
-        return Dialog(
-          insetPadding: const EdgeInsets.symmetric(horizontal: 40, vertical: 30),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        return Material(
+          color: AppTheme.bg,
           child: Container(
-            width: 1080,
-            height: 760,
+            margin: const EdgeInsets.all(20),
             padding: const EdgeInsets.all(24),
-            decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(24)),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(AppTheme.radiusLarge),
+              border: Border.all(color: AppTheme.border),
+            ),
             child: FutureBuilder<IntelligenceEnvelope>(
               future: _api().marginLeakDetail(groupKey: groupKey, groupBy: _groupBy),
               builder: (context, snapshot) {
@@ -1542,14 +1544,13 @@ class _MoneyFinderScreenState extends State<MoneyFinderScreen> {
     required Color leadingColor,
     required List<Widget> body,
   }) async {
-    await showDialog<void>(
-      context: context,
+    await PosWorkspacePages.open<void>(
+      context,
       builder: (context) {
-        return Dialog(
-          backgroundColor: Colors.transparent,
-          insetPadding: const EdgeInsets.all(24),
+        return Material(
+          color: AppTheme.bg,
           child: Container(
-            constraints: const BoxConstraints(maxWidth: 900, maxHeight: 720),
+            margin: const EdgeInsets.all(20),
             decoration: BoxDecoration(
               color: Colors.white,
               borderRadius: BorderRadius.circular(24),

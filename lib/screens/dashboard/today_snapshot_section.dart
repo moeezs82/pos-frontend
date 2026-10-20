@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import 'package:enterprise_pos/services/app_currency.dart';
+import 'package:enterprise_pos/services/app_navigator.dart';
 
 /// Home-screen "how's today going" snapshot: a row of KPI cards (today's
 /// net sales, invoice count, gross profit, top product) plus a low-stock
@@ -268,7 +269,7 @@ class _TodaySnapshotSectionState extends State<TodaySnapshotSection> {
           count: _lowStockCount,
           preview: _lowStockPreview,
           obscured: _obscured,
-          onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const LowStockScreen())),
+          onTap: () => PosNavigation.openSingleton(routeId: PosRouteIds.lowStock, builder: (_) => const LowStockScreen()),
         ),
       ],
     );

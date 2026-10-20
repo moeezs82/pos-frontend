@@ -10,6 +10,7 @@ import 'package:enterprise_pos/widgets/enterprise/enterprise_ui.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
+import 'package:enterprise_pos/widgets/workspace_pages.dart';
 
 class CashBookScreen extends StatefulWidget {
   const CashBookScreen({super.key});
@@ -307,9 +308,9 @@ class _CashBookScreenState extends State<CashBookScreen> {
     }
     if (!mounted) return;
     final merged = <String, dynamic>{...row, ...detail};
-    await showDialog<void>(
-      context: context,
-      builder: (ctx) => AlertDialog(
+    await PosWorkspacePages.open<void>(
+      context,
+      builder: (ctx) => WorkspaceFormPage(
         title: Text('Expense #$id'),
         content: SizedBox(
           width: 560,

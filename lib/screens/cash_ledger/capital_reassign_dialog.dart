@@ -4,6 +4,7 @@ import 'package:enterprise_pos/api/partner_service.dart';
 import 'package:enterprise_pos/services/app_currency.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:flutter/material.dart';
+import 'package:enterprise_pos/widgets/workspace_pages.dart';
 
 /// Reassign unassigned owner capital to a partner (phase 7a).
 ///
@@ -12,7 +13,7 @@ import 'package:flutter/material.dart';
 /// partner). The backend re-checks the partner, the available amount and the
 /// period lock; this dialog only pre-fills and shows the result.
 ///
-/// Returns `true` from [showDialog] after a successful reassignment.
+/// Returns `true` from [PosWorkspacePages.open] after a successful reassignment.
 class CapitalReassignDialog extends StatefulWidget {
   final CashLedgerService service;
   final PartnerService partners;
@@ -130,7 +131,7 @@ class _CapitalReassignDialogState extends State<CapitalReassignDialog> {
   @override
   Widget build(BuildContext context) {
     final noPartners = !_loadingPartners && _activePartners.isEmpty;
-    return AlertDialog(
+    return WorkspaceFormPage(
       title: const Text('Reassign capital to partner'),
       content: SizedBox(
         width: 440,

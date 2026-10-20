@@ -12,6 +12,7 @@ import 'package:enterprise_pos/services/app_navigator.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:enterprise_pos/widgets/workspace_pages.dart';
 
 /// Owner Equity tab of the Cash Ledger (add-on `owner_equity`).
 ///
@@ -50,8 +51,8 @@ class _OwnerEquityViewState extends State<OwnerEquityView> {
 
   /// Phase 7a: move capital recorded without a partner to a partner.
   Future<void> _reassign() async {
-    final saved = await showDialog<bool>(
-      context: context,
+    final saved = await PosWorkspacePages.open<bool>(
+      context,
       builder: (_) => CapitalReassignDialog(service: _service, partners: _partners, unassigned: _num('unassigned_capital')),
     );
     if (saved != true || !mounted) return;
