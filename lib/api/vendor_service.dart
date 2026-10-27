@@ -119,6 +119,7 @@ class VendorService {
     int? branchId,
     String allocationMode = 'auto',
     List<Map<String, dynamic>> allocations = const [],
+    String? date,
   }) async {
     final params = {
       "amount": amount,
@@ -126,6 +127,10 @@ class VendorService {
       "allocation_mode": allocationMode,
       if (allocationMode == 'manual') "allocations": allocations,
       if (reference != null && reference.isNotEmpty) "reference": reference,
+      if (date != null && date.trim().isNotEmpty) ...{
+        "paid_at": date.trim(),
+        "date": date.trim(),
+      },
       // if (branchId != null) "branch_id": branchId,
     };
     return await _client.post('/vendors/$vendorId/payments', body: params);

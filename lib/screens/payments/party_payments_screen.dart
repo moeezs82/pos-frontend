@@ -63,6 +63,7 @@ class _PartyPaymentsScreenState extends State<PartyPaymentsScreen> {
 
   String _search = '';
   String _method = 'cash';
+  DateTime _paymentDate = DateTime.now();
   String? _detailError;
 
   List<Map<String, dynamic>> get _parties => _partyPages.values.expand((rows) => rows).toList(growable: false);
@@ -386,6 +387,7 @@ class _PartyPaymentsScreenState extends State<PartyPaymentsScreen> {
       _method = 'cash';
       _amountController.clear();
       _referenceController.clear();
+      _paymentDate = DateTime.now();
       _selectedParty = null;
       _detail = null;
       _ledger.clear();
@@ -980,6 +982,8 @@ class _PartyPaymentsScreenState extends State<PartyPaymentsScreen> {
         }
       }
 
+      final dateStr = _paymentDate.toIso8601String().substring(0, 10);
+
       switch (_kind) {
         case PartyPaymentKind.customer:
           await _customerService.createReceipt(
@@ -990,6 +994,7 @@ class _PartyPaymentsScreenState extends State<PartyPaymentsScreen> {
             reference: reference,
             allocationMode: _allocationModeCode,
             allocations: _allocationPayload(),
+            date: dateStr,
           );
           break;
         case PartyPaymentKind.vendor:
@@ -1001,12 +1006,14 @@ class _PartyPaymentsScreenState extends State<PartyPaymentsScreen> {
             reference: reference,
             allocationMode: _allocationModeCode,
             allocations: _allocationPayload(),
+            date: dateStr,
           );
           break;
         case PartyPaymentKind.deliveryBoy:
           await _deliveryBoyService.createReceived(
             deliveryBoyId: id,
             amount: amount,
+            date: dateStr,
           );
           break;
       }
@@ -1019,6 +1026,7 @@ class _PartyPaymentsScreenState extends State<PartyPaymentsScreen> {
       });
       _amountController.clear();
       _referenceController.clear();
+      _paymentDate = DateTime.now();
       await _reloadAll(keepSelection: true);
     } catch (e) {
       if (mounted) AppFeedback.error(context, 'Failed to save payment: $e');
@@ -1487,6 +1495,8 @@ class _PartyPaymentsScreenState extends State<PartyPaymentsScreen> {
             amountLabel: _amountLabel,
             method: _method,
             posting: _posting,
+            paymentDate: _paymentDate,
+            onDateChanged: (d) => setState(() => _paymentDate = d),
             onMethodChanged: (value) => setState(() => _method = value ?? 'cash'),
             onSubmit: _submitPayment,
             allocationSection: _kind == PartyPaymentKind.deliveryBoy ? null : _buildAllocationSection(),
@@ -1757,6 +1767,8 @@ class _PaymentPanel extends StatelessWidget {
     required this.amountLabel,
     required this.method,
     required this.posting,
+    required this.paymentDate,
+    required this.onDateChanged,
     required this.onMethodChanged,
     required this.onSubmit,
     this.allocationSection,
@@ -1770,13 +1782,40 @@ class _PaymentPanel extends StatelessWidget {
   final String amountLabel;
   final String method;
   final bool posting;
+  final DateTime paymentDate;
+  final ValueChanged<DateTime> onDateChanged;
   final ValueChanged<String?> onMethodChanged;
   final VoidCallback onSubmit;
   final Widget? allocationSection;
 
   @override
   Widget build(BuildContext context) {
-    final wide = MediaQuery.of(context).size.width >= 860;
+    final wide = MediaQuery.of(context).size.width >= 960;
+
+    Widget dateField() => InkWell(
+          borderRadius: BorderRadius.circular(12),
+          onTap: posting
+              ? null
+              : () async {
+                  final picked = await showDatePicker(
+                    context: context,
+                    initialDate: paymentDate,
+                    firstDate: DateTime(2020),
+                    lastDate: DateTime.now(),
+                  );
+                  if (picked != null) onDateChanged(picked);
+                },
+          child: InputDecorator(
+            decoration: const InputDecoration(
+              labelText: 'Payment Date',
+              prefixIcon: Icon(Icons.calendar_today_rounded),
+            ),
+            child: Text(
+              paymentDate.toIso8601String().substring(0, 10),
+              style: const TextStyle(fontWeight: FontWeight.w700),
+            ),
+          ),
+        );
 
     Widget amountField() => TextFormField(
           controller: amountController,
@@ -1833,6 +1872,8 @@ class _PaymentPanel extends StatelessWidget {
         ? Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              Expanded(flex: 2, child: dateField()),
+              const SizedBox(width: 10),
               Expanded(flex: 2, child: amountField()),
               const SizedBox(width: 10),
               Expanded(flex: 2, child: methodField()),
@@ -1845,6 +1886,8 @@ class _PaymentPanel extends StatelessWidget {
         : Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              dateField(),
+              const SizedBox(height: 10),
               amountField(),
               const SizedBox(height: 10),
               methodField(),

@@ -82,10 +82,17 @@ class DeliveryBoyService {
   Future<Map<String, dynamic>> createReceived({
     required int deliveryBoyId,
     required double amount,
+    String? date,
   }) async {
     final res = await _client.post(
       '/delivery-boys/$deliveryBoyId/received',
-      body: {'amount': amount},
+      body: {
+        'amount': amount,
+        if (date != null && date.trim().isNotEmpty) ...{
+          'date': date.trim(),
+          'received_at': date.trim(),
+        },
+      },
     );
     if (res['success'] == true) return res;
     throw Exception(res['message'] ?? 'Failed to record delivery boy received amount');

@@ -312,6 +312,7 @@ class _VendorEditScreenState extends State<VendorEditScreen>
     _amountController.clear();
     _referenceController.clear();
     methodPay = 'cash';
+    DateTime paymentDate = DateTime.now();
     final formKey = GlobalKey<FormState>();
     var saving = false;
 
@@ -347,6 +348,32 @@ class _VendorEditScreenState extends State<VendorEditScreen>
                           color: _vendorBalanceColor(_toDouble(vendor!['balance'])),
                         ),
                         const SizedBox(height: 14),
+                        InkWell(
+                          borderRadius: BorderRadius.circular(12),
+                          onTap: saving
+                              ? null
+                              : () async {
+                                  final picked = await showDatePicker(
+                                    context: context,
+                                    initialDate: paymentDate,
+                                    firstDate: DateTime(2020),
+                                    lastDate: DateTime.now(),
+                                  );
+                                  if (picked != null) setLocal(() => paymentDate = picked);
+                                },
+                          child: InputDecorator(
+                            decoration: const InputDecoration(
+                              labelText: 'Payment Date',
+                              prefixIcon: Icon(Icons.calendar_today_rounded),
+                              border: OutlineInputBorder(),
+                            ),
+                            child: Text(
+                              paymentDate.toIso8601String().substring(0, 10),
+                              style: const TextStyle(fontWeight: FontWeight.w700),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
                         TextFormField(
                           controller: _amountController,
                           autofocus: true,
@@ -368,7 +395,7 @@ class _VendorEditScreenState extends State<VendorEditScreen>
                             if (saving) return;
                             if (!(formKey.currentState?.validate() ?? false)) return;
                             setLocal(() => saving = true);
-                            await _submitPayment(dlgCtx);
+                            await _submitPayment(dlgCtx, paymentDate);
                             if (dlgCtx.mounted) setLocal(() => saving = false);
                           },
                         ),
@@ -411,7 +438,7 @@ class _VendorEditScreenState extends State<VendorEditScreen>
                       : () async {
                           if (!(formKey.currentState?.validate() ?? false)) return;
                           setLocal(() => saving = true);
-                          await _submitPayment(dlgCtx);
+                          await _submitPayment(dlgCtx, paymentDate);
                           if (dlgCtx.mounted) setLocal(() => saving = false);
                         },
                   icon: saving
@@ -431,13 +458,14 @@ class _VendorEditScreenState extends State<VendorEditScreen>
     );
   }
 
-  Future<void> _submitPayment(BuildContext sheetCtx) async {
+  Future<void> _submitPayment(BuildContext sheetCtx, DateTime paymentDate) async {
     setState(() => _postingPayment = true);
     try {
       final branchId = context.read<BranchProvider>().selectedBranchId;
       final amount = double.parse(_amountController.text.trim());
       final reference = _referenceController.text.trim();
       final method = methodPay;
+      final dateStr = paymentDate.toIso8601String().substring(0, 10);
 
       await _service.createPayment(
         vendorId: widget.vendorId,
@@ -445,6 +473,7 @@ class _VendorEditScreenState extends State<VendorEditScreen>
         branchId: branchId,
         method: method,
         reference: reference,
+        date: dateStr,
       );
 
       if (!mounted) return;
