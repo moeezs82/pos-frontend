@@ -78,6 +78,10 @@ class PartySectionCard extends StatelessWidget {
   final bool showDeliveryBoy;
   final bool showVendor;
 
+  /// Custom walk-in customer name when not a registered account.
+  final String? walkInCustomerName;
+  final void Function(String name)? onSetWalkInCustomerName;
+
   /// Posted-sale amendments deliberately lock customer identity. Moving an
   /// already-posted invoice to another party changes AR/payment history and
   /// therefore belongs to a separate controlled accounting workflow.
@@ -126,6 +130,8 @@ class PartySectionCard extends StatelessWidget {
     this.salesmanController,
     this.deliveryBoyController,
     this.vendorController,
+    this.walkInCustomerName,
+    this.onSetWalkInCustomerName,
     this.showDeliveryBoy = true,
     this.showVendor = true,
     this.customerLocked = false,
@@ -158,7 +164,9 @@ class PartySectionCard extends StatelessWidget {
                 label: 'Customer',
                 value: selectedCustomer != null
                     ? _customerLabel(selectedCustomer!)
-                    : 'Walk-in customer',
+                    : (walkInCustomerName != null && walkInCustomerName!.trim().isNotEmpty
+                        ? walkInCustomerName!.trim()
+                        : 'Walk-in customer'),
                 subtitle: selectedCustomer != null
                     ? _customerSubtitle(selectedCustomer!)
                     : 'Customer identity is locked for this posted invoice',
@@ -168,7 +176,7 @@ class PartySectionCard extends StatelessWidget {
             else
               PartyAutocompleteField<PartyMap>(
                 label: 'Customer',
-                hintText: 'Type customer ID, name, area or phone…',
+                hintText: 'Walk-in Customer (type to search or enter name…)',
                 focusNode: customerFocusNode,
                 controller: customerController,
                 getCachedItems: () =>
@@ -182,12 +190,32 @@ class PartySectionCard extends StatelessWidget {
                 subtitleOf: _customerSubtitle,
                 searchTextOf: CustomerDisplayUtils.searchText,
                 idOf: (c) => (c['id'] ?? '').toString(),
-                selectedLabel: selectedCustomer != null ? _customerLabel(selectedCustomer!) : null,
-                selectedSubtitle: selectedCustomer != null ? _customerSubtitle(selectedCustomer!) : null,
+                selectedLabel: selectedCustomer != null
+                    ? _customerLabel(selectedCustomer!)
+                    : (walkInCustomerName != null && walkInCustomerName!.trim().isNotEmpty
+                        ? walkInCustomerName!.trim()
+                        : null),
+                selectedSubtitle: selectedCustomer != null
+                    ? _customerSubtitle(selectedCustomer!)
+                    : (walkInCustomerName != null && walkInCustomerName!.trim().isNotEmpty
+                        ? 'Walk-in customer'
+                        : null),
                 onSelectedTap: onPickCustomer,
-                onSelected: (c) => onApplyCustomer(c),
-                onCleared: () => onApplyCustomer(null),
+                onSelected: (c) {
+                  onApplyCustomer(c);
+                  onSetWalkInCustomerName?.call('');
+                },
+                onCleared: () {
+                  onApplyCustomer(null);
+                  onSetWalkInCustomerName?.call('');
+                },
                 onBrowseAll: onBrowseCustomerSheet,
+                customActionLabel: (query) => 'Use "$query" as Walk-in Customer',
+                customActionIcon: Icons.person_add_alt_1_rounded,
+                onCustomAction: (name) {
+                  onApplyCustomer(null);
+                  onSetWalkInCustomerName?.call(name);
+                },
               ),
             PartyAutocompleteField<PartyMap>(
               label: 'Salesman',

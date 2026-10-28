@@ -100,6 +100,11 @@ class PartyAutocompleteField<T> extends StatefulWidget {
   /// normal behaviour (pick the highlighted suggestion).
   final Future<bool> Function(String code)? onSubmitText;
 
+  /// Optional callback when user chooses a custom action on the typed query text
+  final void Function(String query)? onCustomAction;
+  final String Function(String query)? customActionLabel;
+  final IconData customActionIcon;
+
   const PartyAutocompleteField({
     super.key,
     required this.getCachedItems,
@@ -123,6 +128,9 @@ class PartyAutocompleteField<T> extends StatefulWidget {
     this.controller,
     this.keepFocusAfterSelect = false,
     this.onSubmitText,
+    this.onCustomAction,
+    this.customActionLabel,
+    this.customActionIcon = Icons.person_add_alt_1_rounded,
   });
 
   @override
@@ -297,6 +305,16 @@ class _PartyAutocompleteFieldState<T> extends State<PartyAutocompleteField<T>> {
                 onTap: (item) {
                   _select(item);
                 },
+                onCustomAction: widget.onCustomAction == null
+                    ? null
+                    : (q) {
+                        _focusNode.unfocus();
+                        _removeOverlay();
+                        _controller.clear();
+                        widget.onCustomAction!(q);
+                      },
+                customActionLabel: widget.customActionLabel,
+                customActionIcon: widget.customActionIcon,
                 onBrowseAll: () async {
                   _focusNode.unfocus();
                   _removeOverlay();
@@ -348,6 +366,11 @@ class _PartyAutocompleteFieldState<T> extends State<PartyAutocompleteField<T>> {
     }
     if (_highlightedIndex >= 0 && _highlightedIndex < _suggestions.length) {
       _select(_suggestions[_highlightedIndex]);
+    } else if (widget.onCustomAction != null && value.trim().isNotEmpty) {
+      _focusNode.unfocus();
+      _removeOverlay();
+      _controller.clear();
+      widget.onCustomAction!(value.trim());
     }
   }
 
@@ -486,6 +509,9 @@ class _SuggestionsPanel<T> extends StatelessWidget {
   final String query;
   final void Function(T) onTap;
   final VoidCallback onBrowseAll;
+  final void Function(String query)? onCustomAction;
+  final String Function(String query)? customActionLabel;
+  final IconData customActionIcon;
 
   const _SuggestionsPanel({
     required this.suggestions,
@@ -497,6 +523,9 @@ class _SuggestionsPanel<T> extends StatelessWidget {
     this.subtitleOf,
     this.trailingOf,
     this.searching = false,
+    this.onCustomAction,
+    this.customActionLabel,
+    this.customActionIcon = Icons.person_add_alt_1_rounded,
   });
 
   @override
@@ -569,6 +598,31 @@ class _SuggestionsPanel<T> extends StatelessWidget {
                   },
                 ),
               ),
+            if (customActionLabel != null && onCustomAction != null && query.trim().isNotEmpty) ...[
+              const Divider(height: 1),
+              InkWell(
+                canRequestFocus: false,
+                onTap: () => onCustomAction!(query.trim()),
+                child: Container(
+                  color: AppTheme.primarySoft.withValues(alpha: 0.4),
+                  padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 14),
+                  child: Row(
+                    children: [
+                      Icon(customActionIcon, size: 16, color: AppTheme.primary),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          customActionLabel!(query.trim()),
+                          style: const TextStyle(color: AppTheme.primary, fontWeight: FontWeight.w700, fontSize: 13),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      const Icon(Icons.arrow_forward_rounded, size: 14, color: AppTheme.primary),
+                    ],
+                  ),
+                ),
+              ),
+            ],
             const Divider(height: 1),
             InkWell(
               canRequestFocus: false,

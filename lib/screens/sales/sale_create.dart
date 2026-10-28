@@ -1,6 +1,7 @@
 import 'dart:async' show Timer, unawaited;
 import 'dart:typed_data';
 import 'dart:ui' show FontFeature;
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:enterprise_pos/api/core/api_client.dart' show ApiException;
 import 'package:enterprise_pos/api/product_service.dart';
@@ -179,11 +180,16 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
   final shippingController = TextEditingController(text: "0");
   final cashReceivedController = TextEditingController();
 
+  static const _prefKeyAutoCash = 'pos_sale_create_auto_cash';
+  static const _prefKeyWhatsApp = 'pos_sale_create_whatsapp';
+  static bool? _cachedAutoCash;
+  static bool? _cachedSendInvoiceOnWhatsApp;
+
   final TextEditingController addressController = TextEditingController();
   final TextEditingController customerNameController = TextEditingController();
   final TextEditingController customerPhoneController = TextEditingController();
   bool _customerLocked = false;
-  bool _sendInvoiceOnWhatsApp = false;
+  bool _sendInvoiceOnWhatsApp = _cachedSendInvoiceOnWhatsApp ?? false;
   Future<bool>? _walkInPhoneLookupFuture;
   String? _lastWalkInPhoneLookupKey;
 
@@ -218,7 +224,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
   final _cashReceivedFocusNode = FocusNode();
 
   bool _submitting = false;
-  bool _autoCashIfEmpty = true;
+  bool _autoCashIfEmpty = _cachedAutoCash ?? true;
   bool _didAutoOpenPicker = false;
 
   // WhatsApp invoice preparation is intentionally non-blocking. Completed
@@ -245,6 +251,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
   @override
   void initState() {
     super.initState();
+    unawaited(_loadCheckboxPreferences());
     unawaited(loadSystemArabicPdfFonts());
     // Prepare the receipt logo once the screen is up so the first Preview
     // does not pay for decoding it.
@@ -337,6 +344,44 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     });
   }
 
+
+  Future<void> _loadCheckboxPreferences() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final savedAutoCash = prefs.getBool(_prefKeyAutoCash);
+      final savedWhatsApp = prefs.getBool(_prefKeyWhatsApp);
+      if (savedAutoCash != null) {
+        _cachedAutoCash = savedAutoCash;
+      }
+      if (savedWhatsApp != null) {
+        _cachedSendInvoiceOnWhatsApp = savedWhatsApp;
+      }
+      if (mounted) {
+        setState(() {
+          if (savedAutoCash != null) _autoCashIfEmpty = savedAutoCash;
+          if (savedWhatsApp != null) _sendInvoiceOnWhatsApp = savedWhatsApp;
+        });
+      }
+    } catch (_) {
+      // Non-fatal if preference read fails
+    }
+  }
+
+  void _setAutoCash(bool value) {
+    setState(() => _autoCashIfEmpty = value);
+    _cachedAutoCash = value;
+    SharedPreferences.getInstance().then((prefs) {
+      prefs.setBool(_prefKeyAutoCash, value);
+    }).catchError((_) {});
+  }
+
+  void _setSendInvoiceOnWhatsApp(bool value) {
+    setState(() => _sendInvoiceOnWhatsApp = value);
+    _cachedSendInvoiceOnWhatsApp = value;
+    SharedPreferences.getInstance().then((prefs) {
+      prefs.setBool(_prefKeyWhatsApp, value);
+    }).catchError((_) {});
+  }
 
   Future<void> _loadSaleSources({bool preferCache = false}) async {
     final branchId = int.tryParse(_effectiveBranchIdStr());
@@ -1057,7 +1102,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
   /// Seeds the product/customer instant-suggestion buckets from the local
   /// catalog cache so the pickers show data even offline / after a restart.
   void _hydrateOfflinePickers(int? branchIdInt) {
-    ProductPickCache.hydrateFromCatalog(vendorId: _selectedVendorId, branchId: branchIdInt);
+    ProductPickCache.hydrateFromCatalog(branchId: branchIdInt);
     CustomerPickCache.hydrateFromCatalog(branchId: branchIdInt);
   }
 
@@ -1300,7 +1345,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       _selectedVendor = vendor;
       _selectedVendorId = _metaInt(vendor?['id']);
     });
-    if (!_isEditing) _pruneItemsForVendor();
+    // Vendor selection is for invoice party, does not filter products or cart
     _restoreSaleScreenFocus();
   }
 
@@ -1590,7 +1635,6 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     final picked = await ProductPickerGridSheet.openMulti(
       context,
       token: token,
-      vendorId: _selectedVendorId,
       customerType: _selectedCustomerType,
       alreadySelectedIds: alreadySelectedIds,
       alreadySelectedQty: alreadySelectedQty,
@@ -2384,7 +2428,6 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     try {
       product = await _productService.getProductByBarcode(
         code,
-        vendorId: _selectedVendorId,
         rethrowErrors: true,
       );
       serverAnswered = true;
@@ -2398,7 +2441,6 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       product ??= await CatalogCacheService.instance.productByBarcode(
         code,
         branchId: int.tryParse(_effectiveBranchIdStr()),
-        vendorId: _selectedVendorId,
       );
     }
     return product;
@@ -4703,8 +4745,6 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       _selectedUserId = null;
       _selectedDeliveryBoy = null;
       _selectedDeliveryBoyId = null;
-      _autoCashIfEmpty = true;
-      _sendInvoiceOnWhatsApp = false;
       _showProfitInsight = false;
 
       if (!keepInitialCustomer) {
@@ -4725,7 +4765,6 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       final res = await _productService.getProducts(
         page: 1,
         search: q,
-        vendorId: _selectedVendorId,
       );
       final data = res['data'];
       List list = const [];
@@ -4782,7 +4821,6 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         final offlineRows = await CatalogCacheService.instance.searchProducts(
           q,
           branchId: branchIdInt,
-          vendorId: _selectedVendorId,
           limit: 50,
         );
         return offlineRows.map<ProductRef>((m) {
@@ -5253,7 +5291,8 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
               },
             },
             _ctrlShift(LogicalKeyboardKey.keyN): () {
-              _walkInNameFocusNode.requestFocus();
+              _customerController.clear();
+              _customerFocusNode.requestFocus();
             },
             _ctrlShift(LogicalKeyboardKey.keyH): () {
               _walkInPhoneFocusNode.requestFocus();
@@ -5323,9 +5362,9 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
                             Expanded(
                               flex: 43,
                               child: SaleProductPanel(
-                                key: ValueKey(_selectedVendorId),
+                                key: const ValueKey('sale_product_panel'),
                                 token: token,
-                                vendorId: _selectedVendorId,
+                                vendorId: null,
                                 branchId: int.tryParse(_effectiveBranchIdStr()),
                                 customerType: _selectedCustomerType,
                                 cartProductIds: _cartProductIds,
@@ -5413,6 +5452,12 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
                 deliveryEnabled || (_isEditing && _selectedDeliveryBoyId != null),
             showVendor:
                 saleVendorEnabled || (_isEditing && _selectedVendorId != null),
+            walkInCustomerName: customerNameController.text,
+            onSetWalkInCustomerName: (name) {
+              setState(() {
+                customerNameController.text = name;
+              });
+            },
             customerLocked: _isEditing,
             customerLockMessage:
                 'Customer identity is locked on posted invoices. Use the dedicated customer-transfer workflow when an AR party genuinely needs correction.',
@@ -5423,7 +5468,6 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
             onClearVendor: () => setState(() {
               _selectedVendor = null;
               _selectedVendorId = null;
-              if (!_isEditing) _items = [];
             }),
             onBrowseCustomerSheet: _openCustomerSheet,
             onApplyCustomer: _applyCustomerSelection,
@@ -5668,9 +5712,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
         child: InkWell(
           onTap: _submitting
               ? null
-              : () => setState(() {
-                    _sendInvoiceOnWhatsApp = !_sendInvoiceOnWhatsApp;
-                  }),
+              : () => _setSendInvoiceOnWhatsApp(!_sendInvoiceOnWhatsApp),
           borderRadius: BorderRadius.circular(6),
           child: Row(
             mainAxisSize: MainAxisSize.min,
@@ -5679,9 +5721,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
                 value: _sendInvoiceOnWhatsApp,
                 onChanged: _submitting
                     ? null
-                    : (value) => setState(() {
-                          _sendInvoiceOnWhatsApp = value ?? false;
-                        }),
+                    : (value) => _setSendInvoiceOnWhatsApp(value ?? false),
                 visualDensity: VisualDensity.compact,
               ),
               const Text(
@@ -5834,68 +5874,61 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
-              if (wide)
-                Row(
-                  children: [
-                    const SizedBox(
-                      width: 48,
-                      child: Text(
-                        'Walk-in',
-                        style: TextStyle(
-                          fontSize: 10,
-                          fontWeight: FontWeight.w700,
-                          color: AppTheme.textMuted,
-                        ),
-                      ),
-                    ),
-                    Expanded(flex: 3, child: nameField()),
-                    const SizedBox(width: 6),
-                    SizedBox(width: 126, child: phoneField()),
-                    if (_selectedCustomerId != null) ...[
-                      const SizedBox(width: 4),
-                      clearCustomerButton(),
+              if (wide) ...[
+                if (_selectedCustomerId != null)
+                  Row(
+                    children: [
+                      Expanded(flex: 3, child: areaRow()),
+                      if (context.watch<AuthProvider>().hasAddon('whatsapp_invoice')) ...[
+                        const SizedBox(width: 8),
+                        whatsAppToggle(),
+                      ],
                     ],
-                    const SizedBox(width: 6),
-                    Expanded(flex: 4, child: addressField()),
-                    if (context.watch<AuthProvider>().hasAddon('whatsapp_invoice')) ...[
+                  )
+                else
+                  Row(
+                    children: [
+                      SizedBox(width: 140, child: phoneField()),
                       const SizedBox(width: 6),
-                      whatsAppToggle(),
-                    ],
-                  ],
-                )
-              else ...[
-                Row(
-                  children: [
-                    const SizedBox(
-                      width: 48,
-                      child: Text(
-                        'Walk-in',
-                        style: TextStyle(
-                          fontSize: 10,
-                          fontWeight: FontWeight.w700,
-                          color: AppTheme.textMuted,
-                        ),
-                      ),
-                    ),
-                    Expanded(child: nameField()),
-                    const SizedBox(width: 6),
-                    SizedBox(width: 120, child: phoneField()),
-                    if (_selectedCustomerId != null) ...[
-                      const SizedBox(width: 4),
-                      clearCustomerButton(),
-                    ],
-                  ],
-                ),
-                const SizedBox(height: 4),
-                Row(
-                  children: [
-                    Expanded(child: addressField()),
-                    if (context.watch<AuthProvider>().hasAddon('whatsapp_invoice')) ...[
+                      Expanded(flex: 3, child: addressField()),
                       const SizedBox(width: 6),
-                      whatsAppToggle(),
+                      Expanded(flex: 2, child: areaRow()),
+                      if (context.watch<AuthProvider>().hasAddon('whatsapp_invoice')) ...[
+                        const SizedBox(width: 6),
+                        whatsAppToggle(),
+                      ],
                     ],
-                  ],
-                ),
+                  ),
+              ] else ...[
+                if (_selectedCustomerId != null)
+                  Row(
+                    children: [
+                      Expanded(child: areaRow()),
+                      if (context.watch<AuthProvider>().hasAddon('whatsapp_invoice')) ...[
+                        const SizedBox(width: 6),
+                        whatsAppToggle(),
+                      ],
+                    ],
+                  )
+                else ...[
+                  Row(
+                    children: [
+                      Expanded(child: phoneField()),
+                      const SizedBox(width: 6),
+                      Expanded(child: addressField()),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      Expanded(child: areaRow()),
+                      if (context.watch<AuthProvider>().hasAddon('whatsapp_invoice')) ...[
+                        const SizedBox(width: 6),
+                        whatsAppToggle(),
+                      ],
+                    ],
+                  ),
+                ],
               ],
               if (_sendInvoiceOnWhatsApp) ...[
                 const SizedBox(height: 4),
@@ -5904,8 +5937,6 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
                   child: whatsAppDestination(),
                 ),
               ],
-              const SizedBox(height: 4),
-              areaRow(),
               if (_selectedCustomerId != null &&
                   _selectedCustomerSecondaryPhones.isNotEmpty) ...[
                 const SizedBox(height: 4),
@@ -6526,7 +6557,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
             alignment: Alignment.centerLeft,
             child: Switch(
               value: _autoCashIfEmpty,
-              onChanged: (v) => setState(() => _autoCashIfEmpty = v),
+              onChanged: _setAutoCash,
             ),
           ),
           const SizedBox(width: 8),

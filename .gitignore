@@ -44,7 +44,6 @@ app.*.map.json
 /android/app/profile
 /android/app/release
 
-
 windows/signing/*.pfx
 
 *.zip
@@ -62,3 +61,6 @@ installer/output
 *private-key*
 
 *.patch
+
+# FVM Version Cache
+.fvm/

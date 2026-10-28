@@ -303,7 +303,7 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
           ? vendor!['id'] as int
           : int.tryParse(vendor?['id']?.toString() ?? '');
     });
-    _pruneItemsForVendor();
+    // Vendor selection is for invoice party, does not filter products or cart
   }
 
   /// Keeps cart rows that can be bought from the selected vendor: products
@@ -342,7 +342,6 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
       final res = await _productService.getProducts(
         page: 1,
         search: q,
-        vendorId: _selectedVendorId,
       );
       final data = res['data'];
       List list = const [];
@@ -407,7 +406,6 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
     final picked = await ProductPickerGridSheet.openMulti(
       context,
       token: _token,
-      vendorId: _selectedVendorId,
       alreadySelectedIds: alreadySelectedIds,
       alreadySelectedQty: alreadySelectedQty,
       alreadySelectedProducts: baseRows.map((item) {
@@ -800,7 +798,7 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
   /// Looks the barcode up and adds the product to the purchase (or increments
   /// its existing row). Returns false when no product has that barcode.
   Future<bool> _addProductByCode(String safeCode) async {
-    final product = await _productService.getProductByBarcode(safeCode, vendorId: _selectedVendorId);
+    final product = await _productService.getProductByBarcode(safeCode);
     if (!mounted || product == null) return false;
 
     final productId = int.tryParse(product['id']?.toString() ?? '') ?? 0;
@@ -1204,13 +1202,12 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
               controller: _productSearchController,
               getCachedItems: () =>
                   ProductPickCache.cache
-                      .peek(ProductPickCache.keyFor(vendorId: _selectedVendorId))
+                      .peek(ProductPickCache.keyFor())
                       ?.items ??
                   const [],
               onSearchRemote: (query) => ProductPickCache.searchRemote(
                 _productService,
                 query,
-                vendorId: _selectedVendorId,
               ),
               labelOf: (product) => (product['name'] ?? '').toString(),
               subtitleOf: (product) =>
@@ -1625,9 +1622,9 @@ class _CreatePurchaseScreenState extends State<CreatePurchaseScreen> {
               Expanded(
                 flex: 43,
                 child: PurchaseProductPanel(
-                  key: ValueKey(_selectedVendorId),
+                  key: const ValueKey('purchase_product_panel'),
                   token: _token,
-                  vendorId: _selectedVendorId,
+                  vendorId: null,
                   branchId: branchId,
                   cartProductIds: _cartProductIds,
                   cartProductQuantities: _cartProductQuantities,
