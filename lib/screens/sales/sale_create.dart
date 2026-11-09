@@ -5398,6 +5398,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
                 deliveryEnabled || (_isEditing && _selectedDeliveryBoyId != null),
             showVendor:
                 saleVendorEnabled || (_isEditing && _selectedVendorId != null),
+            showSaleSource: false,
             walkInCustomerName: customerNameController.text,
             onSetWalkInCustomerName: (name) {
               setState(() {

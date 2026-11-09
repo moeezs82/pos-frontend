@@ -82,6 +82,7 @@ class PartySectionCard extends StatelessWidget {
   /// Both default to true so existing call sites are unaffected.
   final bool showDeliveryBoy;
   final bool showVendor;
+  final bool showSaleSource;
 
   /// Custom walk-in customer name when not a registered account.
   final String? walkInCustomerName;
@@ -139,6 +140,7 @@ class PartySectionCard extends StatelessWidget {
     this.onSetWalkInCustomerName,
     this.showDeliveryBoy = true,
     this.showVendor = true,
+    this.showSaleSource = true,
     this.customerLocked = false,
     this.customerLockMessage,
     this.compact = false,
@@ -258,9 +260,16 @@ class PartySectionCard extends StatelessWidget {
                   onSetWalkInCustomerName?.call('');
                 },
                 onBrowseAll: onBrowseCustomerSheet,
-                customActionLabel: (query) => query.trim().isEmpty
-                    ? '+ Create Customer'
-                    : '+ Create Customer "$query"',
+                customActionLabel: (query) {
+                  final trimmed = query.trim();
+                  if (trimmed.isEmpty) return '+ Create Customer';
+                  final hasDigits = RegExp(r'[0-9]').hasMatch(trimmed);
+                  final hasLetters = RegExp(r'[a-zA-Z]').hasMatch(trimmed);
+                  if (hasDigits && !hasLetters) {
+                    return '+ Create Customer with Phone "$trimmed"';
+                  }
+                  return '+ Create Customer "$trimmed"';
+                },
                 customActionIcon: Icons.person_add_rounded,
                 onCustomAction: (name) async {
                   final created = await QuickCustomerCreateDialog.show(
@@ -351,12 +360,14 @@ class PartySectionCard extends StatelessWidget {
             if (showVendor) allFields[3],
           ];
 
-          final source = _SaleSourceField(
-            items: saleSources,
-            selectedId: selectedSaleSourceId,
-            onChanged: onSaleSourceChanged,
-            onManage: canManageSaleSources ? onManageSaleSources : null,
-          );
+          final source = showSaleSource
+              ? _SaleSourceField(
+                  items: saleSources,
+                  selectedId: selectedSaleSourceId,
+                  onChanged: onSaleSourceChanged,
+                  onManage: canManageSaleSources ? onManageSaleSources : null,
+                )
+              : null;
 
           if (compact) {
             return _buildCompactLayout(
@@ -379,19 +390,21 @@ class PartySectionCard extends StatelessWidget {
   Widget _buildCompactLayout(
     double width,
     List<Widget> fields,
-    Widget source,
+    Widget? source,
   ) {
     // On desktop and tablet widths (width >= 560), keep Customer, Salesman,
-    // and Sale From on ONE line as requested.
+    // and Sale From (if shown) on ONE line as requested.
     if (width >= 560) {
       final primaryRow = Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(flex: 4, child: fields[0]),
+          Expanded(flex: source != null ? 4 : 1, child: fields[0]),
           const SizedBox(width: 8),
-          Expanded(flex: 3, child: fields[1]),
-          const SizedBox(width: 8),
-          Expanded(flex: 3, child: source),
+          Expanded(flex: source != null ? 3 : 1, child: fields[1]),
+          if (source != null) ...[
+            const SizedBox(width: 8),
+            Expanded(flex: 3, child: source),
+          ],
         ],
       );
 
@@ -428,7 +441,7 @@ class PartySectionCard extends StatelessWidget {
           fields[i],
           const SizedBox(height: 8),
         ],
-        source,
+        if (source != null) source,
       ],
     );
   }
@@ -436,7 +449,7 @@ class PartySectionCard extends StatelessWidget {
   Widget _buildStandardLayout(
     double width,
     List<Widget> fields,
-    Widget source,
+    Widget? source,
   ) {
     final info = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -453,26 +466,32 @@ class PartySectionCard extends StatelessWidget {
       ],
     );
 
-    final sourceBox = SizedBox(
-      width: onManageSaleSources != null && canManageSaleSources ? 270 : 230,
-      child: source,
-    );
+    final sourceBox = source != null
+        ? SizedBox(
+            width: onManageSaleSources != null && canManageSaleSources ? 270 : 230,
+            child: source,
+          )
+        : null;
 
     final header = width < 610
         ? Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               info,
-              const SizedBox(height: 10),
-              Align(alignment: Alignment.centerRight, child: sourceBox),
+              if (sourceBox != null) ...[
+                const SizedBox(height: 10),
+                Align(alignment: Alignment.centerRight, child: sourceBox),
+              ],
             ],
           )
         : Row(
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               Expanded(child: info),
-              const SizedBox(width: 14),
-              sourceBox,
+              if (sourceBox != null) ...[
+                const SizedBox(width: 14),
+                sourceBox,
+              ],
             ],
           );
 

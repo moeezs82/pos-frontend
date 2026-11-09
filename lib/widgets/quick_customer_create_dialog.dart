@@ -48,13 +48,13 @@ class _QuickCustomerCreateDialogState extends State<QuickCustomerCreateDialog> {
   void initState() {
     super.initState();
     final query = (widget.initialQuery ?? '').trim();
-    // If the typed query is numeric, prefill phone; otherwise prefill name.
-    final isPhoneLike = query.isNotEmpty &&
-        RegExp(r'^[0-9+\s\-()]+$').hasMatch(query) &&
-        query.replaceAll(RegExp(r'[^0-9]'), '').length >= 4;
+    // Detect if the query is filled with a number (contains digits and no letters)
+    final hasDigits = RegExp(r'[0-9]').hasMatch(query);
+    final hasLetters = RegExp(r'[a-zA-Z]').hasMatch(query);
+    final isNumber = hasDigits && !hasLetters;
 
-    _nameController = TextEditingController(text: isPhoneLike ? '' : query);
-    _phoneController = TextEditingController(text: isPhoneLike ? query : '');
+    _nameController = TextEditingController(text: isNumber ? '' : query);
+    _phoneController = TextEditingController(text: isNumber ? query : '');
     _addressController = TextEditingController();
   }
 
@@ -242,9 +242,6 @@ class _QuickCustomerCreateDialogState extends State<QuickCustomerCreateDialog> {
                   validator: (v) {
                     final text = (v ?? '').trim();
                     if (text.isEmpty) return 'Phone number is required';
-                    if (text.length < 7) {
-                      return 'Enter a valid phone number';
-                    }
                     return null;
                   },
                 ),
