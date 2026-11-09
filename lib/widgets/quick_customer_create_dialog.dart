@@ -74,15 +74,10 @@ class _QuickCustomerCreateDialogState extends State<QuickCustomerCreateDialog> {
 
     try {
       final rawName = _nameController.text.trim();
-      final nameParts = rawName.split(RegExp(r'\s+'));
-      final firstName = nameParts.first;
-      final lastName =
-          nameParts.length > 1 ? nameParts.sublist(1).join(' ') : '';
 
       final service = CustomerService(token: widget.token);
       final payload = <String, dynamic>{
-        'first_name': firstName,
-        if (lastName.isNotEmpty) 'last_name': lastName,
+        'first_name': rawName,
         'phone': _phoneController.text.trim(),
         if (_addressController.text.trim().isNotEmpty)
           'address': _addressController.text.trim(),

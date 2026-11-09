@@ -699,7 +699,12 @@ class _SalesScreenState extends State<SalesScreen> {
 
   Widget _saleRow(dynamic s) {
     final total = _toDouble(s['total']); final paid = _toDouble(s['paid_amount']); final balance = s['balance_amount'] != null ? _toDouble(s['balance_amount']) : math.max(0, total - paid).toDouble(); final st = _paymentStatus(s);
-    final dt = _tryParseDate(s['created_at'] ?? s['date']); final customer = (s['customer']?['first_name'] ?? 'Walk-in').toString();
+    final dt = _tryParseDate(s['created_at'] ?? s['date']);
+    final customerMap = s['customer'] is Map ? Map<String, dynamic>.from(s['customer'] as Map) : null;
+    final customerName = customerMap != null
+        ? CustomerDisplayUtils.fullName(customerMap)
+        : (s['customer_name'] ?? '').toString().trim();
+    final customer = customerName.isNotEmpty ? customerName : 'Walk-in';
     final cells = [(s['invoice_no'] ?? '').toString(), dt == null ? (s['invoice_date'] ?? '').toString() : DateFormat('dd MMM yyyy • HH:mm').format(dt), customer, (s['sale_source_name'] ?? 'Counter').toString(), _currency.format(total), _currency.format(paid), _currency.format(balance), st.label, ''];
     return InkWell(onTap: () async { final changed = await Navigator.push(context, MaterialPageRoute(builder: (_) => SaleDetailScreen(saleId: _toInt(s['id']) ?? 0))); if (changed == true && mounted) _fetchInitial(); }, child: Stack(children: [_tableRow(cells), Positioned(right: 15, top: 10, child: IconButton(tooltip: 'Copy invoice', icon: const Icon(Icons.copy_rounded, size: 17), onPressed: () async { await Clipboard.setData(ClipboardData(text: cells[0])); if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Copied: ${cells[0]}'))); }))]));
   }
