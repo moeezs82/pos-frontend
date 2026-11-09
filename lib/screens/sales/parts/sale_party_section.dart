@@ -1,12 +1,17 @@
 import 'package:enterprise_pos/api/customer_service.dart';
 import 'package:enterprise_pos/api/user_service.dart';
 import 'package:enterprise_pos/api/vendor_service.dart';
+import 'package:enterprise_pos/providers/auth_provider.dart';
+import 'package:enterprise_pos/providers/printer_config_provider.dart';
 import 'package:enterprise_pos/services/party_pick_caches.dart';
 import 'package:enterprise_pos/theme/app_theme.dart';
 import 'package:enterprise_pos/utils/customer_display_utils.dart';
 import 'package:enterprise_pos/widgets/enterprise/enterprise_panel.dart';
 import 'package:enterprise_pos/widgets/party_autocomplete_field.dart';
+import 'package:enterprise_pos/widgets/quick_customer_create_dialog.dart';
+import 'package:enterprise_pos/widgets/whatsapp_icon.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
 typedef PartyMap = Map<String, dynamic>;
 
@@ -158,6 +163,48 @@ class PartySectionCard extends StatelessWidget {
           final vendorService = VendorService(token: token);
           final userService = UsersService(token: token);
 
+          final auth = context.watch<AuthProvider>();
+          final printerConfig = context.watch<PrinterConfigProvider>();
+          final hasWhatsApp = auth.hasAddon('whatsapp_invoice') &&
+              printerConfig.sendWhatsAppInvoiceOnSale;
+          final customerPhone =
+              (selectedCustomer?['phone'] ?? '').toString().trim();
+          final showWhatsAppIndicator =
+              hasWhatsApp && customerPhone.isNotEmpty;
+
+          final whatsAppIndicator = showWhatsAppIndicator
+              ? Tooltip(
+                  message: 'WhatsApp invoice will be sent to $customerPhone',
+                  child: Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                    margin: const EdgeInsets.only(right: 4),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF25D366).withValues(alpha: 0.14),
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(
+                        color: const Color(0xFF25D366).withValues(alpha: 0.4),
+                      ),
+                    ),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        WhatsAppIcon(size: 14),
+                        SizedBox(width: 4),
+                        Text(
+                          'WhatsApp',
+                          style: TextStyle(
+                            fontSize: 10.5,
+                            fontWeight: FontWeight.w700,
+                            color: Color(0xFF128C7E),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                )
+              : null;
+
           final allFields = [
             if (customerLocked)
               _LockedPartyField(
@@ -176,9 +223,10 @@ class PartySectionCard extends StatelessWidget {
             else
               PartyAutocompleteField<PartyMap>(
                 label: 'Customer',
-                hintText: 'Walk-in Customer (type to search or enter name…)',
+                hintText: 'Walk-in Customer (type to search or create…)',
                 focusNode: customerFocusNode,
                 controller: customerController,
+                indicator: whatsAppIndicator,
                 getCachedItems: () =>
                     CustomerPickCache.cache.peek(CustomerPickCache.keyFor())?.items ?? const [],
                 onSearchRemote: (query) => CustomerPickCache.searchRemote(
@@ -210,11 +258,20 @@ class PartySectionCard extends StatelessWidget {
                   onSetWalkInCustomerName?.call('');
                 },
                 onBrowseAll: onBrowseCustomerSheet,
-                customActionLabel: (query) => 'Use "$query" as Walk-in Customer',
-                customActionIcon: Icons.person_add_alt_1_rounded,
-                onCustomAction: (name) {
-                  onApplyCustomer(null);
-                  onSetWalkInCustomerName?.call(name);
+                customActionLabel: (query) => query.trim().isEmpty
+                    ? '+ Create Customer'
+                    : '+ Create Customer "$query"',
+                customActionIcon: Icons.person_add_rounded,
+                onCustomAction: (name) async {
+                  final created = await QuickCustomerCreateDialog.show(
+                    context,
+                    token: token,
+                    initialQuery: name,
+                  );
+                  if (created != null) {
+                    onApplyCustomer(created);
+                    onSetWalkInCustomerName?.call('');
+                  }
                 },
               ),
             PartyAutocompleteField<PartyMap>(
@@ -324,35 +381,30 @@ class PartySectionCard extends StatelessWidget {
     List<Widget> fields,
     Widget source,
   ) {
-    // At normal desktop widths, the most-used controls stay on one line.
-    // The 560px breakpoint is intentionally lower than the previous 760px
-    // breakpoint so 1366x768 / Windows-scaled client PCs do not unnecessarily
-    // push Customer and Salesman onto separate lines.
-    if (width >= 560 && fields.length == 2) {
-      return Row(
+    // On desktop and tablet widths (width >= 560), keep Customer, Salesman,
+    // and Sale From on ONE line as requested.
+    if (width >= 560) {
+      final primaryRow = Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(child: fields[0]),
+          Expanded(flex: 4, child: fields[0]),
           const SizedBox(width: 8),
-          Expanded(child: fields[1]),
+          Expanded(flex: 3, child: fields[1]),
           const SizedBox(width: 8),
-          Expanded(child: source),
+          Expanded(flex: 3, child: source),
         ],
       );
-    }
 
-    if (width >= 560) {
+      if (fields.length <= 2) {
+        return primaryRow;
+      }
+
+      // If additional optional parties (Delivery Boy, Vendor) are enabled,
+      // place them on a secondary row below without displacing the primary row.
       return Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(child: fields[0]),
-              const SizedBox(width: 8),
-              Expanded(child: fields[1]),
-            ],
-          ),
+          primaryRow,
           const SizedBox(height: 8),
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -361,8 +413,6 @@ class PartySectionCard extends StatelessWidget {
                 if (i > 2) const SizedBox(width: 8),
                 Expanded(child: fields[i]),
               ],
-              if (fields.length > 2) const SizedBox(width: 8),
-              Expanded(child: source),
             ],
           ),
         ],

@@ -189,7 +189,7 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
   final TextEditingController customerNameController = TextEditingController();
   final TextEditingController customerPhoneController = TextEditingController();
   bool _customerLocked = false;
-  bool _sendInvoiceOnWhatsApp = _cachedSendInvoiceOnWhatsApp ?? false;
+  bool _sendInvoiceOnWhatsApp = _cachedSendInvoiceOnWhatsApp ?? true;
   Future<bool>? _walkInPhoneLookupFuture;
   String? _lastWalkInPhoneLookupKey;
 
@@ -353,13 +353,11 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       if (savedAutoCash != null) {
         _cachedAutoCash = savedAutoCash;
       }
-      if (savedWhatsApp != null) {
-        _cachedSendInvoiceOnWhatsApp = savedWhatsApp;
-      }
+      _cachedSendInvoiceOnWhatsApp = savedWhatsApp ?? true;
       if (mounted) {
         setState(() {
           if (savedAutoCash != null) _autoCashIfEmpty = savedAutoCash;
-          if (savedWhatsApp != null) _sendInvoiceOnWhatsApp = savedWhatsApp;
+          _sendInvoiceOnWhatsApp = savedWhatsApp ?? true;
         });
       }
     } catch (_) {
@@ -372,14 +370,6 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     _cachedAutoCash = value;
     SharedPreferences.getInstance().then((prefs) {
       prefs.setBool(_prefKeyAutoCash, value);
-    }).catchError((_) {});
-  }
-
-  void _setSendInvoiceOnWhatsApp(bool value) {
-    setState(() => _sendInvoiceOnWhatsApp = value);
-    _cachedSendInvoiceOnWhatsApp = value;
-    SharedPreferences.getInstance().then((prefs) {
-      prefs.setBool(_prefKeyWhatsApp, value);
     }).catchError((_) {});
   }
 
@@ -482,13 +472,6 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
     }
   }
 
-  bool _areaActive(Map<String, dynamic> area) {
-    final value = area['is_active'];
-    return value == true ||
-        value == 1 ||
-        value?.toString().toLowerCase() == 'true';
-  }
-
   Map<String, dynamic>? _areaById(int? id) {
     if (id == null) return null;
     for (final area in _customerAreas) {
@@ -556,46 +539,6 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       _customerAreasBranchId = branchId;
       if (!_isEditing && !currentStillAvailable) _selectedAreaId = null;
     });
-  }
-
-  Future<void> _manageCustomerAreas() async {
-    final auth = context.read<AuthProvider>();
-    if (!auth.hasPermission('manage-customers')) {
-      AppFeedback.warning(
-        context,
-        'You do not have permission to manage customer town / area values.',
-      );
-      return;
-    }
-    final result = await showNamedReferenceManagerDialog(
-      context: context,
-      title: 'Town / Areas',
-      singularLabel: 'Town / Area',
-      icon: Icons.location_city_outlined,
-      selectedId: _selectedAreaId,
-      loadItems: () => _customerAreaService.getAreas(activeOnly: true),
-      createItem: _customerAreaService.createArea,
-      updateItem: _customerAreaService.updateArea,
-      subtitle: 'Create, rename, or choose an area without leaving the sale.',
-      selectedSubtitle: 'Selected for this sale',
-    );
-    if (!mounted || result == null) return;
-    await _loadCustomerAreas();
-    if (!mounted) return;
-    if (result.selectedId != null &&
-        _customerAreas.any((area) => _metaInt(area['id']) == result.selectedId)) {
-      setState(() => _selectedAreaId = result.selectedId);
-    } else if (result.selectedId == null) {
-      setState(() => _selectedAreaId = null);
-    }
-
-    if (result.changed) {
-      final branchId = int.tryParse(_effectiveBranchIdStr());
-      final token = auth.token!;
-      CatalogCacheService.instance
-          .refresh(token: token, branchId: branchId, force: true)
-          .then((_) => _loadCustomerAreas(preferCache: true));
-    }
   }
 
   Map<String, dynamic> _mapValue(dynamic value) {
@@ -1315,19 +1258,6 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
   Future<void> _pickCustomer() async {
     final customer = await _openCustomerSheet();
     _applyCustomerSelection(customer);
-  }
-
-  void _clearCustomerSelection() {
-    setState(() {
-      _selectedCustomer = null;
-      _selectedCustomerId = null;
-      _selectedAreaId = null;
-      _customerLocked = false;
-      _lastWalkInPhoneLookupKey = null;
-      customerNameController.text = "";
-      customerPhoneController.text = "";
-      addressController.text = "";
-    });
   }
 
   Future<Map<String, dynamic>?> _openVendorSheet() async {
@@ -3517,17 +3447,33 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
       return;
     }
 
-    final wantsWhatsApp = _sendInvoiceOnWhatsApp || forceWhatsApp;
-    // Captured now: the customer fields are cleared once the sale is saved.
-    final whatsappDestinationPhone = _whatsAppDestinationPhone();
-    if (wantsWhatsApp) {
+    final whatsappDestinationPhone = _whatsAppDestinationPhone().trim();
+    final autoWhatsAppEnabled =
+        context.read<PrinterConfigProvider>().sendWhatsAppInvoiceOnSale &&
+            _sendInvoiceOnWhatsApp;
+    final wantsWhatsApp = forceWhatsApp ||
+        (autoWhatsAppEnabled && whatsappDestinationPhone.isNotEmpty);
+
+    if (forceWhatsApp && whatsappDestinationPhone.isEmpty) {
+      AppFeedback.warning(
+        context,
+        'Customer phone number is required to send WhatsApp invoice.',
+      );
+      return;
+    }
+
+    if (wantsWhatsApp && whatsappDestinationPhone.isNotEmpty) {
       try {
         WhatsAppInvoiceService.instance.normalizePhone(
           whatsappDestinationPhone,
         );
       } on FormatException catch (e) {
-        AppFeedback.warning(context, e.message.toString());
-        return;
+        if (forceWhatsApp) {
+          AppFeedback.warning(context, e.message.toString());
+          return;
+        } else {
+          debugPrint('Invalid phone for WhatsApp invoice: ${e.message}');
+        }
       }
     }
 
@@ -5295,10 +5241,10 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
               _customerFocusNode.requestFocus();
             },
             _ctrlShift(LogicalKeyboardKey.keyH): () {
-              _walkInPhoneFocusNode.requestFocus();
+              _customerFocusNode.requestFocus();
             },
             _ctrlShift(LogicalKeyboardKey.keyA): () {
-              _walkInAddressFocusNode.requestFocus();
+              _customerFocusNode.requestFocus();
             },
             _ctrlShift(LogicalKeyboardKey.keyR): () {
               _focusAndSelectAll(_cashReceivedFocusNode, cashReceivedController);
@@ -5491,12 +5437,6 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
           if ((widget.initialReturnInvoice ?? '').trim().isNotEmpty)
             _buildReturnContextBanner(),
 
-          // 2. FIXED — walk-in/customer snapshot fields are immutable once the
-          // invoice is posted. Customer identity is already shown above in the
-          // locked party field, so hiding these edit-only inputs avoids a
-          // misleading control that would not be persisted by an amendment.
-          if (!_isEditing) _buildWalkInCompact(),
-
           const Divider(height: 1, thickness: 1, color: AppTheme.border),
 
           // 3. FIXED — product autocomplete + scanner + F2
@@ -5613,363 +5553,6 @@ class _CreateSaleScreenState extends State<CreateSaleScreen> {
           ),
           SizedBox(width: 28),
         ],
-      ),
-    );
-  }
-
-  // ── Compact walk-in section ────────────────────────────────────────────
-  // Town / Area intentionally remains a separate sale-level field. On wider
-  // POS workspaces the walk-in identity/contact inputs share one line; narrower
-  // or Windows-scaled screens fall back safely without horizontal overflow.
-  Widget _buildWalkInCompact() {
-    final inputDecoration = InputDecoration(
-      isDense: true,
-      contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
-      border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(6),
-        borderSide: const BorderSide(color: AppTheme.border),
-      ),
-      enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(6),
-        borderSide: const BorderSide(color: AppTheme.border),
-      ),
-    );
-
-    Widget nameField() => Tooltip(
-          message: 'Focus: Ctrl+Shift+N',
-          child: SizedBox(
-            height: 40,
-            child: TextFormField(
-              controller: customerNameController,
-              focusNode: _walkInNameFocusNode,
-              decoration: inputDecoration.copyWith(hintText: 'Customer name'),
-              style: const TextStyle(fontSize: 12),
-            ),
-          ),
-        );
-
-    Widget phoneField() => Tooltip(
-          message: 'Focus: Ctrl+Shift+H',
-          child: SizedBox(
-            height: 40,
-            child: TextFormField(
-              controller: customerPhoneController,
-              focusNode: _walkInPhoneFocusNode,
-              keyboardType: TextInputType.phone,
-              decoration: inputDecoration.copyWith(hintText: 'Phone'),
-              style: const TextStyle(fontSize: 12),
-              onEditingComplete: () {
-                unawaited(_resolveWalkInCustomerByPhone());
-                _walkInAddressFocusNode.requestFocus();
-              },
-            ),
-          ),
-        );
-
-    Widget addressField() => Tooltip(
-          message: 'Focus: Ctrl+Shift+A',
-          child: SizedBox(
-            height: 40,
-            child: TextFormField(
-              controller: addressController,
-              focusNode: _walkInAddressFocusNode,
-              decoration: inputDecoration.copyWith(
-                hintText: 'Address (optional)',
-                prefixIcon: const Icon(
-                  Icons.location_on_outlined,
-                  size: 14,
-                  color: AppTheme.textMuted,
-                ),
-              ),
-              style: const TextStyle(fontSize: 12),
-            ),
-          ),
-        );
-
-    Widget clearCustomerButton() {
-      if (_selectedCustomerId == null) return const SizedBox.shrink();
-      return InkWell(
-        onTap: _clearCustomerSelection,
-        borderRadius: BorderRadius.circular(4),
-        child: const Padding(
-          padding: EdgeInsets.all(2),
-          child: Icon(
-            Icons.close_rounded,
-            size: 14,
-            color: AppTheme.danger,
-          ),
-        ),
-      );
-    }
-
-    Widget whatsAppToggle() {
-      if (!context.watch<AuthProvider>().hasAddon('whatsapp_invoice')) {
-        return const SizedBox.shrink();
-      }
-      return Tooltip(
-        message:
-            'Prepare this receipt for WhatsApp after the sale is saved. Registered customers always use their primary phone.',
-        child: InkWell(
-          onTap: _submitting
-              ? null
-              : () => _setSendInvoiceOnWhatsApp(!_sendInvoiceOnWhatsApp),
-          borderRadius: BorderRadius.circular(6),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Checkbox(
-                value: _sendInvoiceOnWhatsApp,
-                onChanged: _submitting
-                    ? null
-                    : (value) => _setSendInvoiceOnWhatsApp(value ?? false),
-                visualDensity: VisualDensity.compact,
-              ),
-              const Text(
-                'WhatsApp invoice',
-                style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-
-    Widget whatsAppDestination() {
-      if (!_sendInvoiceOnWhatsApp) return const SizedBox.shrink();
-      return Container(
-        constraints: const BoxConstraints(maxWidth: 230),
-        height: 34,
-        padding: const EdgeInsets.symmetric(horizontal: 10),
-        decoration: BoxDecoration(
-          border: Border.all(color: AppTheme.border),
-          borderRadius: BorderRadius.circular(6),
-          color: AppTheme.surfaceSoft,
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const WhatsAppIcon(size: 15),
-            const SizedBox(width: 6),
-            Flexible(
-              child: Text(
-                _whatsAppDestinationPhone().isEmpty
-                    ? 'Primary phone required'
-                    : 'To: ${_whatsAppDestinationPhone()}',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  color: AppTheme.textMuted,
-                ),
-              ),
-            ),
-          ],
-        ),
-      );
-    }
-
-    Widget areaRow() => Row(
-          children: [
-            Expanded(
-              child: SizedBox(
-                height: 40,
-                child: DropdownButtonFormField<int>(
-                  value: _areaById(_selectedAreaId) == null ? null : _selectedAreaId,
-                  isExpanded: true,
-                  decoration: inputDecoration.copyWith(
-                    labelText: 'Town / Area',
-                    hintText: 'Select sale area',
-                    prefixIcon: const Icon(
-                      Icons.location_city_outlined,
-                      size: 15,
-                      color: AppTheme.textMuted,
-                    ),
-                  ),
-                  items: _customerAreas
-                      .where(_areaActive)
-                      .map(
-                        (area) => DropdownMenuItem<int>(
-                          value: _metaInt(area['id']),
-                          child: Text(
-                            (area['name'] ?? '').toString(),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontSize: 12),
-                          ),
-                        ),
-                      )
-                      .where((item) => item.value != null)
-                      .toList(growable: false),
-                  onChanged: _submitting
-                      ? null
-                      : (value) => setState(() => _selectedAreaId = value),
-                ),
-              ),
-            ),
-            if (_selectedAreaId != null) ...[
-              const SizedBox(width: 6),
-              Tooltip(
-                message: 'Clear sale area',
-                child: SizedBox(
-                  width: 38,
-                  height: 40,
-                  child: OutlinedButton(
-                    onPressed: _submitting
-                        ? null
-                        : () => setState(() => _selectedAreaId = null),
-                    style: OutlinedButton.styleFrom(
-                      padding: EdgeInsets.zero,
-                      side: const BorderSide(color: AppTheme.border),
-                    ),
-                    child: const Icon(Icons.close_rounded, size: 16),
-                  ),
-                ),
-              ),
-            ],
-            if (context.read<AuthProvider>().hasPermission('manage-customers')) ...[
-              const SizedBox(width: 6),
-              Tooltip(
-                message: 'Create or rename Town / Area',
-                child: SizedBox(
-                  width: 38,
-                  height: 40,
-                  child: OutlinedButton(
-                    onPressed: _submitting ? null : _manageCustomerAreas,
-                    style: OutlinedButton.styleFrom(
-                      padding: EdgeInsets.zero,
-                      side: const BorderSide(color: AppTheme.border),
-                    ),
-                    child: const Icon(Icons.tune_rounded, size: 17),
-                  ),
-                ),
-              ),
-            ],
-            if (_selectedCustomerId != null &&
-                _metaInt(_selectedCustomer?['area_id']) != null &&
-                _selectedAreaId != _metaInt(_selectedCustomer?['area_id'])) ...[
-              const SizedBox(width: 8),
-              const Tooltip(
-                message:
-                    'This changes only this sale. The customer default area is not modified.',
-                child: Icon(
-                  Icons.info_outline_rounded,
-                  size: 16,
-                  color: AppTheme.textMuted,
-                ),
-              ),
-            ],
-          ],
-        );
-
-    return Container(
-      padding: const EdgeInsets.fromLTRB(8, 5, 8, 6),
-      decoration: const BoxDecoration(
-        border: Border(top: BorderSide(color: AppTheme.border)),
-      ),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final wide = constraints.maxWidth >= 720;
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (wide) ...[
-                if (_selectedCustomerId != null)
-                  Row(
-                    children: [
-                      Expanded(flex: 3, child: areaRow()),
-                      if (context.watch<AuthProvider>().hasAddon('whatsapp_invoice')) ...[
-                        const SizedBox(width: 8),
-                        whatsAppToggle(),
-                      ],
-                    ],
-                  )
-                else
-                  Row(
-                    children: [
-                      SizedBox(width: 140, child: phoneField()),
-                      const SizedBox(width: 6),
-                      Expanded(flex: 3, child: addressField()),
-                      const SizedBox(width: 6),
-                      Expanded(flex: 2, child: areaRow()),
-                      if (context.watch<AuthProvider>().hasAddon('whatsapp_invoice')) ...[
-                        const SizedBox(width: 6),
-                        whatsAppToggle(),
-                      ],
-                    ],
-                  ),
-              ] else ...[
-                if (_selectedCustomerId != null)
-                  Row(
-                    children: [
-                      Expanded(child: areaRow()),
-                      if (context.watch<AuthProvider>().hasAddon('whatsapp_invoice')) ...[
-                        const SizedBox(width: 6),
-                        whatsAppToggle(),
-                      ],
-                    ],
-                  )
-                else ...[
-                  Row(
-                    children: [
-                      Expanded(child: phoneField()),
-                      const SizedBox(width: 6),
-                      Expanded(child: addressField()),
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  Row(
-                    children: [
-                      Expanded(child: areaRow()),
-                      if (context.watch<AuthProvider>().hasAddon('whatsapp_invoice')) ...[
-                        const SizedBox(width: 6),
-                        whatsAppToggle(),
-                      ],
-                    ],
-                  ),
-                ],
-              ],
-              if (_sendInvoiceOnWhatsApp) ...[
-                const SizedBox(height: 4),
-                Align(
-                  alignment: Alignment.centerRight,
-                  child: whatsAppDestination(),
-                ),
-              ],
-              if (_selectedCustomerId != null &&
-                  _selectedCustomerSecondaryPhones.isNotEmpty) ...[
-                const SizedBox(height: 4),
-                Row(
-                  children: [
-                    const Icon(
-                      Icons.print_outlined,
-                      size: 14,
-                      color: AppTheme.textMuted,
-                    ),
-                    const SizedBox(width: 6),
-                    const Text(
-                      'Invoice phones:',
-                      style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        _selectedCustomerSecondaryPhones.join(' • '),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 10,
-                          color: AppTheme.textMuted,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ],
-          );
-        },
       ),
     );
   }

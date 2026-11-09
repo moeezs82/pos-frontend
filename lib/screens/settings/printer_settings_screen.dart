@@ -1762,7 +1762,7 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
                     borderRadius: BorderRadius.circular(10),
                   ),
                   child: Image.memory(
-                    logoBytes!,
+                    logoBytes,
                     fit: BoxFit.contain,
                     errorBuilder: (_, __, ___) => const Icon(Icons.broken_image_outlined),
                   ),
@@ -1856,6 +1856,7 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
 
   Widget _buildWhatsAppInvoicePanel() {
     final scheme = Theme.of(context).colorScheme;
+    final printerConfig = context.watch<PrinterConfigProvider>();
     return EnterprisePanel(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1867,6 +1868,25 @@ class _PrinterSettingsScreenState extends State<PrinterSettingsScreen> {
             icon: Icons.chat_rounded,
             color: Color(0xFF128C7E),
           ),
+          const SizedBox(height: 14),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            value: printerConfig.sendWhatsAppInvoiceOnSale,
+            onChanged: (value) {
+              context
+                  .read<PrinterConfigProvider>()
+                  .setSendWhatsAppInvoiceOnSale(value);
+            },
+            title: const Text(
+              'Send WhatsApp invoice on sale by default',
+              style: TextStyle(fontWeight: FontWeight.w800),
+            ),
+            subtitle: const Text(
+              'Automatically prepare the invoice for WhatsApp after each sale when the customer has a phone number.',
+            ),
+          ),
+          const SizedBox(height: 10),
+          const Divider(height: 1),
           const SizedBox(height: 14),
           const Text(
             'Attachment format',

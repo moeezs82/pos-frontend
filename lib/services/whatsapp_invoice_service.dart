@@ -215,32 +215,138 @@ class WhatsAppInvoiceService {
     return WindowsFileClipboard.copyFiles(existing);
   }
 
+  /// Checks whether WhatsApp Desktop is installed on the local system.
+  Future<bool> isWhatsAppDesktopInstalled() async {
+    if (Platform.isWindows) {
+      try {
+        final result = await Process.run('reg', ['query', r'HKCR\whatsapp']);
+        if (result.exitCode == 0) return true;
+      } catch (_) {}
+
+      try {
+        final result = await Process.run(
+          'reg',
+          ['query', r'HKCU\Software\Classes\whatsapp'],
+        );
+        if (result.exitCode == 0) return true;
+      } catch (_) {}
+
+      try {
+        final localAppData = Platform.environment['LOCALAPPDATA'];
+        if (localAppData != null && localAppData.isNotEmpty) {
+          final win32Exe =
+              File(p.join(localAppData, 'WhatsApp', 'WhatsApp.exe'));
+          if (await win32Exe.exists()) return true;
+        }
+      } catch (_) {}
+
+      return false;
+    }
+    if (Platform.isMacOS) {
+      try {
+        final macApp = Directory('/Applications/WhatsApp.app');
+        final home = Platform.environment['HOME'];
+        final userApp = home != null
+            ? Directory('$home/Applications/WhatsApp.app')
+            : null;
+        if (await macApp.exists() ||
+            (userApp != null && await userApp.exists())) {
+          return true;
+        }
+      } catch (_) {}
+      return false;
+    }
+    if (Platform.isLinux) {
+      try {
+        final res = await Process.run('which', ['whatsapp-desktop']);
+        if (res.exitCode == 0) return true;
+      } catch (_) {}
+      return false;
+    }
+    return false;
+  }
+
   Future<void> openChat({
     required String phone,
     required String message,
   }) async {
     final normalizedPhone = normalizePhone(phone);
-    final uri = Uri.https('wa.me', '/$normalizedPhone', {'text': message});
+    final hasDesktop = await isWhatsAppDesktopInstalled();
+
+    final String targetUrl;
+    if (hasDesktop) {
+      final textParam = message.isNotEmpty
+          ? '&text=${Uri.encodeComponent(message)}'
+          : '';
+      targetUrl = 'whatsapp://send?phone=$normalizedPhone$textParam';
+    } else {
+      final textParam = message.isNotEmpty
+          ? '?text=${Uri.encodeComponent(message)}'
+          : '';
+      targetUrl = 'https://wa.me/$normalizedPhone$textParam';
+    }
 
     if (Platform.isWindows) {
       // explorer.exe treats some HTTPS URLs as filesystem locations. Use the
       // Windows URL protocol handler so the default browser/WhatsApp handoff
-      // receives the URL instead.
-      await Process.start(
-        'rundll32.exe',
-        ['url.dll,FileProtocolHandler', uri.toString()],
-        runInShell: false,
-        mode: ProcessStartMode.detached,
-      );
-      return;
+      // receives the URL instead. When WhatsApp desktop is installed, launching
+      // the whatsapp:// protocol opens the desktop app directly.
+      try {
+        await Process.start(
+          'rundll32.exe',
+          ['url.dll,FileProtocolHandler', targetUrl],
+          runInShell: false,
+          mode: ProcessStartMode.detached,
+        );
+        return;
+      } catch (e) {
+        if (hasDesktop) {
+          final textParam = message.isNotEmpty
+              ? '?text=${Uri.encodeComponent(message)}'
+              : '';
+          final webUrl = 'https://wa.me/$normalizedPhone$textParam';
+          await Process.start(
+            'rundll32.exe',
+            ['url.dll,FileProtocolHandler', webUrl],
+            runInShell: false,
+            mode: ProcessStartMode.detached,
+          );
+          return;
+        }
+        rethrow;
+      }
     }
     if (Platform.isMacOS) {
-      await Process.start('open', [uri.toString()], runInShell: false);
-      return;
+      try {
+        await Process.start('open', [targetUrl], runInShell: false);
+        return;
+      } catch (e) {
+        if (hasDesktop) {
+          final textParam = message.isNotEmpty
+              ? '?text=${Uri.encodeComponent(message)}'
+              : '';
+          final webUrl = 'https://wa.me/$normalizedPhone$textParam';
+          await Process.start('open', [webUrl], runInShell: false);
+          return;
+        }
+        rethrow;
+      }
     }
     if (Platform.isLinux) {
-      await Process.start('xdg-open', [uri.toString()], runInShell: false);
-      return;
+      try {
+        await Process.start('xdg-open', [targetUrl], runInShell: false);
+        return;
+      } catch (e) {
+        if (hasDesktop) {
+          final textParam = message.isNotEmpty
+              ? '?text=${Uri.encodeComponent(message)}'
+              : '';
+          final webUrl = 'https://wa.me/$normalizedPhone$textParam';
+          await Process.start('xdg-open', [webUrl], runInShell: false);
+          return;
+        }
+        rethrow;
+      }
     }
     throw UnsupportedError(
       'WhatsApp invoice sharing is not supported on this platform.',

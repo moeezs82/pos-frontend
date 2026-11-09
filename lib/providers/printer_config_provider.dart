@@ -20,6 +20,7 @@ import '../models/whatsapp_invoice_format.dart';
 /// already changed.
 class PrinterConfigProvider extends ChangeNotifier {
   static const Duration _cacheDuration = Duration(minutes: 10);
+  static const String prefKeyAutoWhatsApp = 'pos_sale_create_whatsapp';
 
   Timer? _cacheResetTimer;
   PrinterConfig _config = const PrinterConfig();
@@ -27,6 +28,34 @@ class PrinterConfigProvider extends ChangeNotifier {
   String? _loadedContextKey;
   int? _branchId;
   int _generation = 0;
+  bool _sendWhatsAppInvoiceOnSale = true;
+
+  PrinterConfigProvider() {
+    _loadLocalWhatsAppPref();
+  }
+
+  Future<void> _loadLocalWhatsAppPref() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final saved = prefs.getBool(prefKeyAutoWhatsApp);
+      if (saved != null) {
+        _sendWhatsAppInvoiceOnSale = saved;
+        notifyListeners();
+      }
+    } catch (_) {}
+  }
+
+  bool get sendWhatsAppInvoiceOnSale => _sendWhatsAppInvoiceOnSale;
+
+  Future<void> setSendWhatsAppInvoiceOnSale(bool value) async {
+    if (_sendWhatsAppInvoiceOnSale == value) return;
+    _sendWhatsAppInvoiceOnSale = value;
+    notifyListeners();
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(prefKeyAutoWhatsApp, value);
+    } catch (_) {}
+  }
 
   PrinterConfig get config => _config;
   bool get isLoading => _isLoading;

@@ -105,6 +105,9 @@ class PartyAutocompleteField<T> extends StatefulWidget {
   final String Function(String query)? customActionLabel;
   final IconData customActionIcon;
 
+  /// Optional indicator widget shown inside the selected chip (e.g. WhatsApp status)
+  final Widget? indicator;
+
   const PartyAutocompleteField({
     super.key,
     required this.getCachedItems,
@@ -131,6 +134,7 @@ class PartyAutocompleteField<T> extends StatefulWidget {
     this.onCustomAction,
     this.customActionLabel,
     this.customActionIcon = Icons.person_add_alt_1_rounded,
+    this.indicator,
   });
 
   @override
@@ -434,6 +438,7 @@ class _PartyAutocompleteFieldState<T> extends State<PartyAutocompleteField<T>> {
         fieldLabel: widget.label,
         enabled: widget.enabled,
         allowClear: widget.allowClear,
+        indicator: widget.indicator,
         onTap: widget.onSelectedTap,
         onClear: widget.onCleared,
         onBrowseAll: widget.onBrowseAll,
@@ -598,7 +603,7 @@ class _SuggestionsPanel<T> extends StatelessWidget {
                   },
                 ),
               ),
-            if (customActionLabel != null && onCustomAction != null && query.trim().isNotEmpty) ...[
+            if (customActionLabel != null && onCustomAction != null) ...[
               const Divider(height: 1),
               InkWell(
                 canRequestFocus: false,
@@ -661,6 +666,7 @@ class _SelectedChipField<T> extends StatelessWidget {
   final VoidCallback? onClear;
   final Future<T?> Function() onBrowseAll;
   final void Function(T) onSelected;
+  final Widget? indicator;
 
   const _SelectedChipField({
     required this.label,
@@ -672,6 +678,7 @@ class _SelectedChipField<T> extends StatelessWidget {
     this.allowClear = true,
     this.onTap,
     this.onClear,
+    this.indicator,
   });
 
   @override
@@ -721,6 +728,7 @@ class _SelectedChipField<T> extends StatelessWidget {
                 ],
               ),
             ),
+            if (indicator != null) indicator!,
             if (allowClear)
               IconButton(
                 tooltip: 'Clear',
